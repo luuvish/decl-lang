@@ -29,6 +29,6 @@ follows once the chapters settle.
 | [09. Evaluation Semantics](specification/09_semantics.md) | Pipeline, dependency graph, laziness, determinism and numeric rules, invalidation, partial evaluation, termination |
 | [10. Data Interchange](specification/10_interchange.md) | Input binding, serialization policy, canonical JSON text, total round-trip idempotence, JSON-only scope |
 | [11. Grammar](specification/11_grammar.md) | The formal grammar (EBNF): declarations, types, members, expressions, data documents, disambiguation notes — wins over prose on conflict |
+| [12. Errors and Diagnostic Codes](specification/12_errors.md) | Code scheme and bands, machine-readable report format, ordering and conformance scope, the full v0.1 registry |
 
-Chapters 12–13 (errors, stdlib) are being authored in ROADMAP §0.2
-order.
+Chapter 13 (stdlib) is being authored per ROADMAP §0.2–0.3.
