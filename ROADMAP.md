@@ -54,7 +54,8 @@ simultaneous chapter updates).
 ### 0.1 Design documents
 
 - Vision and background — done: [docs/design/00_vision.md](docs/design/00_vision.md)
-- Requirements: goals, non-goals, capability requirements, quality bar
+- Requirements — done: [docs/design/01_requirements.md](docs/design/01_requirements.md)
+  (goals, non-goals, capability requirements, generality benchmark, quality bar)
 - Design principles and numbered design decisions — the charter that spec
   chapters must never contradict; open questions are tracked and promoted to
   numbered decisions when resolved
