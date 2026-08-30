@@ -189,6 +189,7 @@ A diagnostic serializes as:
 | E5005 | array index out of bounds |
 | E5006 | unbound `input` demanded (§5.6) |
 | E5007 | dependency cycle detected at evaluation time (§9.3) |
+| E5008 | standard-library function called outside its domain ([13. Stdlib](13_stdlib.md)) |
 
 ### E6xxx — validation and binding (ch. 6, 7, 10)
 

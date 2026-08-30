@@ -30,7 +30,7 @@ never migrated wholesale or modified from this repo.
 
 | Phase | Name | Deliverables | Status |
 |---|---|---|---|
-| 0 | Specification (v0.1 freeze) | design docs, spec chapters, stdlib spec, validation corpus desk check, evaluator spike | in progress (0.1 done, 0.2 started) |
+| 0 | Specification (v0.1 freeze) | design docs, spec chapters, stdlib spec, validation corpus desk check, evaluator spike | in progress (0.1–0.3 done, 0.4 next) |
 | 1 | Grammar & parser | tree-sitter grammar + corpus tests + fixtures | not started |
 | 2 | Reference implementation core (TS) | type check, evaluation, constraint validation, serialization + conformance runner | not started |
 | 3 | Modules & standard library | import/export, manifest + lock, `std.*` | not started |
@@ -61,19 +61,19 @@ simultaneous chapter updates).
   (P1–P7, D1–D29, rejected-syntax table, vision-checklist traceability; all
   open questions resolved except the two spike-gated ones, OQ3 and OQ7)
 
-### 0.2 Specification chapters
+### 0.2 Specification chapters — done
 
-Author the normative spec. Expected coverage (final chapter structure is
-decided during writing): introduction and core concepts, lexical structure,
-type system, expressions, declarations and schemas, constraints and
-diagnostics, relationships, modules and packages, evaluation semantics, data
-interchange, formal grammar (EBNF), error and diagnostic codes.
+Chapters 01–12 authored under `docs/specification/`: introduction, lexical
+structure, type system, expressions, declarations and schemas, constraints
+and diagnostics, relationships, modules and packages, evaluation semantics,
+data interchange, formal grammar (EBNF), error and diagnostic codes.
 
-### 0.3 Standard library specification
+### 0.3 Standard library specification — done
 
-Define the `std.*` modules used by the spec and validation corpus: per-module
-signatures, semantics, and error conditions. The v0.1 scope is limited to
-functions the spec and corpus actually use.
+`13_stdlib.md`: per-module signatures, semantics, and error conditions for
+the complete v0.1 `std.*` surface (array, math, int, float, string, object,
+map, SI unit catalog; `std.graph` reserved pending OQ3), scoped to what the
+spec and corpus actually use.
 
 ### 0.4 Guide
 
