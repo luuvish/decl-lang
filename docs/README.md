@@ -1,0 +1,13 @@
+# Decl Documentation
+
+**Status: pre-specification.** The specification is being written from
+scratch (see [ROADMAP.md](../ROADMAP.md), Phase 0). Spec chapters and the
+guide will be added here as Phase 0 proceeds.
+
+## Index
+
+### Design documents (why the language is shaped this way)
+
+| Document | Description |
+|---|---|
+| [00. Vision and Background](design/00_vision.md) | Why this language exists: the config-language landscape, the agent-era turn, lessons and defect review from the previous Decl iteration, and the checklist of issues the new spec must resolve (informative) |
