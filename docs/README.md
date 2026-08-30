@@ -22,7 +22,8 @@ follows once the chapters settle.
 | [02. Lexical Structure](specification/02_lexical.md) | Source text, comments, identifiers, keywords, literals, separators, operators |
 | [03. Type System](specification/03_types.md) | All type forms, dimensions/units, subsumption (⊑), assignability, uninhabited types |
 | [04. Expressions](specification/04_expressions.md) | Operator precedence, arithmetic and numeric safety, `match`, comprehensions, absence, pipeline, `with` |
+| [05. Declarations and Schemas](specification/05_declarations.md) | `const`/`func`/`type`/`output`/`input`, the four member kinds, constraint-member placement, inheritance, annotations |
 
-Chapters 05–13 (declarations, constraints, relationships, modules,
-semantics, interchange, grammar, errors, stdlib) are being authored in
-ROADMAP §0.2 order.
+Chapters 06–13 (constraints, relationships, modules, semantics,
+interchange, grammar, errors, stdlib) are being authored in ROADMAP
+§0.2 order.
