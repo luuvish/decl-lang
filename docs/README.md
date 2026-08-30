@@ -26,6 +26,7 @@ follows once the chapters settle.
 | [06. Constraints and Diagnostics](specification/06_constraints.md) | `assert`/`when`, `diagnostic` templates, type-level `else`, severities, invalidation and root-cause reporting, paths and ordering |
 | [07. Relationships](specification/07_relationships.md) | Composition vs reference, canonical paths and their order, context variables, reference construction and integrity, `$referrers` |
 | [08. Modules and Packages](specification/08_modules.md) | Exports/imports/re-export, provenance rules, `decl.toml`, the lock file, multi-module evaluation |
+| [09. Evaluation Semantics](specification/09_semantics.md) | Pipeline, dependency graph, laziness, determinism and numeric rules, invalidation, partial evaluation, termination |
 
-Chapters 09–13 (semantics, interchange, grammar, errors, stdlib) are
-being authored in ROADMAP §0.2 order.
+Chapters 10–13 (interchange, grammar, errors, stdlib) are being
+authored in ROADMAP §0.2 order.
