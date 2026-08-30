@@ -30,7 +30,7 @@ never migrated wholesale or modified from this repo.
 
 | Phase | Name | Deliverables | Status |
 |---|---|---|---|
-| 0 | Specification (v0.1 freeze) | design docs, spec chapters, stdlib spec, validation corpus desk check, evaluator spike | in progress (0.1 started) |
+| 0 | Specification (v0.1 freeze) | design docs, spec chapters, stdlib spec, validation corpus desk check, evaluator spike | in progress (0.1 done, 0.2 started) |
 | 1 | Grammar & parser | tree-sitter grammar + corpus tests + fixtures | not started |
 | 2 | Reference implementation core (TS) | type check, evaluation, constraint validation, serialization + conformance runner | not started |
 | 3 | Modules & standard library | import/export, manifest + lock, `std.*` | not started |
