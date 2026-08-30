@@ -58,8 +58,8 @@ simultaneous chapter updates).
   (goals, non-goals, capability requirements, generality benchmark, quality bar)
 - Design principles and decisions — done:
   [docs/design/02_design_decisions.md](docs/design/02_design_decisions.md)
-  (P1–P7, D1–D29, rejected-syntax table, vision-checklist traceability; open
-  questions OQ1–OQ6 tracked in the doc, promoted to D numbers when resolved)
+  (P1–P7, D1–D29, rejected-syntax table, vision-checklist traceability; all
+  open questions resolved except the two spike-gated ones, OQ3 and OQ7)
 
 ### 0.2 Specification chapters
 

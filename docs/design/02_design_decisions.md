@@ -202,6 +202,12 @@ because the same requirements produce them, not because they were inherited.
   detection on input remains fully effective. Defining closedness inside
   subtyping makes extension and closedness contradict each other, which is
   precisely the trap the previous iteration fell into *(V9)*.
+- Unknown fields passing through `...` are **opaque**: preserved and
+  re-serialized faithfully, but inaccessible to expressions — to compute
+  on a field, declare it. A first-class `unknown` type (TS-style,
+  access-after-narrowing) is rejected for v0.1: it would require complete
+  narrowing semantics, a cost P7 does not allow to defer.
+  *(resolves former OQ2)*
 
 ### D11. Unions with structural discrimination
 
@@ -228,6 +234,13 @@ because the same requirements produce them, not because they were inherited.
     qualified by their origin type (D20).
   - The result is closed iff **either** side is closed (intersection of
     allowed member sets).
+- **Emptiness detection is structural**: an intersection that is
+  uninhabited for structural reasons — primitive mismatch
+  (`int & string`), disjoint ranges or literals (`1..10 & 20..30`),
+  conflicting member kinds — is a compile diagnostic. Emptiness that
+  hinges on predicates (`int(f) & int(g)` with no common satisfier) is
+  undecidable and is **not** detected statically; it surfaces when a
+  value is constructed or bound. *(resolves former OQ5)*
 - The token `&` is available because references are spelled `ref<T>`
   (D26); the previous iteration excluded intersection half on a token
   clash — a semantic decision must not be justified by a syntax problem.
@@ -246,8 +259,10 @@ because the same requirements produce them, not because they were inherited.
 - The judgment is designated for exposure as a queryable operation —
   semantic diff between schema versions and residual-constraint queries
   are the same procedure asked differently *(V11)*. v0.1 specifies the
-  judgment and its internal uses; the tool-facing query surface is
-  introduced with the CLI/LSP phase (open question OQ4 tracks scope).
+  judgment normatively and uses it internally (narrowing, `&`
+  compatibility, discrimination); the tool-facing query surface —
+  semantic diff, residual constraints — lands with the CLI/LSP phase
+  (Phase 4). *(resolves former OQ4)*
 
 ### D14. Generics with type and value parameters
 
@@ -273,6 +288,11 @@ because the same requirements produce them, not because they were inherited.
   round-trippable and usable in `input`-bound JSON — a unit system whose
   values cannot cross the input boundary would collide with the
   language's core purpose.
+- The stdlib ships the **full SI catalog**: the seven base dimensions,
+  their base units, the standard derived units, and the SI-prefixed
+  forms — all as ordinary `dimension`/`unit` declarations, no special
+  mechanism (the stdlib chapter fixes the exact inventory). Domain
+  units are user-declared on top. *(resolves former OQ1)*
 
 ---
 
@@ -560,8 +580,13 @@ diagnostic width_mismatch(src: int, dst: int) {
 
 ### D28. Packages: exact pin and lock
 
-- Manifest `decl.toml`: name, version, dependencies. Dependency versions
-  are **exact pins only** — no ranges, no carets.
+- Manifest `decl.toml`: three semantic fields — name, version,
+  dependencies. Dependency versions are **exact pins only** — no ranges,
+  no carets.
+- Descriptive metadata fields (description, license, authors, …; the
+  modules chapter fixes the list) are permitted and **never affect
+  resolution or evaluation**. Fields outside the semantic and metadata
+  sets are errors (fail-closed). *(resolves former OQ6)*
 - The lock file records content hashes and is **fail-closed**: a hash
   mismatch stops resolution. Under the same lock state, module resolution
   is deterministic.
@@ -727,27 +752,20 @@ Every item of [00. Vision §6](00_vision.md) resolves to a decision here
 
 ## Open questions
 
-Tracked here until resolved; resolutions are promoted to numbered
-decisions.
+Tracked here until resolved; resolutions are promoted into the numbered
+decisions. OQ1 (SI catalog → D15), OQ2 (opaque unknown fields → D10),
+OQ4 (subsumption exposure scope → D13), OQ5 (structural emptiness →
+D12), and OQ6 (manifest fields → D28) were resolved on 2026-08-30 and
+folded into their host decisions. The two remaining questions are
+**deliberately open** — their resolution criterion is the evaluator
+spike's evidence (ROADMAP §0.6), and deciding them earlier would defeat
+the evidence gate:
 
-- **OQ1.** Standard dimension/unit catalog scope for the stdlib (full SI
-  vs a minimal set) — D15 fixes the mechanism, not the catalog.
-- **OQ2.** The type of unknown fields passing through an open record
-  (`...`): opaque value inaccessible to expressions vs a first-class
-  `unknown` type.
 - **OQ3.** Admission of `std.graph.*` fixpoint combinators into v0.1 —
-  decided by the evaluator spike (D18, ROADMAP §0.6).
-- **OQ4.** Scope of the subsumption query's tool exposure in v0.1
-  (judgment is normative either way; CLI/LSP surface may land in the
-  tooling phase) — D13.
-- **OQ5.** Static detection depth for empty intersections (`A & B`
-  uninhabited): which cases must be compile diagnostics vs first-use
-  errors — D12.
-- **OQ6.** `decl.toml` manifest field set beyond name/version/
-  dependencies — D28.
+  decided by the evaluator spike (D18).
 - **OQ7.** Re-admission of an expression-level binding form (designated
   candidate: `const (x = e) body`) — decided by the evaluator spike's
-  evidence on single-expression `func` bodies (D3, ROADMAP §0.6).
+  evidence on single-expression `func` bodies (D3).
 
 ---
 
