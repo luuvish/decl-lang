@@ -39,6 +39,14 @@ segment  = "." identifier          // record member (identifier-shaped name)
   diagnostics emit exactly this form, and a reference path string from
   input data must **be** canonical — a non-canonical spelling
   (`demo["services"]`) does not resolve (§7.5).
+- **Document-relative form**: in *serialized reference strings and
+  bound documents only*, the root may be spelled `$` — "the evaluation
+  root this document is bound to" (`"$.services[0]"`) — keeping
+  documents self-contained and independent of the slot name they bind
+  to ([10. Interchange](10_interchange.md)). `$` is a wire form: the
+  location it denotes is an absolute path, and reference identity,
+  place equality, diagnostics, and path ordering always use the
+  absolute form.
 - **Canonical path order** — the total order used for `$referrers` results
   (§7.6) and diagnostic sorting (§6.7) — compares **segment-wise**:
   root names lexicographically (by Unicode code point), member and key

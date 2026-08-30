@@ -225,6 +225,13 @@ because the same requirements produce them, not because they were inherited.
 
 - `A | B` is a union type. Tagged unions are discriminated **structurally**
   by literal-typed fields — there is no reserved tag-field convention.
+- Discriminability of record arms is **required, not optional**: each
+  record arm carries its own defaults, derived members, and constraints,
+  so the arm that runs must be uniquely determined by the value — a
+  union with two non-discriminable record arms is an error at its
+  declaration (P2). Arms without member semantics (primitives, literals,
+  ranges, patterns) may overlap freely; the types chapter fixes the
+  layered determination procedure.
 - `match` performs exhaustiveness checking over the discriminating field.
 
 ### D12. Intersection `A & B` is the conjunction of constraint layers
@@ -632,7 +639,12 @@ diagnostic width_mismatch(src: int, dst: int) {
 - Floats print in shortest round-trip form (the ECMAScript
   `Number::toString` algorithm).
 - Quantities serialize per D15; references serialize as canonical path
-  strings (D26); member order follows D23.
+  strings (D26) — **document-relative** (`"$.a[0]"`) for targets under
+  the same evaluation root, absolute for cross-root targets, so an
+  emitted document never embeds its own root name and can re-bind to a
+  slot of any name (without this, intra-root references would break
+  the round-trip below: an input can never share its output's name).
+  Member order follows D23.
 - **Round-trip idempotence is normative and total** *(V1)*: for every
   value the language can produce, serializing and re-binding the output
   as `input` succeeds, validates, and re-serializes byte-identically.

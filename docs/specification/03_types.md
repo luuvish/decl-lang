@@ -266,16 +266,37 @@ type Rect   = { kind: "rect", w: float, h: float }
 type Shape  = Circle | Rect
 ```
 
-- A union of record types is **discriminable** if some set of member
-  names carries, in each arm, literal types whose value combinations are
-  pairwise disjoint. `match` requires a discriminable union and checks
-  exhaustiveness over the discriminant
+- **Arm determination** is layered and must be unique wherever arms
+  carry semantics:
+  1. Arms of different **value kinds** (null, bool, number, string,
+     array, object) are discriminated by the value itself; `int` and
+     `float` arms are discriminated by the value's numeric kind (in
+     data, by lexical form — §2.6, §10.2).
+  2. Arms with no member semantics — primitives, literals, ranges,
+     patterns, arrays — may overlap freely: a value satisfies the
+     union iff it satisfies some arm, and which one is unobservable
+     (nothing runs per-arm).
+  3. **Record arms must be pairwise discriminable**: some set of
+     member names carries, in each record arm, literal types whose
+     value combinations are pairwise disjoint (`kind: "circle"` vs
+     `kind: "rect"`). This is not only `match`'s requirement but
+     validation's: each record arm has its own defaults, derived
+     members, constraints, and closedness, so the arm that runs
+     **must be uniquely determined** or the same input could evaluate
+     two ways (P2). A union type with two non-discriminable record
+     arms is an error at its declaration.
+  4. Among object-kind arms, at most **one** may be a non-record form
+     (a map, a `quantity<D>`, or an open catch-all): it matches
+     exactly when no record arm's discriminant does. Two non-record
+     object arms are not discriminable — an error.
+- An object whose discriminant members match a record arm is checked
+  wholly against that arm, and its diagnostics name that arm; an
+  object matching no discriminant (and no fallback arm) fails at the
+  union with the discriminant members and expected values named
+  ([06. Constraints](06_constraints.md)).
+- `match` requires the inspected union's arms to be discriminable
+  under the same rules and checks exhaustiveness over them
   ([04. Expressions](04_expressions.md)).
-- Checking a value against a union does not require discriminability: a
-  value satisfies `A | B` iff it satisfies `A` or satisfies `B`. If it
-  satisfies neither, diagnostics report the arm chosen by the
-  discriminant when one exists, and otherwise the union as a whole
-  ([06. Constraints](06_constraints.md) §reporting).
 
 ## 3.13 Intersection types
 
@@ -373,6 +394,11 @@ const t: Delay = 10ms
 - `quantity<D>` is the type of quantities of dimension `D`. A unit
   literal `10ms` has type `quantity<Time>` — the dimension of its unit.
   The stdlib ships the full SI catalog as ordinary declarations (D15).
+- A quantity's **magnitude is IEEE 754 binary64** (unit conversions
+  force fractions, so an integer magnitude kind would not survive
+  arithmetic). Literal magnitudes convert exactly when representable
+  (`10ms` is exactly 10.0); conversion to the base unit is an exact
+  rational scaling with one final rounding (§9.5).
 - Arithmetic ([04. Expressions](04_expressions.md)): `+`/`-` and
   comparison require **equal dimensions** (error otherwise — never a
   conversion failure, since equal dimensions always convert); `*`/`/`
