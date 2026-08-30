@@ -56,9 +56,10 @@ simultaneous chapter updates).
 - Vision and background — done: [docs/design/00_vision.md](docs/design/00_vision.md)
 - Requirements — done: [docs/design/01_requirements.md](docs/design/01_requirements.md)
   (goals, non-goals, capability requirements, generality benchmark, quality bar)
-- Design principles and numbered design decisions — the charter that spec
-  chapters must never contradict; open questions are tracked and promoted to
-  numbered decisions when resolved
+- Design principles and decisions — done:
+  [docs/design/02_design_decisions.md](docs/design/02_design_decisions.md)
+  (P1–P7, D1–D29, rejected-syntax table, vision-checklist traceability; open
+  questions OQ1–OQ6 tracked in the doc, promoted to D numbers when resolved)
 
 ### 0.2 Specification chapters
 
@@ -184,7 +185,7 @@ tests pass · a fixture exists for every stdlib function.
 
 ## Phase 4 — CLI & tooling
 
-- `decl` CLI: `check` (parse + types), `eval` (instance evaluation → JSON),
+- `decl` CLI: `check` (parse + types), `eval` (output evaluation → JSON),
   `validate` (input binding validation, `--expect-errors` support), `fmt`
 - Formatter: enforce the canonical form the spec defines
 - Minimal LSP surface, in order: diagnostics → hover → definition. The

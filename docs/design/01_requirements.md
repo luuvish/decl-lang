@@ -221,5 +221,5 @@ or user land.
 ## Previous / Next
 
 - Previous: [00. Vision and Background](00_vision.md)
-- Next: 02. Design Decisions (to be written)
+- Next: [02. Design Decisions](02_design_decisions.md)
 - Index: [Documentation home](../README.md)
