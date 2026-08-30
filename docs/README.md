@@ -28,6 +28,7 @@ follows once the chapters settle.
 | [08. Modules and Packages](specification/08_modules.md) | Exports/imports/re-export, provenance rules, `decl.toml`, the lock file, multi-module evaluation |
 | [09. Evaluation Semantics](specification/09_semantics.md) | Pipeline, dependency graph, laziness, determinism and numeric rules, invalidation, partial evaluation, termination |
 | [10. Data Interchange](specification/10_interchange.md) | Input binding, serialization policy, canonical JSON text, total round-trip idempotence, JSON-only scope |
+| [11. Grammar](specification/11_grammar.md) | The formal grammar (EBNF): declarations, types, members, expressions, data documents, disambiguation notes — wins over prose on conflict |
 
-Chapters 11–13 (grammar, errors, stdlib) are being authored in
-ROADMAP §0.2 order.
+Chapters 12–13 (errors, stdlib) are being authored in ROADMAP §0.2
+order.
