@@ -348,7 +348,7 @@ because the same requirements produce them, not because they were inherited.
   (`std.array.count`) is namespace member access, never module
   resolution. The `$` sigil is reserved for **context variables** — values
   that depend on the evaluation position: `$this $parent $root $key
-  $path $refs`. A sigil on `std` (`$std.*`) would dilute that signal:
+  $path $referrers`. A sigil on `std` (`$std.*`) would dilute that signal:
   `$` answers "does this depend on where I am?" at a glance.
 - Record update: `base with { width: 128 }` — shallow, produces a new
   value. Deep merge is a stdlib function with specified bias and conflict
@@ -523,7 +523,7 @@ diagnostic width_mismatch(src: int, dst: int) {
 - **Ordering is specified everywhere** *(V6)*: module members in
   declaration order; input-bound data in document order; map/object
   members preserve insertion order; duplicate keys are errors; query
-  results (e.g. `$refs`) in canonical path order (D26).
+  results (e.g. `$referrers`) in canonical path order (D26).
 - Numeric semantics (arbitrary-precision `int`, binary64 rounding rules,
   D24 safety) are fixed so implementations agree bit-for-bit. FMA
   contraction and extended-precision intermediates are forbidden.
@@ -566,14 +566,31 @@ diagnostic width_mismatch(src: int, dst: int) {
   for intersection (D12), and makes composition explicit where a prefix
   marker is ambiguous: `ref<Service>[]` is an array of references,
   `ref<Service[]>` a reference to an array.
+- Reference reading is type-directed in both directions: a navigation
+  expression in a `ref<T>` position denotes the reference (the place,
+  not a copy), and a reference in a plain `T` position denotes the
+  target's **value** (dereference where a declaration asks for the
+  value — never silently). Member access and spread navigate through
+  references transparently.
 - **Legal targets** are values reachable under evaluation roots
   (`output`/`input` values and their sub-values) — therefore every
   referenced value has passed its type's pipeline (D22, *(V2)*), and
   every legal target has a canonical serialization path rooted at its
   evaluation root's name.
 - Navigation context: `$this $parent $root $key $path`. Reverse query:
-  `$refs(T, "prop")` returns the referrers, in **canonical path order** —
-  defined identically for declared and input-bound data *(V6)*.
+  the one universe query is the reverse query `$referrers(T, "m")` —
+  read as a relationship edge: `T` names **who** refers (and types the
+  result), `"m"` names **through what** (the member carrying the
+  reference, where "carrying" traverses arrays/maps under `m` but not
+  nested records). Premise: a reference is always owned by a record
+  instance, so the two arguments fully determine the edge. The result
+  is distinct `ref<T>[]` in **canonical path order**, defined
+  identically for declared and input-bound data *(V6)*. Place equality
+  supports the surrounding idioms: `==`/`in` with reference operands
+  compare canonical paths. There is no ambient "all values of T"
+  enumeration; other relationship constraints belong to the container
+  type that owns the collections, as comprehensions over named
+  collections.
 
 ---
 
@@ -752,7 +769,7 @@ Every item of [00. Vision §6](00_vision.md) resolves to a decision here
 | V3 assignability total over member kinds | D13 (one total subsumption judgment) |
 | V4 `float<32>` semantics | D7 (removed; P7 bars re-entry without full semantics) |
 | V5 context variables in refinements | D8 (predicates are plain functions of the value — no context variables, no sigil at all) |
-| V6 ordering guarantees | D23 (ordering everywhere), D26 (`$refs` canonical path order) |
+| V6 ordering guarantees | D23 (ordering everywhere), D26 (`$referrers` canonical path order) |
 | V7 transitive/fixpoint queries | D18 (reserved combinators, spike-gated — OQ3) |
 | V8 order-independent conjunction | D12 (intersection `&`) |
 | V9 closedness vs subtyping | D10 (construction-time check, not a subtype clause) |

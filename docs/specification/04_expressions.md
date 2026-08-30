@@ -74,6 +74,18 @@ except `..`/`..<` (non-associative) and `=>` (right):
 - Comparison and equality do not chain: `a < b < c` is an error (the
   first comparison yields `bool`, which `<` rejects).
 
+**Access forms.** `e.m` reads a declared record member with an
+identifier-shaped name — resolved statically against `e`'s type
+(§3.11). `e[k]` reads: an array element (`k: int`; out of bounds is an
+evaluation error, §4.14), a map entry (`k: string`; maybe-absent,
+§4.10), or a record member whose name the dot cannot spell — not
+identifier-shaped, or a reserved keyword (`r["my-key"]`, `r["type"]`)
+— then `k` must be a string literal, and the access is as static as
+`.`. One name, one form: bracket access to a dot-spellable record
+member (`r["port"]`) is a compile error. Records read with `.`, maps
+always with `[…]`; the quoted form exists only for names the dot
+cannot write.
+
 ## 4.4 Arithmetic, bitwise, and shifts
 
 - Arithmetic requires both operands of the **same** numeric kind —
@@ -108,10 +120,15 @@ except `..`/`..<` (non-associative) and `=>` (right):
 - Equality `== !=` is **structural**: primitives by value, quantities by
   dimension-checked magnitude (converted to the base unit), arrays
   element-wise, objects entry-wise (order-insensitive for equality),
-  references by target path. Operands must have overlapping types
+  references by target path — and when either operand is
+  reference-typed, both operands are read as **places** (`$this` and
+  navigation chains denote their locations) and compared by canonical
+  path ([07. Relationships](07_relationships.md) §7.6). Otherwise
+  operands must have overlapping types
   (`S₁ & S₂` inhabited) — `1 == "1"` and `1 == 1.0` are type errors,
   not `false`. Since NaN does not exist, `==` is reflexive.
-- `x in e`: membership. `e` may be an array (element equality), a range
+- `x in e`: membership. `e` may be an array (element equality —
+  including place equality when elements are references, §7.4), a range
   (bounds check, same base type), a map (**key** membership,
   `x: string`), or a record — then `x` must be a string **literal**
   naming an *optional* member of `e`'s type, and the result is that

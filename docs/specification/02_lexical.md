@@ -85,7 +85,7 @@ A `$` immediately followed by an identifier is a context-variable token.
 The valid context variables are exactly:
 
 ```
-$this  $parent  $root  $key  $path  $refs
+$this  $parent  $root  $key  $path  $referrers
 ```
 
 Any other `$`-token (`$value`, `$std`, …) is a lexical error. Semantics

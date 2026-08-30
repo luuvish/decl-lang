@@ -216,6 +216,12 @@ type Router = {
 }
 ```
 
+- Member names are strings: written bare when identifier-shaped,
+  quoted otherwise (`"my-key": int` — closed records must be able to
+  declare any JSON key, P3). A reserved keyword as a name is also
+  quoted (`"type": string` — the bare form cannot lex). Quoting a name
+  that could be written bare is an error (one form per name); access
+  forms are §4.3.
 - Members divide into **value members** — required `x: T`, optional
   `x?: T`, defaulted `x: T = e`, derived `const x = e` — and
   **constraint members** — `assert`, `when` (D19). Constraint members
@@ -459,7 +465,13 @@ and predicate payloads.
 One judgment serves every checking site (D13):
 
 - **Static assignability** — an expression of inferred type `S` is
-  assignable where `T` is expected iff `S ⊑ T`.
+  assignable where `T` is expected iff `S ⊑ T` — with the two
+  type-directed readings of references
+  ([07. Relationships](07_relationships.md) §7.4): a navigation
+  expression in a `ref<T>` position denotes the reference (assignable
+  iff the location's type `⊑ T`), and a `ref<S>`-typed expression in a
+  non-reference `T` position denotes the target's value (assignable
+  iff `S ⊑ T`).
 - **Literal construction** — an object/array literal checked against `T`
   is checked member-wise (each provided member against its declared
   type; required members present; defaulted/derived members *omitted*

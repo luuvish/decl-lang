@@ -24,6 +24,7 @@ follows once the chapters settle.
 | [04. Expressions](specification/04_expressions.md) | Operator precedence, arithmetic and numeric safety, `match`, comprehensions, absence, pipeline, `with` |
 | [05. Declarations and Schemas](specification/05_declarations.md) | `const`/`func`/`type`/`output`/`input`, the four member kinds, constraint-member placement, inheritance, annotations |
 | [06. Constraints and Diagnostics](specification/06_constraints.md) | `assert`/`when`, `diagnostic` templates, type-level `else`, severities, invalidation and root-cause reporting, paths and ordering |
+| [07. Relationships](specification/07_relationships.md) | Composition vs reference, canonical paths and their order, context variables, reference construction and integrity, `$refs` |
 
-Chapters 07–13 (relationships, modules, semantics, interchange,
-grammar, errors, stdlib) are being authored in ROADMAP §0.2 order.
+Chapters 08–13 (modules, semantics, interchange, grammar, errors,
+stdlib) are being authored in ROADMAP §0.2 order.
