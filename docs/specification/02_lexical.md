@@ -71,7 +71,7 @@ Predeclared names — not keywords, but bound in the outermost scope and
 protected by the no-shadowing rule (D27), so they cannot be redeclared:
 
 ```
-bool  int  uint  float  string  quantity  ref  std  exists
+bool  int  uint  float  string  quantity  ref  std
 ```
 
 *Counterexample:* `const type = 3` is a lexical error (keyword);

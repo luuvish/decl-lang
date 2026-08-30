@@ -118,8 +118,16 @@ because the same requirements produce them, not because they were inherited.
   explicit value of type `null`; `T?` abbreviates `T | null`. (The `?` in
   `x?: T` marks the declaration; the `?` in `T?` marks the type — different
   concepts, deliberately different positions.)
-- Absence is handled with `?.` (safe navigation), `??` (fallback), and the
-  built-in predicate `exists(x)`.
+- Absence is handled with `?.` (safe navigation), `??` (fallback — for
+  absent *or* `null`, the nullish reading), and the membership operator
+  `in` as the presence test: `"x" in a` for an optional record member,
+  `k in m` for a map key (`null` is present). Presence is a question
+  about the **container**, never about an absent "value" — there is no
+  `exists()` special form, so nothing in the language consumes absence
+  except `?.` and `??`. The three forms answer different questions:
+  presence, safe navigation, usable-value fallback. Absence is tracked
+  statically (a maybe-absent flag on expressions), so consuming an
+  absent value is a compile error, never a runtime one.
 - Serialization: absent properties are not emitted; `null` is emitted (D29).
 
 ---

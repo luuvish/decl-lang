@@ -21,7 +21,8 @@ follows once the chapters settle.
 | [01. Introduction](specification/01_introduction.md) | What Decl is, core concepts, authority and precedence, conformance, chapter map |
 | [02. Lexical Structure](specification/02_lexical.md) | Source text, comments, identifiers, keywords, literals, separators, operators |
 | [03. Type System](specification/03_types.md) | All type forms, dimensions/units, subsumption (⊑), assignability, uninhabited types |
+| [04. Expressions](specification/04_expressions.md) | Operator precedence, arithmetic and numeric safety, `match`, comprehensions, absence, pipeline, `with` |
 
-Chapters 04–13 (expressions, declarations, constraints, relationships,
-modules, semantics, interchange, grammar, errors, stdlib) are being
-authored in ROADMAP §0.2 order.
+Chapters 05–13 (declarations, constraints, relationships, modules,
+semantics, interchange, grammar, errors, stdlib) are being authored in
+ROADMAP §0.2 order.
