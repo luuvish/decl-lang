@@ -103,8 +103,12 @@ because the same requirements produce them, not because they were inherited.
   "input cannot set it" follows from what `const` already means.
 - `const` members may carry a type (`const x: T = expr`) or infer it.
 - Default and derived expressions may reference sibling properties (the
-  dependency graph, D23). Input data specifying a derived member is an
-  error.
+  dependency graph, D23). Input data cannot **set** a derived member — but
+  it may **restate** one: a bound document supplying a derived member is
+  accepted iff the supplied value equals the computed one, and is an error
+  otherwise. Without the restatement rule, D29's round-trip (derived
+  members included in output by default) would reject its own output on
+  re-binding.
 - `@` annotations (`@deprecated`, `@doc("...")`) are metadata only; no
   annotation affects semantics (P5 — semantics live in one place).
 
