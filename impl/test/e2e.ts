@@ -210,5 +210,37 @@ output port: int = match proto {
   check('catch-all arm selected', eng2.ev(o2.expr, scO) === 0n);
 }
 
+console.log('== generic instantiation (§3.15) ==');
+{
+  const src = `
+type Vec<T, N: int> = T[N]
+type Bounded<T, N: 1..1024> = { items: T[0..N], const count = std.array.count(items) }
+output q: Vec<int, 3> = [1, 2, 3]
+output b: Bounded<string, 4> = { items: ["a", "b"] }
+`;
+  const { decls, errors } = parseSource(src);
+  check('generic module parses', errors.length === 0);
+  check('generic module checks clean', checkModule(decls).length === 0, JSON.stringify(checkModule(decls).slice(0, 3)));
+  const env = new Env(); env.load(decls);
+  const eng = new Engine(env);
+  for (const o of env.outputs) {
+    const sc = { inst: null, locals: new Map<string, any>(), rootName: o.name };
+    try { env.roots.set(o.name, eng.bind(eng.ev(o.expr, sc), env.resolve(o.type), [o.name], null, sc)); } catch { }
+  }
+  for (const v of env.roots.values()) eng.forceAll(v, true);
+  eng.validateAll('');
+  check('generic outputs bind clean', env.diagnostics.length === 0, JSON.stringify(env.diagnostics.slice(0, 2)));
+  check('Vec<int,3> bound', isArr(env.roots.get('q')) && env.roots.get('q').items.length === 3);
+  check('Bounded derived count', get(eng, ['b', 'count']) === 2n);
+
+  // size violation caught at binding
+  const env2 = new Env(); env2.load(parseSource(src).decls);
+  const eng2 = new Engine(env2);
+  const sc2 = { inst: null, locals: new Map<string, any>(), rootName: 'q' };
+  const mark = env2.diagnostics.length;
+  try { eng2.bind(eng2.ev({ e: 'arr', items: [1n, 2n].map(v => ({ spread: false, expr: { e: 'lit', v } })) } as any, sc2), env2.resolve({ k: 'named', name: 'Vec', args: [{ k: 'prim', name: 'int' }, { k: 'lit', v: 3n }] } as any), ['q'], null, sc2); } catch { }
+  check('size violation surfaces', env2.diagnostics.length > mark, JSON.stringify(env2.diagnostics));
+}
+
 console.log(`\nTOTAL ${pass} ok, ${fail} failed`);
 process.exitCode = fail > 0 ? 1 : 0;

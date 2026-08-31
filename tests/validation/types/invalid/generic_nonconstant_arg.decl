@@ -1,0 +1,6 @@
+// @expect-phase: checking
+// @expect-error: E4021
+// parses; generic value arguments are constant positions (§4.13)
+type Vec<T, N: int> = T[N]
+input limit: int
+type Bad = Vec<int, limit>

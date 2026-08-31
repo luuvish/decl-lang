@@ -171,14 +171,22 @@ export function checkModule(decls: Decl[]): Diag[] {
     try { return env.resolve(ast); } catch { return undefined; }
   };
 
+  const mapResolveErr = (msg: string, where: string) => {
+    if (/unknown type/.test(msg)) report('E3003', `${msg} (in ${where})`);
+    else if (/generic arity/.test(msg)) report('E4022', `${msg} (in ${where})`);
+    else if (/outside parameter/.test(msg)) report('E4023', `${msg} (in ${where})`);
+    else if (/non-constant value argument/.test(msg)) report('E4021', `${msg} (in ${where})`);
+  };
+  const resolveOrReport = (t: TypeAst | undefined, where: string): RT | null => {
+    if (!t) return null;
+    try { return env.resolve(t); } catch (e: any) { mapResolveErr(e.message, where); return null; }
+  };
+
   for (const [name, decl] of env.typeAsts) {
     if (decl.params?.length) continue;   // generic declarations check at instantiation (§3.15)
     let rt: RT | undefined;
     try { rt = env.resolve({ k: 'named', name, args: [] }); }
-    catch (e: any) {
-      if (/unknown type/.test(e.message)) report('E3003', `${e.message} (in ${name})`);
-      continue;
-    }
+    catch (e: any) { mapResolveErr(e.message, name); continue; }
     checkResolved(rt, name);
   }
 
@@ -304,13 +312,14 @@ export function checkModule(decls: Decl[]): Diag[] {
     checkRecordExprs(rt, cx0, decl.ast);
   }
   for (const d of decls) {
-    if (d.d === 'const') checkExpr(cx0, d.expr, tryResolve(env, d.type));
+    if (d.d === 'const') checkExpr(cx0, d.expr, d.type ? resolveOrReport(d.type, `const ${d.name}`) : null);
     else if (d.d === 'func') {
       const cxF = { ...cx0, vars: new Map(cx0.vars) };
-      for (const p of d.params) cxF.vars.set(p.name, { rt: tryResolve(env, p.type), abs: false });
-      checkExpr(cxF, d.body, tryResolve(env, d.ret));
-    } else if (d.d === 'output') checkExpr(cx0, d.expr, tryResolve(env, d.type));
-    else if (d.d === 'input' && d.fallback) checkExpr(cx0, d.fallback, tryResolve(env, d.type));
+      for (const p of d.params) cxF.vars.set(p.name, { rt: resolveOrReport(p.type, `func ${d.name}`), abs: false });
+      checkExpr(cxF, d.body, d.ret ? resolveOrReport(d.ret, `func ${d.name}`) : null);
+    } else if (d.d === 'output') checkExpr(cx0, d.expr, resolveOrReport(d.type, `output ${d.name}`));
+    else if (d.d === 'input' && d.fallback) checkExpr(cx0, d.fallback, resolveOrReport(d.type, `input ${d.name}`));
+    else if (d.d === 'input') resolveOrReport(d.type, `input ${d.name}`);
     else if (d.d === 'diagnostic') {
       const cxD = { ...cx0, vars: new Map(cx0.vars) };
       for (const p of d.params) cxD.vars.set(p.name, { rt: tryResolve(env, p.type), abs: false });

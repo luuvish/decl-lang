@@ -1,0 +1,5 @@
+// @expect-phase: checking
+// @expect-error: E4023
+// parses; the value parameter's type is its constraint (D14)
+type Bounded<T, N: 1..1024> = { items: T[0..N] }
+type Bad = Bounded<int, 2000>

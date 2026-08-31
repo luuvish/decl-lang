@@ -39,6 +39,12 @@ type QT = quantity<time>
 type QS = quantity<size>
 type RN = ref<Node>
 type RB = ref<Base>
+type Pair<T> = { first: T, second: T }
+type Vec<T, N: int> = T[N]
+type PairSmall = Pair<Small>
+type PairStruct = { first: Small, second: Small }
+type Quad = Vec<Small, 4>
+type Wide4 = Wide[4]
 `;
 
 await initParser();
@@ -118,6 +124,12 @@ no('required weakened to optional', T('ReqAsOpt'), T('Base'));
 yes('same shape both ways', T('Node'), T('NodeAlias'));
 yes('recursive record coinduction', T('Tree'), T('TreeAlias'));
 yes('recursive record reflexive', T('Tree'), T('Tree'));
+
+console.log('== generics (§3.15: structural after substitution) ==');
+yes('Pair<Small> ⊑ its structure', T('PairSmall'), T('PairStruct'));
+yes('structure ⊑ Pair<Small>', T('PairStruct'), T('PairSmall'));
+yes('Vec<Small,4> ⊑ Wide[4]', T('Quad'), T('Wide4'));
+no('Wide[4] ⊄ Vec<Small,4>', T('Wide4'), T('Quad'));
 
 console.log('== structural emptiness ==');
 empty('inverted range empty', { t: 'range', base: 'int', lo: 5n, hi: 3n } as any, true);

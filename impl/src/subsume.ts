@@ -1,9 +1,8 @@
 // The subsumption judgment ⊑ (spec §3.17) — one normative, total
 // judgment behind assignability, narrowing, discrimination, and
 // intersection compatibility (D13). Coinductive on recursive records.
-import type { RT } from './semantics.ts';
-import { Env } from './semantics.ts';
-import { Engine, } from './engine.ts';
+import type { Env, RT } from './semantics.ts';
+import { Engine } from './engine.ts';
 
 type Assume = Map<RT, Set<RT>>;
 

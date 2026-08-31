@@ -1,6 +1,7 @@
 // Value model, environment, type resolution (reference implementation;
 // promoted from the Phase 0 spike, adapted to the tree-sitter AST).
 import type { Decl, Expr, MemberAst, TypeAst, ElseTail, TemplateParts } from './ast.ts';
+import { subsumes } from './subsume.ts';
 
 // ---------------- values ----------------
 export const ABSENT = Symbol('absent');
@@ -147,7 +148,8 @@ export class Env {
         const decl = this.typeAsts.get(ast.name);
         if (!decl) throw new Error(`unknown type ${ast.name}`);
         let base: RT;
-        if (this.typeMemo.has(ast.name)) base = this.typeMemo.get(ast.name);
+        if (decl.params?.length) base = this.instantiate(ast, decl);
+        else if (this.typeMemo.has(ast.name)) base = this.typeMemo.get(ast.name);
         else {
           if (decl.ast.k === 'record') {
             base = { t: 'rec', name: ast.name, members: [], asserts: [], open: decl.ast.open, tail: decl.tail };
@@ -175,6 +177,90 @@ export class Env {
       }
     }
   }
+  // §3.15: substitute arguments, check value arguments against their
+  // parameter types (the parameter's type IS its constraint, D14), and
+  // resolve the substituted body — structural after substitution
+  instantiate(ast: TypeAst & { k: 'named' }, decl: { ast: TypeAst; tail?: ElseTail; params?: any[] }): RT {
+    const ps = decl.params!;
+    if (ast.args.length !== ps.length)
+      throw new Error(`generic arity: ${ast.name} expects ${ps.length} argument(s), got ${ast.args.length}`);
+    const types = new Map<string, TypeAst>();
+    const values = new Map<string, any>();
+    const label: string[] = [];
+    for (let i = 0; i < ps.length; i++) {
+      const p = ps[i], a = ast.args[i];
+      if (p.type) {                       // value parameter
+        let v: any;
+        if (a.k === 'lit') v = a.v;
+        else if (a.k === 'named' && !a.args.length && !a.ext && !a.preds) {
+          v = this.constNum(a.name);
+          if (typeof v === 'string')
+            throw new Error(`non-constant value argument ${a.name} for ${p.name} of ${ast.name}`);
+        } else throw new Error(`generic arity: parameter ${p.name} of ${ast.name} takes a constant value`);
+        const bound = this.resolve(this.substType(p.type, types, values));
+        if (!subsumes(this, { t: 'lit', v }, bound))
+          throw new Error(`value argument ${v} outside parameter ${p.name}'s type in ${ast.name}`);
+        values.set(p.name, v);
+        label.push(String(v));
+      } else {
+        types.set(p.name, a);
+        label.push(a.k === 'named' ? a.name : a.k === 'prim' ? (a as any).name : a.k);
+      }
+    }
+    const bigStr = (_k: string, v: any) => typeof v === 'bigint' ? `${v}n` : v;
+    const key = `${ast.name}<${JSON.stringify(ast.args, bigStr)}>`;
+    if (this.typeMemo.has(key)) return this.typeMemo.get(key);
+    const shown = `${ast.name}<${label.join(', ')}>`;
+    const body = this.substType(decl.ast, types, values);
+    let rt: RT;
+    if (body.k === 'record') {
+      rt = { t: 'rec', name: shown, members: [], asserts: [], open: body.open, tail: decl.tail };
+      this.typeMemo.set(key, rt);
+      this.fillRecord(rt, body.members);
+    } else {
+      rt = this.resolve(body, shown);
+      if (rt.t === 'rec' || rt.t === 'union') rt.name = shown;
+      rt.tail = rt.tail ?? decl.tail;
+      this.typeMemo.set(key, rt);
+    }
+    return rt;
+  }
+  substType(ast: TypeAst, types: Map<string, TypeAst>, values: Map<string, any>): TypeAst {
+    const t = (a: TypeAst): TypeAst => this.substType(a, types, values);
+    switch (ast.k) {
+      case 'named': {
+        const plain = !ast.args.length && !ast.ext && !ast.preds;
+        if (plain && types.has(ast.name)) return types.get(ast.name)!;
+        if (plain && values.has(ast.name)) return { k: 'lit', v: values.get(ast.name) };
+        return { ...ast, args: ast.args.map(t), ext: ast.ext ? t(ast.ext) : undefined,
+                 preds: ast.preds?.map(p => substExpr(p, values)) };
+      }
+      case 'range': {
+        const sub = (v: any) => typeof v === 'string' && values.has(v) ? values.get(v) : v;
+        return { ...ast, lo: sub(ast.lo), hi: sub(ast.hi) };
+      }
+      case 'array': {
+        const sub = (v: any) => typeof v === 'string' && values.has(v) ? Number(values.get(v)) : v;
+        return { ...ast, elem: t(ast.elem), lo: sub(ast.lo), hi: sub(ast.hi) };
+      }
+      case 'record': return { ...ast, members: ast.members.map(m => this.substMember(m, types, values)) };
+      case 'map': return { ...ast, key: t(ast.key), val: t(ast.val) };
+      case 'union': case 'isect': return { ...ast, arms: ast.arms.map(t) };
+      case 'func': return { ...ast, params: ast.params.map(t), ret: t(ast.ret) };
+      default: return ast;
+    }
+  }
+  substMember(m: MemberAst, types: Map<string, TypeAst>, values: Map<string, any>): MemberAst {
+    const t = (a: TypeAst): TypeAst => this.substType(a, types, values);
+    switch (m.m) {
+      case 'value': return { ...m, type: t(m.type), dflt: m.dflt ? substExpr(m.dflt, values) : undefined };
+      case 'derived': return { ...m, type: m.type ? t(m.type) : undefined, expr: substExpr(m.expr, values) };
+      case 'context': return { ...m, type: t(m.type) };
+      case 'assert': return { ...m, cond: substExpr(m.cond, values) };
+      case 'when': return { ...m, cond: substExpr(m.cond, values), body: m.body.map(b => this.substMember(b, types, values)) };
+    }
+  }
+
   fillRecord(rt: any, members: MemberAst[]) {
     for (const m of members) {
       if (m.m === 'value')
@@ -205,6 +291,20 @@ export class Env {
 }
 
 // ---------------- helpers ----------------
+// deep-copy an expression substituting generic value parameters (§3.15)
+export function substExpr(e: Expr, values: Map<string, any>): Expr {
+  if (!e || typeof e !== 'object') return e;
+  if ((e as any).e === 'name' && values.has((e as any).name))
+    return { e: 'lit', v: values.get((e as any).name) };
+  const out: any = {};
+  for (const [k, v] of Object.entries(e)) {
+    if (Array.isArray(v)) out[k] = v.map(x => x && typeof x === 'object' ? substExpr(x, values) : x);
+    else if (v && typeof v === 'object') out[k] = substExpr(v as any, values);
+    else out[k] = v;
+  }
+  return out;
+}
+
 const idRe = /^[_A-Za-z][_A-Za-z0-9]*$/;
 export function pathStr(segs: Seg[], relRoot?: string): string {
   let out = '';

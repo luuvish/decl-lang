@@ -1,3 +1,5 @@
+type Service = { name: string, ... }
+type Env = { profile: "dev" | "prod", ... }
 export output demo: Service = { name: "gateway" }
 export input external: Service
 input with_fallback: Env = { profile: "dev" }

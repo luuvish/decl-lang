@@ -18,8 +18,8 @@ tree-sitter CST  ->  AST (src/parse.ts lowering)
 
 ```bash
 npm install
-node test/e2e.ts          # benchmarks + guide + match, end to end (35 checks)
-node test/subsume.ts      # subsumption ⊑ / emptiness unit tests (48 checks)
+node test/e2e.ts          # benchmarks + guide + match + generics (41 checks)
+node test/subsume.ts      # subsumption ⊑ / emptiness unit tests (52 checks)
 node src/conformance.ts   # judge every tests/validation fixture by phase
 ```
 
@@ -53,7 +53,13 @@ and array sizes evaluate at elaboration time and participate in
 subsumption/emptiness with their values; non-constant references
 (inputs, outputs, context variables, `$referrers`) in endpoints or
 predicate arguments are E4021, and an erroring constant surfaces as a
-compile-time E5xxx diagnostic. Inference is conservative — an undetermined form
+compile-time E5xxx diagnostic. Generics (§3.15): instantiation
+substitutes type and value parameters through the declaration body
+(types, sizes, endpoints, member expressions), checks value arguments
+against their parameter types (D14 — the type is the constraint,
+E4021/E4022/E4023), and memoizes per argument list so recursive
+generic records stay coinductive; after substitution typing is fully
+structural. Inference is conservative — an undetermined form
 types as unknown and suppresses downstream judgments. Two deliberate
 precision choices keep the frozen corpus sound under strict `S ⊑ T`:
 interval arithmetic on int ranges (`9000 + i` with `i: 0..<3` stays
@@ -62,5 +68,5 @@ literal-set) defer unprovable membership to binding instead of failing
 statically — the guide and benchmarks rely on both (candidate spec
 clarifications for §3.18/§4.4).
 
-Growing: quantity dimension algebra E4072/E4073, generic
-instantiation checks §3.15, and modules/`decl.toml` (Phase 3).
+Growing: quantity dimension algebra E4072/E4073 and
+modules/`decl.toml` (Phase 3).

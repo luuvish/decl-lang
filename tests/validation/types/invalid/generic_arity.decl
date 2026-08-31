@@ -1,0 +1,5 @@
+// @expect-phase: checking
+// @expect-error: E4022
+// parses; every instantiation is checked (§3.15)
+type Vec<T, N: int> = T[N]
+type Bad = Vec<int>
