@@ -87,7 +87,7 @@ type Vec<T, N: 1..1024> = T[N]
   the *declaration*: when a value fails this type, the attached
   diagnostic replaces the generic type-mismatch report. Forms and
   semantics — including the error-only severity rule — are in
-  [06. Constraints](06_constraints.md) §type-level. Anonymous inline
+  [06. Constraints](06_constraints.md) §6.5. Anonymous inline
   types cannot carry `else`; name the type.
 - Names are transparent aliases (§3.1): the `else` clause and the name
   itself never change the value set.
@@ -122,7 +122,7 @@ input env: EnvProfile = { profile: "dev" }
 ```
 
 - `input name: T [= fallback]` declares a slot the evaluating tool
-  binds a document to (D12/D22); binding semantics are
+  binds a document to (D22); binding semantics are
   [10. Interchange](10_interchange.md). The bound value runs the
   pipeline **identical** to an output's.
 - The fallback is a constant expression used when the tool binds

@@ -128,8 +128,10 @@ whitespace — is a unit literal, a single token denoting a quantity (D15):
 ```
 
 - Only decimal forms take units: `0x10ms` is a lexical error.
-- The identifier must resolve to a declared `unit`; that check is
-  semantic, not lexical ([03. Types](03_types.md)).
+- The identifier must resolve to a declared `unit` — in the **unit
+  name space**, which is separate from value and type names
+  ([03. Types](03_types.md) §3.16); that check is semantic, not
+  lexical.
 - With interposed whitespace, the same characters are two tokens
   (`10 ms` — a number and an identifier), which is a parse error in
   value positions.
@@ -163,7 +165,7 @@ type ServiceName = /[a-z][a-z0-9-]*/
 ```
 
 - `\/` escapes a slash; the pattern body is otherwise passed to the
-  pattern grammar of [03. Types](03_types.md) §pattern.
+  pattern grammar of [03. Types](03_types.md) §3.6.
 - There are no flags after the closing `/` (matching is exact,
   case-sensitive, whole-string).
 - An empty pattern `//` is not a pattern literal — it is a line comment.
@@ -177,9 +179,10 @@ type ServiceName = /[a-z][a-z0-9-]*/
 Element separation follows D1 — both JSON commas and Decl newlines:
 
 - Inside `{ … }` (object literals, record types, schema bodies,
-  `diagnostic`/`when` blocks) and `[ … ]` (arrays), elements are
-  separated by `,` or by a newline. Trailing commas are allowed. Blank
-  lines and comment-only lines separate nothing extra.
+  `diagnostic`/`when`/`match` blocks) and `[ … ]` (arrays), and in
+  import-item lists, elements are separated by `,` or by a newline.
+  Trailing commas are allowed. Blank lines and comment-only lines
+  separate nothing extra.
 - At module level, declarations are separated by newlines.
 - Inside `( … )` — call arguments, parameter lists, predicate lists,
   parenthesized expressions — newlines are ordinary whitespace, and
@@ -226,7 +229,8 @@ All fixed tokens, longest-match first:
 ## 2.11 Lexical errors
 
 Each of the following is an error condition (codes in
-[12. Errors](12_errors.md)): invalid UTF-8; unterminated string,
+[12. Errors](12_errors.md)): invalid UTF-8; a byte-order mark;
+unterminated string,
 template, pattern, or block comment; unknown escape; a number with
 leading zeros, a misplaced digit separator, or digits missing around a
 float dot; a unit literal on a non-decimal base; an unknown

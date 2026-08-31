@@ -78,9 +78,10 @@ type Index = 0..<256        // upper bound exclusive
 - The **base type is read off the endpoints**: two int-typed endpoints
   make an int range; two float-typed endpoints a float range. Mixed
   endpoints are an error. *Counterexample:* `0..100.0` — error.
-- Endpoints are compile-time constant expressions of the base type
-  (literals, `const` references, arithmetic on those — the same
-  constant-expression class as array sizes, §3.9). `lo > hi` (or
+- Endpoints are compile-time constant expressions of the base type —
+  the class of §4.13: literals, `const` references, value parameters,
+  arithmetic and `func` calls over those; the same class as array
+  sizes (§3.9). `lo > hi` (or
   `lo ≥ hi` for `..<`) is an **empty-range error** at the declaration.
 - Membership requires the base type: `3.0` does not satisfy `1..10`.
 - One-sided ranges (`2..`) do not exist in v0.1; use a predicate
@@ -333,7 +334,8 @@ Derived member rules ("satisfies both" spelled out for records):
 type Child = Parent { label: string, port: 1..1024 }
 ```
 
-- `Parent { … }` **extends** a record type: it may add members and may
+- `Parent { … }` **extends** a record type — extending any non-record
+  type is an error. It may add members and may
   **narrow** an inherited member — replace its type `T` with `T′ ⊑ T`,
   or strengthen optional to required. Any widening — loosening a type,
   making required optional, changing a member kind incompatibly — is an
@@ -388,9 +390,21 @@ const t: Delay = 10ms
   `Length * Time ^ -1`). `dimension Name` declares a base dimension;
   `dimension Name = expr` names a derived one.
 - **Units**: `unit u: D` declares the base unit of `D` (one per
-  dimension per scope); `unit u = factor u0` declares a unit as a
-  constant multiple of another; its dimension is `u0`'s. Conversion
-  factors are constant expressions.
+  dimension per scope — a second base unit for the same dimension is
+  an error); `unit u = factor u0` declares a unit as a constant
+  multiple of another; its dimension is `u0`'s. Conversion factors are
+  constant expressions.
+- **Units and dimensions have their own name spaces**, separate from
+  the value/type name space of §5.1. A unit symbol is meaningful only
+  in unit positions — after a number (`10ms`), as the trailing unit of
+  a `unit` declaration, in the `"unit"` string of the interchange form
+  — and a dimension name only in dimension expressions and
+  `quantity<D>` arguments; every such position is syntactically
+  unambiguous, so `const ms = 5` and `unit ms` coexist without
+  conflict. The no-shadowing rule applies *within* each space
+  (redeclaring the unit `ms` is an error; declaring a value `ms` is
+  not), and `export`/`import` carry units and dimensions into the
+  importer's corresponding spaces (§8.2).
 - `quantity<D>` is the type of quantities of dimension `D`. A unit
   literal `10ms` has type `quantity<Time>` — the dimension of its unit.
   The stdlib ships the full SI catalog as ordinary declarations (D15).

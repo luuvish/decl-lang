@@ -38,3 +38,9 @@ the v0.1 freeze (see [ROADMAP.md](../ROADMAP.md), Phase 0 — §0.5–0.7).
 | Document | Description |
 |---|---|
 | [Decl by Example](guide/01_overview_by_example.md) | One scenario end to end — describe → generate → validate — with the evaluated JSON and the diagnostics it produces |
+
+### Validation cases (§0.5 desk-check artifacts)
+
+| Document | Description |
+|---|---|
+| [examples/](examples/README.md) | The generality benchmark cases in the new syntax, with the desk-check findings they produced |

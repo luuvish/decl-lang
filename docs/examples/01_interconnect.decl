@@ -1,0 +1,229 @@
+// Benchmark case 1 — hardware interconnect (ROADMAP §0.5)
+// Re-expression of ../decl-lang/tests/validation/customs/oic.decl
+// (a 2x2 crossbar) with no domain keywords. The legacy fixture parsed
+// edges out of strings ("dec0.mi1 -> arb1.si0") and propagated widths
+// through @readonly lambdas; here edges are typed references and
+// propagation is one derived member over $referrers.
+
+export type Ident = /[_a-z][a-z0-9]*/
+export type PortMode = "si" | "mi"
+export type Width = 1 | 2 | 4 | 8 | 16 | 32 | 64 | 128
+
+// Boundary port: width is set where the port is instantiated.
+export type ExtPort = {
+    kind: "ext"
+    mode: PortMode
+    width: Width = 1
+}
+
+// Internal port: width propagates from whatever edge feeds it —
+// the legacy toolkit's connection-based value propagation, as a
+// derived member. Unfed internal ports fall back to width 1.
+export type IntPort = {
+    kind: "int"
+    mode: PortMode
+
+    const feeders = $referrers(Edge, "target")
+    const width: Width =
+        if std.array.count(feeders) == 1 then feeders[0].source.width else 1
+}
+
+export type Port = ExtPort | IntPort        // discriminated by `kind`
+
+export diagnostic width_mismatch(src: int, dst: int) {
+    severity = error
+    message = `edge endpoints disagree on width: ${src} != ${dst}`
+}
+
+export type Edge = {
+    source: ref<Port>
+    target: ref<Port>
+
+    assert width_match: source.width == target.width
+        else width_mismatch(source.width, target.width)
+}
+
+// Constraint layer for anything that hosts edges over a port map.
+// Conjoined into containers with `&` — the owner-dependent rules of
+// the legacy model, expressed once.
+export type EdgeHost = {
+    ports: { [/[sm]i[0-9]+/]: Port }
+    edges: Edge[]
+    ...
+
+    // Endpoints must lie inside this node's subtree.
+    assert local_edges: std.array.all(edges, (e) =>
+        std.string.starts_with(std.ref.path(e.source), $path) &&
+        std.string.starts_with(std.ref.path(e.target), $path))
+
+    // Hierarchical flow: an edge leaves my own "si" boundary or a
+    // child's "mi" output, and enters my own "mi" boundary or a
+    // child's "si" input. Own-ness = place equality against my ports.
+    assert flow: std.array.all(edges, (e) =>
+        (if std.array.any(std.map.keys(ports), (k) => k in ports && ports[k] == e.source)
+         then e.source.mode == "si"
+         else e.source.mode == "mi")
+        &&
+        (if std.array.any(std.map.keys(ports), (k) => k in ports && ports[k] == e.target)
+         then e.target.mode == "mi"
+         else e.target.mode == "si"))
+}
+
+// --- Leaf node roles: fixed ports, internal wiring as derived edges ---
+
+export type Master = {
+    kind: "node.mst"
+    enable_rob: bool = false
+    ports: { si: IntPort { mode: "si" }, mi: IntPort { mode: "mi" } }
+        = { si: { kind: "int", mode: "si" }, mi: { kind: "int", mode: "mi" } }
+
+    const wired: Edge[] = [{ source: ports.si, target: ports.mi }]
+}
+
+export type Slave = {
+    kind: "node.slv"
+    enable_rob: bool = false
+    ports: { si: IntPort { mode: "si" }, mi: IntPort { mode: "mi" } }
+        = { si: { kind: "int", mode: "si" }, mi: { kind: "int", mode: "mi" } }
+
+    const wired: Edge[] = [{ source: ports.si, target: ports.mi }]
+}
+
+export type Decoder = {
+    kind: "node.dec"
+    ports: {
+        si: IntPort { mode: "si" }
+        outs: { [/mi[0-9]+/]: IntPort }
+    }
+
+    const fan_out = std.array.count(std.map.keys(ports.outs))
+    assert min_fan_out: fan_out >= 2
+    assert out_modes:
+        std.array.all(std.map.values(ports.outs), (p) => p.mode == "mi")
+
+    const wired: Edge[] = [
+        { source: ports.si, target: ports.outs[k] }
+        for k in std.map.keys(ports.outs)
+    ]
+}
+
+export type Arbiter = {
+    kind: "node.arb"
+    ports: {
+        ins: { [/si[0-9]+/]: IntPort }
+        mi: IntPort { mode: "mi" }
+    }
+
+    const fan_in = std.array.count(std.map.keys(ports.ins))
+    assert min_fan_in: fan_in >= 2
+    assert in_modes:
+        std.array.all(std.map.values(ports.ins), (p) => p.mode == "si")
+
+    const wired: Edge[] = [
+        { source: ports.ins[k], target: ports.mi }
+        for k in std.map.keys(ports.ins)
+    ]
+}
+
+// --- Containers ---
+
+export type Domain = EdgeHost & {
+    kind: "node.dom"
+    enable_int: bool = false
+    ports: { [/[sm]i[0-9]+/]: IntPort }     // narrowed: fed by outer edges
+    nodes: { [Ident]: Master | Decoder | Arbiter | Slave }
+    ...
+}
+
+export type AddressRange = {
+    base: 0..0xFFFF_FFFF
+    size: 1..0x1_0000_0000
+    dest: Ident[1..8]
+}
+
+export type Interconnect = EdgeHost & {
+    kind: "node.oic"
+    address_maps: AddressRange[1..8][]
+    enable_pmu: bool = false
+    enable_cmu: bool = false
+    ports: { [/[sm]i[0-9]+/]: ExtPort }     // true boundary: widths supplied
+    nodes: { [Ident]: Domain }
+    ...
+
+    assert dest_ports_exist: std.array.all(address_maps, (m) =>
+        std.array.all(m, (r) =>
+            std.array.all(r.dest, (d) => d in ports)))
+}
+
+// --- The 2x2 crossbar, ported entry for entry ---
+
+export output xbar: Interconnect = {
+    kind: "node.oic"
+
+    address_maps: [[
+        { base: 0x0000_0000, size: 0x1000_0000, dest: ["mi0"] }
+        { base: 0x1000_0000, size: 0x1000_0000, dest: ["mi1"] }
+    ]]
+    enable_pmu: true
+    enable_cmu: true
+
+    ports: {
+        si0: { kind: "ext", mode: "si", width: 64 }
+        si1: { kind: "ext", mode: "si", width: 64 }
+        mi0: { kind: "ext", mode: "mi", width: 64 }
+        mi1: { kind: "ext", mode: "mi", width: 64 }
+    }
+
+    nodes: {
+        dom0: {
+            kind: "node.dom"
+
+            ports: {
+                si0: { kind: "int", mode: "si" }
+                si1: { kind: "int", mode: "si" }
+                mi0: { kind: "int", mode: "mi" }
+                mi1: { kind: "int", mode: "mi" }
+            }
+
+            nodes: {
+                mst0: { kind: "node.mst" }
+                mst1: { kind: "node.mst" }
+                dec0: { kind: "node.dec", ports: { si: { kind: "int", mode: "si" },
+                    outs: { mi0: { kind: "int", mode: "mi" }, mi1: { kind: "int", mode: "mi" } } } }
+                dec1: { kind: "node.dec", ports: { si: { kind: "int", mode: "si" },
+                    outs: { mi0: { kind: "int", mode: "mi" }, mi1: { kind: "int", mode: "mi" } } } }
+                arb0: { kind: "node.arb", ports: { mi: { kind: "int", mode: "mi" },
+                    ins: { si0: { kind: "int", mode: "si" }, si1: { kind: "int", mode: "si" } } } }
+                arb1: { kind: "node.arb", ports: { mi: { kind: "int", mode: "mi" },
+                    ins: { si0: { kind: "int", mode: "si" }, si1: { kind: "int", mode: "si" } } } }
+                slv0: { kind: "node.slv" }
+                slv1: { kind: "node.slv" }
+            }
+
+            edges: [
+                { source: ports["si0"], target: nodes["mst0"].ports.si }
+                { source: ports["si1"], target: nodes["mst1"].ports.si }
+                { source: nodes["mst0"].ports.mi, target: nodes["dec0"].ports.si }
+                { source: nodes["mst1"].ports.mi, target: nodes["dec1"].ports.si }
+                { source: nodes["dec0"].ports.outs["mi0"], target: nodes["arb0"].ports.ins["si0"] }
+                { source: nodes["dec0"].ports.outs["mi1"], target: nodes["arb1"].ports.ins["si0"] }
+                { source: nodes["dec1"].ports.outs["mi0"], target: nodes["arb0"].ports.ins["si1"] }
+                { source: nodes["dec1"].ports.outs["mi1"], target: nodes["arb1"].ports.ins["si1"] }
+                { source: nodes["arb0"].ports.mi, target: nodes["slv0"].ports.si }
+                { source: nodes["arb1"].ports.mi, target: nodes["slv1"].ports.si }
+                { source: nodes["slv0"].ports.mi, target: ports["mi0"] }
+                { source: nodes["slv1"].ports.mi, target: ports["mi1"] }
+            ]
+        }
+    }
+
+    edges: [
+        { source: ports["si0"], target: nodes["dom0"].ports["si0"] }
+        { source: ports["si1"], target: nodes["dom0"].ports["si1"] }
+        { source: nodes["dom0"].ports["mi0"], target: ports["mi0"] }
+        { source: nodes["dom0"].ports["mi1"], target: ports["mi1"] }
+    ]
+}
+
+// External validation: real NoC documents bind here in Phase 5.
+export input doc: Interconnect

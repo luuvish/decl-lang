@@ -38,10 +38,12 @@ UNIT-LIT  = decimal INT or FLOAT immediately
             followed by IDENT (one token)           — §2.7
 STRING    = "…" with JSON escapes                   — §2.8
 TEMPLATE  = `…${ }…` (text parts and holes)         — §2.8
-PATTERN   = /…/ (non-empty body)                    — §2.8
+PATTERN   = /…/ — non-empty body of literal text
+            and "${" type "}" holes                 — §2.8, §3.6
 CTXVAR    = $this $parent $root $key $path          — §2.5
 REFERRERS = $referrers                              — §2.5
 NEWLINE   = separator-position line break           — §2.9
+DOC       = /// documentation comment line          — §2.2
 ```
 
 Keywords and predeclared names are §2.4; operator tokens are §2.10.
@@ -77,7 +79,7 @@ output-decl     = "output" IDENT ":" type "=" expr
 input-decl      = "input"  IDENT ":" type ("=" expr)?
 
 diagnostic-decl = "diagnostic" IDENT "(" params? ")"
-                  "{" "severity" "=" severity sep "message" "=" TEMPLATE "}"
+                  "{" "severity" "=" severity sep "message" "=" TEMPLATE sep? "}"
 severity        = "error" | "warn" | "info"
 
 dimension-decl  = "dimension" IDENT ("=" dim-expr)?
@@ -134,7 +136,7 @@ func-type       = "(" (type ("," type)*)? ")" "=>" type
 member          = DOC* annotation* ( value-member | const-member
                                    | assert-member | when-member )
 value-member    = member-name "?"? ":" type ("=" expr)?
-const-member    = "const" IDENT (":" type)? "=" expr
+const-member    = "const" member-name (":" type)? "=" expr
 assert-member   = "assert" IDENT ":" expr else-clause?
 when-member     = "when" expr "{" (guarded (sep guarded)* sep?)? "}"
 guarded         = assert-member | when-member
@@ -181,7 +183,7 @@ args            = expr ("," expr)*
 
 primary         = INT | FLOAT | UNIT-LIT | STRING | TEMPLATE
                 | "true" | "false" | "null"
-                | qualified
+                | IDENT                              — dotted paths are postfix access
                 | CTXVAR
                 | referrers-expr
                 | object-literal
@@ -195,9 +197,10 @@ object-literal  = "{" (obj-entry (sep obj-entry)* sep?)? "}"
 obj-entry       = member-key ":" expr
                 | "..." expr
 
-array-literal   = "[" (expr (sep expr)* sep?)? "]"
+array-literal   = "[" (arr-entry (sep arr-entry)* sep?)? "]"
                 | "[" expr for-clauses "]"           — array comprehension
-for-clauses     = ("for" IDENT "in" expr ("if" expr)?)+
+arr-entry       = expr | "..." expr                  — element or spread
+for-clauses     = ("for" IDENT "in" expr ("if" expr)*)+
 ```
 
 **Constant expressions** (`const-expr`, used by §11.3–11.4) are the
@@ -250,8 +253,8 @@ listed so implementations agree:
 5. **Extension juxtaposition**: in a type position,
    `qualified { … }` is inheritance (§3.14); a record type not
    preceded by a name is a plain record. No expression form puts `{`
-   after a name (§7.4 note on `Foo { }` not existing), so the value
-   surface has no counterpart to confuse.
+   after a name — there are no trailing blocks or struct-literal
+   calls (§4.9) — so the value surface has no counterpart to confuse.
 6. **`?` three ways**: `x?:` optional member (declaration), `T?`
    nullable suffix (type), `a?.b` safe navigation (expression) —
    distinct positions, one token (§4.10).
@@ -262,8 +265,25 @@ listed so implementations agree:
 8. **Newline separators**: NEWLINE is a token only in separator
    positions per §2.9's rule (previous token can end an element, next
    can begin one); the grammar writes `sep` where that applies.
-9. **`$referrers` takes a type argument** — the single expression
-   position where a type appears; the dedicated production closes it.
+9. **Types outside type positions** appear in exactly two token-level
+   places, each closed by its own production: the first argument of
+   `$referrers`, and the `${ type }` holes inside a PATTERN body.
+10. **Dotted names are postfix access**: expression `primary` admits a
+    bare IDENT only, so `std.array.count` and `source.width` each have
+    one derivation — a chain of `.` accesses; whether a prefix names a
+    namespace, a declaration, or a value member is decided by name
+    resolution, not the grammar.
+
+## 11.9 Syntax error conditions
+
+The parse-stage error conditions this grammar gives rise to (codes in
+[12. Errors](12_errors.md) §E2xxx): an unexpected token where no
+production continues; an unclosed bracket, brace, or parenthesis at end
+of input; a declaration whose head keyword is not followed by its
+production's shape; a separator where no element may end or begin
+(§2.9). Recovery quality — how much of the surrounding file still
+parses — is an implementation concern bounded by §12.3's conformance
+rule.
 
 ## Open questions
 

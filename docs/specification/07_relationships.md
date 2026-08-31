@@ -72,7 +72,12 @@ from a context variable:
 | `$referrers` | reverse query, §7.6 | — |
 
 - A bare sibling name `x` in a member expression abbreviates
-  `$this.x`.
+  `$this.x`, and resolves **sibling-first**: when a sibling member and
+  an outer (module or imported) name coincide, the sibling wins — the
+  one sanctioned lookup-order exception to the no-shadowing rule
+  (D27); it is resolution order over two coexisting name spaces, not a
+  rebinding, and the outer name stays addressable everywhere outside
+  the record's member expressions.
 - **Context-dependent types.** A type whose member expressions mention
   `$parent`, `$root`, or `$key` depends on where it is embedded. Such
   a type is checked **per composition site**, the way generics are
@@ -247,7 +252,7 @@ type Service = {
   roots of the module set being evaluated — every `output` and every
   bound `input` — regardless of which root the tool ultimately
   serializes, so the answer never depends on what a tool happens to
-  demand ([09. Semantics](09_semantics.md) §universe).
+  demand ([09. Semantics](09_semantics.md) §9.2).
 - A candidate whose member `m` is invalid is excluded silently under
   root-cause rules (§6.6); filters over the result follow the ordinary
   taint rules.

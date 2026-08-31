@@ -177,10 +177,12 @@ mismatch at `.ports` — not three.
   - An assert's diagnostic points at the **record instance** whose
     assert fired (`demo.services[2]`) — the assert's id names the rule;
     the path names the culprit instance.
-- The diagnostic list of any evaluation is sorted by
-  **(path, id)** — path in canonical path order
-  ([07. Relationships](07_relationships.md)), then id lexicographically
-  — making output byte-stable across implementations (D20, P2).
+- Evaluation- and validation-time diagnostics sort by **(path, id)** —
+  path in canonical path order
+  ([07. Relationships](07_relationships.md)), then id lexicographically.
+  Compile-time diagnostics precede them, ordered by source location;
+  [12. Errors](12_errors.md) §12.3 fixes the full order. Together the
+  list is byte-stable across implementations (D20, P2).
 
 ## 6.8 Where each pipeline stage reports
 

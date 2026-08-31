@@ -127,8 +127,9 @@ A diagnostic serializes as:
 | E3016 | lock: version differs from manifest |
 | E3017 | lock: content-hash mismatch |
 | E3018 | root-name collision in the evaluation universe |
+| E3019 | a local binding (comprehension, lambda, match arm) shadows an enclosing name |
 
-### E4xxx — types (ch. 3, §4.3–4.12, §5.7–5.9)
+### E4xxx — types (ch. 3, §4.3–4.13, §5.7–5.9)
 
 | Code | Condition |
 |---|---|
@@ -163,8 +164,8 @@ A diagnostic serializes as:
 | E4070 | template interpolation of a non-convertible value (§4.11) |
 | E4071 | operand kinds invalid for the operator (incl. `int`/`float` mixing) |
 | E4072 | quantity arithmetic or comparison across dimensions |
-| E4073 | unknown unit, or unit of the wrong dimension |
-| E4080 | `with` updating a derived member, an unknown member, or removing one |
+| E4073 | unknown unit, unit of the wrong dimension, or a second base unit for a dimension |
+| E4080 | `with` on a non-record base, updating a derived member, an unknown member, or removing one |
 | E4090 | context variable invalid at this composition site (§7.3) |
 | E4091 | `$referrers`: first argument not a record type, or no compatible `ref` position |
 | E4092 | `$referrers`: second argument not a string literal naming such a member |
@@ -177,6 +178,11 @@ A diagnostic serializes as:
 | E4111 | `when` group containing a value member |
 | E4112 | recursion in the `func` reference graph (§5.3) |
 | E4113 | dependency cycle visible in the type structure (§9.3) |
+| E4114 | duplicate member name within one record declaration (value or constraint member — §3.11) |
+| E4115 | comprehension over a non-iterable value or a float range (§4.8) |
+| E4116 | range value in a data position (§4.6) |
+| E4117 | pattern interpolation `${T}` of a type neither string- nor integer-shaped (§3.6) |
+| E4118 | ambiguous member combination in an intersection: conflicting defaults, or duplicate derived members (§3.13) |
 
 ### E5xxx — evaluation (§4.14, ch. 9)
 
@@ -198,8 +204,7 @@ A diagnostic serializes as:
 | E6001 | `assert` failed (error severity — user or default diagnostic) |
 | E6002 | dangling reference: path does not resolve, or is non-canonical (§7.5) |
 | E6003 | reference target root not in the evaluation universe |
-| E6004 | bound document is not well-formed JSON |
-| E6005 | quantity interchange object malformed (`value`/`unit` shape) |
+| E6004 | bound document is not well-formed JSON (§10.2) |
 
 ### Warnings and information
 
@@ -207,7 +212,6 @@ A diagnostic serializes as:
 |---|---|
 | W0001 | unknown annotation (§5.10) |
 | W0002 | use of a declaration annotated `@deprecated` |
-| W0003 | non-canonical style the formatter would rewrite (tool-emitted) |
 | W6001 | `assert` failed with `warn` severity |
 | I6001 | `assert` failed with `info` severity |
 

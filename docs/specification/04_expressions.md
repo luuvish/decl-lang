@@ -8,7 +8,7 @@ evaluation-error conditions of each.
 
 Expressions appear in: default and derived members, `assert` conditions,
 `when` conditions, predicate arguments, `output` values, `func` bodies,
-diagnostic message templates, and constant positions (§4.15).
+diagnostic message templates, and constant positions (§4.13).
 
 ## 4.1 Primary expressions
 
@@ -34,7 +34,7 @@ diagnostic message templates, and constant positions (§4.15).
 - Object members are `key: expr` with keys per §2.3; entry order is
   preserved (D23). A duplicate key — written twice, or written and also
   produced by a spread — is an error: **overriding is not construction's
-  job**; use `with` (§4.13).
+  job**; use `with` (§4.12).
 - Array spread `...e` splices an array-valued expression in place.
   Object spread `...e` copies the entries of an object-valued
   expression; collisions with other entries or spreads are errors.
@@ -52,8 +52,11 @@ diagnostic message templates, and constant positions (§4.15).
 
 ## 4.3 Operators and precedence
 
-From tightest to loosest; all binary operators are left-associative
-except `..`/`..<` (non-associative) and `=>` (right):
+From tightest to loosest; binary operators are left-associative except
+`..`/`..<`, equality, and the comparisons (all non-associative — no
+chaining) and `=>` (right). `with` sits between levels 1 and 2:
+`-a with { … }` is `-(a with { … })`, and `a * b with { … }` is
+`a * (b with { … })`:
 
 | Level | Operators | Notes |
 |---|---|---|
@@ -92,7 +95,10 @@ identifier-shaped, or a reserved keyword (`r["my-key"]`, `r["type"]`)
 `.`. One name, one form: bracket access to a dot-spellable record
 member (`r["port"]`) is a compile error. Records read with `.`, maps
 always with `[…]`; the quoted form exists only for names the dot
-cannot write.
+cannot write. Access on a **union-typed** operand is legal when every
+arm declares the member; the result types as the union of the arms'
+member types — reading a common member never requires discrimination
+(§3.12).
 
 ## 4.4 Arithmetic, bitwise, and shifts
 
@@ -131,7 +137,7 @@ cannot write.
   references by target path — and when either operand is
   reference-typed, both operands are read as **places** (`$this` and
   navigation chains denote their locations) and compared by canonical
-  path ([07. Relationships](07_relationships.md) §7.6). Otherwise
+  path ([07. Relationships](07_relationships.md) §7.4). Otherwise
   operands must have overlapping types
   (`S₁ & S₂` inhabited) — `1 == "1"` and `1 == 1.0` are type errors,
   not `false`. Since NaN does not exist, `==` is reflexive.
@@ -213,6 +219,11 @@ const port = match protocol {
   are iterated through `std.map.keys` / `values` / `entries` — a map is
   not directly iterable (one concept, one syntax: iteration is over
   arrays).
+- **The iteration variable's type**: over an array, the element type;
+  over a range, **the range itself as a type** (§3.4) — in
+  `for p in 0..<8`, `p: 0..<8`, so `p` is directly assignable where
+  `0..7` is expected. Without this rule every range-driven generation
+  would fail its own bounds statically.
 - Map form `{ k(x): v(x) for … }`: key expressions must be `string`; a
   duplicate produced key is an evaluation error (D23).
 - Comprehension variables are bindings, not assignments; the
@@ -269,10 +280,13 @@ runtime:
 - `e.m` requires `e` to be definitely present and non-null; otherwise
   it is a compile error and `?.` must be used. Its result is
   maybe-absent iff `m` is optional.
-- A maybe-absent expression may be consumed only by `?.` and `??`, or
-  avoided under a narrowing guard (below). Any other consumption —
-  arithmetic, call argument, construction member (§4.2), comparison —
-  is a **compile error**.
+- A maybe-absent expression may be consumed only by `?.` and `??`,
+  avoided under a narrowing guard (below), or written in a **`ref<T>`
+  position** — there it denotes a place (§7.4), and whether the place
+  holds a value is *reference integrity* (a dangling-reference check,
+  §7.5), not absence discipline. Any other consumption — arithmetic,
+  call argument, construction member (§4.2), comparison — is a
+  **compile error**.
 - `e?.m` — when `e` is `null` or absent, the result is absent; else
   `e.m`. This deliberately collapses "no value on the way" and "no
   value here" into one state: `?.` exists to feed `??`, which treats
@@ -301,8 +315,13 @@ runtime:
 over navigation paths `P` (`a.b.c`) in `if`/`when` conditions:
 
 - `"m" in P` narrows `P.m` to definitely-present in the true
-  branch/group (likewise `k in P` for a map access `P[k]` when `k` is
-  a constant);
+  branch/group (likewise `k in P` for a map access `P[k]`, including a
+  lambda- or comprehension-bound `k`);
+- narrowing flows through the logical operators: in `A && B`, `A`'s
+  narrowing holds within `B` (and in any true-branch guarded by the
+  whole expression); in `A || B`, `A`'s **negation** narrows `B` —
+  so `k in m && m[k] == x` and `!("x" in a) || a.x > 0` are both
+  well-typed;
 - `P != null` narrows `P`'s type to exclude `null` in the true branch
   (`P == null` narrows it in the false branch).
 
@@ -358,8 +377,9 @@ Positions that the type surface evaluates at elaboration time — range
 endpoints (§3.4), array sizes (§3.9), value arguments (§3.15), unit
 factors (§3.16), predicate arguments (§3.7) — take **constant
 expressions**: expressions built from literals, operators, module
-`const` references, and `func` calls, with no `input`, no `output`
-references, and no context variables. Constant evaluation follows the
+`const` references, generic **value parameters** in scope (§3.15), and
+`func` calls, with no `input`, no `output` references, and no context
+variables. Constant evaluation follows the
 same semantics and error rules as runtime evaluation (an erroring
 constant is a compile-time diagnostic).
 

@@ -26,7 +26,9 @@ the language can emit, it can re-bind.
 
 ## 10.2 Input binding
 
-A tool binds a JSON document to `input x: T` (§5.6); binding is the
+A tool binds a JSON document to `input x: T` (§5.6). The document must
+be well-formed JSON (RFC 8259, §11.7) — a malformed document fails the
+binding as a whole, before any checking. Binding is then the
 literal-construction check of §3.18 followed by the ordinary pipeline:
 
 1. **Structure**: the document is checked member-wise against `T`.

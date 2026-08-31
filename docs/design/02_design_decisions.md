@@ -248,7 +248,7 @@ because the same requirements produce them, not because they were inherited.
     in both is constrained by both types (its effective type must be
     non-empty and comparable under D13 — otherwise a compile diagnostic).
   - A member is required in `A & B` if required in either side.
-  - Two derived (`let`) members with the same name are an error.
+  - Two derived (`const`) members with the same name are an error.
   - Constraints (`assert`, `when`) are the union of both sides, ids
     qualified by their origin type (D20).
   - The result is closed iff **either** side is closed (intersection of
@@ -312,6 +312,12 @@ because the same requirements produce them, not because they were inherited.
   forms — all as ordinary `dimension`/`unit` declarations, no special
   mechanism (the stdlib chapter fixes the exact inventory). Domain
   units are user-declared on top. *(resolves former OQ1)*
+- **Units and dimensions live in their own name spaces**, separate
+  from values and types: unit symbols appear only in syntactically
+  unambiguous unit positions (after a number, in `unit` declarations,
+  in the interchange `"unit"` string), so the ambient catalog's bare
+  symbols (`ms`, `s`, …) pollute no value names — `const s = 1` stays
+  legal everywhere, preserving D16/P6 provenance.
 
 ---
 
@@ -483,8 +489,11 @@ diagnostic width_mismatch(src: int, dst: int) {
   it; **reporting is root-cause-only** — invalidation propagates, but
   dependent members produce no cascading diagnostics, so one defect is
   one report. Warnings and infos preserve values.
-- Every diagnostic automatically carries its occurrence path; the
-  diagnostic list is sorted by `(path, id)` for byte-stable output.
+- Every diagnostic automatically carries its occurrence locus — a value
+  path for evaluation- and validation-time diagnostics, a source
+  location for compile-time ones. The list is byte-stable:
+  compile-time diagnostics precede, ordered by source location; the
+  rest sort by `(path, id)` (the errors chapter fixes the full order).
 
 ### D21. Inheritance is extension plus narrowing
 
@@ -534,6 +543,10 @@ diagnostic width_mismatch(src: int, dst: int) {
 - Numeric semantics (arbitrary-precision `int`, binary64 rounding rules,
   D24 safety) are fixed so implementations agree bit-for-bit. FMA
   contraction and extended-precision intermediates are forbidden.
+- Diagnostic-list equality across implementations carries exactly one
+  scoped relaxation: syntax-band recovery diagnostics need agree only
+  on code and location (independent parsers recover differently); every
+  other band is field-identical (the errors chapter states it).
 
 ### D24. No NaN, no Infinity, no silent division
 
@@ -612,7 +625,11 @@ diagnostic width_mismatch(src: int, dst: int) {
 - Re-export is named-only: `export { A as B } from "./x.decl"`; no
   `export * from`.
 - No shadowing anywhere: a name bound in scope cannot be rebound by an
-  inner scope.
+  inner scope. One sanctioned resolution-order exception: inside a
+  schema's member expressions, a bare name resolves **sibling-first**
+  (it is sugar for `$this.x`, D26's navigation) before outer names —
+  this is lookup order over two coexisting spaces, not a rebinding;
+  the outer name stays addressable everywhere else.
 
 ### D28. Packages: exact pin and lock
 
@@ -777,7 +794,7 @@ Every item of [00. Vision §6](00_vision.md) resolves to a decision here
 | Item | Resolution |
 |---|---|
 | V1 quantity round-trip and input | D15 (interchange form), D29 (total round-trip) |
-| V2 references only to validated values | D22 (module `let` excluded), D26 (targets under evaluation roots) |
+| V2 references only to validated values | D22 (module `const` excluded), D26 (targets under evaluation roots) |
 | V3 assignability total over member kinds | D13 (one total subsumption judgment) |
 | V4 `float<32>` semantics | D7 (removed; P7 bars re-entry without full semantics) |
 | V5 context variables in refinements | D8 (predicates are plain functions of the value — no context variables, no sigil at all) |

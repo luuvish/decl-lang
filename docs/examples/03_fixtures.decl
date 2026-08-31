@@ -1,0 +1,52 @@
+// Benchmark case 3 — test fixture generation (ROADMAP §0.5)
+// Exercises: comprehension-parameterized instance generation, range
+// iteration typing, literal-union element types, derived members,
+// uniqueness constraints.
+
+export type PacketSize = 64 | 128 | 256 | 512
+
+export type Packet = {
+    id: int
+    size_bytes: PacketSize
+    priority: 0..7
+
+    const label = `pkt-${id}-p${priority}`
+}
+
+export type TestCase = {
+    name: /[a-z][a-z0-9_]*/
+    packets: Packet[1..1024]
+
+    const packet_count = std.array.count(packets)
+    const total_bytes = std.array.sum([p.size_bytes for p in packets])
+
+    assert ids_unique: std.array.all_distinct([p.id for p in packets])
+}
+
+// The parameter grid. The annotation matters: without it the elements
+// would infer as plain int and fail `size_bytes: PacketSize`.
+const sizes: PacketSize[] = [64, 128, 256, 512]
+
+// 4 sizes x 8 priorities = 32 cases, 16 packets each — deterministic.
+// `p` is typed 0..<8 by the range-iteration rule (spec 4.8), so it is
+// assignable to `priority: 0..7` directly.
+export output sweep: TestCase[] = [
+    {
+        name: `case_s${s}_p${p}`
+        packets: [
+            { id: i, size_bytes: s, priority: p }
+            for i in 0..<16
+        ]
+    }
+    for s in sizes
+    for p in 0..<8
+]
+
+// A single fixture with an intentional shape: ascending ids, mixed sizes.
+export output smoke: TestCase = {
+    name: "smoke_minimal"
+    packets: [
+        { id: i, size_bytes: if i % 2 == 0 then 64 else 512, priority: 0 }
+        for i in 0..<4
+    ]
+}

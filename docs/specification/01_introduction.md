@@ -122,7 +122,9 @@ and an empty diagnostic list. Binding an external JSON document to
   input bindings, must produce byte-identical serialized values and an
   identical, identically ordered diagnostic list — across platforms and
   implementations (P2; [09. Evaluation Semantics](09_semantics.md) fixes
-  the numeric and ordering rules that make this possible).
+  the numeric and ordering rules that make this possible, and
+  [12. Errors](12_errors.md) §12.3 states the one scoped relaxation for
+  syntax-recovery diagnostics).
 - Every error condition named by this specification receives a code in
   [12. Errors and Diagnostic Codes](12_errors.md).
 
