@@ -632,6 +632,14 @@ diagnostic width_mismatch(src: int, dst: int) {
 - Context declarations are not members: never data, never serialized,
   never settable; one per variable; inheritance narrows them,
   intersection conjoins them.
+- The syntax is the bare member form deliberately: `$parent: P` is the
+  required member `x: T` **pointed outward** — the same concept, a
+  typed obligation; only the supplier differs (the embedding site, not
+  the input), and that difference is exactly what the `$` sigil marks
+  (D16). A `const` prefix was considered and rejected: `const` means
+  *computed and serialized* (D3/D4), both of which a context
+  declaration is not, and it would add a third `const` form with no
+  `=`.
 
 ## G. Modules and packages
 
