@@ -1,0 +1,340 @@
+// CST -> AST: lower the canonical tree-sitter parse tree into the AST
+// of ast.ts. This is the reference implementation's only parser front
+// end (ROADMAP: tree-sitter is the single canonical parser).
+import { Parser, Language, Node } from 'web-tree-sitter';
+import { readFileSync } from 'node:fs';
+import { join, dirname } from 'node:path';
+import { fileURLToPath } from 'node:url';
+import type { Decl, ElseTail, Expr, MemberAst, TemplateParts, TypeAst } from './ast.ts';
+
+const here = dirname(fileURLToPath(import.meta.url));
+const WASM = join(here, '../../tree-sitter-decl/tree-sitter-decl.wasm');
+
+let language: Language | null = null;
+export async function initParser(): Promise<void> {
+  if (language) return;
+  await Parser.init();
+  language = await Language.load(WASM);
+}
+
+export type ParseResult = { decls: Decl[]; errors: { row: number; col: number }[] };
+
+export function parseSource(src: string): ParseResult {
+  if (!language) throw new Error('call initParser() first');
+  const parser = new Parser();
+  parser.setLanguage(language);
+  const tree = parser.parse(src)!;
+  const errors: { row: number; col: number }[] = [];
+  collectErrors(tree.rootNode, errors);
+  const decls: Decl[] = [];
+  for (const c of tree.rootNode.namedChildren) {
+    if (!c || c.type === 'ERROR') continue;
+    const d = lowerDecl(c);
+    if (d) decls.push(d);
+  }
+  return { decls, errors };
+}
+
+function collectErrors(n: Node, out: { row: number; col: number }[]) {
+  if (n.type === 'ERROR' || n.isMissing) out.push({ row: n.startPosition.row, col: n.startPosition.column });
+  if (n.hasError) for (const c of n.children) if (c) collectErrors(c, out);
+}
+
+const field = (n: Node, name: string): Node | null => n.childForFieldName(name);
+const req = (n: Node, name: string): Node => {
+  const c = field(n, name);
+  if (!c) throw new Error(`lower: ${n.type} missing field ${name}`);
+  return c;
+};
+const kids = (n: Node, type: string): Node[] => n.namedChildren.filter((c): c is Node => !!c && c.type === type);
+const kid = (n: Node, type: string): Node | null => n.namedChildren.find((c): c is Node => !!c && c.type === type) ?? null;
+
+// ---------------- declarations ----------------
+function lowerDecl(n: Node): Decl | null {
+  switch (n.type) {
+    case 'type_declaration': {
+      const params = kid(n, 'type_parameters');
+      return {
+        d: 'type', name: req(n, 'name').text,
+        params: params ? kids(params, 'type_parameter').map(p => ({
+          name: p.namedChildren[0]!.text,
+          type: p.namedChildren[1] ? lowerType(p.namedChildren[1]!) : undefined,
+        })) : undefined,
+        type: lowerType(req(n, 'type')),
+        tail: maybeTail(n),
+      };
+    }
+    case 'const_declaration':
+      return { d: 'const', name: req(n, 'name').text,
+        type: field(n, 'type') ? lowerType(req(n, 'type')) : undefined,
+        expr: lowerExpr(req(n, 'value')) };
+    case 'func_declaration':
+      return { d: 'func', name: req(n, 'name').text,
+        params: kids(n, 'parameter').map(p => ({ name: p.namedChildren[0]!.text, type: lowerType(p.namedChildren[1]!) })),
+        ret: field(n, 'return_type') ? lowerType(req(n, 'return_type')) : undefined,
+        body: lowerExpr(req(n, 'body')) };
+    case 'output_declaration':
+      return { d: 'output', name: req(n, 'name').text, type: lowerType(req(n, 'type')), expr: lowerExpr(req(n, 'value')) };
+    case 'input_declaration':
+      return { d: 'input', name: req(n, 'name').text, type: lowerType(req(n, 'type')),
+        fallback: field(n, 'fallback') ? lowerExpr(req(n, 'fallback')) : undefined };
+    case 'diagnostic_declaration': {
+      const sev = kid(n, 'severity')!;
+      const tmpl = kid(n, 'template_string')!;
+      return { d: 'diagnostic', name: req(n, 'name').text,
+        params: kids(n, 'parameter').map(p => ({ name: p.namedChildren[0]!.text, type: lowerType(p.namedChildren[1]!) })),
+        severity: sev.text, template: lowerTemplateParts(tmpl) };
+    }
+    case 'dimension_declaration': return { d: 'dimension', name: req(n, 'name').text };
+    case 'unit_declaration': return { d: 'unit', name: req(n, 'name').text };
+    case 'import_declaration': return { d: 'import' };
+    case 're_export_declaration': return { d: 're_export' };
+    default: return null;
+  }
+}
+
+function maybeTail(n: Node): ElseTail | undefined {
+  const t = kid(n, 'else_clause');
+  return t ? lowerTail(t) : undefined;
+}
+function lowerTail(n: Node): ElseTail {
+  const sev = kid(n, 'severity');
+  if (sev) return { t: 'inline', severity: sev.text, template: lowerTemplateParts(kid(n, 'template_string')!) };
+  const name = kid(n, 'qualified_name')!.text;
+  const args = n.namedChildren
+    .filter((c): c is Node => !!c && c.type !== 'qualified_name')
+    .map(c => lowerExpr(c));
+  return { t: 'ref', name, args };
+}
+function lowerTemplateParts(n: Node): TemplateParts {
+  const parts: TemplateParts = [];
+  for (const c of n.namedChildren) {
+    if (!c) continue;
+    if (c.type === 'template_chars') parts.push(c.text);
+    else if (c.type === 'template_escape') parts.push(unescape(c.text));
+    else if (c.type === 'interpolation') parts.push(lowerExpr(c.namedChildren[0]!));
+  }
+  return parts;
+}
+const unescape = (s: string) => s.replace(/\\(.)/g, (_, c) =>
+  c === 'n' ? '\n' : c === 't' ? '\t' : c === 'r' ? '\r' : c);
+
+// ---------------- types ----------------
+function lowerType(n: Node): TypeAst {
+  switch (n.type) {
+    case 'union_type': return { k: 'union', arms: n.namedChildren.filter(Boolean).map(c => lowerType(c!)) };
+    case 'intersection_type': return { k: 'isect', arms: n.namedChildren.filter(Boolean).map(c => lowerType(c!)) };
+    case 'nullable_type': return { k: 'union', arms: [lowerType(n.namedChildren[0]!), { k: 'prim', name: 'null' }] };
+    case 'array_type': {
+      const elem = lowerType(n.namedChildren[0]!);
+      const range = kid(n, 'array_size_range') ?? (() => {
+        const sz = field(n, 'size');
+        return sz && sz.type === 'range_expression' ? sz : null;
+      })();
+      if (range) {
+        const [lo, hi] = range.namedChildren.filter(Boolean).map(c => Number(constNum(c!)));
+        const excl = range.children.some(c => c && !c.isNamed && c.text === '..<');
+        return { k: 'array', elem, lo, hi: excl ? hi - 1 : hi };
+      }
+      const size = field(n, 'size');
+      if (size) { const v = Number(constNum(size)); return { k: 'array', elem, lo: v, hi: v }; }
+      return { k: 'array', elem };
+    }
+    case 'range_type': {
+      const [a, b] = n.namedChildren.filter(Boolean);
+      return { k: 'range', lo: constNum(a!), hi: constNum(b!), excl: n.text.includes('..<') };
+    }
+    case 'number_literal': return { k: 'lit', v: constNum(n) };
+    case 'string': return { k: 'lit', v: JSON.parse(n.text.replace(/\n/g, '\\n')) };
+    case 'pattern': return { k: 'pattern', re: n.text.slice(1, -1) };
+    case 'paren_type': return lowerType(n.namedChildren[0]!);
+    case 'record_type': {
+      let open = false;
+      const members: MemberAst[] = [];
+      for (const c of n.namedChildren) {
+        if (!c) continue;
+        if (c.type === 'open_marker') { open = true; continue; }
+        const m = lowerMember(c);
+        if (m) members.push(m);
+      }
+      return { k: 'record', members, open };
+    }
+    case 'map_type': return { k: 'map', key: lowerType(req(n, 'key')), val: lowerType(req(n, 'value')) };
+    case 'function_type': {
+      const cs = n.namedChildren.filter(Boolean).map(c => lowerType(c!));
+      return { k: 'func', params: cs.slice(0, -1), ret: cs[cs.length - 1] };
+    }
+    case 'named_type': {
+      const name = kid(n, 'qualified_name')!.text;
+      const argsN = kid(n, 'type_arguments');
+      const args = argsN ? argsN.namedChildren.filter(Boolean).map(c => lowerType(c!)) : [];
+      const predsN = field(n, 'predicates');
+      const preds = predsN ? predsN.namedChildren.filter(Boolean).map(c => lowerExpr(c!)) : undefined;
+      const extN = field(n, 'extension');
+      const ext = extN ? lowerType(extN) : undefined;
+      const prim = ['int', 'uint', 'float', 'bool', 'string'];
+      if (prim.includes(name) && args.length === 0 && !preds && !ext) return { k: 'prim', name };
+      return { k: 'named', name, args, preds, ext };
+    }
+    default:
+      if (n.text === 'true') return { k: 'lit', v: true };
+      if (n.text === 'false') return { k: 'lit', v: false };
+      if (n.text === 'null') return { k: 'prim', name: 'null' };
+      throw new Error(`lowerType: unhandled ${n.type} '${n.text.slice(0, 30)}'`);
+  }
+}
+function constNum(n: Node): any {
+  if (n.type === 'number_literal') {
+    const neg = n.text.trimStart().startsWith('-');
+    const inner = n.namedChildren[0]!;
+    const v = constNum(inner);
+    return neg ? -v : v;
+  }
+  if (n.type === 'int') return parseInt_(n.text);
+  if (n.type === 'float') return parseFloat(n.text.replace(/_/g, ''));
+  if (n.type === 'qualified_name' || n.type === 'identifier') return n.text; // const/param reference
+  throw new Error(`constNum: ${n.type} '${n.text.slice(0, 20)}'`);
+}
+function parseInt_(text: string): bigint {
+  const t = text.replace(/_/g, '');
+  return BigInt(t);
+}
+
+// ---------------- members ----------------
+function lowerMember(n: Node): MemberAst | null {
+  switch (n.type) {
+    case 'value_member': {
+      const nameN = req(n, 'name');
+      return { m: 'value',
+        name: nameN.type === 'string' ? JSON.parse(nameN.text) : nameN.text,
+        opt: !!field(n, 'optional'),
+        type: lowerType(req(n, 'type')),
+        dflt: field(n, 'default') ? lowerExpr(req(n, 'default')) : undefined };
+    }
+    case 'derived_member': {
+      const nameN = req(n, 'name');
+      return { m: 'derived',
+        name: nameN.type === 'string' ? JSON.parse(nameN.text) : nameN.text,
+        type: field(n, 'type') ? lowerType(req(n, 'type')) : undefined,
+        expr: lowerExpr(req(n, 'value')) };
+    }
+    case 'context_declaration':
+      return { m: 'context', variable: req(n, 'variable').text, type: lowerType(req(n, 'type')) };
+    case 'assert_member':
+      return { m: 'assert', name: req(n, 'name').text, cond: lowerExpr(req(n, 'condition')), tail: maybeTail(n) };
+    case 'when_member': {
+      const body: MemberAst[] = [];
+      for (const c of n.namedChildren.slice(1)) {
+        if (!c) continue;
+        const m = lowerMember(c);
+        if (m) body.push(m);
+      }
+      return { m: 'when', cond: lowerExpr(req(n, 'condition')), body };
+    }
+    default: return null;
+  }
+}
+
+// ---------------- expressions ----------------
+const BIN_NODES = new Set([
+  'pipe_expression', 'nullish_expression', 'binary_expression_or',
+  'binary_expression_and', 'bit_or_expression', 'bit_xor_expression',
+  'bit_and_expression', 'equality_expression', 'relational_expression',
+  'range_expression', 'shift_expression', 'additive_expression',
+  'multiplicative_expression',
+]);
+
+function lowerExpr(n: Node): Expr {
+  switch (n.type) {
+    case 'int': return { e: 'lit', v: parseInt_(n.text) };
+    case 'float': return { e: 'lit', v: parseFloat(n.text.replace(/_/g, '')) };
+    case 'unit_literal': {
+      const m = /^([0-9._]+(?:[eE][+-]?[0-9]+)?)([A-Za-z][A-Za-z0-9]*)$/.exec(n.text)!;
+      return { e: 'unitlit', num: parseFloat(m[1].replace(/_/g, '')), unit: m[2] };
+    }
+    case 'string': return { e: 'lit', v: JSON.parse(n.text.replace(/\n/g, '\\n')) };
+    case 'template_string': return { e: 'template', parts: lowerTemplateParts(n) };
+    case 'identifier': return { e: 'name', name: n.text };
+    case 'context_variable': return { e: 'ctx', name: n.text };
+    case 'referrers_expression':
+      return { e: 'referrers', type: req(n, 'type').text, member: JSON.parse(req(n, 'member').text) };
+    case 'paren_expression': return { e: 'paren', x: lowerExpr(n.namedChildren[0]!) };
+    case 'unary_expression':
+      return { e: 'un', op: n.children[0]!.text, x: lowerExpr(n.namedChildren[0]!) };
+    case 'if_expression':
+      return { e: 'if', c: lowerExpr(req(n, 'condition')), t: lowerExpr(req(n, 'then')), f: lowerExpr(req(n, 'else')) };
+    case 'lambda':
+      return { e: 'lambda',
+        params: kids(n, 'lambda_parameter').map(p => p.namedChildren[0]!.text),
+        body: lowerExpr(req(n, 'body')) };
+    case 'with_expression': {
+      const [base, patch] = n.namedChildren.filter(Boolean);
+      return { e: 'with', base: lowerExpr(base!), patch: lowerExpr(patch!) };
+    }
+    case 'member_access': case 'safe_access': {
+      const [x, name] = n.namedChildren.filter(Boolean);
+      return { e: 'member', x: lowerExpr(x!),
+        name: name!.type === 'string' ? JSON.parse(name!.text) : name!.text,
+        safe: n.type === 'safe_access' || undefined };
+    }
+    case 'index_access': {
+      const [x, i] = n.namedChildren.filter(Boolean);
+      return { e: 'index', x: lowerExpr(x!), i: lowerExpr(i!) };
+    }
+    case 'call': {
+      const cs = n.namedChildren.filter(Boolean);
+      return { e: 'call', fn: lowerExpr(cs[0]!), args: cs.slice(1).map(c => lowerExpr(c!)) };
+    }
+    case 'object': {
+      const comp = kid(n, 'map_comprehension') ?? (n.type === 'map_comprehension' ? n : null);
+      if (comp) return lowerExpr(comp);
+      return { e: 'obj', entries: kids(n, 'object_entry').map(en => {
+        const key = field(en, 'key');
+        if (key) return { key: key.type === 'string' ? JSON.parse(key.text) : key.text, val: lowerExpr(req(en, 'value')) };
+        return { key: '...', val: lowerExpr(en.namedChildren[0]!) };   // spread entry
+      }) };
+    }
+    case 'map_comprehension':
+      return { e: 'mapcomp', key: lowerExpr(req(n, 'key')), val: lowerExpr(req(n, 'value')),
+        clauses: kids(n, 'for_clause').map(lowerFor) };
+    case 'array': {
+      const comp = kid(n, 'array_comprehension') ?? (n.type === 'array_comprehension' ? n : null);
+      if (comp) return lowerExpr(comp);
+      return { e: 'arr', items: kids(n, 'array_entry').map(en => {
+        const spread = en.text.startsWith('...');
+        return { spread, expr: lowerExpr(en.namedChildren[0]!) };
+      }) };
+    }
+    case 'array_comprehension':
+      return { e: 'comp', head: lowerExpr(req(n, 'head')), clauses: kids(n, 'for_clause').map(lowerFor) };
+    case 'match_expression': {
+      // v0.1 impl: match lowers to nothing the corpus needs at runtime yet;
+      // keep structure for future checker work
+      return { e: 'lit', v: null };
+    }
+    default:
+      if (BIN_NODES.has(n.type)) {
+        const [l, r] = n.namedChildren.filter(Boolean);
+        const op = n.children.find(c => c && !c.isNamed && c.text.trim() !== '')!.text;
+        if (n.type === 'relational_expression' || n.type === 'range_expression'
+          || n.type === 'equality_expression' || n.type === 'shift_expression'
+          || n.type === 'additive_expression' || n.type === 'multiplicative_expression') {
+          // operator is the middle anonymous child
+          const mid = n.children.filter(c => c && !c.isNamed).map(c => c!.text);
+          return { e: 'bin', op: mid[0], l: lowerExpr(l!), r: lowerExpr(r!) };
+        }
+        return { e: 'bin', op, l: lowerExpr(l!), r: lowerExpr(r!) };
+      }
+      if (n.text === 'true') return { e: 'lit', v: true };
+      if (n.text === 'false') return { e: 'lit', v: false };
+      if (n.text === 'null') return { e: 'lit', v: null };
+      throw new Error(`lowerExpr: unhandled ${n.type} '${n.text.slice(0, 40)}'`);
+  }
+}
+function lowerFor(n: Node) {
+  return {
+    v: req(n, 'variable').text,
+    iter: lowerExpr(req(n, 'iterable')),
+    filters: n.childrenForFieldName('filter').filter(Boolean).map(c => lowerExpr(c!)),
+  };
+}
