@@ -31,7 +31,7 @@ never migrated wholesale or modified from this repo.
 | Phase | Name | Deliverables | Status |
 |---|---|---|---|
 | 0 | Specification (v0.1 freeze) | design docs, spec chapters, stdlib spec, validation corpus desk check, evaluator spike | **done — v0.1 frozen 2026-08-31** |
-| 1 | Grammar & parser | tree-sitter grammar + corpus tests + fixtures | in progress (grammar + starter corpus done) |
+| 1 | Grammar & parser | tree-sitter grammar + corpus tests + fixtures | in progress (grammar, corpus, fixtures, highlights done; playground pending) |
 | 2 | Reference implementation core (TS) | type check, evaluation, constraint validation, serialization + conformance runner | not started |
 | 3 | Modules & standard library | import/export, manifest + lock, `std.*` | not started |
 | 4 | CLI & tooling | `decl` CLI, formatter, minimal LSP | not started |
