@@ -109,6 +109,27 @@ value.
   }
   ```
 
+  `$key` declares at its plain value type (no `ref` — a key does not
+  contain `$this`), and the site check runs against the embedding
+  collection's key or index type:
+
+  ```decl
+  type NamedPort = {
+      $key: /[sm]i[0-9]+/          // I live in a map keyed by port names
+      const name = $key            // the entry knows its own key
+      width: Width = 1
+  }
+
+  type Node = {
+      ports: { [/[sm]i[0-9]+/]: NamedPort }   // key type ⊑ the bound — ok
+  }
+  // items: NamedPort[]  — site error: an array's index type int ⋢ the pattern
+  ```
+
+  (There is no `$value`: a map entry's value *is* the instance — that
+  is `$this`; and the checked value of a predicate type is that
+  predicate function's explicitly typed parameter, §3.7.)
+
   - **What you write is the variable's type** (D2): `$parent` and
     `$root` declarations are written `ref<P>` — the reference-ness is
     an invariant (the table above), and the language makes you *write*
