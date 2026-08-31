@@ -1,0 +1,4 @@
+// @expect-phase: parsing
+// @expect-error: E2001
+// D27-rejected syntax: no export *
+export * from "./schemas.decl"

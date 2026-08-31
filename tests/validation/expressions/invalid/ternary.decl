@@ -1,0 +1,4 @@
+// @expect-phase: parsing
+// @expect-error: E2001
+// D16-rejected syntax: no ternary
+const bad = c ? a : b

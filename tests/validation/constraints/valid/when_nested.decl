@@ -1,0 +1,10 @@
+type Cfg = {
+    enabled: bool = false
+    level: int = 1
+    when enabled {
+        assert has_level: level >= 1
+        when level > 3 {
+            assert capped: level <= 8
+        }
+    }
+}

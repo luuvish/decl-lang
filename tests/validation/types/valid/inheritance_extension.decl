@@ -1,0 +1,5 @@
+type Child = Parent { label: string, port: 1..1024 }
+type Narrowed = Base {
+    mode: "si"
+    const width = 64
+}

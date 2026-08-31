@@ -1,0 +1,3 @@
+// @expect-phase: parsing
+// @expect-error: E1002
+const s = "never closed

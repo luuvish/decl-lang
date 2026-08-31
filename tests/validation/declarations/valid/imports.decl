@@ -1,0 +1,3 @@
+import { Service, Port as PublicPort } from "./schemas.decl"
+import * as topo from "corelib/topology.decl"
+export { Service as Svc } from "./schemas.decl"

@@ -1,0 +1,4 @@
+// @expect-phase: parsing
+// @expect-error: E2001
+// D3-rejected syntax: let does not exist
+let x = 1

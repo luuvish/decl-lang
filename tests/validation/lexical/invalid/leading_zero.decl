@@ -1,0 +1,3 @@
+// @expect-phase: parsing
+// @expect-error: E1007
+const bad = 012

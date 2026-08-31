@@ -1,0 +1,9 @@
+type Link = {
+    source: ref<Service>
+    target: ref<Service>
+    assert no_self: source.name != target.name
+    assert widths: source.width == target.width
+        else width_mismatch(source.width, target.width)
+    assert soft: weight in 1..10
+        else warn `unusual weight ${weight}`
+}

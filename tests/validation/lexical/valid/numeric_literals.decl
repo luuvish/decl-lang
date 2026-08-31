@@ -1,0 +1,7 @@
+const dec = 1_000_000
+const hex = 0xFFFF_0000
+const oct = 0o755
+const bin = 0b1010_0101
+const f1 = 0.5
+const f2 = 2.5e-3
+const zero = 0

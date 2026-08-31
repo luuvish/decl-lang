@@ -1,0 +1,4 @@
+// @expect-phase: parsing
+// @expect-error: E2001
+// D17-rejected syntax: `where` is not a keyword
+type Port = int where value in 1..65535

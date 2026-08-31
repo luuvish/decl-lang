@@ -1,0 +1,6 @@
+type Port = 1..65535
+type Index = 0..<256
+type Ratio = 0.0..1.0
+type Width = 8 | 16 | 32 | 64
+type Protocol = "http" | "grpc" | "tcp"
+type MaybeInt = int?

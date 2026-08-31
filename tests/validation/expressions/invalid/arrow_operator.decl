@@ -1,0 +1,4 @@
+// @expect-phase: parsing
+// @expect-error: E2001
+// rejected syntax: -> does not exist
+func f(x: int) -> int = x

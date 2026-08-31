@@ -1,0 +1,4 @@
+// line comment
+/* block /* nested */ still block */
+/// documents the following declaration
+const documented = 1

@@ -1,0 +1,6 @@
+type Port = {
+    $parent: ref<{ data_width: int, ... }>
+    $key: /[sm]i[0-9]+/
+    const name = $key
+    const width = $parent.data_width
+}

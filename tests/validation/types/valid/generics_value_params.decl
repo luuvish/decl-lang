@@ -1,0 +1,3 @@
+type Pair<T> = { first: T, second: T }
+type Vec<T, N: int> = T[N]
+type Bounded<T, N: 1..1024> = { items: T[0..N] }

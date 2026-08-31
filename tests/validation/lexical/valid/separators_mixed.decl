@@ -1,0 +1,9 @@
+const one_line = { a: 1, b: 2, c: 3 }
+const multi_line = {
+    a: 1
+    b: 2
+    c: 3
+}
+const trailing = [1, 2, 3,]
+const wrapped = 1 +
+    2 * 3

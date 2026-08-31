@@ -1,0 +1,7 @@
+const xs = [f(x) for x in items if p(x) if q(x)]
+const grid = [
+    { id: i, size: s }
+    for s in sizes
+    for i in 0..<16
+]
+const m = { s.name: s for s in services }

@@ -1,0 +1,4 @@
+// @expect-phase: checking
+// @expect-error: E4052
+// parses; the checker must reject ?? mixed with && unparenthesized
+const bad = a && b ?? c

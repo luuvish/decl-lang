@@ -1,0 +1,4 @@
+// @expect-phase: checking
+// @expect-error: E4010
+// parses; the checker must reject mixed int/float endpoints
+type Bad = 0..100.0

@@ -1,0 +1,5 @@
+const a = 1 + 2 * 3 - 4 / 2 % 3
+const b = x << 2 | y & 7 ^ ~z
+const c = p && !q || r == s
+const d = v ?? (w && u)
+const e = -n + 3

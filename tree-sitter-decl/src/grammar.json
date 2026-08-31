@@ -3801,7 +3801,7 @@
           },
           {
             "type": "PATTERN",
-            "value": "[0-9][0-9_]*"
+            "value": "0|[1-9][0-9_]*"
           }
         ]
       }
@@ -3813,11 +3813,11 @@
         "members": [
           {
             "type": "PATTERN",
-            "value": "[0-9][0-9_]*\\.[0-9][0-9_]*([eE][+-]?[0-9]+)?"
+            "value": "(0|[1-9][0-9_]*)\\.[0-9][0-9_]*([eE][+-]?[0-9]+)?"
           },
           {
             "type": "PATTERN",
-            "value": "[0-9][0-9_]*[eE][+-]?[0-9]+"
+            "value": "(0|[1-9][0-9_]*)[eE][+-]?[0-9]+"
           }
         ]
       }
@@ -3832,11 +3832,11 @@
           "members": [
             {
               "type": "PATTERN",
-              "value": "[0-9][0-9_]*\\.[0-9][0-9_]*([eE][+-]?[0-9]+)?[A-Za-z][A-Za-z0-9]*"
+              "value": "(0|[1-9][0-9_]*)\\.[0-9][0-9_]*([eE][+-]?[0-9]+)?[A-Za-z][A-Za-z0-9]*"
             },
             {
               "type": "PATTERN",
-              "value": "[0-9][0-9_]*[A-Za-z][A-Za-z0-9]*"
+              "value": "(0|[1-9][0-9_]*)[A-Za-z][A-Za-z0-9]*"
             }
           ]
         }
@@ -3998,26 +3998,6 @@
           "value": "\\/\\/[^\\n]*"
         }
       }
-    },
-    "block_comment": {
-      "type": "TOKEN",
-      "content": {
-        "type": "SEQ",
-        "members": [
-          {
-            "type": "STRING",
-            "value": "/*"
-          },
-          {
-            "type": "PATTERN",
-            "value": "[^*]*\\*+([^/*][^*]*\\*+)*"
-          },
-          {
-            "type": "STRING",
-            "value": "/"
-          }
-        ]
-      }
     }
   },
   "extras": [
@@ -4070,6 +4050,10 @@
     {
       "type": "SYMBOL",
       "name": "_newline"
+    },
+    {
+      "type": "SYMBOL",
+      "name": "block_comment"
     }
   ],
   "inline": [],

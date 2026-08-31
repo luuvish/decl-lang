@@ -9,7 +9,7 @@ const SEP = ',';
 module.exports = grammar({
   name: 'decl',
 
-  externals: $ => [$._newline],
+  externals: $ => [$._newline, $.block_comment],
 
   // '\n' is also an extra: the external scanner runs first, so where
   // the parse state admits NEWLINE it becomes a separator token, and
@@ -377,15 +377,15 @@ module.exports = grammar({
       prec(2, /0[xX][0-9a-fA-F][0-9a-fA-F_]*/),
       prec(2, /0[oO][0-7][0-7_]*/),
       prec(2, /0[bB][01][01_]*/),
-      /[0-9][0-9_]*/,
+      /0|[1-9][0-9_]*/,
     )),
     float: _ => token(choice(
-      /[0-9][0-9_]*\.[0-9][0-9_]*([eE][+-]?[0-9]+)?/,
-      /[0-9][0-9_]*[eE][+-]?[0-9]+/,
+      /(0|[1-9][0-9_]*)\.[0-9][0-9_]*([eE][+-]?[0-9]+)?/,
+      /(0|[1-9][0-9_]*)[eE][+-]?[0-9]+/,
     )),
     unit_literal: _ => token(prec(1, choice(
-      /[0-9][0-9_]*\.[0-9][0-9_]*([eE][+-]?[0-9]+)?[A-Za-z][A-Za-z0-9]*/,
-      /[0-9][0-9_]*[A-Za-z][A-Za-z0-9]*/,
+      /(0|[1-9][0-9_]*)\.[0-9][0-9_]*([eE][+-]?[0-9]+)?[A-Za-z][A-Za-z0-9]*/,
+      /(0|[1-9][0-9_]*)[A-Za-z][A-Za-z0-9]*/,
     ))),
     string: _ => token(seq('"', repeat(choice(/[^"\\\n]/, /\\./)), '"')),
     pattern: _ => token(seq('/', repeat1(choice(/[^\/\\\n]/, /\\./)), '/')),
@@ -405,7 +405,7 @@ module.exports = grammar({
 
     doc_comment: _ => token(prec(2, /\/\/\/[^\n]*/)),
     line_comment: _ => token(prec(1, /\/\/[^\n]*/)),
-    block_comment: _ => token(seq('/*', /[^*]*\*+([^/*][^*]*\*+)*/, '/')),
+    // block_comment (nesting) comes from the external scanner
   },
 });
 

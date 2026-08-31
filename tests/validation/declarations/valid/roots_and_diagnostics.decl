@@ -1,0 +1,7 @@
+export output demo: Service = { name: "gateway" }
+export input external: Service
+input with_fallback: Env = { profile: "dev" }
+diagnostic width_mismatch(src: int, dst: int) {
+    severity = error
+    message = `source width ${src} != target width ${dst}`
+}

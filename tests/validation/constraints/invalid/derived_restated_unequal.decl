@@ -1,0 +1,5 @@
+// @expect-phase: binding
+// @expect-error: E4005
+// parses; binding must reject a derived member restated unequal
+type S = { name: string, const tag = `s:${name}` }
+output o: S = { name: "a", tag: "s:b" }

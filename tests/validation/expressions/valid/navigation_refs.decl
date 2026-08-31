@@ -1,0 +1,5 @@
+const inbound = $referrers(Link, "target")
+const deep = nodes["dom0"].ports.si
+const safe = cfg.tls?.cert_path ?? "none"
+const own = "buffer" in cfg && cfg.limits["search"] > 10
+const path = std.ref.path(edge.source)

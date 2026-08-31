@@ -1,0 +1,6 @@
+dimension Bandwidth = DataSize / Time
+type Delay = quantity<Time>
+type Config = {
+    timeout: quantity<Time> = 250ms
+    budget: quantity<Time> = 1.5s
+}

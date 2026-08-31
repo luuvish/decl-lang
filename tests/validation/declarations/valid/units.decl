@@ -1,0 +1,3 @@
+dimension Pressure = Mass / Length / Time / Time
+unit q: Pressure
+unit kq = 1000 q

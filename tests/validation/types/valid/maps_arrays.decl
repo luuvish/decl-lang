@@ -1,0 +1,5 @@
+type ByName = { [string]: int }
+type Ports = { [/[sm]i[0-9]+/]: Port }
+type Grid = int[4][2]
+type Sized = Port[1..8]
+type Refs = ref<Service>[]

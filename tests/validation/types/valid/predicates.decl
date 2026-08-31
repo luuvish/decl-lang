@@ -1,0 +1,4 @@
+func is_aligned(n: int): bool = (n & 7) == 0
+func divisible_by(d: int): (int) => bool = (n) => n % d == 0
+type Aligned = int(is_aligned)
+type Strict = int(is_aligned, divisible_by(4))

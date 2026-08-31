@@ -1,0 +1,4 @@
+// @expect-phase: parsing
+// @expect-error: E2002
+type Broken = {
+    name: string

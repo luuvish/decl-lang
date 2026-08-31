@@ -1,0 +1,5 @@
+const area = match shape {
+    (c: Circle) => 3.14 * c.radius * c.radius
+    (r: Rect) => r.w * r.h
+    (other) => 0.0
+}
