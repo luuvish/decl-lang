@@ -30,7 +30,7 @@ never migrated wholesale or modified from this repo.
 
 | Phase | Name | Deliverables | Status |
 |---|---|---|---|
-| 0 | Specification (v0.1 freeze) | design docs, spec chapters, stdlib spec, validation corpus desk check, evaluator spike | in progress (0.1–0.4 done, 0.5 in progress) |
+| 0 | Specification (v0.1 freeze) | design docs, spec chapters, stdlib spec, validation corpus desk check, evaluator spike | in progress (0.1–0.5 done, 0.6 spike next) |
 | 1 | Grammar & parser | tree-sitter grammar + corpus tests + fixtures | not started |
 | 2 | Reference implementation core (TS) | type check, evaluation, constraint validation, serialization + conformance runner | not started |
 | 3 | Modules & standard library | import/export, manifest + lock, `std.*` | not started |
@@ -81,16 +81,13 @@ spec and corpus actually use.
 (describe → generate → validate), showing the evaluated JSON, the
 diagnostic output, and root-cause reporting in action.
 
-### 0.5 Cross-consistency review and validation corpus desk check
+### 0.5 Cross-consistency review and validation corpus desk check — done
 
-- Formal grammar ↔ chapter prose ↔ design-decision examples ↔ guide examples
-  all agree; every error condition has an assigned code
-- Write the three generality benchmark cases in the new syntax and review
-  them against the spec alone (any blocking point is a spec defect):
-  1. **Hardware interconnect** — node/port/edge graph, derivations, and
-     constraints with no domain keywords
-  2. **API/config schema** — open records, defaults, per-environment override
-  3. **Test fixture generation** — comprehension-based parameterized instances
+- Three parallel review sweeps (charter↔chapters, grammar↔examples,
+  code-coverage↔cross-references) surfaced ~40 findings; all resolved
+- The three generality benchmark cases are written and desk-checked under
+  `docs/examples/` — the desk check itself surfaced and fixed seven spec
+  defects (see the findings log in `docs/examples/README.md`)
 
 ### 0.6 Minimal evaluator spike (evidence pass)
 
