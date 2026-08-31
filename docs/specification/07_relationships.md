@@ -64,12 +64,20 @@ from a context variable:
 
 | Variable | Meaning | Type |
 |---|---|---|
-| `$this` | the record value whose member is being evaluated | the enclosing type |
-| `$parent` | the value that owns `$this` | site-dependent |
-| `$root` | the evaluation root's value | site-dependent |
-| `$key` | the key or index under which `$this` sits in its parent collection | `string` (map) / `int` (array), site-dependent |
+| `$this` | the record instance whose member is being evaluated | `ref<enclosing type>` |
+| `$parent` | the instance that owns `$this` | `ref<declared bound>` (D30) |
+| `$root` | the evaluation root's instance | `ref<declared bound>` (D30) |
+| `$key` | the key or index under which `$this` sits in its parent collection | `string` (map) / `int` (array) — a plain value |
 | `$path` | the canonical path of `$this` | `string` |
 | `$referrers` | reverse query, §7.6 | — |
+
+`$this`, `$parent`, and `$root` are **references, necessarily**: each
+denotes an instance that (transitively) contains `$this`, so a *value*
+reading would be a value containing itself — the value cycle D26
+forbids. Member access reads through them transparently (§7.4), a
+member holding one (`const up = $parent`) serializes as a canonical
+path, and equality is place equality. `$key` alone is an ordinary
+value.
 
 - A bare name `x` in a member expression resolves
   **nearest-enclosing-instance-first**: the members of `$this`, then of
@@ -101,12 +109,15 @@ from a context variable:
   }
   ```
 
-  - Inside member expressions, the variable **has the declared type**,
-    so the type's body is checked **once, at its declaration** — fully
-    modular, like any position-independent type. The embedding-site
+  - The declaration states the **target bound**: inside member
+    expressions the variable has type **`ref<P>`** for the declared
+    `P` (see the table above — the ref wrapper is invariant, so it is
+    never written; `$parent: ref<P>` is an error, being ambiguous with
+    a bound that is itself a reference). The type's body is checked
+    **once, at its declaration** — fully modular. The embedding-site
     check reduces to one subsumption test: the embedding record's type
     (for `$parent`), the root's type (for `$root`), or the collection's
-    key/index type (for `$key`) must be `⊑` the declared type. A site
+    key/index type (for `$key`) must be `⊑` the declared bound. A site
     that fails says so **at that site**, naming both types.
   - Structural typing keeps declarations decoupled: declare the minimal
     **open** record you actually read (`{ data_width: DataWidth, ... }`),

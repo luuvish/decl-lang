@@ -618,10 +618,14 @@ diagnostic width_mismatch(src: int, dst: int) {
 
 - A named type using `$parent`, `$root`, or `$key` in member expressions
   must **declare** each one, member-syntax with the variable as the
-  name: `$parent: { data_width: DataWidth, ... }`. The variable is then
-  *typed by its declaration*, so the type's body checks once, modularly;
-  the embedding site's whole obligation is one subsumption test against
-  the declared bound, failing (if it fails) at the embedder's line.
+  name: `$parent: { data_width: DataWidth, ... }`. The declaration
+  states the **target bound** `P`; the variable's type is **`ref<P>`**
+  — necessarily: `$this`/`$parent`/`$root` denote instances that
+  contain `$this`, so a value reading would be a self-containing value,
+  the cycle D26 forbids. The invariant wrapper is never written
+  (`$parent: ref<P>` is an error). The type's body checks once,
+  modularly; the embedding site's whole obligation is one subsumption
+  test against the bound, failing (if it fails) at the embedder's line.
 - Rationale: inferred obligations made a type's requirements invisible
   at its interface (against P6) and forced whole-body re-checking per
   site. Structural typing keeps explicit declarations decoupled — the
