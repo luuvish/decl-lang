@@ -7,11 +7,12 @@ Guidance for coding agents working in this repository.
 Decl is a general-purpose declarative language for describing, generating, and
 validating structured data with strong type safety and constraint checking.
 
-This repository is a fresh start. The spec documents previously migrated from
-`../decl-lang` have been removed; the language specification will be written
-completely anew, using the sibling repositories below as reference material
-only. Implementation (tree-sitter parser, TypeScript reference implementation,
-CLI, LSP) will be added phase by phase after the spec is settled.
+This repository holds the language's **frozen v0.1 specification**
+(docs/, authored from scratch in Phase 0 and gated by the `spike/`
+evaluator) and, phase by phase, its implementation: tree-sitter parser
+(Phase 1), TypeScript reference implementation (Phase 2), modules and
+stdlib (3), CLI/LSP (4), real-world validation (5). The sibling
+repositories below are reference material only.
 
 `ROADMAP.md` owns the phase plan, exit criteria, and progress status; update
 its phase table when a phase advances.
@@ -26,8 +27,11 @@ Sibling repositories used as reference (do not modify from here):
 ## Working Rules
 
 - Documents are written in English.
-- Once written, the specification under `docs/` is the single source of truth;
-  design decisions and spec chapters must never be left diverged.
+- The specification under `docs/specification/` (v0.1, **frozen**) is the
+  single source of truth; design decisions and spec chapters must never be
+  left diverged.
+- Post-freeze spec changes are **revisions**: amend the charter decision,
+  every affected chapter, and `docs/REVISIONS.md` in one change.
 - Update the doc index in `docs/README.md` when adding documentation.
 
 ## Code Style (for future phases)

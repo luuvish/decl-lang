@@ -1,9 +1,16 @@
 # Decl Documentation
 
-**Status: draft.** The design docs, all thirteen specification
-chapters, and the guide are authored; cross-consistency review, the
-validation corpus desk check, and the evaluator spike remain before
-the v0.1 freeze (see [ROADMAP.md](../ROADMAP.md), Phase 0 — §0.5–0.7).
+**Status: v0.1 — FROZEN (2026-08-31).** Phase 0 is complete: design
+docs, all thirteen specification chapters, the guide, the validation
+cases, and the evaluator spike that gated the freeze
+([ROADMAP.md](../ROADMAP.md) §0.6, `spike/FINDINGS.md`). The normative
+specification below is the single source of truth for every
+implementation phase.
+
+**Post-freeze changes are revisions**: a change touches the design
+charter (a new or amended decision), every affected chapter, and
+[REVISIONS.md](REVISIONS.md) — in one commit. Divergence between
+charter and chapters remains a defect to fix on sight (§1.4).
 
 ## Index
 

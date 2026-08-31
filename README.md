@@ -28,14 +28,17 @@ Design goals:
 
 ## Status
 
-**Pre-specification.** This repository is a fresh start: the language
-specification is being written from scratch, using the previous iteration
-(`../decl-lang`) and real-world spec tooling
-(`../../research/oic-design-suite`) as reference material only. Implementation
-(parser, reference implementation, CLI, LSP) follows once the spec is frozen.
+**Specification v0.1 — frozen (2026-08-31).** Phase 0 is complete: the
+full 13-chapter normative spec, its design charter (P1–P7, D1–D29), an
+example-driven guide, three generality benchmark cases, and the
+throwaway evaluator spike that gated the freeze by executing all of it
+end to end (`spike/`, 31/31 checks green). Post-freeze changes follow
+the revision process recorded in
+[docs/REVISIONS.md](docs/REVISIONS.md).
 
-See [ROADMAP.md](ROADMAP.md) for the phase plan, exit criteria, and current
-progress.
+Next: **Phase 1 — grammar & parser** (tree-sitter, written against
+chapter 11). See [ROADMAP.md](ROADMAP.md) for the phase plan and exit
+criteria.
 
 ## Documents
 

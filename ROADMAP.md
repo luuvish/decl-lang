@@ -30,8 +30,8 @@ never migrated wholesale or modified from this repo.
 
 | Phase | Name | Deliverables | Status |
 |---|---|---|---|
-| 0 | Specification (v0.1 freeze) | design docs, spec chapters, stdlib spec, validation corpus desk check, evaluator spike | in progress (0.1–0.6 done, 0.7 freeze next) |
-| 1 | Grammar & parser | tree-sitter grammar + corpus tests + fixtures | not started |
+| 0 | Specification (v0.1 freeze) | design docs, spec chapters, stdlib spec, validation corpus desk check, evaluator spike | **done — v0.1 frozen 2026-08-31** |
+| 1 | Grammar & parser | tree-sitter grammar + corpus tests + fixtures | next |
 | 2 | Reference implementation core (TS) | type check, evaluation, constraint validation, serialization + conformance runner | not started |
 | 3 | Modules & standard library | import/export, manifest + lock, `std.*` | not started |
 | 4 | CLI & tooling | `decl` CLI, formatter, minimal LSP | not started |
@@ -106,15 +106,17 @@ width rule — each fed back into the chapters and charter
 **OQ7 — no expression-level bindings** (the corpus never hurt without
 them).
 
-### 0.7 v0.1 freeze declaration
+### 0.7 v0.1 freeze declaration — done (2026-08-31)
 
-Update the status in `docs/README.md`; record all subsequent spec changes as
-revisions.
+**v0.1 is frozen.** `docs/README.md` carries the frozen status and the
+revision process; `docs/REVISIONS.md` is the revision log, seeded with the
+freeze entry.
 
-**Exit criteria**: zero open questions across all chapters · stdlib spec
-exists · zero grammar/prose mismatches · all three validation cases written
-and reviewed · evaluator spike run with every finding resolved (spec fixed or
-decision recorded).
+Exit criteria, verified: zero open questions across charter and chapters
+(OQ1–OQ7 all resolved) · stdlib spec exists (ch. 13) · grammar/prose
+mismatches resolved (§0.5 sweeps) · all three validation cases written and
+desk-checked (`docs/examples/`) · evaluator spike run green with every
+finding resolved (`spike/FINDINGS.md`).
 
 ---
 
