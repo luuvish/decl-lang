@@ -30,7 +30,7 @@ never migrated wholesale or modified from this repo.
 
 | Phase | Name | Deliverables | Status |
 |---|---|---|---|
-| 0 | Specification (v0.1 freeze) | design docs, spec chapters, stdlib spec, validation corpus desk check, evaluator spike | in progress (0.1–0.5 done, 0.6 spike next) |
+| 0 | Specification (v0.1 freeze) | design docs, spec chapters, stdlib spec, validation corpus desk check, evaluator spike | in progress (0.1–0.6 done, 0.7 freeze next) |
 | 1 | Grammar & parser | tree-sitter grammar + corpus tests + fixtures | not started |
 | 2 | Reference implementation core (TS) | type check, evaluation, constraint validation, serialization + conformance runner | not started |
 | 3 | Modules & standard library | import/export, manifest + lock, `std.*` | not started |
@@ -89,26 +89,22 @@ diagnostic output, and root-cause reporting in action.
   `docs/examples/` — the desk check itself surfaced and fixed seven spec
   defects (see the findings log in `docs/examples/README.md`)
 
-### 0.6 Minimal evaluator spike (evidence pass)
+### 0.6 Minimal evaluator spike (evidence pass) — done
 
-Errors caught by reading and errors caught by execution are different sets;
-the previous iteration froze specs on reading alone, three times
-([00. Vision §5](docs/design/00_vision.md)). Do not declare v0.1 frozen
-until a spike implementation has met the spec.
+The throwaway evaluator lives in `spike/` (`node spike/src/run.ts` —
+31 checks, 0 failures): parse → bind → evaluate → validate → serialize →
+round-trip over all three benchmark cases, including the ported 2x2
+crossbar with `$referrers`-based width propagation and byte-identical
+round-trips under renamed roots.
 
-- Time-boxed, **throwaway** evaluator over a representative Decl subset —
-  assignability, `input` binding, defaults/derived evaluation, constraint
-  checking. Not the Phase 2 reference implementation; no code is promised to
-  survive into it
-- Run it on the three benchmark cases from 0.5, and bind the real fixture
-  `../decl-lang/tests/validation/customs/oic.decl` (ported to the new
-  syntax/data) as `input`
-- Exercise the checklist in [00. Vision §6](docs/design/00_vision.md)
-  end to end — quantity round-trip and input binding, assignability across
-  all four member kinds, closedness vs subtyping, whether transitive/fixpoint
-  queries are actually needed by the interconnect case
-- Every blocking point feeds back into chapters and design decisions before
-  the freeze
+Execution caught five defects reading had missed — nested-literal name
+resolution, `$referrers`×laziness ordering, integral-float round-trip
+breakage, `with` copying derived members, and the arbiter's missing
+width rule — each fed back into the chapters and charter
+(`spike/FINDINGS.md`). The spike resolved the two gated questions:
+**OQ3 — `std.graph.*` not admitted** (the whole corpus is one-hop);
+**OQ7 — no expression-level bindings** (the corpus never hurt without
+them).
 
 ### 0.7 v0.1 freeze declaration
 

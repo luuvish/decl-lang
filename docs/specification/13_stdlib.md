@@ -176,9 +176,11 @@ made ambient with the rest of `std`:
 ## 13.11 Reserved: `std.graph`
 
 The namespace `std.graph` is reserved for the finite-fixpoint
-combinators of D18 (`closure`, `reachable`, `is_acyclic`, …). Whether
-they enter v0.1 is decided by the evaluator spike (OQ3, ROADMAP §0.6);
-until then the namespace is empty and unusable.
+combinators of D18 (`closure`, `reachable`, `is_acyclic`, …). The §0.6
+evaluator spike resolved OQ3: they are **not admitted in v0.1** — the
+entire ported corpus, the real interconnect fixture included, needed
+only one-hop operations. The namespace stays reserved and unusable;
+admission waits for a revision carrying new evidence.
 
 ## Open questions
 

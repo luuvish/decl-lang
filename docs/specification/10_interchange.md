@@ -79,8 +79,12 @@ Serializing an evaluated value (an exported `output`, or a bound
   with 64-bit float parsers may lose precision on huge integers, and
   that is the consumer's documented concern, not a reason to truncate.
   `float` in the shortest round-trip form (the ECMAScript
-  `Number::toString` algorithm, D29): parsing the emitted text yields
-  the identical binary64.
+  `Number::toString` algorithm, D29) — **with `.0` appended whenever
+  that form is lexically an integer** (the float 10 emits as `10.0`):
+  numbers bind by lexical form (§10.2), so a bare `10` would re-bind
+  as an `int` and break the round trip at every integral-valued float
+  (the §0.6 spike's quantity magnitudes hit this immediately). Parsing
+  the emitted text yields the identical binary64.
 - **Quantities**: `{ "value": v, "unit": "u" }`, normalized to the
   dimension's **base unit** (§3.16, §9.5) — one canonical encoding
   per value, whatever unit the source used.

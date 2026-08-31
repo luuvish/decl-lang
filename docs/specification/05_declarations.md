@@ -83,6 +83,11 @@ type Vec<T, N: 1..1024> = T[N]
 
 - `type Name [<params>] = TypeExpr [else …]` — the type forms are
   [03. Types](03_types.md); generic parameters §3.15.
+- Type declarations exist at **module level only** — there are no
+  nested type declarations inside record bodies. Typing is structural
+  (§3.1), so an inner type would buy only a name prefix; a helper type
+  private to one schema is a non-exported module type (§8.2), and
+  one-off member shapes are anonymous inline types.
 - The optional **`else` clause** attaches a custom error diagnostic to
   the *declaration*: when a value fails this type, the attached
   diagnostic replaces the generic type-mismatch report. Forms and

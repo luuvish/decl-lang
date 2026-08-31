@@ -44,9 +44,11 @@ diagnostic message templates, and constant positions (§4.13).
 - **Sibling references in typed construction**: within an object
   literal checked against a *record type* (§3.18), entry expressions
   are member expressions of the instance under construction — bare
-  sibling names and `$this` resolve per §7.3, and the references join
-  the member dependency graph (§9.3, acyclic as ever). This is what
-  lets an `output`'s links refer to its own services (§7.4). In a
+  names resolve **up the chain of enclosing instances under
+  construction** (nearest first, then module scope; §7.3), and the
+  references join the member dependency graph (§9.3, acyclic as
+  ever). The chain is essential: an edge literal nested inside a
+  node's literal reaches the node's `ports` by name (§7.4). In a
   literal not checked against a record type (a map, a bare object),
   names resolve in the ordinary lexical scope only.
 
@@ -359,10 +361,15 @@ arrays, or references is a type/evaluation error — convert explicitly
 const eu_service = base with { region: "eu", replicas: 3 }
 ```
 
-- `base with { … }` produces a **new** object: `base`'s entries, with
-  the listed members replaced or (for optional members) supplied.
-  Shallow — nested objects are replaced whole; deep merging is
-  `std.object.merge` with its specified bias rules.
+- `base with { … }` produces a **new** object: `base`'s value-member
+  entries, with the listed members replaced or (for optional members)
+  supplied. **Derived members are not copied** — they are recomputed
+  by whatever pipeline consumes the result; copying them would trip
+  D4's restatement rule the moment an update changed one of their
+  dependencies (the §0.6 spike hit exactly this with a copied
+  `insecure` after enabling TLS). Shallow — nested objects are
+  replaced whole; deep merging is `std.object.merge` with its
+  specified bias rules.
 - Statically: `base`'s type must be a record type; every updated key
   must be a declared member (against a closed type, unknown keys are
   errors) with an assignable value; a **derived** member cannot be

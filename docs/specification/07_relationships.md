@@ -71,13 +71,18 @@ from a context variable:
 | `$path` | the canonical path of `$this` | `string` |
 | `$referrers` | reverse query, §7.6 | — |
 
-- A bare sibling name `x` in a member expression abbreviates
-  `$this.x`, and resolves **sibling-first**: when a sibling member and
-  an outer (module or imported) name coincide, the sibling wins — the
-  one sanctioned lookup-order exception to the no-shadowing rule
-  (D27); it is resolution order over two coexisting name spaces, not a
-  rebinding, and the outer name stays addressable everywhere outside
-  the record's member expressions.
+- A bare name `x` in a member expression resolves
+  **nearest-enclosing-instance-first**: the members of `$this`, then of
+  `$parent`, and so on up the ownership chain, before module and
+  imported names — the one sanctioned lookup-order exception to the
+  no-shadowing rule (D27). It is resolution order over coexisting name
+  spaces, not a rebinding, and the outer name stays addressable
+  outside member expressions. The chain (not just siblings) is what
+  lets a nested literal reach its container's entries — `source:
+  ports["si0"]` inside an edge literal reaches the enclosing node's
+  `ports` (§4.2); sibling-only resolution would contradict this
+  chapter's own §7.4 example, a defect the §0.6 evaluator spike caught
+  in execution.
 - **Context-dependent types.** A type whose member expressions mention
   `$parent`, `$root`, or `$key` depends on where it is embedded. Such
   a type is checked **per composition site**, the way generics are
@@ -256,6 +261,14 @@ type Service = {
 - A candidate whose member `m` is invalid is excluded silently under
   root-cause rules (§6.6); filters over the result follow the ordinary
   taint rules.
+- **`$referrers` and laziness**: the query is answerable only after
+  every instance of the universe is materialized — a demand-driven
+  implementation must defer `$referrers`-dependent members (and
+  everything that transitively reads them) until materialization
+  completes, or the same document could yield different answers
+  depending on demand order, violating observational equivalence
+  (§9.4). The §0.6 spike hit this as a live bug: a width forced
+  mid-materialization memoized an empty referrer set.
 - `$referrers` is the **only** universe query. Ad-hoc relationship
   constraints — uniqueness, degree rules, joins — belong to the
   container type that owns the collections involved, filtering

@@ -111,7 +111,15 @@ export type Arbiter = {
     kind: "node.arb"
     ports: {
         ins: { [/si[0-9]+/]: IntPort }
-        mi: IntPort { mode: "mi" }
+        // an arbiter merges: its output width is the max of its inputs,
+        // overriding IntPort's single-feeder propagation (two wired
+        // edges feed mi, so the base rule would fall back to 1)
+        mi: IntPort {
+            mode: "mi"
+            const width: Width = std.array.fold(
+                [p.width for p in std.map.values($parent.ins)],
+                1, (a, w) => std.math.max(a, w))
+        }
     }
 
     const fan_in = std.array.count(std.map.keys(ports.ins))

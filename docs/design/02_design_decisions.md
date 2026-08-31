@@ -626,10 +626,12 @@ diagnostic width_mismatch(src: int, dst: int) {
   `export * from`.
 - No shadowing anywhere: a name bound in scope cannot be rebound by an
   inner scope. One sanctioned resolution-order exception: inside a
-  schema's member expressions, a bare name resolves **sibling-first**
-  (it is sugar for `$this.x`, D26's navigation) before outer names —
-  this is lookup order over two coexisting spaces, not a rebinding;
-  the outer name stays addressable everywhere else.
+  schema's member expressions, a bare name resolves
+  **nearest-enclosing-instance-first** — `$this`'s members, then the
+  ownership chain upward, then module names — lookup order over
+  coexisting spaces, not a rebinding; the outer name stays addressable
+  everywhere else. (Sibling-only resolution was the original wording;
+  the evaluator spike showed nested literals need the chain.)
 
 ### D28. Packages: exact pin and lock
 
@@ -654,7 +656,10 @@ diagnostic width_mismatch(src: int, dst: int) {
 - Derived (`const`) members are **included** by default (tool option to
   exclude).
 - Floats print in shortest round-trip form (the ECMAScript
-  `Number::toString` algorithm).
+  `Number::toString` algorithm), with `.0` appended when that form is
+  lexically an integer — numbers bind by lexical form, so integral
+  floats would otherwise re-bind as ints and break the round trip
+  below.
 - Quantities serialize per D15; references serialize as canonical path
   strings (D26) — **document-relative** (`"$.a[0]"`) for targets under
   the same evaluation root, absolute for cross-root targets, so an
@@ -692,6 +697,7 @@ the right column.
 | reserved tag fields (`__tag`) | literal-field structural discrimination (D11) |
 | word operators `and` `or` `not`, `band` `bor` `bxor` `bnot` `shl` `shr` | `&&` `\|\|` `!`, `&` `\|` `^` `~` `<<` `>>` (D16) |
 | method calls (`xs.count()`), trailing blocks | `std.*` application + `\|>` + lambdas (D16) |
+| nested `type` declarations inside a record body | module-level types — non-exported for privacy (D27); structural typing makes an inner type nothing but a name prefix, and inline anonymous types cover one-off shapes. The one real gain (capturing an outer generic parameter) is deferred until corpus evidence demands it |
 | `$std.*` sigil namespace | plain `std.*` — `$` is context-variables-only (D16) |
 | `import * from` (bare injection) | named imports, `* as ns` (D27) |
 | `export * from` | named re-export (D27) |
@@ -810,20 +816,26 @@ Every item of [00. Vision §6](00_vision.md) resolves to a decision here
 
 ## Open questions
 
-Tracked here until resolved; resolutions are promoted into the numbered
-decisions. OQ1 (SI catalog → D15), OQ2 (opaque unknown fields → D10),
-OQ4 (subsumption exposure scope → D13), OQ5 (structural emptiness →
-D12), and OQ6 (manifest fields → D28) were resolved on 2026-08-30 and
-folded into their host decisions. The two remaining questions are
-**deliberately open** — their resolution criterion is the evaluator
-spike's evidence (ROADMAP §0.6), and deciding them earlier would defeat
-the evidence gate:
+**All open questions are resolved.** OQ1 (SI catalog → D15), OQ2
+(opaque unknown fields → D10), OQ4 (subsumption exposure scope → D13),
+OQ5 (structural emptiness → D12), and OQ6 (manifest fields → D28) were
+resolved on 2026-08-30 and folded into their host decisions. The two
+spike-gated questions were resolved on 2026-08-31 by the §0.6 evaluator
+spike's evidence (`spike/FINDINGS.md`):
 
-- **OQ3.** Admission of `std.graph.*` fixpoint combinators into v0.1 —
-  decided by the evaluator spike (D18).
-- **OQ7.** Re-admission of an expression-level binding form (designated
-  candidate: `const (x = e) body`) — decided by the evaluator spike's
-  evidence on single-expression `func` bodies (D3).
+- **OQ3 — resolved: `std.graph.*` is NOT admitted in v0.1** (D18). The
+  full ported corpus — including the real interconnect fixture with
+  hierarchical width propagation and reverse queries — needed only
+  one-hop operations; no constraint required a transitive closure. The
+  namespace stays reserved; admission remains open to a future
+  revision carrying new evidence (e.g. reachability requirements in
+  Phase 5's real NoC corpus).
+- **OQ7 — resolved: no expression-level binding form in v0.1** (D3).
+  The corpus's most complex single expressions (the arbiter's
+  fold-over-a-comprehension width rule) stayed readable without local
+  bindings; no `func` body in the corpus suffered. The designated
+  candidate (`const (x = e) body`) remains recorded for a future
+  revision should Phase 5 produce contrary evidence.
 
 ---
 
