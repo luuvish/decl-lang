@@ -94,6 +94,16 @@ from a context variable:
   owner is not a collection element — is a compile error **at that
   site**. Types that avoid these variables stay position-independent
   and are checked once.
+- Mechanically, the declaration site checks everything *except* the
+  context accesses, and records the type's **context obligations** —
+  which members `$parent` must offer and at what types, whether `$key`
+  is used and how, whether `$root` is reached. Each embedding site
+  then discharges the obligations against its own types; a site that
+  cannot (`items: Port[]` in a record with no `data_width`) fails
+  **there**, naming the unmet obligation — the diagnostic belongs to
+  the consumer's line, not to the library type's declaration. A
+  context-dependent type is, in effect, implicitly parameterized over
+  its owner; the embedding site supplies the argument.
 
 ```decl
 type Port = {
