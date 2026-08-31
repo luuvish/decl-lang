@@ -23,7 +23,10 @@ export class Engine {
   deferredSlots: { inst: RecInst; name: string }[] = [];
   noReg = 0;                     // >0: binding for comparison only — do not register instances
   phase = 1;                     // 1: materialization; 2: universe complete, $referrers answers
-  constructor(env: Env) { this.env = env; }
+  constructor(env: Env) {
+    this.env = env;
+    env.constEval = (name: string) => this.forceConst(name, '');   // §4.13 elaboration-time constants
+  }
 
   // ---------- expression evaluation ----------
   ev(e: Expr, sc: Scope): any {

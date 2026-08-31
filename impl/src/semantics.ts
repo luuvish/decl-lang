@@ -62,6 +62,9 @@ export class Env {
   registry: RecInst[] = [];
   roots = new Map<string, Value>();
   diagnostics: Diag[] = [];
+  constEval?: (name: string) => any;   // installed by the Engine (§4.13)
+  onConstDiag?: (d: Diag) => void;     // installed by the checker
+  private constDiagSeen = new Set<string>();
 
   load(decls: Decl[]) {
     const seen = new Set<string>();
@@ -79,17 +82,46 @@ export class Env {
 
   report(d: Diag) { this.diagnostics.push(d); }
 
+  // §4.13: a named endpoint in a constant position evaluates at
+  // elaboration time; an erroring constant is a compile-time diagnostic
+  constNum(v: any): any {
+    if (typeof v !== 'string' || !this.constEval || !this.consts.has(v)) return v;
+    const diag = (code: string, message: string) => {
+      if (this.constDiagSeen.has(v + code)) return;
+      this.constDiagSeen.add(v + code);
+      const d: Diag = { severity: 'error', code, message, path: '' };
+      this.onConstDiag ? this.onConstDiag(d) : this.report(d);
+    };
+    try {
+      const r = this.constEval(v);
+      if (typeof r === 'bigint' || typeof r === 'number') return r;
+      if (r !== undefined) diag('E4021', `constant ${v} is not numeric in a constant position`);
+      return v;
+    } catch (e: any) {
+      if (e instanceof EvalErr) {
+        const code = /zero/.test(e.message) ? 'E5001' : /NaN|Infinity/.test(e.message) ? 'E5002' : 'E5001';
+        diag(code, `evaluating constant ${v}: ${e.message}`);
+      }
+      return v;
+    }
+  }
+
   resolve(ast: TypeAst, name?: string): RT {
     switch (ast.k) {
       case 'prim': return { t: 'prim', name: ast.name };
       case 'lit': return { t: 'lit', v: ast.v };
       case 'range': {
-        const isF = typeof ast.lo === 'number' || typeof ast.hi === 'number';
-        return { t: 'range', lo: ast.lo, hi: ast.hi, excl: ast.excl, base: isF ? 'float' : 'int' };
+        const lo = this.constNum(ast.lo), hi = this.constNum(ast.hi);
+        const isF = typeof lo === 'number' || typeof hi === 'number';
+        return { t: 'range', lo, hi, excl: ast.excl, base: isF ? 'float' : 'int' };
       }
       case 'pattern': return { t: 'pattern', src: ast.re, re: new RegExp(`^(?:${ast.re})$`) };
       case 'map': return { t: 'map', key: this.resolve(ast.key), val: this.resolve(ast.val) };
-      case 'array': return { t: 'arr', elem: this.resolve(ast.elem), lo: ast.lo, hi: ast.hi };
+      case 'array': {
+        const lo = this.constNum(ast.lo), hi0 = this.constNum(ast.hi);
+        const hi = ast.excl && typeof hi0 !== 'string' && hi0 !== undefined ? Number(hi0) - 1 : hi0;
+        return { t: 'arr', elem: this.resolve(ast.elem), lo: typeof lo === 'bigint' ? Number(lo) : lo, hi: typeof hi === 'bigint' ? Number(hi) : hi };
+      }
       case 'union': return { t: 'union', arms: ast.arms.map(a => this.resolve(a)) };
       case 'isect': {
         const arms = ast.arms.map(a => this.resolve(a));

@@ -48,7 +48,12 @@ E3019, static assignability E4001/E4002/E4003, absence discipline
 E4050/E4051/E4054 with the two narrowing rules (`in` guards, `&&`/`||`
 flow, `!= null`), call arity E4062, operator kinds E4071, `with` misuse
 E4080, and the `match` static checks E4100–E4103. `match` and `|>` also
-evaluate (engine). Inference is conservative — an undetermined form
+evaluate (engine). Constant positions (§4.13): named range endpoints
+and array sizes evaluate at elaboration time and participate in
+subsumption/emptiness with their values; non-constant references
+(inputs, outputs, context variables, `$referrers`) in endpoints or
+predicate arguments are E4021, and an erroring constant surfaces as a
+compile-time E5xxx diagnostic. Inference is conservative — an undetermined form
 types as unknown and suppresses downstream judgments. Two deliberate
 precision choices keep the frozen corpus sound under strict `S ⊑ T`:
 interval arithmetic on int ranges (`9000 + i` with `i: 0..<3` stays
@@ -57,5 +62,5 @@ literal-set) defer unprovable membership to binding instead of failing
 statically — the guide and benchmarks rely on both (candidate spec
 clarifications for §3.18/§4.4).
 
-Growing: the §4.13 constant-position checks, quantity dimension
-algebra E4072/E4073, and modules/`decl.toml` (Phase 3).
+Growing: quantity dimension algebra E4072/E4073, generic
+instantiation checks §3.15, and modules/`decl.toml` (Phase 3).

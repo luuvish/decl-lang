@@ -1,0 +1,5 @@
+// @expect-phase: checking
+// @expect-error: E4021
+// parses; a range endpoint constant must evaluate to a number
+const label = "svc"
+type Bad = 1..label

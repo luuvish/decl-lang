@@ -1,0 +1,6 @@
+// @expect-phase: checking
+// @expect-error: E4021
+// parses; predicate arguments are constant positions (§4.13)
+func divisible_by(d: int): (int) => bool = (n) => n % d == 0
+input base: int
+type Bad = int(divisible_by(base))

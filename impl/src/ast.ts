@@ -8,7 +8,7 @@ export type TypeAst =
   | { k: 'pattern'; re: string }
   | { k: 'record'; members: MemberAst[]; open: boolean }
   | { k: 'map'; key: TypeAst; val: TypeAst }
-  | { k: 'array'; elem: TypeAst; lo?: number; hi?: number }
+  | { k: 'array'; elem: TypeAst; lo?: number | string; hi?: number | string; excl?: boolean }
   | { k: 'union'; arms: TypeAst[] }
   | { k: 'isect'; arms: TypeAst[] }
   | { k: 'func'; params: TypeAst[]; ret: TypeAst }

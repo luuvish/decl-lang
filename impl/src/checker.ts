@@ -15,6 +15,7 @@ import type { Diag, RT } from './semantics.ts';
 import { subsumes, structurallyEmpty } from './subsume.ts';
 import { makeCtx, infer, checkExpr, requireVal, applyGuards, guardsOf, tryResolve } from './infer.ts';
 import type { ICtx, Ty } from './infer.ts';
+import { Engine } from './engine.ts';
 
 export function checkModule(decls: Decl[]): Diag[] {
   const out: Diag[] = [];
@@ -23,7 +24,31 @@ export function checkModule(decls: Decl[]): Diag[] {
 
   const env = new Env();
   env.load(decls);
+  new Engine(env);                     // installs env.constEval (§4.13)
+  env.onConstDiag = d => out.push(d);  // constant-evaluation errors surface here
   for (const n of env.duplicates) report('E3001', `duplicate name ${n} in module`);
+
+  // ---------- §4.13: constant positions ----------
+  let curTParams = new Set<string>();
+  const checkEndpoint = (v: any, where: string) => {
+    if (typeof v !== 'string' || curTParams.has(v) || v.includes('.')) return;
+    if (env.inputs.has(v) || env.outputs.some(o => o.name === v))
+      report('E4021', `non-constant ${where}: ${v} is an input/output, not a module const`);
+    else if (!env.consts.has(v))
+      report('E3003', `unknown name ${v} in a ${where}`);
+  };
+  const constViolation = (e: any): string | null => {
+    if (!e || typeof e !== 'object') return null;
+    if (e.e === 'ctx') return `context variable ${e.name}`;
+    if (e.e === 'referrers') return '$referrers';
+    if (e.e === 'name' && env.inputs.has(e.name)) return `input ${e.name}`;
+    if (e.e === 'name' && env.outputs.some(o => o.name === e.name)) return `output ${e.name}`;
+    for (const v of Object.values(e)) {
+      if (Array.isArray(v)) { for (const x of v) { const r = constViolation(x); if (r) return r; } }
+      else if (v && typeof v === 'object') { const r = constViolation(v); if (r) return r; }
+    }
+    return null;
+  };
 
   // ---------- AST-level walks ----------
   const walkType = (t: TypeAst | undefined, depth: number, declName?: string) => {
@@ -33,17 +58,27 @@ export function checkModule(decls: Decl[]): Diag[] {
         const kinds = [t.lo, t.hi].map(v => typeof v);
         if (kinds[0] !== kinds[1] && !kinds.includes('string'))
           report('E4010', `mixed range endpoints: ${t.lo}..${t.hi}`);
+        checkEndpoint(t.lo, 'range endpoint');
+        checkEndpoint(t.hi, 'range endpoint');
         break;
       }
       case 'record': checkRecordCtx(t, depth, declName); t.members.forEach(m => walkMember(m, depth, declName)); break;
       case 'map': walkType(t.key, depth, declName); walkType(t.val, depth, declName); break;
-      case 'array': walkType(t.elem, depth, declName); break;
+      case 'array':
+        checkEndpoint(t.lo, 'array size');
+        checkEndpoint(t.hi, 'array size');
+        walkType(t.elem, depth, declName);
+        break;
       case 'union': case 'isect': t.arms.forEach(a => walkType(a, depth, declName)); break;
       case 'func': t.params.forEach(p => walkType(p, depth, declName)); walkType(t.ret, depth, declName); break;
       case 'named':
         t.args.forEach(a => walkType(a, depth, declName));
         if (t.ext) { checkExtension(t, declName); walkType(t.ext, depth + 1, declName); }
-        t.preds?.forEach(p => walkExpr(p));
+        t.preds?.forEach(p => {
+          const bad = constViolation(p);
+          if (bad) report('E4021', `non-constant predicate argument: ${bad} (§4.13)`);
+          walkExpr(p);
+        });
         break;
     }
   };
@@ -152,6 +187,9 @@ export function checkModule(decls: Decl[]): Diag[] {
     seen.add(rt);
     switch (rt.t) {
       case 'range': {
+        const ks = [typeof rt.lo, typeof rt.hi];
+        if (!ks.includes('string') && ks[0] !== ks[1])
+          report('E4010', `mixed range endpoints after constant substitution in ${name}`);
         if (structurallyEmpty(env, rt)) report('E4011', `empty range in ${name}`);
         break;
       }
@@ -199,6 +237,7 @@ export function checkModule(decls: Decl[]): Diag[] {
 
   // AST walks over all declarations
   for (const d of decls) {
+    curTParams = d.d === 'type' ? new Set((d.params ?? []).map(p => p.name)) : new Set();
     if (d.d === 'type') walkType(d.type, 1, d.name);
     else if (d.d === 'const') { walkType(d.type, 0); walkExpr(d.expr); }
     else if (d.d === 'func') { d.params.forEach(p => walkType(p.type, 0)); walkType(d.ret, 0); walkExpr(d.body); }

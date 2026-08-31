@@ -1,0 +1,10 @@
+const MIN_PORT = 1
+const MAX_PORT = 65535
+const BUF = 8
+func half(n: int): int = n / 2
+const HALF = half(BUF)
+type Port = MIN_PORT..MAX_PORT
+type Buf = int[BUF]
+type Win = int[1..HALF]
+func divisible_by(d: int): (int) => bool = (n) => n % d == 0
+type Aligned = int(divisible_by(HALF))

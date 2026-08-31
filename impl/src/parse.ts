@@ -132,12 +132,20 @@ function lowerType(n: Node): TypeAst {
         return sz && sz.type === 'range_expression' ? sz : null;
       })();
       if (range) {
-        const [lo, hi] = range.namedChildren.filter(Boolean).map(c => Number(constNum(c!)));
+        // endpoints stay names when they reference module consts (§4.13);
+        // resolution substitutes their evaluated values
+        const [lo, hi] = range.namedChildren.filter(Boolean)
+          .map(c => constNum(c!)).map(v => typeof v === 'string' ? v : Number(v));
         const excl = range.children.some(c => c && !c.isNamed && c.text === '..<');
-        return { k: 'array', elem, lo, hi: excl ? hi - 1 : hi };
+        if (typeof hi === 'number') return { k: 'array', elem, lo, hi: excl ? hi - 1 : hi };
+        return { k: 'array', elem, lo, hi, excl };
       }
       const size = field(n, 'size');
-      if (size) { const v = Number(constNum(size)); return { k: 'array', elem, lo: v, hi: v }; }
+      if (size) {
+        const v0 = constNum(size);
+        const v = typeof v0 === 'string' ? v0 : Number(v0);
+        return { k: 'array', elem, lo: v, hi: v };
+      }
       return { k: 'array', elem };
     }
     case 'range_type': {

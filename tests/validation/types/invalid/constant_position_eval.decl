@@ -1,0 +1,6 @@
+// @expect-phase: checking
+// @expect-error: E5001
+// parses; an erroring constant is a compile-time diagnostic (§4.13)
+const zero = 0
+const bad_hi = 1 / zero
+type Bad = 1..bad_hi

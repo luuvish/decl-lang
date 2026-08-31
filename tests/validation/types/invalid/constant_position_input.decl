@@ -1,0 +1,5 @@
+// @expect-phase: checking
+// @expect-error: E4021
+// parses; an input reference is not a constant expression (§4.13)
+input limit: int
+type Bad = 1..limit
