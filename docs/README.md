@@ -1,8 +1,9 @@
 # Decl Documentation
 
-**Status: draft.** The specification is being written from scratch (see
-[ROADMAP.md](../ROADMAP.md), Phase 0 — §0.2 in progress). The guide
-follows once the chapters settle.
+**Status: draft.** The design docs, all thirteen specification
+chapters, and the guide are authored; cross-consistency review, the
+validation corpus desk check, and the evaluator spike remain before
+the v0.1 freeze (see [ROADMAP.md](../ROADMAP.md), Phase 0 — §0.5–0.7).
 
 ## Index
 
@@ -31,3 +32,9 @@ follows once the chapters settle.
 | [11. Grammar](specification/11_grammar.md) | The formal grammar (EBNF): declarations, types, members, expressions, data documents, disambiguation notes — wins over prose on conflict |
 | [12. Errors and Diagnostic Codes](specification/12_errors.md) | Code scheme and bands, machine-readable report format, ordering and conformance scope, the full v0.1 registry |
 | [13. Standard Library](specification/13_stdlib.md) | The complete `std.*` surface: array/math/int/float/string/object/map functions, the SI unit catalog, reserved `std.graph` |
+
+### Guide (informative)
+
+| Document | Description |
+|---|---|
+| [Decl by Example](guide/01_overview_by_example.md) | One scenario end to end — describe → generate → validate — with the evaluated JSON and the diagnostics it produces |

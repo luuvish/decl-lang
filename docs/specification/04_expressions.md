@@ -41,6 +41,14 @@ diagnostic message templates, and constant positions (§4.15).
 - A construction member whose expression is maybe-absent is a compile
   error (§4.10) — there is no implicit member dropping. Discharge the
   absence (`??`, an `in` guard) or build conditionally.
+- **Sibling references in typed construction**: within an object
+  literal checked against a *record type* (§3.18), entry expressions
+  are member expressions of the instance under construction — bare
+  sibling names and `$this` resolve per §7.3, and the references join
+  the member dependency graph (§9.3, acyclic as ever). This is what
+  lets an `output`'s links refer to its own services (§7.4). In a
+  literal not checked against a record type (a map, a bare object),
+  names resolve in the ordinary lexical scope only.
 
 ## 4.3 Operators and precedence
 

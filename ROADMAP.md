@@ -30,7 +30,7 @@ never migrated wholesale or modified from this repo.
 
 | Phase | Name | Deliverables | Status |
 |---|---|---|---|
-| 0 | Specification (v0.1 freeze) | design docs, spec chapters, stdlib spec, validation corpus desk check, evaluator spike | in progress (0.1–0.3 done, 0.4 next) |
+| 0 | Specification (v0.1 freeze) | design docs, spec chapters, stdlib spec, validation corpus desk check, evaluator spike | in progress (0.1–0.4 done, 0.5 next) |
 | 1 | Grammar & parser | tree-sitter grammar + corpus tests + fixtures | not started |
 | 2 | Reference implementation core (TS) | type check, evaluation, constraint validation, serialization + conformance runner | not started |
 | 3 | Modules & standard library | import/export, manifest + lock, `std.*` | not started |
@@ -75,10 +75,11 @@ the complete v0.1 `std.*` surface (array, math, int, float, string, object,
 map, SI unit catalog; `std.graph` reserved pending OQ3), scoped to what the
 spec and corpus actually use.
 
-### 0.4 Guide
+### 0.4 Guide — done
 
-Example-driven overview walking one scenario end to end
-(describe → generate → validate).
+`docs/guide/01_overview_by_example.md`: one scenario end to end
+(describe → generate → validate), showing the evaluated JSON, the
+diagnostic output, and root-cause reporting in action.
 
 ### 0.5 Cross-consistency review and validation corpus desk check
 
