@@ -226,7 +226,7 @@ type Router = {
 - Members divide into **value members** — required `x: T`, optional
   `x?: T`, defaulted `x: T = e`, derived `const x = e` — and
   **constraint members** — `assert`, `when` (D19). A record body may
-  also carry **context declarations** (`$parent: P`, §7.3/D30), which
+  also carry **context declarations** (`$parent: ref<P>`, §7.3/D30), which
   are not members at all: they state what the type's surroundings must
   offer, and live in the `$` name space. Constraint members
   contribute diagnostics only and are covered in

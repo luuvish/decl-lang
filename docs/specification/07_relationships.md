@@ -98,9 +98,9 @@ value.
 
   ```decl
   type Port = {
-      $parent: { data_width: DataWidth, ... }   // what my owner must offer
+      $parent: ref<{ data_width: DataWidth, ... }>  // what my owner must offer
       name: PortName
-      width: int = $parent.data_width           // $parent is typed by the declaration
+      width: int = $parent.data_width               // $parent has exactly the written type
   }
 
   type Router = {
@@ -109,16 +109,20 @@ value.
   }
   ```
 
-  - The declaration states the **target bound**: inside member
-    expressions the variable has type **`ref<P>`** for the declared
-    `P` (see the table above — the ref wrapper is invariant, so it is
-    never written; `$parent: ref<P>` is an error, being ambiguous with
-    a bound that is itself a reference). The type's body is checked
-    **once, at its declaration** — fully modular. The embedding-site
-    check reduces to one subsumption test: the embedding record's type
-    (for `$parent`), the root's type (for `$root`), or the collection's
-    key/index type (for `$key`) must be `⊑` the declared bound. A site
-    that fails says so **at that site**, naming both types.
+  - **What you write is the variable's type** (D2): `$parent` and
+    `$root` declarations are written `ref<P>` — the reference-ness is
+    an invariant (the table above), and the language makes you *write*
+    the invariant rather than hiding it: a bare non-`ref` bound
+    (`$parent: { … }`) is a compile error whose message supplies the
+    `ref<…>` form. No ambiguity arises: an owner is always a record
+    instance, never itself a reference, so a nested `ref<ref<…>>` bound
+    has no meaning to collide with. `$key` is declared at its plain
+    value type. The type's body is checked **once, at its
+    declaration** — fully modular. The embedding-site check reduces to
+    one subsumption test: the embedding record's type (for `$parent`),
+    the root's type (for `$root`), or the collection's key/index type
+    (for `$key`) must be `⊑` the bound's target. A site that fails says
+    so **at that site**, naming both types.
   - Structural typing keeps declarations decoupled: declare the minimal
     **open** record you actually read (`{ data_width: DataWidth, ... }`),
     not some specific owner — any embedder offering it qualifies.

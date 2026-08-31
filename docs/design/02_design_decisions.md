@@ -618,14 +618,17 @@ diagnostic width_mismatch(src: int, dst: int) {
 
 - A named type using `$parent`, `$root`, or `$key` in member expressions
   must **declare** each one, member-syntax with the variable as the
-  name: `$parent: { data_width: DataWidth, ... }`. The declaration
-  states the **target bound** `P`; the variable's type is **`ref<P>`**
-  — necessarily: `$this`/`$parent`/`$root` denote instances that
-  contain `$this`, so a value reading would be a self-containing value,
-  the cycle D26 forbids. The invariant wrapper is never written
-  (`$parent: ref<P>` is an error). The type's body checks once,
-  modularly; the embedding site's whole obligation is one subsumption
-  test against the bound, failing (if it fails) at the embedder's line.
+  name: `$parent: ref<{ data_width: DataWidth, ... }>`. The variable's
+  type is exactly what is written (D2), and it is **necessarily a
+  reference**: `$this`/`$parent`/`$root` denote instances that contain
+  `$this`, so a value reading would be a self-containing value, the
+  cycle D26 forbids. The language makes the invariant **written and
+  compiler-enforced** rather than implicit: a bare non-`ref` bound is a
+  compile error that supplies the `ref<…>` form (no ambiguity exists —
+  an owner is never itself a reference, so nested `ref<ref<…>>` has no
+  meaning). The type's body checks once, modularly; the embedding
+  site's whole obligation is one subsumption test against the bound's
+  target, failing (if it fails) at the embedder's line.
 - Rationale: inferred obligations made a type's requirements invisible
   at its interface (against P6) and forced whole-body re-checking per
   site. Structural typing keeps explicit declarations decoupled — the
@@ -636,14 +639,16 @@ diagnostic width_mismatch(src: int, dst: int) {
 - Context declarations are not members: never data, never serialized,
   never settable; one per variable; inheritance narrows them,
   intersection conjoins them.
-- The syntax is the bare member form deliberately: `$parent: P` is the
+- The syntax is the member form deliberately: `$parent: ref<P>` is the
   required member `x: T` **pointed outward** — the same concept, a
   typed obligation; only the supplier differs (the embedding site, not
   the input), and that difference is exactly what the `$` sigil marks
   (D16). A `const` prefix was considered and rejected: `const` means
   *computed and serialized* (D3/D4), both of which a context
   declaration is not, and it would add a third `const` form with no
-  `=`.
+  `=`. An implicit-`ref` reading (`$parent: P` meaning `ref<P>`) was
+  also tried and rejected: the annotation must *be* the type (D2);
+  invariants are written and enforced, not hidden.
 
 ## G. Modules and packages
 
