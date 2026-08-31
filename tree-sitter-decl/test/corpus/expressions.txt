@@ -305,3 +305,48 @@ const area = match shape {
       (match_arm
         (identifier)
         (float)))))
+
+================================================================================
+numeric literals do not lex as unit literals
+================================================================================
+
+const oct = 0o755
+const hexz = 0x0000_0000
+const bin = 0b101
+const exp = 1e3
+const negexp = 1e-3
+const zsec = 0s
+const msec = 250ms
+const fsec = 1.5e3s
+const ev = 5eV
+
+--------------------------------------------------------------------------------
+
+(module
+  (const_declaration
+    name: (identifier)
+    value: (int))
+  (const_declaration
+    name: (identifier)
+    value: (int))
+  (const_declaration
+    name: (identifier)
+    value: (int))
+  (const_declaration
+    name: (identifier)
+    value: (float))
+  (const_declaration
+    name: (identifier)
+    value: (float))
+  (const_declaration
+    name: (identifier)
+    value: (unit_literal))
+  (const_declaration
+    name: (identifier)
+    value: (unit_literal))
+  (const_declaration
+    name: (identifier)
+    value: (unit_literal))
+  (const_declaration
+    name: (identifier)
+    value: (unit_literal)))

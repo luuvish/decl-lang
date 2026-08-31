@@ -1,0 +1,4 @@
+// @expect-phase: checking
+// @expect-error: E4073
+// parses; one base unit per dimension (std declares s for Time)
+unit tick: Time

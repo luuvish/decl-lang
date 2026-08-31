@@ -3825,21 +3825,87 @@
     "unit_literal": {
       "type": "TOKEN",
       "content": {
-        "type": "PREC",
-        "value": 1,
-        "content": {
-          "type": "CHOICE",
-          "members": [
-            {
-              "type": "PATTERN",
-              "value": "(0|[1-9][0-9_]*)\\.[0-9][0-9_]*([eE][+-]?[0-9]+)?[A-Za-z][A-Za-z0-9]*"
-            },
-            {
-              "type": "PATTERN",
-              "value": "(0|[1-9][0-9_]*)[A-Za-z][A-Za-z0-9]*"
-            }
-          ]
-        }
+        "type": "CHOICE",
+        "members": [
+          {
+            "type": "SEQ",
+            "members": [
+              {
+                "type": "PATTERN",
+                "value": "(0|[1-9][0-9_]*)\\.[0-9][0-9_]*([eE][+-]?[0-9]+)?"
+              },
+              {
+                "type": "CHOICE",
+                "members": [
+                  {
+                    "type": "PATTERN",
+                    "value": "[A-DF-Za-df-z][A-Za-z0-9]*"
+                  },
+                  {
+                    "type": "PATTERN",
+                    "value": "[eE][A-Za-z][A-Za-z0-9]*"
+                  },
+                  {
+                    "type": "PATTERN",
+                    "value": "[eE]"
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "type": "SEQ",
+            "members": [
+              {
+                "type": "PATTERN",
+                "value": "[1-9][0-9_]*"
+              },
+              {
+                "type": "CHOICE",
+                "members": [
+                  {
+                    "type": "PATTERN",
+                    "value": "[A-DF-Za-df-z][A-Za-z0-9]*"
+                  },
+                  {
+                    "type": "PATTERN",
+                    "value": "[eE][A-Za-z][A-Za-z0-9]*"
+                  },
+                  {
+                    "type": "PATTERN",
+                    "value": "[eE]"
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "type": "SEQ",
+            "members": [
+              {
+                "type": "STRING",
+                "value": "0"
+              },
+              {
+                "type": "CHOICE",
+                "members": [
+                  {
+                    "type": "PATTERN",
+                    "value": "[ACDF-NP-WYZacdf-np-wyz][A-Za-z0-9]*"
+                  },
+                  {
+                    "type": "PATTERN",
+                    "value": "[eEoObBxX][A-Za-z][A-Za-z0-9]*"
+                  },
+                  {
+                    "type": "PATTERN",
+                    "value": "[eEoObBxX]"
+                  }
+                ]
+              }
+            ]
+          }
+        ]
       }
     },
     "string": {

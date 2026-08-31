@@ -41,12 +41,30 @@ export class EvalErr extends Error { constructor(msg: string) { super(msg); } }
 
 export type Diag = { severity: string; id?: string; message: string; path: string; code?: string };
 
-// ---------------- units (SI subset) ----------------
-const UNITS: Record<string, { dim: string; factor: number }> = {
-  s: { dim: 'Time', factor: 1 }, ms: { dim: 'Time', factor: 1e-3 },
-  us: { dim: 'Time', factor: 1e-6 }, ns: { dim: 'Time', factor: 1e-9 },
-};
-const BASE_UNIT: Record<string, string> = { Time: 's' };
+// ---------------- dimensions as exponent vectors (§3.16) ----------------
+// two dimension expressions are equal iff their base-exponent vectors
+// are; the normalized key string is the canonical identity
+export type DimVec = Record<string, number>;
+export function keyOfVec(v: DimVec): string {
+  return Object.entries(v).filter(([, e]) => e !== 0)
+    .sort(([a], [b]) => a < b ? -1 : 1)
+    .map(([n, e]) => e === 1 ? n : `${n}^${e}`)
+    .join('*');   // '' = dimensionless
+}
+export function vecOfKey(key: string): DimVec {
+  const v: DimVec = {};
+  if (!key) return v;
+  for (const p of key.split('*')) {
+    const [n, e] = p.split('^');
+    v[n] = (v[n] ?? 0) + (e ? Number(e) : 1);
+  }
+  return v;
+}
+export function vecCombine(a: DimVec, b: DimVec, sign: 1 | -1): DimVec {
+  const out = { ...a };
+  for (const [n, e] of Object.entries(b)) out[n] = (out[n] ?? 0) + sign * e;
+  return out;
+}
 
 // ---------------- resolved types ----------------
 export type RT = any;
@@ -64,14 +82,104 @@ export class Env {
   roots = new Map<string, Value>();
   diagnostics: Diag[] = [];
   constEval?: (name: string) => any;   // installed by the Engine (§4.13)
+  exprEval?: (e: Expr) => any;         // installed by the Engine (unit factors)
   onConstDiag?: (d: Diag) => void;     // installed by the checker
   private constDiagSeen = new Set<string>();
+
+  // ---- unit / dimension name spaces (§3.16; separate from values/types) ----
+  dimDecls = new Map<string, { terms?: { name: string; exp: number }[] }>();
+  dimMemo = new Map<string, DimVec>();
+  unitDecls = new Map<string, { dim?: string; factor?: Expr; base?: string }>();
+  unitMemo = new Map<string, { key: string; toBase: number }>();
+  baseUnitOf = new Map<string, string>();   // dim key -> base unit symbol
+  spaceDiags: Diag[] = [];                  // unit/dimension-space findings for the checker
+
+  constructor() {
+    // the std SI subset the corpus relies on, as ordinary declarations (D15)
+    this.dimDecls.set('Time', {});
+    this.unitDecls.set('s', { dim: 'Time' });
+    for (const [n, f] of [['ms', 1e-3], ['us', 1e-6], ['ns', 1e-9]] as [string, number][])
+      this.unitDecls.set(n, { factor: { e: 'lit', v: f }, base: 's' });
+  }
+
+  resolveDim(name: string, visiting = new Set<string>()): DimVec {
+    if (this.dimMemo.has(name)) return this.dimMemo.get(name)!;
+    if (visiting.has(name)) throw new Error(`circular dimension ${name}`);
+    const d = this.dimDecls.get(name);
+    if (!d) throw new Error(`unknown dimension ${name}`);
+    let vec: DimVec = {};
+    if (!d.terms) vec = { [name]: 1 };
+    else {
+      visiting.add(name);
+      for (const t of d.terms) {
+        const sub = this.resolveDim(t.name, visiting);
+        for (const [n, e] of Object.entries(sub)) vec[n] = (vec[n] ?? 0) + e * t.exp;
+      }
+      visiting.delete(name);
+    }
+    this.dimMemo.set(name, vec);
+    return vec;
+  }
+  unitInfo(sym: string, visiting = new Set<string>()): { key: string; toBase: number } {
+    if (this.unitMemo.has(sym)) return this.unitMemo.get(sym)!;
+    if (visiting.has(sym)) throw new Error(`circular unit ${sym}`);
+    const u = this.unitDecls.get(sym);
+    if (!u) throw new Error(`unknown unit ${sym}`);
+    let info: { key: string; toBase: number };
+    if (u.dim !== undefined) {
+      const key = keyOfVec(this.resolveDim(u.dim));
+      if (!this.baseUnitOf.has(key)) this.baseUnitOf.set(key, sym);
+      info = { key, toBase: 1 };
+    } else {
+      visiting.add(sym);
+      const b = this.unitInfo(u.base!, visiting);
+      visiting.delete(sym);
+      let f: any = u.factor && (u.factor as any).e === 'lit' ? (u.factor as any).v : undefined;
+      if (f === undefined && u.factor && this.exprEval) { try { f = this.exprEval(u.factor); } catch { } }
+      if (typeof f === 'bigint') f = Number(f);
+      if (typeof f !== 'number') throw new Error(`unit ${sym}: factor is not a numeric constant`);
+      info = { key: b.key, toBase: f * b.toBase };
+    }
+    this.unitMemo.set(sym, info);
+    return info;
+  }
+  // full-space validation for the checker: redeclarations, second base
+  // units, unresolvable factors/dimensions (E4073 and friends)
+  finalizeUnitSpace(): Diag[] {
+    const out: Diag[] = [...this.spaceDiags];
+    const baseSeen = new Map<string, string>();
+    for (const [sym, u] of this.unitDecls) {
+      try {
+        const info = this.unitInfo(sym);
+        if (u.dim !== undefined) {
+          const prev = baseSeen.get(info.key);
+          if (prev) out.push({ severity: 'error', code: 'E4073', message: `second base unit ${sym} for dimension ${info.key} (base is ${prev})`, path: '' });
+          else baseSeen.set(info.key, sym);
+        }
+      } catch (e: any) {
+        const code = /unknown dimension|circular dimension/.test(e.message) ? 'E3003' : 'E4073';
+        out.push({ severity: 'error', code, message: e.message, path: '' });
+      }
+    }
+    return out;
+  }
 
   load(decls: Decl[]) {
     const seen = new Set<string>();
     const claim = (n: string) => { if (seen.has(n)) this.duplicates.push(n); seen.add(n); };
     for (const d of decls) {
-      if ('name' in d && typeof (d as any).name === 'string') claim((d as any).name);
+      // units and dimensions live in their own name spaces (§3.16)
+      if ('name' in d && typeof (d as any).name === 'string' && d.d !== 'unit' && d.d !== 'dimension')
+        claim((d as any).name);
+      if (d.d === 'dimension') {
+        if (this.dimDecls.has(d.name))
+          this.spaceDiags.push({ severity: 'error', code: 'E3001', message: `dimension ${d.name} redeclared`, path: '' });
+        else this.dimDecls.set(d.name, { terms: d.terms });
+      } else if (d.d === 'unit') {
+        if (this.unitDecls.has(d.name))
+          this.spaceDiags.push({ severity: 'error', code: 'E4073', message: `unit ${d.name} redeclared`, path: '' });
+        else this.unitDecls.set(d.name, { dim: d.dim, factor: d.factor, base: d.base });
+      }
       if (d.d === 'type') this.typeAsts.set(d.name, { ast: d.type, tail: d.tail, params: (d as any).params });
       else if (d.d === 'const') this.consts.set(d.name, { expr: d.expr, type: d.type, state: 'unforced' });
       else if (d.d === 'func') this.funcs.set(d.name, { params: d.params, ret: d.ret, body: d.body });
@@ -139,7 +247,8 @@ export class Env {
           const base = this.resolve({ ...(ast as any), preds: undefined }, name);
           return { t: 'pred', base, preds: (ast as any).preds };
         }
-        if (ast.name === 'quantity') return { t: 'quantity', dim: (ast.args[0] as any).name };
+        if (ast.name === 'quantity')
+          return { t: 'quantity', dim: keyOfVec(this.resolveDim((ast.args[0] as any).name)) };
         if (ast.name === 'map' && ast.args.length === 2)
           return { t: 'map', key: this.resolve(ast.args[0]), val: this.resolve(ast.args[1]) };
         if (ast.name === 'ref') return { t: 'ref', target: this.resolve(ast.args[0]) };

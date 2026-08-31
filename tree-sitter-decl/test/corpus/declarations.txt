@@ -149,7 +149,5 @@ unit ms = 1e-3 s
     (identifier))
   (unit_declaration
     (identifier)
-    (additive_expression
-      (unit_literal)
-      (int))
+    (float)
     (identifier)))

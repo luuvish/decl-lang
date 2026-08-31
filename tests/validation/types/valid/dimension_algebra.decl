@@ -1,0 +1,13 @@
+dimension Length
+dimension Speed = Length / Time
+unit m: Length
+unit km = 1000 m
+unit mps: Speed
+type Distance = quantity<Length>
+type Velocity = quantity<Speed>
+const d = 1.5km
+const t = 500ms
+const v: Velocity = d / t
+const total: Distance = d + 2000m
+const scaled: Distance = d * 2
+const ratio = d / 1km

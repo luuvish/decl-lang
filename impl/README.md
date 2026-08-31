@@ -18,7 +18,7 @@ tree-sitter CST  ->  AST (src/parse.ts lowering)
 
 ```bash
 npm install
-node test/e2e.ts          # benchmarks + guide + match + generics (41 checks)
+node test/e2e.ts          # benchmarks + guide + match + generics + quantities (49 checks)
 node test/subsume.ts      # subsumption ⊑ / emptiness unit tests (52 checks)
 node src/conformance.ts   # judge every tests/validation fixture by phase
 ```
@@ -53,7 +53,15 @@ and array sizes evaluate at elaboration time and participate in
 subsumption/emptiness with their values; non-constant references
 (inputs, outputs, context variables, `$referrers`) in endpoints or
 predicate arguments are E4021, and an erroring constant surfaces as a
-compile-time E5xxx diagnostic. Generics (§3.15): instantiation
+compile-time E5xxx diagnostic. Quantities (§3.16): dimensions resolve
+to base-exponent vectors (abelian group — `Speed = Length / Time` and
+`Length * Time ^ -1` are the same type); `unit`/`dimension`
+declarations load into their own name spaces with the std SI subset
+seeded (D15); `+`/`-`/comparison need equal dimensions (E4072), `*`
+and `/` compose vectors (a cancelled vector is a plain number), and
+unknown units, wrong-dimension interchange forms, redeclarations, and
+second base units are E4073 — statically for unit literals and the
+unit space, at binding for documents. Generics (§3.15): instantiation
 substitutes type and value parameters through the declaration body
 (types, sizes, endpoints, member expressions), checks value arguments
 against their parameter types (D14 — the type is the constraint,
@@ -68,5 +76,5 @@ literal-set) defer unprovable membership to binding instead of failing
 statically — the guide and benchmarks rely on both (candidate spec
 clarifications for §3.18/§4.4).
 
-Growing: quantity dimension algebra E4072/E4073 and
-modules/`decl.toml` (Phase 3).
+Growing: modules/`decl.toml` and the std library as real declarations
+(Phase 3).

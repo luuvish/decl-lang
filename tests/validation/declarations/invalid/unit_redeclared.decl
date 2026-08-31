@@ -1,0 +1,4 @@
+// @expect-phase: checking
+// @expect-error: E4073
+// parses; the unit space has its own no-shadowing rule (§3.16)
+unit ms = 2 s

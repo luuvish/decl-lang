@@ -383,10 +383,28 @@ module.exports = grammar({
       /(0|[1-9][0-9_]*)\.[0-9][0-9_]*([eE][+-]?[0-9]+)?/,
       /(0|[1-9][0-9_]*)[eE][+-]?[0-9]+/,
     )),
-    unit_literal: _ => token(prec(1, choice(
-      /(0|[1-9][0-9_]*)\.[0-9][0-9_]*([eE][+-]?[0-9]+)?[A-Za-z][A-Za-z0-9]*/,
-      /(0|[1-9][0-9_]*)[A-Za-z][A-Za-z0-9]*/,
-    ))),
+    // unit symbols are excluded from the overlap with numeric tokens by
+    // construction (no lookahead in tree-sitter regexes): a unit may not
+    // look like a float exponent (e3) and, after a bare 0, may not look
+    // like a radix prefix (o755, xFF, b101) -- those lex as numbers; a
+    // longer genuine unit (250ms, 0s, 1.5e3s, eV) still matches whole
+    unit_literal: _ => token(choice(
+      seq(/(0|[1-9][0-9_]*)\.[0-9][0-9_]*([eE][+-]?[0-9]+)?/, choice(
+        /[A-DF-Za-df-z][A-Za-z0-9]*/,
+        /[eE][A-Za-z][A-Za-z0-9]*/,
+        /[eE]/,
+      )),
+      seq(/[1-9][0-9_]*/, choice(
+        /[A-DF-Za-df-z][A-Za-z0-9]*/,
+        /[eE][A-Za-z][A-Za-z0-9]*/,
+        /[eE]/,
+      )),
+      seq('0', choice(
+        /[ACDF-NP-WYZacdf-np-wyz][A-Za-z0-9]*/,
+        /[eEoObBxX][A-Za-z][A-Za-z0-9]*/,
+        /[eEoObBxX]/,
+      )),
+    )),
     string: _ => token(seq('"', repeat(choice(/[^"\\\n]/, /\\./)), '"')),
     pattern: _ => token(seq('/', repeat1(choice(/[^\/\\\n]/, /\\./)), '/')),
 

@@ -56,7 +56,7 @@ export type Decl =
   | { d: 'output'; name: string; type: TypeAst; expr: Expr }
   | { d: 'input'; name: string; type: TypeAst; fallback?: Expr }
   | { d: 'diagnostic'; name: string; params: { name: string; type: TypeAst }[]; severity: string; template: TemplateParts }
-  | { d: 'dimension'; name: string }
-  | { d: 'unit'; name: string }
+  | { d: 'dimension'; name: string; terms?: { name: string; exp: number }[] }
+  | { d: 'unit'; name: string; dim?: string; factor?: Expr; base?: string }
   | { d: 'import' }
   | { d: 're_export' };

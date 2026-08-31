@@ -7,6 +7,8 @@ import type { RT } from '../src/semantics.ts';
 import { subsumes, structurallyEmpty } from '../src/subsume.ts';
 
 const prelude = `
+dimension time
+dimension size
 func is_even(n: int): bool = n % 2 == 0
 func is_pos(n: int): bool = n > 0
 func divisible_by(d: int): (int) => bool = (n) => n % d == 0

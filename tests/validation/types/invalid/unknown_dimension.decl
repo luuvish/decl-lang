@@ -1,0 +1,4 @@
+// @expect-phase: checking
+// @expect-error: E3003
+// parses; quantity<D> needs a declared dimension
+type Bad = quantity<Warp>

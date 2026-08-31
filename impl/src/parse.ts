@@ -85,8 +85,15 @@ function lowerDecl(n: Node): Decl | null {
         params: kids(n, 'parameter').map(p => ({ name: p.namedChildren[0]!.text, type: lowerType(p.namedChildren[1]!) })),
         severity: sev.text, template: lowerTemplateParts(tmpl) };
     }
-    case 'dimension_declaration': return { d: 'dimension', name: req(n, 'name').text };
-    case 'unit_declaration': return { d: 'unit', name: req(n, 'name').text };
+    case 'dimension_declaration': {
+      const e = kid(n, 'dimension_expression');
+      return { d: 'dimension', name: req(n, 'name').text, terms: e ? lowerDimExpr(e) : undefined };
+    }
+    case 'unit_declaration': {
+      const dim = field(n, 'dimension');
+      if (dim) return { d: 'unit', name: req(n, 'name').text, dim: dim.text };
+      return { d: 'unit', name: req(n, 'name').text, factor: lowerExpr(field(n, 'factor')!), base: field(n, 'base')!.text };
+    }
     case 'import_declaration': return { d: 'import' };
     case 're_export_declaration': return { d: 're_export' };
     default: return null;
@@ -191,6 +198,26 @@ function lowerType(n: Node): TypeAst {
       throw new Error(`lowerType: unhandled ${n.type} '${n.text.slice(0, 30)}'`);
   }
 }
+// dimension expressions are abelian-group products: fold each term's
+// exponent, negating after `/` (§3.16)
+function lowerDimExpr(n: Node): { name: string; exp: number }[] {
+  const out: { name: string; exp: number }[] = [];
+  let sign = 1;
+  for (const c of n.children) {
+    if (!c) continue;
+    if (!c.isNamed) { if (c.text === '/') sign = -1; else if (c.text === '*') sign = 1; continue; }
+    if (c.type === 'dimension_term') {
+      const id = c.namedChildren.find(x => x && x.type === 'identifier')!;
+      const num = c.namedChildren.find(x => x && x.type === 'int');
+      let exp = num ? Number(num.text) : 1;
+      if (c.children.some(x => x && !x.isNamed && x.text === '-')) exp = -exp;
+      out.push({ name: id!.text, exp: exp * sign });
+      sign = 1;
+    }
+  }
+  return out;
+}
+
 function constNum(n: Node): any {
   if (n.type === 'number_literal') {
     const neg = n.text.trimStart().startsWith('-');

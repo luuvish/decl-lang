@@ -3,16 +3,11 @@
 import {
   ABSENT, DeferSig, Env, EvalErr, Taint,
   cmpPath, isArr, isClo, isMap, isQ, isRange, isRec, isRef, parsePath, pathStr, valueEq,
+  keyOfVec, vecCombine, vecOfKey,
 } from './semantics.ts';
 import type { Diag, RecInst, RT, Seg, Slot } from './semantics.ts';
 import type { Expr, TemplateParts } from './ast.ts';
 import { subsumes } from './subsume.ts';
-
-const UNITS: Record<string, { dim: string; factor: number }> = {
-  s: { dim: 'Time', factor: 1 }, ms: { dim: 'Time', factor: 1e-3 },
-  us: { dim: 'Time', factor: 1e-6 }, ns: { dim: 'Time', factor: 1e-9 },
-};
-const BASE_UNIT: Record<string, string> = { Time: 's' };
 
 type Scope = { inst: RecInst | null; locals: Map<string, any>; rootName: string };
 type Pre = { __pre: 'obj'; entries: [string, PreVal][] } | { __pre: 'arr'; items: ({ spread: boolean; v: PreVal })[] };
@@ -26,6 +21,7 @@ export class Engine {
   constructor(env: Env) {
     this.env = env;
     env.constEval = (name: string) => this.forceConst(name, '');   // §4.13 elaboration-time constants
+    env.exprEval = (e: Expr) => this.ev(e, { inst: null, locals: new Map(), rootName: '' });
   }
 
   // ---------- expression evaluation ----------
@@ -33,8 +29,9 @@ export class Engine {
     switch (e.e) {
       case 'lit': return e.v;
       case 'unitlit': {
-        const u = UNITS[e.unit]; if (!u) throw new EvalErr(`unknown unit ${e.unit}`);
-        return { __q: true, dim: u.dim, value: e.num * u.factor };
+        let u: { key: string; toBase: number };
+        try { u = this.env.unitInfo(e.unit); } catch (err: any) { throw new EvalErr(err.message); }
+        return { __q: true, dim: u.key, value: e.num * u.toBase };
       }
       case 'paren': return this.ev(e.x, sc);
       case 'mapcomp': {
@@ -198,6 +195,33 @@ export class Engine {
     }
     return this.ev(e, sc);
   }
+  // quantity arithmetic (§3.16): +/-/compare need equal dimensions;
+  // * and / compose exponent vectors; a vector cancelling to zero is a
+  // plain number; a bare int/float scales a quantity
+  qArith(op: string, l: any, r: any): any {
+    if (op === '+' || op === '-') {
+      if (!isQ(l) || !isQ(r)) throw new EvalErr(`\`${op}\` mixes quantity and plain number`);
+      if (l.dim !== r.dim) throw new EvalErr(`quantity dimension mismatch: ${l.dim || '1'} vs ${r.dim || '1'}`);
+      return { __q: true, dim: l.dim, value: op === '+' ? l.value + r.value : l.value - r.value };
+    }
+    if (['<', '<=', '>', '>='].includes(op)) {
+      if (!isQ(l) || !isQ(r) || l.dim !== r.dim) throw new EvalErr('quantity dimension mismatch in comparison');
+      if (op === '<') return l.value < r.value;
+      if (op === '<=') return l.value <= r.value;
+      if (op === '>') return l.value > r.value;
+      return l.value >= r.value;
+    }
+    const num = (x: any) => typeof x === 'number' ? x : typeof x === 'bigint' ? Number(x) : null;
+    const lm = isQ(l) ? l.value : num(l);
+    const rm = isQ(r) ? r.value : num(r);
+    if (lm === null || rm === null) throw new EvalErr(`bad operands for ${op}`);
+    if (op === '/' && rm === 0) throw new EvalErr('division by zero');
+    const vec = vecCombine(isQ(l) ? vecOfKey(l.dim) : {}, isQ(r) ? vecOfKey(r.dim) : {}, op === '*' ? 1 : -1);
+    const value = op === '*' ? lm * rm : lm / rm;
+    if (!isFinite(value)) throw new EvalErr('non-finite');
+    const key = keyOfVec(vec);
+    return key === '' ? value : { __q: true, dim: key, value };
+  }
   iterate(v: any): any[] {
     if (v && v.__pre) return this.matArr(v);
     if (isArr(v)) return v.items;
@@ -230,6 +254,8 @@ export class Engine {
       throw new EvalErr('in: bad container');
     }
     if (l === ABSENT || r === ABSENT) throw new EvalErr('absent consumed');
+    if ((isQ(l) || isQ(r)) && ['+', '-', '*', '/', '<', '<=', '>', '>='].includes(op))
+      return this.qArith(op, l, r);
     const bothI = typeof l === 'bigint' && typeof r === 'bigint';
     const bothF = typeof l === 'number' && typeof r === 'number';
     const bothS = typeof l === 'string' && typeof r === 'string';
@@ -433,10 +459,12 @@ export class Engine {
         if (raw && raw.__jobj) {
           const es = new Map(raw.entries);
           if (es.size === 2 && es.has('value') && es.has('unit')) {
-            const u = UNITS[es.get('unit') as string];
-            if (!u || u.dim !== rt.dim) return fail(`unit of wrong dimension`, 'E4073');
+            let u: { key: string; toBase: number };
+            try { u = this.env.unitInfo(es.get('unit') as string); }
+            catch { return fail(`unknown unit ${es.get('unit')}`, 'E4073'); }
+            if (u.key !== rt.dim) return fail(`unit of wrong dimension`, 'E4073');
             const num = es.get('value');
-            return { __q: true, dim: rt.dim, value: Number(num) * u.factor };
+            return { __q: true, dim: rt.dim, value: Number(num) * u.toBase };
           }
         }
         return fail('expected quantity');
@@ -778,7 +806,7 @@ export class Engine {
       if (typeof x === 'bigint') return x.toString();
       if (typeof x === 'number') return fmtF(x);
       if (typeof x === 'string') return JSON.stringify(x);
-      if (isQ(x)) return `{"value":${fmtF(x.value)},"unit":${JSON.stringify(BASE_UNIT[x.dim])}}`;
+      if (isQ(x)) return `{"value":${fmtF(x.value)},"unit":${JSON.stringify(this.env.baseUnitOf.get(x.dim) ?? x.dim)}}`;
       if (isRef(x)) return JSON.stringify(pathStr(x.segs, rootName));
       if (isArr(x)) return `[${x.items.map(go).filter((s: any) => s !== undefined).join(',')}]`;
       if (isMap(x)) return `{${[...x.entries.entries()].map(([k, v]: any) => `${JSON.stringify(k)}:${go(v)}`).filter((s: any) => !s.endsWith(':undefined')).join(',')}}`;

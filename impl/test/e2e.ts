@@ -242,5 +242,49 @@ output b: Bounded<string, 4> = { items: ["a", "b"] }
   check('size violation surfaces', env2.diagnostics.length > mark, JSON.stringify(env2.diagnostics));
 }
 
+console.log('== quantity dimension algebra (§3.16) ==');
+{
+  const src = `
+dimension Length
+dimension Speed = Length / Time
+unit m: Length
+unit km = 1000 m
+unit mps: Speed
+type Trip = {
+    dist: quantity<Length>
+    dur: quantity<Time>
+    const speed: quantity<Speed> = dist / dur
+    const ratio = dist / 1km
+}
+output trip: Trip = { dist: 3km, dur: 500ms }
+`;
+  const { decls, errors } = parseSource(src);
+  check('quantity module parses', errors.length === 0);
+  check('quantity module checks clean', checkModule(decls).length === 0, JSON.stringify(checkModule(decls).slice(0, 3)));
+  const env = new Env(); env.load(decls);
+  const eng = new Engine(env);
+  env.finalizeUnitSpace();
+  const o = env.outputs[0];
+  const sc = { inst: null, locals: new Map<string, any>(), rootName: o.name };
+  env.roots.set(o.name, eng.bind(eng.ev(o.expr, sc), env.resolve(o.type), [o.name], null, sc));
+  eng.forceAll(env.roots.get('trip'), true);
+  eng.validateAll('');
+  check('quantity module binds clean', env.diagnostics.length === 0, JSON.stringify(env.diagnostics.slice(0, 2)));
+  const speed = get(eng, ['trip', 'speed']) as any;
+  check('dimensions compose', speed.dim === 'Length*Time^-1' && speed.value === 6000);
+  check('cancelled vector is a number', get(eng, ['trip', 'ratio']) === 3);
+  const ser = eng.serialize(env.roots.get('trip'), 'trip');
+  check('derived-unit input normalized to base', ser.includes('"dist":{"value":3000.0,"unit":"m"}'), ser);
+  check('composed dimension serializes with its base unit', ser.includes('"unit":"mps"'), ser);
+  // interchange form through a derived unit
+  const env2 = new Env(); env2.load(parseSource(src).decls);
+  const eng2 = new Engine(env2);
+  const sc2 = { inst: null, locals: new Map<string, any>(), rootName: 't' };
+  const doc = readJson('{"dist":{"value":2,"unit":"km"},"dur":{"value":1,"unit":"s"}}');
+  const inst = eng2.bind(doc, env2.resolve({ k: 'named', name: 'Trip', args: [] } as any), ['t'], null, sc2);
+  eng2.forceAll(inst, true);
+  check('interchange km converts to base', (eng2.resolveSegs as any) && (inst.slots.get('dist')!.value as any).value === 2000);
+}
+
 console.log(`\nTOTAL ${pass} ok, ${fail} failed`);
 process.exitCode = fail > 0 ? 1 : 0;

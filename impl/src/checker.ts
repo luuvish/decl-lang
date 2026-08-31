@@ -24,9 +24,10 @@ export function checkModule(decls: Decl[]): Diag[] {
 
   const env = new Env();
   env.load(decls);
-  new Engine(env);                     // installs env.constEval (§4.13)
+  new Engine(env);                     // installs env.constEval / env.exprEval (§4.13, §3.16)
   env.onConstDiag = d => out.push(d);  // constant-evaluation errors surface here
   for (const n of env.duplicates) report('E3001', `duplicate name ${n} in module`);
+  for (const d of env.finalizeUnitSpace()) out.push(d);   // §3.16 unit/dimension spaces
 
   // ---------- §4.13: constant positions ----------
   let curTParams = new Set<string>();
@@ -172,7 +173,9 @@ export function checkModule(decls: Decl[]): Diag[] {
   };
 
   const mapResolveErr = (msg: string, where: string) => {
-    if (/unknown type/.test(msg)) report('E3003', `${msg} (in ${where})`);
+    if (/unknown dimension|circular dimension/.test(msg)) report('E3003', `${msg} (in ${where})`);
+    else if (/unknown unit/.test(msg)) report('E4073', `${msg} (in ${where})`);
+    else if (/unknown type/.test(msg)) report('E3003', `${msg} (in ${where})`);
     else if (/generic arity/.test(msg)) report('E4022', `${msg} (in ${where})`);
     else if (/outside parameter/.test(msg)) report('E4023', `${msg} (in ${where})`);
     else if (/non-constant value argument/.test(msg)) report('E4021', `${msg} (in ${where})`);
@@ -324,6 +327,9 @@ export function checkModule(decls: Decl[]): Diag[] {
       const cxD = { ...cx0, vars: new Map(cx0.vars) };
       for (const p of d.params) cxD.vars.set(p.name, { rt: tryResolve(env, p.type), abs: false });
       d.template.forEach(p => { if (typeof p !== 'string') infer(cxD, p); });
+    } else if (d.d === 'unit' && d.factor) {
+      const bad = constViolation(d.factor);
+      if (bad) report('E4021', `non-constant unit factor for ${d.name}: ${bad} (§3.16)`);
     }
   }
   return out;

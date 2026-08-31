@@ -4,7 +4,7 @@
 // a form whose type cannot be determined yields `unknown` (rt: null) and
 // suppresses downstream judgments rather than guessing.
 import type { Expr, TypeAst } from './ast.ts';
-import { Env } from './semantics.ts';
+import { Env, keyOfVec, vecCombine, vecOfKey } from './semantics.ts';
 import type { RT } from './semantics.ts';
 import { subsumes } from './subsume.ts';
 
@@ -12,8 +12,6 @@ export type Ty = { rt: RT | null; abs: boolean };
 const UNK: Ty = { rt: null, abs: false };
 const PRIM = (name: string): RT => ({ t: 'prim', name });
 const BOOL: Ty = { rt: PRIM('bool'), abs: false };
-
-const UNIT_DIMS: Record<string, string> = { s: 'Time', ms: 'Time', us: 'Time', ns: 'Time' };
 
 export interface ICtx {
   env: Env;
@@ -202,7 +200,10 @@ export function requireVal(cx: ICtx, e: Expr, ty: Ty, what: string): Ty {
 export function infer(cx: ICtx, e: Expr): Ty {
   switch (e.e) {
     case 'lit': return { rt: { t: 'lit', v: e.v }, abs: false };
-    case 'unitlit': return { rt: { t: 'quantity', dim: UNIT_DIMS[e.unit] ?? '?' }, abs: false };
+    case 'unitlit': {
+      try { return { rt: { t: 'quantity', dim: cx.env.unitInfo(e.unit).key }, abs: false }; }
+      catch (err: any) { cx.report('E4073', err.message); return UNK; }
+    }
     case 'template': {
       for (const p of e.parts) if (typeof p !== 'string') requireVal(cx, p, infer(cx, p), 'in a template');
       return { rt: PRIM('string'), abs: false };
@@ -370,7 +371,37 @@ function inferBin(cx: ICtx, e: Expr & { e: 'bin' }): Ty {
   if (op === '==' || op === '!=' || op === 'matches') return BOOL;
   const lk = numKind(l.rt), rk = numKind(r.rt);
   const cmp = ['<', '<=', '>', '>='].includes(op);
-  if (l.rt && r.rt && lk && rk && lk !== rk && !(lk === 'quantity' && rk === 'quantity'))
+  if (lk === 'quantity' || rk === 'quantity') {
+    // §3.16: +/-/compare need equal dimensions; * and / compose them;
+    // a bare int/float scales; a cancelled vector is a plain number
+    const qDim = (rt: RT | null): string | null =>
+      rt && rt.t === 'quantity' ? rt.dim : rt && rt.t === 'pred' && rt.base.t === 'quantity' ? rt.base.dim : null;
+    if (op === '+' || op === '-' || cmp) {
+      if (l.rt && r.rt) {
+        if (lk !== 'quantity' || rk !== 'quantity')
+          cx.report('E4071', `\`${op}\` mixes quantity and ${lk === 'quantity' ? rk : lk}`);
+        else {
+          const a = qDim(l.rt), b = qDim(r.rt);
+          if (a !== null && b !== null && a !== b)
+            cx.report('E4072', `\`${op}\` on quantities of different dimensions (${a || '1'} vs ${b || '1'})`);
+        }
+      }
+      return cmp ? BOOL : { rt: lk === 'quantity' ? l.rt : r.rt, abs: false };
+    }
+    if (op === '*' || op === '/') {
+      if (!l.rt || !r.rt) return UNK;
+      const lv = qDim(l.rt), rv = qDim(r.rt);
+      if ((lv === null && lk !== 'int' && lk !== 'float') || (rv === null && rk !== 'int' && rk !== 'float')) {
+        cx.report('E4071', `\`${op}\` on a non-numeric operand`);
+        return UNK;
+      }
+      const key = keyOfVec(vecCombine(lv !== null ? vecOfKey(lv) : {}, rv !== null ? vecOfKey(rv) : {}, op === '*' ? 1 : -1));
+      return { rt: key === '' ? PRIM('float') : { t: 'quantity', dim: key }, abs: false };
+    }
+    cx.report('E4071', `\`${op}\` on quantity operands`);
+    return UNK;
+  }
+  if (l.rt && r.rt && lk && rk && lk !== rk)
     cx.report('E4071', `\`${op}\` mixes ${lk} and ${rk} operands`);
   if (cmp) return BOOL;
   if (['&', '^', '<<', '>>'].includes(op)) {

@@ -1,4 +1,5 @@
 // @expect-phase: checking
 // @expect-error: E4014
 // parses; at most one non-record object arm is allowed in a union
+dimension time
 type Bad = map<string, int> | quantity<time>

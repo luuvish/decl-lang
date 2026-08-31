@@ -1,0 +1,4 @@
+// @expect-phase: checking
+// @expect-error: E4073
+// parses; a unit literal must name a declared unit
+const bad = 5parsec

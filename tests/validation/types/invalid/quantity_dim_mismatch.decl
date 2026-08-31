@@ -1,0 +1,6 @@
+// @expect-phase: checking
+// @expect-error: E4072
+// parses; + needs equal dimensions (§3.16)
+dimension Length
+unit m: Length
+const bad = 1s + 1m
