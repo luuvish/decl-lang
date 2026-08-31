@@ -46,7 +46,8 @@ export type Expr =
   | { e: 'call'; fn: Expr; args: Expr[] }
   | { e: 'member'; x: Expr; name: string; safe?: boolean }
   | { e: 'index'; x: Expr; i: Expr }
-  | { e: 'with'; base: Expr; patch: Expr };
+  | { e: 'with'; base: Expr; patch: Expr }
+  | { e: 'match'; subject: Expr; arms: { v: string; type?: TypeAst; body: Expr }[] };
 
 export type Decl =
   | { d: 'type'; name: string; params?: { name: string; type?: TypeAst }[]; type: TypeAst; tail?: ElseTail }

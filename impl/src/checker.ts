@@ -13,6 +13,8 @@ import type { Decl, Expr, MemberAst, TypeAst } from './ast.ts';
 import { Env } from './semantics.ts';
 import type { Diag, RT } from './semantics.ts';
 import { subsumes, structurallyEmpty } from './subsume.ts';
+import { makeCtx, infer, checkExpr, requireVal, applyGuards, guardsOf, tryResolve } from './infer.ts';
+import type { ICtx, Ty } from './infer.ts';
 
 export function checkModule(decls: Decl[]): Diag[] {
   const out: Diag[] = [];
@@ -202,6 +204,79 @@ export function checkModule(decls: Decl[]): Diag[] {
     else if (d.d === 'func') { d.params.forEach(p => walkType(p.type, 0)); walkType(d.ret, 0); walkExpr(d.body); }
     else if (d.d === 'output') { walkType(d.type, 0); walkExpr(d.expr); }
     else if (d.d === 'input') { walkType(d.type, 0); if (d.fallback) walkExpr(d.fallback); }
+  }
+
+  // ---------- expression pass: inference, assignability, absence (§3.18, §4.10) ----------
+  const cx0 = makeCtx(env, report);
+  const isBool = (t: Ty) => !t.rt || (t.rt.t === 'prim' && t.rt.name === 'bool')
+    || (t.rt.t === 'lit' && typeof t.rt.v === 'boolean');
+
+  const recCtx = (cx: ICtx, rt: RT, ast?: TypeAst): ICtx => {
+    const vars = new Map(cx.vars);
+    for (const m of rt.members) {
+      const mt: RT | null = m.conj ? { t: 'isectN', arms: m.conj } : (m.type ?? null);
+      vars.set(m.name, { rt: mt, abs: m.kind === 'opt' });
+    }
+    vars.set('$this', { rt, abs: false });
+    if (ast && ast.k === 'record')
+      for (const m of ast.members)
+        if (m.m === 'context') vars.set(m.variable, { rt: tryResolve(env, m.type), abs: false });
+    return { ...cx, vars, present: new Set(cx.present), nonnull: new Set(cx.nonnull) };
+  };
+
+  const checkMemberAst = (cx: ICtx, m: MemberAst) => {
+    if (m.m === 'value' && m.dflt) checkExpr(cx, m.dflt, tryResolve(env, m.type));
+    else if (m.m === 'derived') checkExpr(cx, m.expr, tryResolve(env, m.type));
+    else if (m.m === 'assert') {
+      if (!isBool(requireVal(cx, m.cond, infer(cx, m.cond), 'as an assert condition')))
+        report('E4001', 'assert condition is not bool');
+      if (m.tail?.t === 'inline') m.tail.template.forEach(p => { if (typeof p !== 'string') infer(cx, p); });
+      if (m.tail?.t === 'ref') m.tail.args.forEach(a => requireVal(cx, a, infer(cx, a), 'as a diagnostic argument'));
+    } else if (m.m === 'when') {
+      if (!isBool(requireVal(cx, m.cond, infer(cx, m.cond), 'as a when condition')))
+        report('E4001', 'when condition is not bool');
+      const c2 = applyGuards(cx, guardsOf(m.cond, true));
+      m.body.forEach(b => checkMemberAst(c2, b));
+    }
+  };
+
+  const seenRecs = new Set<RT>();
+  const checkRecordExprs = (rt: RT, cx: ICtx, ast?: TypeAst) => {
+    if (rt.t !== 'rec' || seenRecs.has(rt)) return;
+    seenRecs.add(rt);
+    const cxR = recCtx(cx, rt, ast);
+    for (const m of rt.members) {
+      if (m.kind === 'der' && m.expr) checkExpr(cxR, m.expr, m.type ?? null);
+      if (m.kind === 'dflt' && m.dflt) checkExpr(cxR, m.dflt, m.type ?? null);
+      if (m.type?.t === 'rec') checkRecordExprs(m.type, cxR);
+      if (m.type?.t === 'arr' && m.type.elem?.t === 'rec') checkRecordExprs(m.type.elem, cxR);
+      if (m.type?.t === 'map' && m.type.val?.t === 'rec') checkRecordExprs(m.type.val, cxR);
+    }
+    for (const a of rt.asserts) {
+      if (a.kind === 'assert') checkMemberAst(cxR, { m: 'assert', name: a.name, cond: a.cond, tail: a.tail });
+      else if (a.kind === 'when') checkMemberAst(cxR, { m: 'when', cond: a.cond, body: a.body });
+    }
+  };
+
+  for (const [name, decl] of env.typeAsts) {
+    if (decl.params?.length) continue;
+    let rt: RT;
+    try { rt = env.resolve({ k: 'named', name, args: [] }); } catch { continue; }
+    checkRecordExprs(rt, cx0, decl.ast);
+  }
+  for (const d of decls) {
+    if (d.d === 'const') checkExpr(cx0, d.expr, tryResolve(env, d.type));
+    else if (d.d === 'func') {
+      const cxF = { ...cx0, vars: new Map(cx0.vars) };
+      for (const p of d.params) cxF.vars.set(p.name, { rt: tryResolve(env, p.type), abs: false });
+      checkExpr(cxF, d.body, tryResolve(env, d.ret));
+    } else if (d.d === 'output') checkExpr(cx0, d.expr, tryResolve(env, d.type));
+    else if (d.d === 'input' && d.fallback) checkExpr(cx0, d.fallback, tryResolve(env, d.type));
+    else if (d.d === 'diagnostic') {
+      const cxD = { ...cx0, vars: new Map(cx0.vars) };
+      for (const p of d.params) cxD.vars.set(p.name, { rt: tryResolve(env, p.type), abs: false });
+      d.template.forEach(p => { if (typeof p !== 'string') infer(cxD, p); });
+    }
   }
   return out;
 }

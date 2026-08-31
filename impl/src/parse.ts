@@ -308,9 +308,12 @@ function lowerExpr(n: Node): Expr {
     case 'array_comprehension':
       return { e: 'comp', head: lowerExpr(req(n, 'head')), clauses: kids(n, 'for_clause').map(lowerFor) };
     case 'match_expression': {
-      // v0.1 impl: match lowers to nothing the corpus needs at runtime yet;
-      // keep structure for future checker work
-      return { e: 'lit', v: null };
+      const arms = kids(n, 'match_arm').map(a => {
+        const body = a.childForFieldName('body')!;
+        const others = a.namedChildren.filter((c): c is Node => !!c && c.id !== body.id);
+        return { v: others[0]!.text, type: others[1] ? lowerType(others[1]) : undefined, body: lowerExpr(body) };
+      });
+      return { e: 'match', subject: lowerExpr(req(n, 'subject')), arms };
     }
     default:
       if (BIN_NODES.has(n.type)) {

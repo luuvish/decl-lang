@@ -1,0 +1,5 @@
+// @expect-phase: checking
+// @expect-error: E3019
+// parses; a comprehension variable cannot reuse an enclosing name
+const x = 1
+const bad = [x * 2 for x in [1, 2]]

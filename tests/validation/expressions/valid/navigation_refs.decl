@@ -1,5 +1,13 @@
+type Service = { name: string, ... }
+type Link = { source: ref<Service>, target: ref<Service>, ... }
+type Node = { ports: { si: int = 0, ... }, ... }
+type Tls = { cert_path: string = "", ... }
+type Cfg = { buffer?: int, tls?: Tls, limits: map<string, int> = {}, ... }
+input nodes: map<string, Node>
+input cfg: Cfg
+input edge: Link
 const inbound = $referrers(Link, "target")
-const deep = nodes["dom0"].ports.si
+const deep = nodes["dom0"]?.ports?.si ?? 0
 const safe = cfg.tls?.cert_path ?? "none"
-const own = "buffer" in cfg && cfg.limits["search"] > 10
+const own = "buffer" in cfg && (cfg.limits["search"] ?? 0) > 10
 const path = std.ref.path(edge.source)

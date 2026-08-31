@@ -1,0 +1,6 @@
+// @expect-phase: checking
+// @expect-error: E4080
+// parses; `with` cannot update a derived member
+type T = { a: int, const b = a + 1, ... }
+input t: T
+const bad = t with { b: 3 }

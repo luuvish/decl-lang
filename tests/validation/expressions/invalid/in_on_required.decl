@@ -1,0 +1,6 @@
+// @expect-phase: checking
+// @expect-error: E4054
+// parses; `in` asks presence, which only optional members can lack
+type Cfg = { host: string, ... }
+input cfg: Cfg
+const bad = "host" in cfg

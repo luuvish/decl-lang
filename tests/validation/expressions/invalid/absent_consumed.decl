@@ -1,0 +1,6 @@
+// @expect-phase: checking
+// @expect-error: E4050
+// parses; a maybe-absent member fed to arithmetic without ?. / ?? / guard
+type Cfg = { buffer?: int, ... }
+input cfg: Cfg
+const bad = cfg.buffer + 1

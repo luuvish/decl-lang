@@ -53,8 +53,8 @@ export type RT = any;
 export class Env {
   typeAsts = new Map<string, { ast: TypeAst; tail?: ElseTail; params?: any[] }>();
   typeMemo = new Map<string, RT>();
-  consts = new Map<string, { expr: Expr; value?: Value; state: string }>();
-  funcs = new Map<string, { params: { name: string }[]; body: Expr }>();
+  consts = new Map<string, { expr: Expr; type?: TypeAst; value?: Value; state: string }>();
+  funcs = new Map<string, { params: { name: string; type?: TypeAst }[]; ret?: TypeAst; body: Expr }>();
   duplicates: string[] = [];
   outputs: { name: string; type: TypeAst; expr: Expr }[] = [];
   inputs = new Map<string, { type: TypeAst; fallback?: Expr }>();
@@ -69,8 +69,8 @@ export class Env {
     for (const d of decls) {
       if ('name' in d && typeof (d as any).name === 'string') claim((d as any).name);
       if (d.d === 'type') this.typeAsts.set(d.name, { ast: d.type, tail: d.tail, params: (d as any).params });
-      else if (d.d === 'const') this.consts.set(d.name, { expr: d.expr, state: 'unforced' });
-      else if (d.d === 'func') this.funcs.set(d.name, { params: d.params, body: d.body });
+      else if (d.d === 'const') this.consts.set(d.name, { expr: d.expr, type: d.type, state: 'unforced' });
+      else if (d.d === 'func') this.funcs.set(d.name, { params: d.params, ret: d.ret, body: d.body });
       else if (d.d === 'output') this.outputs.push(d);
       else if (d.d === 'input') this.inputs.set(d.name, { type: d.type, fallback: d.fallback });
       else if (d.d === 'diagnostic') this.diags.set(d.name, d as any);

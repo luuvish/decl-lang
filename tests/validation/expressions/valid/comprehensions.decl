@@ -1,3 +1,10 @@
+func f(x: int): int = x * 2
+func p(x: int): bool = x > 0
+func q(x: int): bool = x < 100
+const items = [1, 2, 3]
+const sizes = [8, 16]
+type Svc = { name: string, ... }
+input services: Svc[]
 const xs = [f(x) for x in items if p(x) if q(x)]
 const grid = [
     { id: i, size: s }

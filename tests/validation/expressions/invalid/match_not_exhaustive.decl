@@ -1,0 +1,8 @@
+// @expect-phase: checking
+// @expect-error: E4101
+// parses; variant "b" is covered by no arm
+type P = "a" | "b"
+input p: P
+const bad = match p {
+    (x: "a") => 1
+}

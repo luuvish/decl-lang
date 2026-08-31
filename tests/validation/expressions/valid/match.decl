@@ -1,3 +1,7 @@
+type Circle = { kind: "circle", radius: float, ... }
+type Rect = { kind: "rect", w: float, h: float, ... }
+type Tri = { kind: "tri", b: float, h: float, ... }
+input shape: Circle | Rect | Tri
 const area = match shape {
     (c: Circle) => 3.14 * c.radius * c.radius
     (r: Rect) => r.w * r.h

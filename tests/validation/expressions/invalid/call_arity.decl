@@ -1,0 +1,5 @@
+// @expect-phase: checking
+// @expect-error: E4062
+// parses; arity is checked statically
+func add(a: int, b: int): int = a + b
+const bad = add(1)

@@ -1,3 +1,5 @@
+const name = "svc"
+const port = 8080
 const s = "line\nwith \"escapes\" and A"
 const t = `svc-${name}:${port + 1}`
 type P = /[a-z][a-z0-9_-]*/

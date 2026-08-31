@@ -1,0 +1,5 @@
+// @expect-phase: checking
+// @expect-error: E4003
+// parses; a closed record admits no undeclared construction members
+type T = { a: int }
+output o: T = { a: 1, b: 2 }

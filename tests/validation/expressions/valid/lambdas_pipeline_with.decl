@@ -1,3 +1,8 @@
+type Tls = { on: bool = false, ... }
+type Cfg = { workers: int = 4, tls: Tls = {}, ... }
+input services: { public: bool, ... }[]
+const xs = [1, 2, 3]
+input base: Cfg
 const count = services |> std.array.filter((s) => s.public) |> std.array.count
 const acc = std.array.fold(xs, 0, (a, x) => a + x)
 const prod = base with { workers: 32, tls: base.tls with { on: true } }

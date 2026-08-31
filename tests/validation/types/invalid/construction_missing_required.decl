@@ -1,0 +1,5 @@
+// @expect-phase: checking
+// @expect-error: E4002
+// parses; a required member must be provided in the construction
+type T = { a: int, ... }
+output o: T = { }

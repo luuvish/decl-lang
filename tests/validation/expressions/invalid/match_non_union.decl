@@ -1,0 +1,7 @@
+// @expect-phase: checking
+// @expect-error: E4103
+// parses; the subject is not a discriminable union
+input n: int
+const bad = match n {
+    (x: int) => 1
+}

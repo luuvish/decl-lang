@@ -8,6 +8,7 @@ import { fileURLToPath } from 'node:url';
 import { initParser, parseSource } from '../src/parse.ts';
 import { Env, isArr, readJson } from '../src/semantics.ts';
 import { Engine } from '../src/engine.ts';
+import { checkModule } from '../src/checker.ts';
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '../..');
 let pass = 0, fail = 0;
@@ -150,6 +151,63 @@ console.log('== guide: end to end ==');
   check('guide inbound via referrers', isArr(inbound) && inbound.items.length === 2);
   const ser = eng.serialize(env.roots.get('demo'), 'demo');
   check('guide serialized refs relative', ser.includes('"$.links[0]"'), ser.slice(0, 120));
+}
+
+console.log('== static checker: corpus stays clean ==');
+{
+  for (const f of ['docs/examples/01_interconnect.decl', 'docs/examples/02_config.decl', 'docs/examples/03_fixtures.decl']) {
+    const { decls, errors } = parseSource(readFileSync(join(root, f), 'utf8'));
+    const checks = errors.length ? [] : checkModule(decls);
+    check(`${f.split('/').pop()} check-clean`, errors.length === 0 && checks.length === 0, JSON.stringify(checks.slice(0, 3)));
+  }
+  const md = readFileSync(join(root, 'docs/guide/01_overview_by_example.md'), 'utf8');
+  const guideSrc = [...md.matchAll(/```decl\n([\s\S]*?)```/g)].map(m => m[1]).join('\n');
+  const checks = checkModule(parseSource(guideSrc).decls);
+  check('guide check-clean', checks.length === 0, JSON.stringify(checks.slice(0, 3)));
+}
+
+console.log('== match evaluation ==');
+{
+  const src = `
+type Circle = { kind: "circle", r: float }
+type Rect = { kind: "rect", w: float, h: float }
+type Shape = Circle | Rect
+type Proto = "http" | "grpc" | "tcp"
+input shape: Shape
+input proto: Proto
+output area: float = match shape {
+    (c: Circle) => 3.0 * c.r * c.r
+    (r: Rect) => r.w * r.h
+}
+output port: int = match proto {
+    (p: "http") => 80
+    (p: "grpc") => 50051
+    (other) => 0
+}
+`;
+  const { decls, errors } = parseSource(src);
+  check('match module parses', errors.length === 0);
+  check('match module checks clean', checkModule(decls).length === 0, JSON.stringify(checkModule(decls).slice(0, 3)));
+  const env = new Env(); env.load(decls);
+  const eng = new Engine(env);
+  const scS = { inst: null, locals: new Map<string, any>(), rootName: 'shape' };
+  env.roots.set('shape', eng.bind(readJson('{"kind":"rect","w":2.0,"h":3.0}'), env.resolve(env.inputs.get('shape')!.type), ['shape'], null, scS));
+  const scP = { inst: null, locals: new Map<string, any>(), rootName: 'proto' };
+  env.roots.set('proto', eng.bind(readJson('"grpc"'), env.resolve(env.inputs.get('proto')!.type), ['proto'], null, scP));
+  for (const o of env.outputs) {
+    const sc = { inst: null, locals: new Map<string, any>(), rootName: o.name };
+    env.roots.set(o.name, eng.bind(eng.ev(o.expr, sc), env.resolve(o.type), [o.name], null, sc));
+  }
+  check('record-variant arm selected', env.roots.get('area') === 6);
+  check('literal-variant arm selected', env.roots.get('port') === 50051n);
+  const src2 = src.replace('"grpc"', '"grpc"');
+  const env2 = new Env(); env2.load(parseSource(src2).decls);
+  const eng2 = new Engine(env2);
+  const sc2 = { inst: null, locals: new Map<string, any>(), rootName: 'proto' };
+  env2.roots.set('proto', eng2.bind(readJson('"tcp"'), env2.resolve(env2.inputs.get('proto')!.type), ['proto'], null, sc2));
+  const o2 = env2.outputs.find(o => o.name === 'port')!;
+  const scO = { inst: null, locals: new Map<string, any>(), rootName: 'port' };
+  check('catch-all arm selected', eng2.ev(o2.expr, scO) === 0n);
 }
 
 console.log(`\nTOTAL ${pass} ok, ${fail} failed`);

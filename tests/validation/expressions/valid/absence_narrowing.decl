@@ -1,0 +1,6 @@
+type Cfg = { buffer?: int?, limits: map<string, int> = {}, ... }
+input cfg: Cfg
+const b1 = cfg.buffer ?? 128
+const b2 = if "buffer" in cfg then cfg.buffer else 128
+const b3 = !("buffer" in cfg) || (cfg.buffer ?? 0) >= 0
+const b4 = "x" in cfg.limits && cfg.limits["x"] > 1

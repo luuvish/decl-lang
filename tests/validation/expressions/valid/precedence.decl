@@ -1,3 +1,14 @@
+const x = 4
+const y = 2
+const z = 1
+const p = true
+const q = false
+const r = 3
+const s = 3
+input v: int?
+const w = true
+const u = false
+const n = 7
 const a = 1 + 2 * 3 - 4 / 2 % 3
 const b = x << 2 | y & 7 ^ ~z
 const c = p && !q || r == s

@@ -6,6 +6,7 @@ import {
 } from './semantics.ts';
 import type { Diag, RecInst, RT, Seg, Slot } from './semantics.ts';
 import type { Expr, TemplateParts } from './ast.ts';
+import { subsumes } from './subsume.ts';
 
 const UNITS: Record<string, { dim: string; factor: number }> = {
   s: { dim: 'Time', factor: 1 }, ms: { dim: 'Time', factor: 1e-3 },
@@ -98,6 +99,20 @@ export class Engine {
         return { __pre: 'arr', items };
       }
       case 'if': return this.truthy(this.ev(e.c, sc)) ? this.ev(e.t, sc) : this.ev(e.f, sc);
+      case 'match': {
+        const subj = this.deref(this.ev(e.subject, sc));
+        const run = (arm: { v: string; body: Expr }) => {
+          const l2 = new Map(sc.locals); l2.set(arm.v, subj);
+          return this.ev(arm.body, { ...sc, locals: l2 });
+        };
+        let catchAll: { v: string; body: Expr } | null = null;
+        for (const arm of e.arms) {
+          if (!arm.type) { catchAll = arm; continue; }
+          if (this.memberOf(subj, this.env.resolve(arm.type), sc)) return run(arm);
+        }
+        if (catchAll) return run(catchAll);
+        throw new EvalErr('match: no arm matched');
+      }
       case 'lambda': return { __clo: true, params: e.params, body: e.body, scope: sc };
       case 'un': {
         const x = this.ev(e.x, sc);
@@ -106,7 +121,15 @@ export class Engine {
         if (e.op === '~') return ~(x as bigint);
         throw new EvalErr('un');
       }
-      case 'bin': return this.binop(e.op, e.l, e.r, sc);
+      case 'bin': {
+        if (e.op === '|>') {   // first-argument insertion (§4.9)
+          const call: Expr = e.r.e === 'call'
+            ? { e: 'call', fn: e.r.fn, args: [e.l, ...e.r.args] }
+            : { e: 'call', fn: e.r, args: [e.l] };
+          return this.ev(call, sc);
+        }
+        return this.binop(e.op, e.l, e.r, sc);
+      }
       case 'member': {
         const x0 = this.ev(e.x, sc);
         if (e.safe && (x0 === null || x0 === ABSENT)) return ABSENT;
@@ -153,6 +176,16 @@ export class Engine {
         return { __pre: 'obj', entries };
       }
     }
+  }
+  // does a value belong to a type? (match arm selection) — bound records
+  // answer by their bound type; raw values by a silent trial binding
+  memberOf(v: any, rt: RT, sc: Scope): boolean {
+    if (isRec(v)) return subsumes(this.env, v.rt, rt);
+    const mark = this.env.diagnostics.length;
+    this.noReg++;
+    try { this.bind(v, rt, ['<match>'], null, sc); return true; }
+    catch { return false; }
+    finally { this.noReg--; this.env.diagnostics.length = mark; }
   }
   evCallee(e: Expr, sc: Scope): any {
     if (e.e === 'member') {

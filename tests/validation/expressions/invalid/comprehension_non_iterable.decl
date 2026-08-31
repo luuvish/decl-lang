@@ -1,0 +1,5 @@
+// @expect-phase: checking
+// @expect-error: E4115
+// parses; maps are not directly iterable (use std.map.keys / values)
+input m: map<string, int>
+const bad = [k for k in m]

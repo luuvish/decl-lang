@@ -1,0 +1,7 @@
+// @expect-phase: checking
+// @expect-error: E4051
+// parses; member access on a possibly-null expression needs ?.
+type Tls = { cert: string = "", ... }
+type Cfg = { tls: Tls?, ... }
+input cfg: Cfg
+const bad = cfg.tls.cert
