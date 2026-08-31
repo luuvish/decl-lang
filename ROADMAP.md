@@ -31,7 +31,7 @@ never migrated wholesale or modified from this repo.
 | Phase | Name | Deliverables | Status |
 |---|---|---|---|
 | 0 | Specification (v0.1 freeze) | design docs, spec chapters, stdlib spec, validation corpus desk check, evaluator spike | **done — v0.1 frozen 2026-08-31** |
-| 1 | Grammar & parser | tree-sitter grammar + corpus tests + fixtures | in progress (grammar, corpus, fixtures, highlights done; playground pending) |
+| 1 | Grammar & parser | tree-sitter grammar + corpus tests + fixtures | **done — 2026-08-31** |
 | 2 | Reference implementation core (TS) | type check, evaluation, constraint validation, serialization + conformance runner | not started |
 | 3 | Modules & standard library | import/export, manifest + lock, `std.*` | not started |
 | 4 | CLI & tooling | `decl` CLI, formatter, minimal LSP | not started |
@@ -120,22 +120,24 @@ finding resolved (`spike/FINDINGS.md`).
 
 ---
 
-## Phase 1 — Grammar & parser
+## Phase 1 — Grammar & parser — done (2026-08-31)
 
-Goal: a tree-sitter grammar written against the new spec, in a state where
-"every spec example parses".
+`tree-sitter-decl/`: grammar.js against chapter 11, with the §2.9 newline
+rule and nested block comments in the external scanner; corpus tests
+(incl. error-recovery smoke); `queries/highlights.scm`; wasm build and
+playground verified.
 
-- Write `grammar.js` from the formal grammar chapter and `tree-sitter
-  generate` (the legacy grammar in `../decl-lang/tree-sitter-decl/` serves as
-  a rewrite source and reference)
-- Build corpus tests from per-chapter examples and counterexamples
-- Rewrite `tests/validation/` fixtures in the new syntax (keep `@expect-*`
-  metadata; only `@expect-phase: parsing` is judged at this stage)
-- Highlight queries and playground setup
+`tests/validation/`: 40 fresh fixtures with `@expect-*` metadata and the
+parsing-phase runner (`node tests/run_parsing.mjs`). The legacy 142
+fixtures were not ported 1:1 — they test Decl 1 syntax; the corpus is
+authored against v0.1 and keeps growing through Phase 2, which also picks
+up the deferred `@expect-phase: checking/binding` fixtures.
 
-**Exit criteria**: all spec and guide examples parse · all valid fixtures
-parse · all parsing-phase invalid fixtures are detected · error-recovery
-smoke test (remaining declarations still parse in a broken file).
+**Exit criteria, verified**: every complete spec/guide example parses
+(51/51 module-level blocks; the rest are deliberate fragments) · all
+valid fixtures parse · all parsing-phase invalid fixtures are detected
+(including one fixture per rejected-syntax form) · error-recovery smoke
+green (corpus `:error` tests).
 
 ---
 
