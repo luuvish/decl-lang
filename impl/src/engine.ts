@@ -64,6 +64,11 @@ export class Engine {
           if (v !== undefined) return v;
         }
         if (this.env.consts.has(e.name)) return this.forceConst(e.name, sc.rootName);
+        if (this.env.funcs.has(e.name)) {
+          const f = this.env.funcs.get(e.name)!;
+          return { __clo: true, params: f.params.map(p => p.name), body: f.body,
+                   scope: { inst: null, locals: new Map(), rootName: sc.rootName } };
+        }
         if (e.name === 'std') return { __std: true, path: [] };
         if (this.env.roots.has(e.name)) return this.env.roots.get(e.name);
         throw new EvalErr(`unknown name ${e.name}`);
@@ -469,6 +474,21 @@ export class Engine {
         return fail('no union arm matches');
       }
       case 'rec': return this.bindRecord(raw, rt, path, parent, sc);
+      case 'pred': {
+        const v = this.bind(raw, rt.base, path, parent, sc);
+        for (const p of rt.preds) {
+          const fn = this.ev(p, { inst: null, locals: new Map(), rootName: sc.rootName });
+          let ok: any;
+          try { ok = this.call(fn, [v], sc); } catch { ok = false; }
+          if (ok !== true) return fail(`predicate ${JSON.stringify(exprName(p))} not satisfied`);
+        }
+        return v;
+      }
+      case 'isectN': {
+        let v: any = raw;
+        for (const arm of rt.arms) v = this.bind(raw, arm, path, parent, sc);
+        return v;
+      }
       case 'any': return raw;
     }
     throw new Error(`bind: unhandled ${rt.t}`);
@@ -762,6 +782,11 @@ function rawJson(v: any): string {
   throw new Error('rawJson');
 }
 
+function exprName(e: any): string {
+  if (e?.e === 'name') return e.name;
+  if (e?.e === 'call') return exprName(e.fn);
+  return '<predicate>';
+}
 function mentionsReferrersLocal(e: any): boolean {
   if (!e || typeof e !== 'object') return false;
   if (e.e === 'referrers') return true;

@@ -1,0 +1,4 @@
+// @expect-phase: checking
+// @expect-error: E4015
+// parses; map keys must be string-shaped
+type Bad = map<int, string>

@@ -1,3 +1,5 @@
+type Port = { mode: "si" | "mi", ... }
+type Service = { name: string, ... }
 type ByName = { [string]: int }
 type Ports = { [/[sm]i[0-9]+/]: Port }
 type Grid = int[4][2]

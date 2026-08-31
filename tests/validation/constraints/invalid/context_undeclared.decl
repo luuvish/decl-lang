@@ -1,0 +1,7 @@
+// @expect-phase: checking
+// @expect-error: E4094
+// parses; using $parent without a context declaration violates D30
+type Node = {
+    width: int
+    const total = $parent.width + width
+}

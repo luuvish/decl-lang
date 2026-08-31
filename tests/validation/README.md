@@ -16,11 +16,11 @@ Phase 2 conformance runner picks them up).
 | Feature | valid | invalid (parsing) | invalid (later phases) |
 |---|---|---|---|
 | lexical | 4 | 4 | 0 |
-| types | 9 | 3 | 1 |
+| types | 9 | 3 | 9 |
 | expressions | 5 | 3 | 1 |
-| declarations | 3 | 3 | 0 |
-| constraints | 2 | 1 | 1 |
-| **total** | **23** | **14** | **3** |
+| declarations | 3 | 3 | 2 |
+| constraints | 2 | 1 | 2 |
+| **total** | **23** | **14** | **14** |
 
 Update this table in the same change whenever fixtures are added or
 removed (AGENTS.md rule).

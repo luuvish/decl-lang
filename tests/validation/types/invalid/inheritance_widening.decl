@@ -1,0 +1,5 @@
+// @expect-phase: checking
+// @expect-error: E4030
+// parses; an override may only narrow the inherited member type
+type Base = { width: 1..8, ... }
+type Bad = Base { width: 1..16 }

@@ -51,9 +51,11 @@ const BASE_UNIT: Record<string, string> = { Time: 's' };
 export type RT = any;
 
 export class Env {
-  typeAsts = new Map<string, { ast: TypeAst; tail?: ElseTail }>();
+  typeAsts = new Map<string, { ast: TypeAst; tail?: ElseTail; params?: any[] }>();
   typeMemo = new Map<string, RT>();
   consts = new Map<string, { expr: Expr; value?: Value; state: string }>();
+  funcs = new Map<string, { params: { name: string }[]; body: Expr }>();
+  duplicates: string[] = [];
   outputs: { name: string; type: TypeAst; expr: Expr }[] = [];
   inputs = new Map<string, { type: TypeAst; fallback?: Expr }>();
   diags = new Map<string, { params: { name: string }[]; severity: string; template: TemplateParts }>();
@@ -62,9 +64,13 @@ export class Env {
   diagnostics: Diag[] = [];
 
   load(decls: Decl[]) {
+    const seen = new Set<string>();
+    const claim = (n: string) => { if (seen.has(n)) this.duplicates.push(n); seen.add(n); };
     for (const d of decls) {
-      if (d.d === 'type') this.typeAsts.set(d.name, { ast: d.type, tail: d.tail });
+      if ('name' in d && typeof (d as any).name === 'string') claim((d as any).name);
+      if (d.d === 'type') this.typeAsts.set(d.name, { ast: d.type, tail: d.tail, params: (d as any).params });
       else if (d.d === 'const') this.consts.set(d.name, { expr: d.expr, state: 'unforced' });
+      else if (d.d === 'func') this.funcs.set(d.name, { params: d.params, body: d.body });
       else if (d.d === 'output') this.outputs.push(d);
       else if (d.d === 'input') this.inputs.set(d.name, { type: d.type, fallback: d.fallback });
       else if (d.d === 'diagnostic') this.diags.set(d.name, d as any);
@@ -87,7 +93,8 @@ export class Env {
       case 'union': return { t: 'union', arms: ast.arms.map(a => this.resolve(a)) };
       case 'isect': {
         const arms = ast.arms.map(a => this.resolve(a));
-        return this.mergeIsect(arms, name);
+        if (arms.every(a => a.t === 'rec')) return this.mergeIsect(arms, name);
+        return { t: 'isectN', arms };
       }
       case 'record': {
         const rt: any = { t: 'rec', name, members: [], asserts: [], open: ast.open, tail: undefined };
@@ -95,8 +102,16 @@ export class Env {
         return rt;
       }
       case 'named': {
+        if ((ast as any).preds && (ast as any).preds.length) {
+          const base = this.resolve({ ...(ast as any), preds: undefined }, name);
+          return { t: 'pred', base, preds: (ast as any).preds };
+        }
         if (ast.name === 'quantity') return { t: 'quantity', dim: (ast.args[0] as any).name };
+        if (ast.name === 'map' && ast.args.length === 2)
+          return { t: 'map', key: this.resolve(ast.args[0]), val: this.resolve(ast.args[1]) };
         if (ast.name === 'ref') return { t: 'ref', target: this.resolve(ast.args[0]) };
+        if (['int', 'float', 'bool', 'string'].includes(ast.name) && !ast.args.length && !ast.ext)
+          return { t: 'prim', name: ast.name };
         const decl = this.typeAsts.get(ast.name);
         if (!decl) throw new Error(`unknown type ${ast.name}`);
         let base: RT;
@@ -143,7 +158,7 @@ export class Env {
   }
   mergeIsect(arms: RT[], name?: string): RT {
     const recs = arms.filter(a => a.t === 'rec');
-    if (recs.length !== arms.length) throw new Error('spike: non-record intersection unsupported');
+    if (recs.length !== arms.length) return { t: 'isectN', arms };
     const merged: any = { t: 'rec', name, open: recs.every(r => r.open), tail: undefined, members: [], asserts: [] };
     for (const r of recs) {
       for (const m of r.members) {

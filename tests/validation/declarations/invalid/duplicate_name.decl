@@ -1,0 +1,5 @@
+// @expect-phase: checking
+// @expect-error: E3001
+// parses; one module-level namespace, one binding per name
+type A = { x: int, ... }
+type A = { y: int, ... }

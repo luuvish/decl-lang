@@ -1,0 +1,6 @@
+// @expect-phase: checking
+// @expect-error: E4012
+// parses; the checker must reject a structurally empty intersection
+type Lo = 0..10
+type Hi = 20..30
+type Bad = Lo & Hi

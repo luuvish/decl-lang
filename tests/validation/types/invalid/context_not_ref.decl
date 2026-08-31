@@ -1,0 +1,7 @@
+// @expect-phase: checking
+// @expect-error: E4094
+// parses; $parent context declarations must be ref<...> (D30)
+type Bad = {
+    $parent: int
+    const w = $parent + 1
+}

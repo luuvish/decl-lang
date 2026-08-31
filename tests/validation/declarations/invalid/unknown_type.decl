@@ -1,0 +1,4 @@
+// @expect-phase: checking
+// @expect-error: E3003
+// parses; the checker must reject an unresolved type name
+type Bad = { s: Missing, ... }

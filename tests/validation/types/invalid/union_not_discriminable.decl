@@ -1,0 +1,6 @@
+// @expect-phase: checking
+// @expect-error: E4013
+// parses; record union arms share the same literal tuple
+type A = { kind: "a", x: int, ... }
+type B = { kind: "a", y: int, ... }
+type Bad = A | B

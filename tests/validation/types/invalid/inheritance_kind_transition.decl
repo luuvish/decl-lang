@@ -1,0 +1,5 @@
+// @expect-phase: checking
+// @expect-error: E4032
+// parses; a derived member cannot be overridden as required
+type Base = { width: int, const w = width * 2, ... }
+type Bad = Base { w: int }

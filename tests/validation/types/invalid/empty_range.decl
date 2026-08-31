@@ -1,0 +1,4 @@
+// @expect-phase: checking
+// @expect-error: E4011
+// parses; the checker must reject a structurally empty range
+type Bad = 10..3

@@ -1,3 +1,5 @@
+type Parent = { label?: string, port: 1..65535, ... }
+type Base = { mode: "si" | "mi", width: int = 1, ... }
 type Child = Parent { label: string, port: 1..1024 }
 type Narrowed = Base {
     mode: "si"

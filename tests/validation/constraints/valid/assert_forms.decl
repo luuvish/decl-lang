@@ -1,3 +1,8 @@
+type Service = { name: string, width: int = 8, ... }
+diagnostic width_mismatch(src: int, dst: int) {
+    severity = error
+    message = `width ${src} != ${dst}`
+}
 type Link = {
     source: ref<Service>
     target: ref<Service>
