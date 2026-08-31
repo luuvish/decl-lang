@@ -1,0 +1,16 @@
+{
+  "grammars": [
+    {
+      "name": "decl",
+      "scope": "source.decl",
+      "file-types": ["decl"],
+      "injection-regex": "^decl$"
+    }
+  ],
+  "metadata": {
+    "version": "0.1.0",
+    "license": "MIT",
+    "description": "Decl grammar for tree-sitter (spec chapter 11)",
+    "links": { "repository": "https://github.com/luuvish/decl-lang" }
+  }
+}

@@ -1,0 +1,241 @@
+==================
+record with all member kinds and context declarations
+==================
+type Service = {
+    $parent: ref<{ data_width: int, ... }>
+    $key: /[sm]i[0-9]+/
+    name: /[a-z][a-z0-9-]*/
+    port: 1..65535 = 8080
+    description?: string
+    const endpoint = `${name}:${port}`
+    assert scaled: replicas in 1..16
+        else warn `out of range`
+    when enabled {
+        assert present: "cert" in $this
+    }
+    ...
+}
+---
+
+(module
+  (type_declaration
+    (identifier)
+    (record_type
+      (context_declaration
+        (context_variable)
+        (named_type
+          (qualified_name
+            (identifier))
+          (type_arguments
+            (record_type
+              (value_member
+                (identifier)
+                (named_type
+                  (qualified_name
+                    (identifier))))
+              (open_marker)))))
+      (context_declaration
+        (context_variable)
+        (pattern))
+      (value_member
+        (identifier)
+        (pattern))
+      (value_member
+        (identifier)
+        (range_type
+          (number_literal
+            (int))
+          (number_literal
+            (int)))
+        (int))
+      (value_member
+        (identifier)
+        (named_type
+          (qualified_name
+            (identifier))))
+      (derived_member
+        (identifier)
+        (template_string
+          (interpolation
+            (identifier))
+          (template_chars)
+          (interpolation
+            (identifier))))
+      (assert_member
+        (identifier)
+        (relational_expression
+          (identifier)
+          (range_expression
+            (int)
+            (int)))
+        (else_clause
+          (severity)
+          (template_string
+            (template_chars))))
+      (when_member
+        (identifier)
+        (assert_member
+          (identifier)
+          (relational_expression
+            (string)
+            (context_variable))))
+      (open_marker))))
+
+==================
+unions, intersections, generics, quantity, ref
+==================
+type Protocol = "http" | "grpc" | "tcp"
+type Prod = Service & Hardened & Regional
+type Pair<T> = { first: T, second: T }
+type Vec<T, N: 1..1024> = T[N]
+type Delay = quantity<Time>
+type Link = { source: ref<Service>, target: ref<Service> }
+---
+
+(module
+  (type_declaration
+    (identifier)
+    (union_type
+      (string)
+      (string)
+      (string)))
+  (type_declaration
+    (identifier)
+    (intersection_type
+      (named_type
+        (qualified_name
+          (identifier)))
+      (named_type
+        (qualified_name
+          (identifier)))
+      (named_type
+        (qualified_name
+          (identifier)))))
+  (type_declaration
+    (identifier)
+    (type_parameters
+      (type_parameter
+        (identifier)))
+    (record_type
+      (value_member
+        (identifier)
+        (named_type
+          (qualified_name
+            (identifier))))
+      (value_member
+        (identifier)
+        (named_type
+          (qualified_name
+            (identifier))))))
+  (type_declaration
+    (identifier)
+    (type_parameters
+      (type_parameter
+        (identifier))
+      (type_parameter
+        (identifier)
+        (range_type
+          (number_literal
+            (int))
+          (number_literal
+            (int)))))
+    (array_type
+      (named_type
+        (qualified_name
+          (identifier)))
+      (identifier)))
+  (type_declaration
+    (identifier)
+    (named_type
+      (qualified_name
+        (identifier))
+      (type_arguments
+        (named_type
+          (qualified_name
+            (identifier))))))
+  (type_declaration
+    (identifier)
+    (record_type
+      (value_member
+        (identifier)
+        (named_type
+          (qualified_name
+            (identifier))
+          (type_arguments
+            (named_type
+              (qualified_name
+                (identifier))))))
+      (value_member
+        (identifier)
+        (named_type
+          (qualified_name
+            (identifier))
+          (type_arguments
+            (named_type
+              (qualified_name
+                (identifier)))))))))
+
+==================
+maps, arrays, predicates, extension
+==================
+type Ports = { [/si[0-9]+/]: Port }
+type Grid = int[4][2]
+type Sized = Port[1..8]
+type Aligned = int(is_aligned, divisible_by(4))
+type Child = Parent { label: string, port: 1..1024 }
+---
+
+(module
+  (type_declaration
+    (identifier)
+    (map_type
+      (pattern)
+      (named_type
+        (qualified_name
+          (identifier)))))
+  (type_declaration
+    (identifier)
+    (array_type
+      (array_type
+        (named_type
+          (qualified_name
+            (identifier)))
+        (int))
+      (int)))
+  (type_declaration
+    (identifier)
+    (array_type
+      (named_type
+        (qualified_name
+          (identifier)))
+      (range_expression
+        (int)
+        (int))))
+  (type_declaration
+    (identifier)
+    (named_type
+      (qualified_name
+        (identifier))
+      (predicate_arguments
+        (identifier)
+        (call
+          (identifier)
+          (int)))))
+  (type_declaration
+    (identifier)
+    (named_type
+      (qualified_name
+        (identifier))
+      (record_type
+        (value_member
+          (identifier)
+          (named_type
+            (qualified_name
+              (identifier))))
+        (value_member
+          (identifier)
+          (range_type
+            (number_literal
+              (int))
+            (number_literal
+              (int))))))))

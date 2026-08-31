@@ -1,0 +1,155 @@
+==================
+type declaration with range and else
+==================
+export type Port = 1..65535
+    else error `port must be between 1 and 65535`
+---
+
+(module
+  (type_declaration
+    (identifier)
+    (range_type
+      (number_literal
+        (int))
+      (number_literal
+        (int)))
+    (else_clause
+      (severity)
+      (template_string
+        (template_chars)))))
+
+==================
+const, func, output, input
+==================
+const max_services = 64
+func clog2(n: int): int = std.math.clog2(n)
+output demo: Service = { name: "gateway" }
+input external: Service = { name: "fallback" }
+---
+
+(module
+  (const_declaration
+    (identifier)
+    (int))
+  (func_declaration
+    (identifier)
+    (parameter
+      (identifier)
+      (named_type
+        (qualified_name
+          (identifier))))
+    (named_type
+      (qualified_name
+        (identifier)))
+    (call
+      (member_access
+        (member_access
+          (identifier)
+          (identifier))
+        (identifier))
+      (identifier)))
+  (output_declaration
+    (identifier)
+    (named_type
+      (qualified_name
+        (identifier)))
+    (object
+      (object_entry
+        (identifier)
+        (string))))
+  (input_declaration
+    (identifier)
+    (named_type
+      (qualified_name
+        (identifier)))
+    (object
+      (object_entry
+        (identifier)
+        (string)))))
+
+==================
+diagnostic declaration
+==================
+diagnostic width_mismatch(src: int, dst: int) {
+    severity = error
+    message = `source width ${src} != target width ${dst}`
+}
+---
+
+(module
+  (diagnostic_declaration
+    (identifier)
+    (parameter
+      (identifier)
+      (named_type
+        (qualified_name
+          (identifier))))
+    (parameter
+      (identifier)
+      (named_type
+        (qualified_name
+          (identifier))))
+    (severity_key)
+    (severity)
+    (message_key)
+    (template_string
+      (template_chars)
+      (interpolation
+        (identifier))
+      (template_chars)
+      (interpolation
+        (identifier)))))
+
+==================
+imports and re-export
+==================
+import { Service, Port as PublicPort } from "./schemas.decl"
+import * as topo from "./topology.decl"
+export { Service } from "./schemas.decl"
+---
+
+(module
+  (import_declaration
+    (named_imports
+      (import_item
+        (identifier))
+      (import_item
+        (identifier)
+        (identifier)))
+    (string))
+  (import_declaration
+    (identifier)
+    (string))
+  (re_export_declaration
+    (import_item
+      (identifier))
+    (string)))
+
+==================
+dimension and unit declarations
+==================
+dimension Time
+dimension Speed = Length / Time
+unit s: Time
+unit ms = 1e-3 s
+---
+
+(module
+  (dimension_declaration
+    (identifier))
+  (dimension_declaration
+    (identifier)
+    (dimension_expression
+      (dimension_term
+        (identifier))
+      (dimension_term
+        (identifier))))
+  (unit_declaration
+    (identifier)
+    (identifier))
+  (unit_declaration
+    (identifier)
+    (additive_expression
+      (unit_literal)
+      (int))
+    (identifier)))

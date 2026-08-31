@@ -1,0 +1,17 @@
+==================
+error recovery keeps later declarations
+:error
+==================
+type Broken = {
+    name string
+}
+type Fine = { name: string }
+---
+
+==================
+unterminated declaration recovers
+:error
+==================
+const x =
+type Next = { ok: bool }
+---

@@ -1,0 +1,307 @@
+==================
+operators, if, with, template
+==================
+const a = 1 + 2 * 3 - (4 / 2) % 3
+const b = x << 2 | y & 7 ^ ~z
+const c = p && !q || r == s && t != u
+const d = v ?? w
+const e = if c then a else b
+const f = base with { width: 128, tls: base.tls with { on: true } }
+const g = `svc-${i}:${port}`
+---
+
+(module
+  (const_declaration
+    (identifier)
+    (additive_expression
+      (additive_expression
+        (int)
+        (multiplicative_expression
+          (int)
+          (int)))
+      (multiplicative_expression
+        (paren_expression
+          (multiplicative_expression
+            (int)
+            (int)))
+        (int))))
+  (const_declaration
+    (identifier)
+    (bit_or_expression
+      (shift_expression
+        (identifier)
+        (int))
+      (bit_xor_expression
+        (bit_and_expression
+          (identifier)
+          (int))
+        (unary_expression
+          (identifier)))))
+  (const_declaration
+    (identifier)
+    (binary_expression_or
+      (binary_expression_and
+        (identifier)
+        (unary_expression
+          (identifier)))
+      (binary_expression_and
+        (equality_expression
+          (identifier)
+          (identifier))
+        (equality_expression
+          (identifier)
+          (identifier)))))
+  (const_declaration
+    (identifier)
+    (nullish_expression
+      (identifier)
+      (identifier)))
+  (const_declaration
+    (identifier)
+    (if_expression
+      (identifier)
+      (identifier)
+      (identifier)))
+  (const_declaration
+    (identifier)
+    (with_expression
+      (identifier)
+      (object
+        (object_entry
+          (identifier)
+          (int))
+        (object_entry
+          (identifier)
+          (with_expression
+            (member_access
+              (identifier)
+              (identifier))
+            (object
+              (object_entry
+                (identifier))))))))
+  (const_declaration
+    (identifier)
+    (template_string
+      (template_chars)
+      (interpolation
+        (identifier))
+      (template_chars)
+      (interpolation
+        (identifier)))))
+
+==================
+comprehensions, lambdas, calls, pipeline
+==================
+const xs = [f(x) for x in items if p(x) if q(x)]
+const grid = [
+    { id: i, size: s }
+    for s in sizes
+    for i in 0..<16
+]
+const m = { s.name: s for s in services }
+const n = std.array.count(services)
+const o = services |> std.array.filter((s) => s.public) |> std.array.count
+const q = std.array.fold([p.width for p in items], 1, (a, w) => std.math.max(a, w))
+---
+
+(module
+  (const_declaration
+    (identifier)
+    (array
+      (array_comprehension
+        (call
+          (identifier)
+          (identifier))
+        (for_clause
+          (identifier)
+          (identifier)
+          (call
+            (identifier)
+            (identifier))
+          (call
+            (identifier)
+            (identifier))))))
+  (const_declaration
+    (identifier)
+    (array
+      (array_comprehension
+        (object
+          (object_entry
+            (identifier)
+            (identifier))
+          (object_entry
+            (identifier)
+            (identifier)))
+        (for_clause
+          (identifier)
+          (identifier))
+        (for_clause
+          (identifier)
+          (range_expression
+            (int)
+            (int))))))
+  (const_declaration
+    (identifier)
+    (object
+      (map_comprehension
+        (member_access
+          (identifier)
+          (identifier))
+        (identifier)
+        (for_clause
+          (identifier)
+          (identifier)))))
+  (const_declaration
+    (identifier)
+    (call
+      (member_access
+        (member_access
+          (identifier)
+          (identifier))
+        (identifier))
+      (identifier)))
+  (const_declaration
+    (identifier)
+    (pipe_expression
+      (pipe_expression
+        (identifier)
+        (call
+          (member_access
+            (member_access
+              (identifier)
+              (identifier))
+            (identifier))
+          (lambda
+            (lambda_parameter
+              (identifier))
+            (member_access
+              (identifier)
+              (identifier)))))
+      (member_access
+        (member_access
+          (identifier)
+          (identifier))
+        (identifier))))
+  (const_declaration
+    (identifier)
+    (call
+      (member_access
+        (member_access
+          (identifier)
+          (identifier))
+        (identifier))
+      (array
+        (array_comprehension
+          (member_access
+            (identifier)
+            (identifier))
+          (for_clause
+            (identifier)
+            (identifier))))
+      (int)
+      (lambda
+        (lambda_parameter
+          (identifier))
+        (lambda_parameter
+          (identifier))
+        (call
+          (member_access
+            (member_access
+              (identifier)
+              (identifier))
+            (identifier))
+          (identifier)
+          (identifier))))))
+
+==================
+navigation, refs, referrers, match
+==================
+const inbound = $referrers(Link, "target")
+const first = inbound[0].source
+const deep = nodes["dom0"].ports.si
+const safe = cfg.tls?.cert_path ?? "none"
+const has = "buffer" in cfg && cfg.rate_limits["search"] > 10
+const area = match shape {
+    (c: Circle) => 3.14 * c.radius * c.radius
+    (r: Rect) => r.w * r.h
+    (other) => 0.0
+}
+---
+
+(module
+  (const_declaration
+    (identifier)
+    (referrers_expression
+      (identifier)
+      (string)))
+  (const_declaration
+    (identifier)
+    (member_access
+      (index_access
+        (identifier)
+        (int))
+      (identifier)))
+  (const_declaration
+    (identifier)
+    (member_access
+      (member_access
+        (index_access
+          (identifier)
+          (string))
+        (identifier))
+      (identifier)))
+  (const_declaration
+    (identifier)
+    (nullish_expression
+      (safe_access
+        (member_access
+          (identifier)
+          (identifier))
+        (identifier))
+      (string)))
+  (const_declaration
+    (identifier)
+    (binary_expression_and
+      (relational_expression
+        (string)
+        (identifier))
+      (relational_expression
+        (index_access
+          (member_access
+            (identifier)
+            (identifier))
+          (string))
+        (int))))
+  (const_declaration
+    (identifier)
+    (match_expression
+      (identifier)
+      (match_arm
+        (identifier)
+        (named_type
+          (qualified_name
+            (identifier)))
+        (multiplicative_expression
+          (multiplicative_expression
+            (float)
+            (member_access
+              (identifier)
+              (identifier)))
+          (member_access
+            (identifier)
+            (identifier))))
+      (match_arm
+        (identifier)
+        (named_type
+          (qualified_name
+            (identifier)))
+        (multiplicative_expression
+          (member_access
+            (identifier)
+            (identifier))
+          (member_access
+            (identifier)
+            (identifier))))
+      (match_arm
+        (identifier)
+        (float)))))

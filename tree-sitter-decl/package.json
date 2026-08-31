@@ -1,0 +1,14 @@
+{
+  "name": "tree-sitter-decl",
+  "version": "0.1.0",
+  "description": "Decl grammar for tree-sitter (spec chapter 11)",
+  "license": "MIT",
+  "main": "bindings/node",
+  "devDependencies": {
+    "tree-sitter-cli": "^0.25.0"
+  },
+  "scripts": {
+    "generate": "tree-sitter generate",
+    "test": "tree-sitter test"
+  }
+}
