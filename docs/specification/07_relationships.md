@@ -83,39 +83,50 @@ from a context variable:
   `ports` (§4.2); sibling-only resolution would contradict this
   chapter's own §7.4 example, a defect the §0.6 evaluator spike caught
   in execution.
-- **Context-dependent types.** A type whose member expressions mention
-  `$parent`, `$root`, or `$key` depends on where it is embedded. Such
-  a type is checked **per composition site**, the way generics are
-  checked per instantiation (§3.15): at every member declaration that
-  embeds it, `$parent` is typed as the embedding record, `$key` as the
-  embedding collection's key/index type, `$root` as the root's type.
-  A site that gives the variable no meaning — `$parent` where the type
-  is itself the evaluation root's type, `$key` where the immediate
-  owner is not a collection element — is a compile error **at that
-  site**. Types that avoid these variables stay position-independent
-  and are checked once.
-- Mechanically, the declaration site checks everything *except* the
-  context accesses, and records the type's **context obligations** —
-  which members `$parent` must offer and at what types, whether `$key`
-  is used and how, whether `$root` is reached. Each embedding site
-  then discharges the obligations against its own types; a site that
-  cannot (`items: Port[]` in a record with no `data_width`) fails
-  **there**, naming the unmet obligation — the diagnostic belongs to
-  the consumer's line, not to the library type's declaration. A
-  context-dependent type is, in effect, implicitly parameterized over
-  its owner; the embedding site supplies the argument.
+- **Context declarations — obligations are declared, not inferred**
+  (D30). A named type whose member expressions use `$parent`, `$root`,
+  or `$key` must **declare** them, with the member syntax and the
+  context variable as the name:
 
-```decl
-type Port = {
-    name: PortName
-    width: int = $parent.data_width     // checked at each embedding site
-}
+  ```decl
+  type Port = {
+      $parent: { data_width: DataWidth, ... }   // what my owner must offer
+      name: PortName
+      width: int = $parent.data_width           // $parent is typed by the declaration
+  }
 
-type Router = {
-    data_width: DataWidth
-    ports: Port[]                       // ok: $parent is Router here
-}
-```
+  type Router = {
+      data_width: DataWidth
+      ports: Port[]        // site check: Router ⊑ Port's $parent bound — ok
+  }
+  ```
+
+  - Inside member expressions, the variable **has the declared type**,
+    so the type's body is checked **once, at its declaration** — fully
+    modular, like any position-independent type. The embedding-site
+    check reduces to one subsumption test: the embedding record's type
+    (for `$parent`), the root's type (for `$root`), or the collection's
+    key/index type (for `$key`) must be `⊑` the declared type. A site
+    that fails says so **at that site**, naming both types.
+  - Structural typing keeps declarations decoupled: declare the minimal
+    **open** record you actually read (`{ data_width: DataWidth, ... }`),
+    not some specific owner — any embedder offering it qualifies.
+  - Using a context variable in a named type with no declaration for it
+    is a compile error at the type's declaration. **Exception**: a type
+    expression *lexically nested inside its parent's own declaration*
+    (an inline member type, an inline extension) needs no declaration —
+    its parent is the enclosing record type, statically evident on the
+    page (case 1's arbiter override reads `$parent.ins` this way).
+  - At most one declaration per variable; `$path` and `$this` take none
+    (always `string` and the enclosing type). Inheritance may narrow a
+    context declaration (`⊑` only); intersection conjoins both sides'.
+    Context declarations are not members: they are not data, never
+    serialize, cannot be set or restated, and live in the `$` name
+    space where no member name can collide.
+  - A site that gives a variable no meaning at all — `$parent` where
+    the type is the evaluation root's own type, `$key` where the
+    immediate owner is not a collection element — remains a compile
+    error at that site.
 
 ## 7.4 Reference values
 

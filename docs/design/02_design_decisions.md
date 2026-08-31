@@ -614,6 +614,25 @@ diagnostic width_mismatch(src: int, dst: int) {
 
 ---
 
+### D30. Context obligations are declared, not inferred *(revision, 2026-08-31)*
+
+- A named type using `$parent`, `$root`, or `$key` in member expressions
+  must **declare** each one, member-syntax with the variable as the
+  name: `$parent: { data_width: DataWidth, ... }`. The variable is then
+  *typed by its declaration*, so the type's body checks once, modularly;
+  the embedding site's whole obligation is one subsumption test against
+  the declared bound, failing (if it fails) at the embedder's line.
+- Rationale: inferred obligations made a type's requirements invisible
+  at its interface (against P6) and forced whole-body re-checking per
+  site. Structural typing keeps explicit declarations decoupled — the
+  bound is the minimal open record actually read, not a named owner.
+- Exception: a type expression lexically nested inside its parent's own
+  declaration (inline member types, inline extensions) needs no
+  declaration — the parent is statically evident on the page.
+- Context declarations are not members: never data, never serialized,
+  never settable; one per variable; inheritance narrows them,
+  intersection conjoins them.
+
 ## G. Modules and packages
 
 ### D27. Imports and exports are named; provenance is absolute

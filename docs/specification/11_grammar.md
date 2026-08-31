@@ -134,7 +134,9 @@ func-type       = "(" (type ("," type)*)? ")" "=>" type
 
 ```
 member          = DOC* annotation* ( value-member | const-member
-                                   | assert-member | when-member )
+                                   | assert-member | when-member
+                                   | ctx-member )
+ctx-member      = CTXVAR ":" type                    — §7.3 context declaration (D30)
 value-member    = member-name "?"? ":" type ("=" expr)?
 const-member    = "const" member-name (":" type)? "=" expr
 assert-member   = "assert" IDENT ":" expr else-clause?

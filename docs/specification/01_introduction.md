@@ -103,7 +103,7 @@ and an empty diagnostic list. Binding an external JSON document to
 
 - The design charter
   ([02. Design Decisions](../design/02_design_decisions.md), P1–P7 and
-  D1–D29) binds this specification: no chapter may contradict it. On
+  D1–D30) binds this specification: no chapter may contradict it. On
   discovering a conflict, the chapter is corrected, or the charter is
   revised first.
 - Within the specification, if a chapter's prose and the formal grammar

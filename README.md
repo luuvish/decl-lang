@@ -29,7 +29,7 @@ Design goals:
 ## Status
 
 **Specification v0.1 — frozen (2026-08-31).** Phase 0 is complete: the
-full 13-chapter normative spec, its design charter (P1–P7, D1–D29), an
+full 13-chapter normative spec, its design charter (P1–P7, D1–D30), an
 example-driven guide, three generality benchmark cases, and the
 throwaway evaluator spike that gated the freeze by executing all of it
 end to end (`spike/`, 31/31 checks green). Post-freeze changes follow

@@ -166,7 +166,8 @@ A diagnostic serializes as:
 | E4072 | quantity arithmetic or comparison across dimensions |
 | E4073 | unknown unit, unit of the wrong dimension, or a second base unit for a dimension |
 | E4080 | `with` on a non-record base, updating a derived member, an unknown member, or removing one |
-| E4090 | context variable invalid at this composition site (§7.3) |
+| E4090 | embedding site fails a declared context bound, or gives a context variable no meaning (§7.3) |
+| E4094 | context variable used without a context declaration, or a duplicate/invalid context declaration (§7.3) |
 | E4091 | `$referrers`: first argument not a record type, or no compatible `ref` position |
 | E4092 | `$referrers`: second argument not a string literal naming such a member |
 | E4093 | `ref` position navigating a module `const` or other non-root value (§7.5) |
