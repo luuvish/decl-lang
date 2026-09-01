@@ -1,6 +1,7 @@
-// Conformance runner (ROADMAP Phase 2): judges every fixture under
-// tests/validation by its declared phase.
-//   valid/*                          -> parse clean + static checks clean
+// Conformance judging (ROADMAP Phase 2+): judges fixtures by their
+// declared phase. Usable as a library (the CLI's `decl validate <dir>`)
+// and as a runner over tests/validation.
+//   valid/*                          -> parse + checks clean + outputs evaluate clean
 //   invalid @expect-phase: parsing   -> must fail to parse
 //   invalid @expect-phase: checking  -> parses; static checks report @expect-error
 //   invalid @expect-phase: binding   -> parses; the pipeline reports @expect-error
@@ -8,21 +9,19 @@ import { readFileSync, readdirSync, statSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { initParser, parseSource } from './parse.ts';
-import { Env, readJson } from './semantics.ts';
+import { Env } from './semantics.ts';
 import { Engine } from './engine.ts';
 import { checkModule } from './checker.ts';
 
-const root = join(dirname(fileURLToPath(import.meta.url)), '../..');
-
-function* walk(dir: string): Generator<string> {
-  for (const e of readdirSync(dir)) {
+export function* walkDecl(dir: string): Generator<string> {
+  for (const e of readdirSync(dir).sort()) {
     const p = join(dir, e);
-    if (statSync(p).isDirectory()) yield* walk(p);
+    if (statSync(p).isDirectory()) yield* walkDecl(p);
     else if (p.endsWith('.decl')) yield p;
   }
 }
 
-function runPipeline(decls: any[]) {
+export function runPipeline(decls: any[]) {
   const env = new Env();
   env.load(decls);
   const eng = new Engine(env);
@@ -39,15 +38,13 @@ function runPipeline(decls: any[]) {
   return env.diagnostics;
 }
 
-await initParser();
-let ok = 0, fail = 0;
-for (const file of walk(join(root, 'tests/validation'))) {
-  const rel = file.slice(root.length + 1);
+export type Verdict = { file: string; ok: boolean; detail: string };
+
+export function judgeFixture(file: string, isValid: boolean): Verdict {
   const src = readFileSync(file, 'utf8');
   const meta = Object.fromEntries(
     [...src.matchAll(/\/\/ @([a-z-]+):\s*(.+)/g)].map(m => [m[1], m[2].trim()]),
   );
-  const isValid = rel.includes('/valid/');
   const phase = meta['expect-phase'];
   const wantCode = meta['expect-error'];
   const wantMsg = meta['expect-message'];
@@ -78,8 +75,26 @@ for (const file of walk(join(root, 'tests/validation'))) {
   } else {
     detail = `unknown phase ${phase}`;
   }
-  if (verdict) { ok++; console.log(`  ok   ${rel}`); }
-  else { fail++; console.log(`  FAIL ${rel} ${detail}`); }
+  return { file, ok: verdict, detail };
 }
-console.log(`\n${ok} ok, ${fail} failed`);
-process.exitCode = fail > 0 ? 1 : 0;
+
+export function judgeCorpus(dir: string): Verdict[] {
+  const out: Verdict[] = [];
+  for (const file of walkDecl(dir))
+    out.push(judgeFixture(file, file.includes('/valid/')));
+  return out;
+}
+
+// ---------------- runner ----------------
+if (process.argv[1] && import.meta.url.endsWith(process.argv[1].split('/').pop()!)) {
+  const root = join(dirname(fileURLToPath(import.meta.url)), '../..');
+  await initParser();
+  let ok = 0, fail = 0;
+  for (const v of judgeCorpus(join(root, 'tests/validation'))) {
+    const rel = v.file.slice(root.length + 1);
+    if (v.ok) { ok++; console.log(`  ok   ${rel}`); }
+    else { fail++; console.log(`  FAIL ${rel} ${v.detail}`); }
+  }
+  console.log(`\n${ok} ok, ${fail} failed`);
+  process.exitCode = fail > 0 ? 1 : 0;
+}
