@@ -33,7 +33,7 @@ npm test                  # all of the above
 
 ```bash
 node src/cli.ts check <files...>                      # parse + static checks (module-aware)
-node src/cli.ts eval <file> [--root <name>]           # evaluate outputs -> JSON
+node src/cli.ts evaluate <file> [--root <name>]       # evaluate outputs -> JSON
 node src/cli.ts validate <dir>                        # judge a fixture corpus (@expect-*)
 node src/cli.ts validate <file> --input n=doc.json --expect-errors E4001
 node src/cli.ts fmt <files...> [--check]              # canonical formatting, idempotent

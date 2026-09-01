@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // The `decl` CLI (ROADMAP Phase 4):
 //   decl check <files...>                     parse + static checks (module-aware)
-//   decl eval <file> [--root <name>]          evaluate outputs -> JSON on stdout
+//   decl evaluate <file> [--root <name>]          evaluate outputs -> JSON on stdout
 //   decl validate <dir>                       judge a fixture corpus (@expect-* metadata)
 //   decl validate <file> [--input n=doc.json] [--expect-errors E1,E2]
 //   decl fmt <files...> [--check]             canonical formatting (in place)
@@ -57,7 +57,7 @@ async function main(): Promise<number> {
       if (bad === 0) console.error(`ok: ${positional.length} entry file(s) check clean`);
       return bad ? 1 : 0;
     }
-    case 'eval': {
+    case 'evaluate': {
       const f = positional[0];
       if (!f) return usage();
       const { modules, entry, diags } = openUniverse(f);
@@ -158,7 +158,7 @@ async function main(): Promise<number> {
 function usage(): number {
   console.error(`usage:
   decl check <files...>
-  decl eval <file> [--root <name>]
+  decl evaluate <file> [--root <name>]
   decl validate <dir>
   decl validate <file> [--input name=doc.json] [--expect-errors E1,E2]
   decl fmt <files...> [--check]`);

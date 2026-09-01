@@ -28,15 +28,15 @@ console.log('== decl check ==');
   check('module universe checks', multi.code === 0, multi.err);
 }
 
-console.log('== decl eval ==');
+console.log('== decl evaluate ==');
 {
   const dir = mkdtempSync(join(tmpdir(), 'decl-cli-'));
   const f = join(dir, 'demo.decl');
   writeFileSync(f, 'type T = { a: int, const b = a * 2 }\nexport output demo: T = { a: 21 }\n');
-  const r = run('eval', f, '--root', 'demo');
-  check('eval prints canonical JSON', r.code === 0 && r.out.trim() === '{"a":21,"b":42}', JSON.stringify(r));
-  const all = run('eval', join(root, 'tests/modules/basic/main.decl'));
-  check('eval emits every universe root', all.code === 0 && all.out.includes('"capped":16') && all.out.includes('"net":'), all.out.slice(0, 120));
+  const r = run('evaluate', f, '--root', 'demo');
+  check('evaluate prints canonical JSON', r.code === 0 && r.out.trim() === '{"a":21,"b":42}', JSON.stringify(r));
+  const all = run('evaluate', join(root, 'tests/modules/basic/main.decl'));
+  check('evaluate emits every universe root', all.code === 0 && all.out.includes('"capped":16') && all.out.includes('"net":'), all.out.slice(0, 120));
 }
 
 console.log('== decl validate ==');
