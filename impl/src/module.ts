@@ -20,7 +20,8 @@ export type LoadResult = { modules: Module[]; entry: Module | null; diags: Diag[
 
 export type PackageResolver = (spec: string, fromDir: string) => string | { code: string; message: string };
 
-export function loadModules(entryPath: string, resolvePackage?: PackageResolver): LoadResult {
+export function loadModules(entryPath: string, resolvePackage?: PackageResolver,
+  sourceOverride?: Map<string, string>): LoadResult {
   const diags: Diag[] = [];
   const report = (code: string, message: string) => diags.push({ severity: 'error', code, message, path: '' });
   const modules = new Map<string, Module>();
@@ -45,8 +46,11 @@ export function loadModules(entryPath: string, resolvePackage?: PackageResolver)
       return null;
     }
     let src: string;
-    try { src = readFileSync(abs, 'utf8'); }
-    catch { report('E3004', `module not found: ${abs}`); return null; }
+    if (sourceOverride?.has(abs)) src = sourceOverride.get(abs)!;
+    else {
+      try { src = readFileSync(abs, 'utf8'); }
+      catch { report('E3004', `module not found: ${abs}`); return null; }
+    }
     const { decls, errors } = parseSource(src);
     if (errors.length) { report('E1000', `${abs}: ${errors.length} parse error(s)`); return null; }
     const env = new Env();

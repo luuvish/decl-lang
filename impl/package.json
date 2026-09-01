@@ -1,14 +1,19 @@
 {
   "name": "decl-impl",
   "version": "0.1.0",
-  "description": "Decl reference implementation (ROADMAP Phase 2)",
+  "description": "Decl reference implementation (ROADMAP Phases 2-4)",
   "type": "module",
   "license": "MIT",
+  "bin": {
+    "decl": "src/cli.ts",
+    "decl-lsp": "src/lsp.ts"
+  },
   "dependencies": {
     "web-tree-sitter": "^0.25.0"
   },
   "scripts": {
     "e2e": "node test/e2e.ts",
-    "conformance": "node src/conformance.ts"
+    "conformance": "node src/conformance.ts",
+    "test": "node test/subsume.ts && node test/e2e.ts && node src/conformance.ts && node test/modules.ts && node test/packages.ts && node test/fmt.ts && node test/cli.ts && node test/lsp.ts"
   }
 }

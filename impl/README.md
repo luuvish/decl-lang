@@ -23,6 +23,40 @@ node test/subsume.ts      # subsumption ⊑ / emptiness unit tests (52 checks)
 node test/modules.ts      # multi-module linking + evaluation (§8)
 node test/packages.ts     # packages, decl.toml, lock reproducibility (§8.6–8.7)
 node src/conformance.ts   # judge every tests/validation fixture by phase
+node test/fmt.ts          # formatter idempotency + AST safety over the corpus
+node test/cli.ts          # decl check / eval / validate / fmt end to end
+node test/lsp.ts          # LSP diagnostics / hover / definition over stdio
+npm test                  # all of the above
+```
+
+## CLI
+
+```bash
+node src/cli.ts check <files...>                      # parse + static checks (module-aware)
+node src/cli.ts eval <file> [--root <name>]           # evaluate outputs -> JSON
+node src/cli.ts validate <dir>                        # judge a fixture corpus (@expect-*)
+node src/cli.ts validate <file> --input n=doc.json --expect-errors E4001
+node src/cli.ts fmt <files...> [--check]              # canonical formatting, idempotent
+```
+
+`decl validate tests/validation` judges the full fixture corpus (the
+Phase 4 exit criterion). The formatter preserves the author's line
+structure (§2.9 makes newlines separators), re-derives 4-space
+indentation and token spacing, and is verified idempotent and
+AST-preserving over every parseable corpus file.
+
+## LSP
+
+`src/lsp.ts` is a stdio language server: publishDiagnostics on
+open/change (syntax errors positioned exactly; checker diagnostics
+anchored to the name they mention), hover (declaration kind + source
+line), and definition — both following named, renamed, and namespace
+imports one hop, with open buffers overriding the disk. Point any LSP
+client at `node impl/src/lsp.ts` for `.decl` files, e.g. in VS Code
+via a generic LSP client extension, or in Neovim:
+
+```lua
+vim.lsp.start({ name = 'decl', cmd = { 'node', '<repo>/impl/src/lsp.ts' }, filetypes = { 'decl' } })
 ```
 
 ## Status
@@ -103,4 +137,10 @@ module files in canonical path order, verified fail-closed
 under `<root>/decl_modules/<name>/`, and the lock is line-based
 `name version sha256` in name order.
 
-Growing: the `decl` CLI, formatter, and LSP (Phase 4).
+Tooling (Phase 4): the `decl` CLI (`check` / `eval` / `validate` with
+`--expect-errors` / `fmt --check`), the canonical formatter (§2.1/D1 —
+LF, 4-space indent, normalized spacing, line structure preserved), and
+the stdio LSP server (diagnostics → hover → definition).
+
+Growing: real-world validation libraries and the v0.2 revision list
+(Phase 5).
