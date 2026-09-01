@@ -1,0 +1,56 @@
+// Fixture-generation library: the test-sweep benchmark case grown to
+// production level (Phase 5) — generic containers, match-driven
+// per-protocol shaping, quantity budgets, and uniqueness constraints.
+
+export type Proto = "http" | "grpc" | "tcp"
+export type PacketSize = 64 | 128 | 256 | 512 | 1024
+export type Batch<T, N: 1..4096> = { items: T[1..N], const count = std.array.count(items) }
+
+export func default_port(p: Proto): int = match p {
+    (x: "http") => 8080
+    (x: "grpc") => 9000
+    (x: "tcp") => 4000
+}
+
+export type Packet = {
+    id: int
+    size_bytes: PacketSize
+    priority: 0..7
+    deadline: quantity<Time> = 5ms
+    const label = `pkt-${id}-p${priority}`
+    assert deadline_sane: deadline <= 1s
+}
+
+export type Case = {
+    proto: Proto
+    size: PacketSize
+    priority: 0..7
+    const port = default_port(proto)
+    const name = `case_${proto}_s${size}_p${priority}`
+    packets: Packet[1..1024]
+    const packet_count = std.array.count(packets)
+    const byte_budget = std.array.fold(packets, 0, (a, p) => a + p.size_bytes)
+    const time_budget = std.array.fold(packets, 0.0s, (a, p) => a + p.deadline)
+    assert ids_unique: std.array.all_distinct([p.id for p in packets])
+    assert budget_cap: byte_budget <= 1048576
+}
+
+const protos: Proto[] = ["http", "grpc", "tcp"]
+const sizes: PacketSize[] = [64, 256, 1024]
+
+export output sweep: Batch<Case, 256> = {
+    items: [
+        {
+            proto: pr
+            size: s
+            priority: y
+            packets: [
+                { id: i, size_bytes: s, priority: y }
+                for i in 0..<8
+            ]
+        }
+        for pr in protos
+        for s in sizes
+        for y in 0..<4
+    ]
+}

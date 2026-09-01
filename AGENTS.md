@@ -21,8 +21,8 @@ Sibling repositories used as reference (do not modify from here):
 
 - `../decl-lang` - Previous iteration: Decl 2 spec drafts, legacy Decl 1
   tree-sitter grammar, and 142 validation fixtures
-- `../../research/oic-design-suite` - Real-world NoC spec tooling: NoC LSP
-  contract docs, real NoC (JSON) fixtures
+- `../../research/oic-design-suite` - Real-world NoC spec tooling:
+  editor/LSP contract docs, real design fixtures (JSON)
 
 ## Working Rules
 

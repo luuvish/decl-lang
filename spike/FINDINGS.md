@@ -79,7 +79,7 @@ only execution caught, and the OQ verdicts.
   the ported corpus — the real interconnect fixture included — is
   one-hop. No reachability/acyclicity constraint appears; the legacy
   fixture never checked them either. Reserved namespace kept;
-  re-entry requires new evidence (Phase 5's real NoC corpus is the
+  re-entry requires new evidence (Phase 5's real-world corpus is the
   natural next test).
 - **OQ7 (expression-level bindings): not re-admitted.** The corpus's
   most complex expression — arbiter width,

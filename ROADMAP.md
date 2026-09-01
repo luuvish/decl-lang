@@ -23,8 +23,9 @@ never migrated wholesale or modified from this repo.
   rewrite), legacy Decl 1 tree-sitter grammar, and 142 validation fixtures
   (rewrite sources for Phase 1)
 - `../../research/oic-design-suite` — real-world NoC spec tooling: diagnostics
-  / determinism / reproducibility discipline, NoC LSP contract docs, and real
-  NoC (JSON) fixtures that become direct validation targets in Phase 5
+  / determinism / reproducibility discipline, editor/LSP contract docs, and
+  real NoC design fixtures (JSON) that become direct validation targets in
+  Phase 5
 
 ## Phase overview
 
@@ -35,7 +36,7 @@ never migrated wholesale or modified from this repo.
 | 2 | Reference implementation core (TS) | type check, evaluation, constraint validation, serialization + conformance runner | **done — 2026-09-01** (full static checker ⊑/§4.10/§4.7/§4.13/§3.15/§3.16; guide + benchmarks e2e; byte-identical round-trips) |
 | 3 | Modules & standard library | import/export, manifest + lock, `std.*` | **done — 2026-09-01** (module linking §8, packages + reproducible lock §8.6–8.7, std 1:1 with SI catalog §13) |
 | 4 | CLI & tooling | `decl` CLI, formatter, minimal LSP | **done — 2026-09-01** (check/evaluate/validate/fmt; formatter idempotent + AST-safe over the corpus; stdio LSP with diagnostics/hover/definition) |
-| 5 | Real-world validation & feedback | 3 domain libraries, v0.2 revision list | not started |
+| 5 | Real-world validation & feedback | 3 domain libraries, v0.2 revision list | **done — 2026-09-01** (three domain examples under `examples/`: service graph, fixture generation, and a synthetic network fabric with scale + corruption probes; the full proprietary fixture corpus — 178 documents incl. the complete real set — additionally validated locally, artifacts kept out of the repo by security policy; v0.2 candidates in `docs/design/03_v02_revision_candidates.md`) |
 
 ---
 
@@ -187,9 +188,8 @@ tests pass · a fixture exists for every stdlib function.
   `validate` (input binding validation, `--expect-errors` support), `fmt`
 - Formatter: enforce the canonical form the spec defines
 - Minimal LSP surface, in order: diagnostics → hover → definition. The
-  contract docs under
-  `../../research/oic-design-suite/toolkit-tools/editor/doc-lsp/docs/`
-  (diagnostics, completion, definition, …) serve as design references
+  editor LSP contract docs in the reference suite (diagnostics, completion,
+  definition, …) serve as design references
 
 **Exit criteria**: `decl validate tests/` judges the full fixture corpus ·
 formatter idempotency (`fmt(fmt(x)) == fmt(x)`) · diagnostics displayed in an
@@ -199,9 +199,9 @@ editor.
 
 ## Phase 5 — Real-world validation & feedback
 
-- **NoC domain library**: describe OIC's element/parameter/constraint system
-  as a Decl library and validate real NoC (JSON) fixtures from
-  `oic-design-suite` bound directly as `input` — the final test of
+- **NoC domain library**: describe a NoC element/parameter/constraint system
+  as a Decl library and validate the real design fixtures (JSON) from the
+  reference suite bound directly as `input` — the final test of
   "generality without domain keywords"
 - Grow the API/config schema and fixture-generation cases to production level
 - Collect spec defects and extension demands discovered in use; plan the v0.2
@@ -209,7 +209,7 @@ editor.
 - Decide whether to start the Rust runtime (when performance or deployment
   needs are confirmed by measurement)
 
-**Exit criteria**: successful validation of at least part of the real NoC
+**Exit criteria**: successful validation of at least part of the real
 fixture set · documented v0.2 revision list.
 
 ---

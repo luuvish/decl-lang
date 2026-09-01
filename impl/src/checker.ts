@@ -295,16 +295,20 @@ export function checkModule(decls: Decl[], linked?: Env): Diag[] {
     if (rt.t !== 'rec' || seenRecs.has(rt)) return;
     seenRecs.add(rt);
     const cxR = recCtx(cx, rt, ast);
+    // member expressions and asserts check in their declaring module's
+    // scope (§8.3) — same rule the engine follows at evaluation
+    const cxFor = (menv: Env | undefined): ICtx =>
+      menv && menv !== cxR.env ? { ...cxR, env: menv } : cxR;
     for (const m of rt.members) {
-      if (m.kind === 'der' && m.expr) checkExpr(cxR, m.expr, m.type ?? null);
-      if (m.kind === 'dflt' && m.dflt) checkExpr(cxR, m.dflt, m.type ?? null);
-      if (m.type?.t === 'rec') checkRecordExprs(m.type, cxR);
-      if (m.type?.t === 'arr' && m.type.elem?.t === 'rec') checkRecordExprs(m.type.elem, cxR);
-      if (m.type?.t === 'map' && m.type.val?.t === 'rec') checkRecordExprs(m.type.val, cxR);
+      if (m.kind === 'der' && m.expr) checkExpr(cxFor(m.menv), m.expr, m.type ?? null);
+      if (m.kind === 'dflt' && m.dflt) checkExpr(cxFor(m.menv), m.dflt, m.type ?? null);
+      if (m.type?.t === 'rec') checkRecordExprs(m.type, cxFor(m.menv));
+      if (m.type?.t === 'arr' && m.type.elem?.t === 'rec') checkRecordExprs(m.type.elem, cxFor(m.menv));
+      if (m.type?.t === 'map' && m.type.val?.t === 'rec') checkRecordExprs(m.type.val, cxFor(m.menv));
     }
     for (const a of rt.asserts) {
-      if (a.kind === 'assert') checkMemberAst(cxR, { m: 'assert', name: a.name, cond: a.cond, tail: a.tail });
-      else if (a.kind === 'when') checkMemberAst(cxR, { m: 'when', cond: a.cond, body: a.body });
+      if (a.kind === 'assert') checkMemberAst(cxFor(a.menv), { m: 'assert', name: a.name, cond: a.cond, tail: a.tail });
+      else if (a.kind === 'when') checkMemberAst(cxFor(a.menv), { m: 'when', cond: a.cond, body: a.body });
     }
   };
 

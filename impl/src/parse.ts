@@ -29,7 +29,9 @@ export function parseSource(src: string): ParseResult {
   const decls: Decl[] = [];
   for (const c of tree.rootNode.namedChildren) {
     if (!c || c.type === 'ERROR') continue;
-    const d = lowerDecl(c);
+    let d: Decl | null = null;
+    try { d = lowerDecl(c); }
+    catch { if (!errors.length) errors.push({ row: c.startPosition.row, col: c.startPosition.column }); continue; }
     if (d) {
       if (c.previousSibling?.text === 'export' || d.d === 're_export') d.exported = true;
       decls.push(d);

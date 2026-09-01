@@ -865,7 +865,7 @@ spike's evidence (`spike/FINDINGS.md`):
   one-hop operations; no constraint required a transitive closure. The
   namespace stays reserved; admission remains open to a future
   revision carrying new evidence (e.g. reachability requirements in
-  Phase 5's real NoC corpus).
+  Phase 5's real-world corpus).
 - **OQ7 — resolved: no expression-level binding form in v0.1** (D3).
   The corpus's most complex single expressions (the arbiter's
   fold-over-a-comprehension width rule) stayed readable without local

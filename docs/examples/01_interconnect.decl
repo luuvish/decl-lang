@@ -233,5 +233,5 @@ export output xbar: Interconnect = {
     ]
 }
 
-// External validation: real NoC documents bind here in Phase 5.
+// External validation: real design documents bind here in Phase 5.
 export input doc: Interconnect

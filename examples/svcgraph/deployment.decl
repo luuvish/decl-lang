@@ -1,0 +1,19 @@
+import { Topology, Service } from "./schemas.decl"
+
+export type EnvName = "dev" | "staging" | "prod"
+
+export type Deployment = {
+    env: EnvName
+    topology: Topology
+
+    const public_count = std.array.count(std.array.filter(topology.services, (s) => s.public))
+    const capacity_millis = std.array.fold(topology.services, 0, (a, s) =>
+        a + s.resources.cpu_millis * s.replicas)
+
+    assert prod_is_redundant: (
+        env != "prod" || std.array.all(topology.services, (s) =>
+            !s.public || s.replicas >= 2))
+        else error `every public prod service needs at least 2 replicas`
+    assert has_a_front_door: public_count >= 1
+        else warn `no public service in this deployment`
+}

@@ -26,6 +26,8 @@ node src/conformance.ts   # judge every tests/validation fixture by phase
 node test/fmt.ts          # formatter idempotency + AST safety over the corpus
 node test/cli.ts          # decl check / evaluate / validate / fmt end to end
 node test/lsp.ts          # LSP diagnostics / hover / definition over stdio
+node test/domainlibs.ts   # Phase 5 domain examples (examples/svcgraph, examples/testgen)
+node test/fabric.ts       # synthetic fabric documents against examples/fabric
 npm test                  # all of the above
 ```
 
@@ -142,5 +144,16 @@ Tooling (Phase 4): the `decl` CLI (`check` / `evaluate` / `validate` with
 LF, 4-space indent, normalized spacing, line structure preserved), and
 the stdio LSP server (diagnostics → hover → definition).
 
-Growing: real-world validation libraries and the v0.2 revision list
-(Phase 5).
+Real-world validation (Phase 5): three domain examples under
+`examples/` — a layered service-graph deployment (quantities, health
+checks, `$referrers` fan-in, constructor-func topologies, environment
+parameterization), a production-scale fixture-generation sweep
+(generic containers, match-driven shaping, quantity budgets), and a
+fictional spine-leaf network fabric whose deterministic document
+generator exercises recursive map containers, type tags, parameter
+bags, cross-references, scale (1000-link sites), byte-identical round
+trips, and six corruption probes. A fourth, local-only schema
+additionally validated the full proprietary fixture corpus (178
+documents including the complete real set); it stays out of the
+repository by security policy. Findings feed
+`docs/design/03_v02_revision_candidates.md`.

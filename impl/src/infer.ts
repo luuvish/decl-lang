@@ -89,6 +89,14 @@ function armOf(rt: RT | null, t: string): RT | null {
   if (rt.t === 'isectN') {
     for (const x of rt.arms) { const v = armOf(x, t); if (v) return v; }
   }
+  if (rt.t === 'union') {
+    // e.g. `xs ?? []`: every arm must present the wanted shape
+    const sub = rt.arms.map((x: RT) => armOf(x, t)).filter(Boolean);
+    if (sub.length === rt.arms.length && sub.length) {
+      if (t === 'arr') return { t: 'arr', elem: { t: 'union', arms: sub.map((a: any) => a.elem) } };
+      return sub[0];
+    }
+  }
   return null;
 }
 

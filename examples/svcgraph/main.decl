@@ -1,0 +1,28 @@
+import { Topology } from "./schemas.decl"
+import { Deployment } from "./deployment.decl"
+
+// A reusable topology comes from a constructor func, not a shared
+// const: references bind to places, and a module const is not a root
+// (§7.5) — each output binds its own copy, so links resolve inside it.
+// Environment differences are constructor parameters; `with` layering
+// applies to bound records (see docs/examples/02_config.decl).
+func front_replicas(prod: bool): int = if prod then 3 else 1
+func back_replicas(prod: bool): int = if prod then 2 else 1
+
+func mk_topology(prod: bool): Topology = {
+    services: [
+        { name: "gateway", protocol: "http", port: 8080, public: true, replicas: front_replicas(prod) }
+        { name: "auth", protocol: "grpc", port: 9001, resources: { cpu_millis: 1000 }, replicas: back_replicas(prod) }
+        { name: "billing", protocol: "grpc", port: 9002, resources: { memory: 512MiB }, replicas: back_replicas(prod) }
+        { name: "ledger", protocol: "tcp", port: 5432, resources: { cpu_millis: 2000, memory: 1GiB }, replicas: back_replicas(prod) }
+    ]
+    links: [
+        { source: services[0], target: services[1] }
+        { source: services[0], target: services[2], weight: 3 }
+        { source: services[2], target: services[3], weight: 5 }
+        { source: services[1], target: services[3] }
+    ]
+}
+
+export output dev: Deployment = { env: "dev", topology: mk_topology(false) }
+export output prod: Deployment = { env: "prod", topology: mk_topology(true) }

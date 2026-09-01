@@ -153,6 +153,17 @@ export class Engine {
       }
       case 'with': {
         const base = this.deref(this.ev(e.base, sc));
+        if (base && base.__pre === 'obj') {
+          // an unbound literal (e.g. a constructor func's result):
+          // merge entries directly, still unbound
+          const patch = this.ev(e.patch, sc);
+          const entries: [string, any][] = base.entries.map(([k, v]: any) => [k, v]);
+          for (const [k, v] of (patch as any).entries) {
+            const i = entries.findIndex(([n]) => n === k);
+            if (i >= 0) entries[i] = [k, v]; else entries.push([k, v]);
+          }
+          return { __pre: 'obj', entries };
+        }
         if (!isRec(base)) throw new EvalErr('with on non-record');
         const patch = this.ev(e.patch, sc);
         const entries: [string, any][] = [];
@@ -847,7 +858,12 @@ export class Engine {
     c.state = 'ok';
     const sc = { inst: null, locals: new Map(), rootName, menv: env };
     c.value = this.ev(c.expr, sc);
-    if (c.value && (c.value.__pre || c.value.__jobj)) c.value = this.materialize(c.value, [name], null, sc);
+    if (c.value && (c.value.__pre || c.value.__jobj)) {
+      // an annotated const binds against its declared type (sibling
+      // references inside the literal need the record scope chain)
+      if (c.type) c.value = this.bind(c.value, env.resolve(c.type), [name], null, sc);
+      else c.value = this.materialize(c.value, [name], null, sc);
+    }
     return c.value;
   }
 
