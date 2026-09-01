@@ -1,0 +1,6 @@
+name = "badpkg"
+version = "1.0.0"
+custom_field = "nope"
+
+[dependencies]
+other = "^2.0.0"

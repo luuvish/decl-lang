@@ -20,6 +20,8 @@ tree-sitter CST  ->  AST (src/parse.ts lowering)
 npm install
 node test/e2e.ts          # benchmarks + guide + match + generics + quantities (49 checks)
 node test/subsume.ts      # subsumption ⊑ / emptiness unit tests (52 checks)
+node test/modules.ts      # multi-module linking + evaluation (§8)
+node test/packages.ts     # packages, decl.toml, lock reproducibility (§8.6–8.7)
 node src/conformance.ts   # judge every tests/validation fixture by phase
 ```
 
@@ -87,4 +89,18 @@ ships the full SI catalog (D15) generated from the §13.10 prefix rule
 statically (§13.1). Every stdlib function has a self-verifying fixture
 under `tests/validation/stdlib/`.
 
-Growing: modules/`decl.toml` (Phase 3).
+Modules (§8, `src/module.ts`): files are modules with explicit
+exports; named/renamed/namespace imports and re-export link through
+per-module `Env`s (imported members type, evaluate, and assert in
+their declaring module's scope), the import graph is checked acyclic
+(E3007), exported units/dimensions travel to importers, and the
+evaluation universe is every loaded module's roots with §8.8
+uniqueness (E3018). Packages (§8.6–8.7, `src/package.ts`): fail-closed
+`decl.toml` manifests (E3011–E3013), exact pins with conflict
+detection (E3014), and a reproducible `decl.lock` — SHA-256 over
+module files in canonical path order, verified fail-closed
+(E3015–E3017). Implementation conventions: dependencies live flat
+under `<root>/decl_modules/<name>/`, and the lock is line-based
+`name version sha256` in name order.
+
+Growing: the `decl` CLI, formatter, and LSP (Phase 4).

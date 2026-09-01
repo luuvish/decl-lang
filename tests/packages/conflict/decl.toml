@@ -1,0 +1,6 @@
+name = "conflictroot"
+version = "1.0.0"
+
+[dependencies]
+liba = "1.0.0"
+libb = "2.0.0"

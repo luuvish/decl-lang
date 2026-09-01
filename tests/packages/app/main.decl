@@ -1,0 +1,3 @@
+import { Base, WIDTH } from "corelib/types/base.decl"
+export output box: Base = { label: "x" }
+export output w: int = WIDTH * 2

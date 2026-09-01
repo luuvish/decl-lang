@@ -1,0 +1,6 @@
+name = "app"
+version = "0.1.0"
+description = "package test root"
+
+[dependencies]
+corelib = "1.0.0"

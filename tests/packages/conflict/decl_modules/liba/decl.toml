@@ -1,0 +1,5 @@
+name = "liba"
+version = "1.0.0"
+
+[dependencies]
+libb = "1.0.0"

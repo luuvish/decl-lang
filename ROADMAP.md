@@ -32,8 +32,8 @@ never migrated wholesale or modified from this repo.
 |---|---|---|---|
 | 0 | Specification (v0.1 freeze) | design docs, spec chapters, stdlib spec, validation corpus desk check, evaluator spike | **done — v0.1 frozen 2026-08-31** |
 | 1 | Grammar & parser | tree-sitter grammar + corpus tests + fixtures | **done — 2026-08-31** |
-| 2 | Reference implementation core (TS) | type check, evaluation, constraint validation, serialization + conformance runner | in progress (pipeline green; static checker: subsumption ⊑, expression inference, absence discipline §4.10, match §4.7, constant positions §4.13, generics §3.15, quantity dimension algebra §3.16 landed) |
-| 3 | Modules & standard library | import/export, manifest + lock, `std.*` | not started |
+| 2 | Reference implementation core (TS) | type check, evaluation, constraint validation, serialization + conformance runner | **done — 2026-09-01** (full static checker ⊑/§4.10/§4.7/§4.13/§3.15/§3.16; guide + benchmarks e2e; byte-identical round-trips) |
+| 3 | Modules & standard library | import/export, manifest + lock, `std.*` | **done — 2026-09-01** (module linking §8, packages + reproducible lock §8.6–8.7, std 1:1 with SI catalog §13) |
 | 4 | CLI & tooling | `decl` CLI, formatter, minimal LSP | not started |
 | 5 | Real-world validation & feedback | 3 domain libraries, v0.2 revision list | not started |
 

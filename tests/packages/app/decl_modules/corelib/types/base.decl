@@ -1,0 +1,2 @@
+export type Base = { label: string, width: int = 8, ... }
+export const WIDTH = 8
