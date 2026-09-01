@@ -37,7 +37,10 @@ export type RecInst = {
 
 export class Taint extends Error { constructor() { super('taint'); } }
 export class DeferSig extends Error { constructor() { super('defer'); } }
-export class EvalErr extends Error { constructor(msg: string) { super(msg); } }
+export class EvalErr extends Error {
+  code?: string;
+  constructor(msg: string, code?: string) { super(msg); this.code = code; }
+}
 
 export type Diag = { severity: string; id?: string; message: string; path: string; code?: string };
 
@@ -95,11 +98,52 @@ export class Env {
   spaceDiags: Diag[] = [];                  // unit/dimension-space findings for the checker
 
   constructor() {
-    // the std SI subset the corpus relies on, as ordinary declarations (D15)
-    this.dimDecls.set('Time', {});
-    this.unitDecls.set('s', { dim: 'Time' });
-    for (const [n, f] of [['ms', 1e-3], ['us', 1e-6], ['ns', 1e-9]] as [string, number][])
-      this.unitDecls.set(n, { factor: { e: 'lit', v: f }, base: 's' });
+    // std.units — the full SI catalog as ordinary declarations (D15,
+    // §13.10); the prefix generation rule below IS the inventory
+    const dim = (name: string, terms?: { name: string; exp: number }[]) => this.dimDecls.set(name, { terms });
+    const unit = (sym: string, decl: { dim?: string; factor?: number; base?: string }) => {
+      if (this.unitDecls.has(sym)) return;   // base/named symbols win over generated ones
+      this.unitDecls.set(sym, decl.dim !== undefined ? { dim: decl.dim }
+        : { factor: { e: 'lit', v: decl.factor! }, base: decl.base! });
+    };
+    const bases: [string, string][] = [
+      ['Time', 's'], ['Length', 'm'], ['Mass', 'kg'], ['Current', 'A'],
+      ['Temperature', 'K'], ['Amount', 'mol'], ['LuminousIntensity', 'cd'],
+    ];
+    for (const [d] of bases) dim(d);
+    const t = (name: string, exp: number) => ({ name, exp });
+    const derived: [string, { name: string; exp: number }[], string][] = [
+      ['Frequency', [t('Time', -1)], 'Hz'],
+      ['Force', [t('Mass', 1), t('Length', 1), t('Time', -2)], 'N'],
+      ['Pressure', [t('Mass', 1), t('Length', -1), t('Time', -2)], 'Pa'],
+      ['Energy', [t('Mass', 1), t('Length', 2), t('Time', -2)], 'J'],
+      ['Power', [t('Mass', 1), t('Length', 2), t('Time', -3)], 'W'],
+      ['Charge', [t('Current', 1), t('Time', 1)], 'C'],
+      ['Voltage', [t('Mass', 1), t('Length', 2), t('Time', -3), t('Current', -1)], 'V'],
+      ['Resistance', [t('Mass', 1), t('Length', 2), t('Time', -3), t('Current', -2)], 'Ohm'],
+      ['Capacitance', [t('Mass', -1), t('Length', -2), t('Time', 4), t('Current', 2)], 'F'],
+      ['DataSize', undefined as any, 'bit'],
+    ];
+    for (const [d, terms] of derived) dim(d, terms);
+    for (const [, s] of bases) unit(s, { dim: bases.find(b => b[1] === s)![0] });
+    for (const [d, , s] of derived) unit(s, { dim: d });
+    unit('B', { factor: 8, base: 'bit' });
+    unit('g', { factor: 1e-3, base: 'kg' });
+    const PREFIXES: [string, number][] = [
+      ['y', 1e-24], ['z', 1e-21], ['a', 1e-18], ['f', 1e-15], ['p', 1e-12],
+      ['n', 1e-9], ['u', 1e-6], ['m', 1e-3], ['c', 1e-2], ['d', 1e-1],
+      ['da', 1e1], ['h', 1e2], ['k', 1e3], ['M', 1e6], ['G', 1e9],
+      ['T', 1e12], ['P', 1e15], ['E', 1e18], ['Z', 1e21], ['Y', 1e24],
+    ];
+    const prefixable = [...bases.map(([, s]) => s).filter(s => s !== 'kg'),
+      ...derived.map(([, , s]) => s).filter(s => s !== 'bit'), 'g'];
+    for (const u0 of prefixable) for (const [p, f] of PREFIXES) unit(p + u0, { factor: f, base: u0 });
+    for (const u0 of ['bit', 'B']) {
+      for (const [p, f] of [['Ki', 1024], ['Mi', 1024 ** 2], ['Gi', 1024 ** 3], ['Ti', 1024 ** 4], ['Pi', 1024 ** 5], ['Ei', 1024 ** 6]] as [string, number][])
+        unit(p + u0, { factor: f, base: u0 });
+      for (const [p, f] of PREFIXES.filter(([p]) => ['k', 'M', 'G', 'T', 'P', 'E'].includes(p)))
+        unit(p + u0, { factor: f, base: u0 });
+    }
   }
 
   resolveDim(name: string, visiting = new Set<string>()): DimVec {

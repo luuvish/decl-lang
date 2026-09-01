@@ -169,10 +169,20 @@ const STD: Record<string, { arity: number; ret: RT | null }> = {
   'string.of': { arity: 1, ret: PRIM('string') },
   'string.join': { arity: 2, ret: PRIM('string') },
   'string.starts_with': { arity: 2, ret: PRIM('bool') },
+  'map.entries': { arity: 1, ret: null },
   'ref.path': { arity: 1, ret: PRIM('string') },
   'math.abs': { arity: 1, ret: null },
   'math.min': { arity: 2, ret: null },
   'math.max': { arity: 2, ret: null },
+  'math.clog2': { arity: 1, ret: PRIM('int') },
+  'math.floor': { arity: 1, ret: PRIM('int') },
+  'math.ceil': { arity: 1, ret: PRIM('int') },
+  'math.round': { arity: 1, ret: PRIM('int') },
+  'int.of': { arity: 1, ret: PRIM('int') },
+  'int.at_least': { arity: 1, ret: { t: 'func', params: [PRIM('int')], ret: PRIM('bool') } },
+  'int.at_most': { arity: 1, ret: { t: 'func', params: [PRIM('int')], ret: PRIM('bool') } },
+  'float.of': { arity: 1, ret: PRIM('float') },
+  'object.merge': { arity: 2, ret: null },
 };
 function stdPath(e: Expr): string | null {
   if (e.e === 'member' && !e.safe) {
@@ -533,6 +543,7 @@ function inferCall(cx: ICtx, e: Expr & { e: 'call' }): Ty {
   const sp = stdPath(e.fn);
   if (sp !== null) {
     const sig = STD[sp];
+    if (!sig) cx.report('E3003', `std.${sp} does not exist (§13.1: names not listed do not exist)`);
     if (sig && e.args.length !== sig.arity)
       cx.report('E4062', `std.${sp} expects ${sig.arity} argument(s), got ${e.args.length}`);
     for (const a of e.args) {

@@ -55,9 +55,13 @@ for (const file of walk(join(root, 'tests/validation'))) {
   let verdict = false, detail = '';
   const { decls, errors } = parseSource(src);
   if (isValid) {
+    // a valid fixture must parse, check clean, AND evaluate its outputs
+    // without error-severity diagnostics
     const checks = errors.length === 0 ? checkModule(decls) : [];
-    verdict = errors.length === 0 && checks.length === 0;
-    detail = errors.length ? `${errors.length} parse errors` : JSON.stringify(checks);
+    const evalErrs = errors.length === 0 && checks.length === 0
+      ? runPipeline(decls).filter(d => d.severity === 'error') : [];
+    verdict = errors.length === 0 && checks.length === 0 && evalErrs.length === 0;
+    detail = errors.length ? `${errors.length} parse errors` : JSON.stringify([...checks, ...evalErrs]);
   } else if (phase === 'parsing') {
     verdict = errors.length > 0;
     detail = 'expected parse errors, got none';

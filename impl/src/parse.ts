@@ -317,8 +317,10 @@ function lowerExpr(n: Node): Expr {
       return { e: 'index', x: lowerExpr(x!), i: lowerExpr(i!) };
     }
     case 'call': {
-      const cs = n.namedChildren.filter(Boolean);
-      return { e: 'call', fn: lowerExpr(cs[0]!), args: cs.slice(1).map(c => lowerExpr(c!)) };
+      // bare true/false/null are anonymous keyword tokens — include them
+      const cs = n.children.filter((c): c is Node =>
+        !!c && (c.isNamed || ['true', 'false', 'null'].includes(c.text)));
+      return { e: 'call', fn: lowerExpr(cs[0]!), args: cs.slice(1).map(c => lowerExpr(c)) };
     }
     case 'object': {
       const comp = kid(n, 'map_comprehension') ?? (n.type === 'map_comprehension' ? n : null);
@@ -337,7 +339,9 @@ function lowerExpr(n: Node): Expr {
       if (comp) return lowerExpr(comp);
       return { e: 'arr', items: kids(n, 'array_entry').map(en => {
         const spread = en.text.startsWith('...');
-        return { spread, expr: lowerExpr(en.namedChildren[0]!) };
+        const inner = en.namedChildren.find(Boolean)
+          ?? en.children.find(c => c && ['true', 'false', 'null'].includes(c.text));
+        return { spread, expr: lowerExpr(inner!) };
       }) };
     }
     case 'array_comprehension':

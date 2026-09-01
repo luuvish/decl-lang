@@ -245,10 +245,7 @@ output b: Bounded<string, 4> = { items: ["a", "b"] }
 console.log('== quantity dimension algebra (§3.16) ==');
 {
   const src = `
-dimension Length
 dimension Speed = Length / Time
-unit m: Length
-unit km = 1000 m
 unit mps: Speed
 type Trip = {
     dist: quantity<Length>

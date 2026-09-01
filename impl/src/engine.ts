@@ -40,7 +40,7 @@ export class Engine {
           if (ci === e.clauses.length) {
             const k = this.ev(e.key, { ...sc, locals });
             if (typeof k !== 'string') throw new EvalErr('map key must be string');
-            if (entries.some(([kk]) => kk === k)) throw new EvalErr(`duplicate key ${k}`);
+            if (entries.some(([kk]) => kk === k)) throw new EvalErr(`duplicate key ${k}`, 'E5004');
             entries.push([k, this.ev(e.val, { ...sc, locals })]);
             return;
           }
@@ -141,7 +141,7 @@ export class Engine {
         const i = this.ev(e.i, sc);
         if (isArr(x)) {
           const n = Number(i);
-          if (n < 0 || n >= x.items.length) throw new EvalErr(`index ${n} out of bounds`);
+          if (n < 0 || n >= x.items.length) throw new EvalErr(`index ${n} out of bounds`, 'E5005');
           return x.items[n];
         }
         if (isMap(x)) return x.entries.has(i) ? x.entries.get(i) : ABSENT;
@@ -215,10 +215,10 @@ export class Engine {
     const lm = isQ(l) ? l.value : num(l);
     const rm = isQ(r) ? r.value : num(r);
     if (lm === null || rm === null) throw new EvalErr(`bad operands for ${op}`);
-    if (op === '/' && rm === 0) throw new EvalErr('division by zero');
+    if (op === '/' && rm === 0) throw new EvalErr('division by zero', 'E5001');
     const vec = vecCombine(isQ(l) ? vecOfKey(l.dim) : {}, isQ(r) ? vecOfKey(r.dim) : {}, op === '*' ? 1 : -1);
     const value = op === '*' ? lm * rm : lm / rm;
-    if (!isFinite(value)) throw new EvalErr('non-finite');
+    if (!isFinite(value)) throw new EvalErr('non-finite', 'E5002');
     const key = keyOfVec(vec);
     return key === '' ? value : { __q: true, dim: key, value };
   }
@@ -264,10 +264,10 @@ export class Engine {
       case '-': if (bothI || bothF) return (l as any) - (r as any); break;
       case '*': if (bothI || bothF) return (l as any) * (r as any); break;
       case '/':
-        if (bothI) { if (r === 0n) throw new EvalErr('division by zero'); const q = (l as bigint) / (r as bigint); return q; }
-        if (bothF) { if (r === 0) throw new EvalErr('division by zero'); const q = (l as number) / (r as number); if (!isFinite(q)) throw new EvalErr('non-finite'); return q; }
+        if (bothI) { if (r === 0n) throw new EvalErr('division by zero', 'E5001'); const q = (l as bigint) / (r as bigint); return q; }
+        if (bothF) { if (r === 0) throw new EvalErr('division by zero', 'E5001'); const q = (l as number) / (r as number); if (!isFinite(q)) throw new EvalErr('non-finite', 'E5002'); return q; }
         break;
-      case '%': if (bothI) { if (r === 0n) throw new EvalErr('mod zero'); return (l as bigint) % (r as bigint); } break;
+      case '%': if (bothI) { if (r === 0n) throw new EvalErr('mod zero', 'E5001'); return (l as bigint) % (r as bigint); } break;
       case '<': case '<=': case '>': case '>=': {
         if (bothI || bothF || bothS) {
           if (op === '<') return l < r; if (op === '<=') return l <= r;
@@ -324,6 +324,12 @@ export class Engine {
       if (x.extras.has(name)) throw new EvalErr(`opaque field ${name} accessed`);
       throw new EvalErr(`no member ${name}`);
     }
+    if (x && x.__pre === 'obj') {   // unbound literal (e.g. std.map.entries records)
+      const en = x.entries.find(([k]: any) => k === name);
+      if (!en) return ABSENT;
+      const v = en[1];
+      return v && v.__expr ? this.ev(v.__expr, v.scope) : v;
+    }
     if (x === null) throw new EvalErr('member access on null');
     if (x === ABSENT) return ABSENT;
     throw new EvalErr(`member access on non-record (${name})`);
@@ -344,10 +350,12 @@ export class Engine {
       fn.params.forEach((p: string, i: number) => locals.set(p, args[i]));
       return this.ev(fn.body, { ...fn.scope, locals });
     }
+    if (fn && fn.__nat) return fn.__nat(args);
     if (fn && fn.__std) return this.std(fn.path.join('.'), args, sc);
     throw new EvalErr('call of non-function');
   }
   std(name: string, a: any[], sc: Scope): any {
+    const domain = (msg: string): never => { throw new EvalErr(`std.${name}: ${msg}`, 'E5008'); };
     switch (name) {
       case 'array.count': return BigInt(this.matArr(a[0]).length);
       case 'array.all': return this.matArr(a[0]).every(x => this.truthy(this.call(a[1], [x], sc)));
@@ -378,8 +386,76 @@ export class Engine {
       case 'math.abs': return typeof a[0] === 'bigint' ? (a[0] < 0n ? -a[0] : a[0]) : Math.abs(a[0]);
       case 'math.min': return a[0] < a[1] ? a[0] : a[1];
       case 'math.max': return a[0] > a[1] ? a[0] : a[1];
-      default: throw new EvalErr(`std.${name} not in spike`);
+      case 'math.clog2': {
+        const n = a[0];
+        if (typeof n !== 'bigint' || n < 1n) return domain(`n >= 1 required, got ${n}`);
+        let k = 0n;
+        while ((1n << k) < n) k++;
+        return k;
+      }
+      case 'math.floor': return BigInt(Math.floor(a[0]));
+      case 'math.ceil': return BigInt(Math.ceil(a[0]));
+      case 'math.round': {
+        const x = a[0] as number;
+        const f = Math.floor(x), frac = x - f;
+        // ties to even (banker's rounding — deterministic, §13.3)
+        const r = frac > 0.5 ? f + 1 : frac < 0.5 ? f : (f % 2 === 0 ? f : f + 1);
+        return BigInt(r);
+      }
+      case 'int.of': {
+        const x = a[0];
+        if (typeof x !== 'number' || !Number.isInteger(x)) return domain(`no fractional part allowed, got ${x}`);
+        return BigInt(x);
+      }
+      case 'int.at_least': { const n = a[0] as bigint; return { __nat: (args: any[]) => args[0] >= n }; }
+      case 'int.at_most': { const n = a[0] as bigint; return { __nat: (args: any[]) => args[0] <= n }; }
+      case 'float.of': {
+        const v = Number(a[0] as bigint);
+        if (!isFinite(v)) return domain(`magnitude outside binary64 range`);
+        return v;
+      }
+      case 'map.entries': {
+        const m = this.matMap(a[0]);
+        return { __arr: true, items: [...m.entries.entries()].map(([k, v]: any) =>
+          ({ __pre: 'obj', entries: [['key', k], ['value', v]] })), path: [] };
+      }
+      case 'object.merge': return this.deepMerge(a[0], a[1]);
+      default: throw new EvalErr(`std.${name} does not exist`);
     }
+  }
+  // std.object.merge (§13.7): per member — one side only → taken; both:
+  // records recurse, everything else patch wins whole; derived members
+  // are dropped (recomputed on the result); opacity of extras preserved
+  deepMerge(base0: any, patch0: any): any {
+    const base = this.matRec(base0), patch = this.matRec(patch0);
+    const val = (r: RecInst, n: string): any => {
+      if (r.extras.has(n)) return r.extras.get(n);
+      const s = r.slots.get(n);
+      if (!s || s.kind === 'der') return undefined;
+      if (this.forceState(r, n) === 'absent') return undefined;
+      return this.forceSlot(r, n);
+    };
+    const names: string[] = [];
+    for (const n of base.entryOrder) if (!names.includes(n)) names.push(n);
+    for (const m of base.rt.members) if (m.kind === 'dflt' && !names.includes(m.name)) names.push(m.name);
+    for (const n of patch.entryOrder) if (!names.includes(n)) names.push(n);
+    for (const m of patch.rt.members) if (m.kind === 'dflt' && !names.includes(m.name)) names.push(m.name);
+    const entries: [string, any][] = [];
+    for (const n of names) {
+      if (base.slots.get(n)?.kind === 'der' || patch.slots.get(n)?.kind === 'der') continue;
+      const bv = val(base, n), pv = val(patch, n);
+      if (bv !== undefined && pv !== undefined && isRec(this.deref(bv)) && isRec(this.deref(pv)))
+        entries.push([n, this.deepMerge(bv, pv)]);
+      else if (pv !== undefined) entries.push([n, pv]);
+      else if (bv !== undefined) entries.push([n, bv]);
+    }
+    return { __pre: 'obj', entries };
+  }
+  matRec(v: any): RecInst {
+    let d = this.deref(v);
+    if (d && (d.__pre || d.__jobj)) d = this.materialize(d, [], null, null as any);
+    if (isRec(d)) return d;
+    throw new EvalErr('std.object.merge: expected records', 'E5008');
   }
   matArr(v: any): any[] {
     let d = this.deref(v);
@@ -729,7 +805,7 @@ export class Engine {
       }
       if (s.state === 'forcing') s.state = 'invalid';
       if (e instanceof EvalErr) {
-        this.env.report({ severity: 'error', message: e.message, path: pathStr([...inst.path, name]), code: 'E5xxx' });
+        this.env.report({ severity: 'error', message: e.message, path: pathStr([...inst.path, name]), code: (e as any).code });
         throw new Taint();
       }
       throw e;
@@ -775,7 +851,7 @@ export class Engine {
       try { ok = this.ev(a.cond, sc); }
       catch (e) {
         if (e instanceof Taint) continue;
-        if (e instanceof EvalErr) { this.env.report({ severity: 'error', message: `${a.name}: ${e.message}`, path: pathStr(inst.path), code: 'E5xxx' }); continue; }
+        if (e instanceof EvalErr) { this.env.report({ severity: 'error', message: `${a.name}: ${e.message}`, path: pathStr(inst.path), code: (e as any).code }); continue; }
         throw e;
       }
       if (ok === true) continue;

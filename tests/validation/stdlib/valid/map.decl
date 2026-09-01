@@ -1,0 +1,9 @@
+type Check = {
+    const m: map<string, int> = { a: 1, b: 2 }
+    const ks = std.map.keys(m)
+    assert keys_ok: std.string.join(ks, ",") == "a,b"
+    assert values_ok: std.array.fold(std.map.values(m), 0, (acc, v) => acc + v) == 3
+    assert entries_count: std.array.count(std.map.entries(m)) == 2
+    assert entries_values: std.array.all(std.map.entries(m), (en) => en.value > 0)
+}
+output c: Check = { }

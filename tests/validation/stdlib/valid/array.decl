@@ -1,0 +1,14 @@
+type Check = {
+    const xs = [3, 1, 4, 1, 5]
+    const evens = std.array.filter(xs, (x) => x % 2 == 0)
+    assert count_ok: std.array.count(xs) == 5
+    assert all_ok: std.array.all(xs, (x) => x > 0) && !std.array.all(xs, (x) => x > 3)
+    assert all_empty: std.array.all([], (x) => false)
+    assert any_ok: std.array.any(xs, (x) => x > 4) && !std.array.any([], (x) => true)
+    assert distinct_ok: !std.array.all_distinct(xs) && std.array.all_distinct([1, 2])
+    assert filter_ok: std.array.count(evens) == 1
+    assert fold_ok: std.array.fold(xs, 0, (a, x) => a + x) == 14
+    assert sum_ok: std.array.sum(xs) == 14 && std.array.sum([]) == 0
+    assert sum_float: std.array.sum([1.5, 2.5]) == 4.0
+}
+output c: Check = { }

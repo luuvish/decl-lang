@@ -1,0 +1,4 @@
+// @expect-phase: checking
+// @expect-error: E3003
+// parses; std.graph is reserved and unusable (§13.11)
+const bad = std.graph.closure([1, 2])

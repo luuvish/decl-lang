@@ -76,5 +76,15 @@ literal-set) defer unprovable membership to binding instead of failing
 statically — the guide and benchmarks rely on both (candidate spec
 clarifications for §3.18/§4.4).
 
-Growing: modules/`decl.toml` and the std library as real declarations
-(Phase 3).
+Standard library (§13, complete 1:1): every listed function of
+`std.array` / `math` / `int` / `float` / `string` / `object` / `map` /
+`ref` is implemented with its documented semantics (banker's rounding,
+ties-to-even conversions, the §13.7 merge bias rules) and E5008 domain
+errors; evaluation errors carry their §12 E5xxx codes. `std.units`
+ships the full SI catalog (D15) generated from the §13.10 prefix rule
+— base and named units plus all prefixed forms, binary prefixes for
+`bit`/`B`, `g`-based mass prefixes. Unlisted `std` names are E3003
+statically (§13.1). Every stdlib function has a self-verifying fixture
+under `tests/validation/stdlib/`.
+
+Growing: modules/`decl.toml` (Phase 3).

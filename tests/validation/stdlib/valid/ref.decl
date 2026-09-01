@@ -1,0 +1,7 @@
+type Node = { id: string, ... }
+type Net = {
+    nodes: Node[]
+    edge: ref<Node>
+    assert path_ok: std.ref.path(edge) == "n.nodes[0]"
+}
+output n: Net = { nodes: [{ id: "a" }], edge: nodes[0] }

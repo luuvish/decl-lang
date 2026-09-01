@@ -20,7 +20,8 @@ Phase 2 conformance runner picks them up).
 | expressions | 6 | 3 | 11 |
 | declarations | 3 | 3 | 6 |
 | constraints | 2 | 1 | 2 |
-| **total** | **26** | **14** | **39** |
+| stdlib | 7 | 0 | 3 |
+| **total** | **33** | **14** | **42** |
 
 Update this table in the same change whenever fixtures are added or
 removed (AGENTS.md rule).
@@ -33,3 +34,7 @@ removed (AGENTS.md rule).
   grammar refuses them.
 - Later-phase fixtures (`checking`, `binding`) are authored now so the
   Phase 2 runner starts with expectations already in place.
+- Valid fixtures are judged end to end: they must parse, check clean,
+  AND evaluate their outputs without error-severity diagnostics — the
+  `stdlib/` feature uses self-verifying asserts on this rule to cover
+  every standard-library function (Phase 3 exit criterion).

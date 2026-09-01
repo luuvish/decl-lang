@@ -1,5 +1,3 @@
-dimension Mass
-dimension Length
-dimension Pressure = Mass / Length / Time / Time
-unit q: Pressure
+dimension Stiffness = Mass / Time / Time
+unit q: Stiffness
 unit kq = 1000 q

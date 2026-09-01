@@ -1,0 +1,10 @@
+type Small = int(std.int.at_most(10))
+type Check = {
+    const ge3 = std.int.at_least(3)
+    const le9 = std.int.at_most(9)
+    assert of_ok: std.int.of(4.0) == 4
+    assert float_of_ok: std.float.of(3) == 3.0
+    assert at_ok: ge3(5) && !ge3(2) && le9(9) && !le9(10)
+}
+output c: Check = { }
+output small_ok: Small = 7

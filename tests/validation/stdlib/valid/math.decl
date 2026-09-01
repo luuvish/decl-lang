@@ -1,0 +1,9 @@
+type Check = {
+    assert abs_ok: std.math.abs(-5) == 5 && std.math.abs(2.5) == 2.5
+    assert min_max: std.math.min(3, 7) == 3 && std.math.max(3, 7) == 7
+    assert clog2_ok: std.math.clog2(1) == 0 && std.math.clog2(8) == 3 && std.math.clog2(9) == 4
+    assert floor_ok: std.math.floor(2.7) == 2 && std.math.floor(-2.1) == -3
+    assert ceil_ok: std.math.ceil(2.1) == 3 && std.math.ceil(-2.7) == -2
+    assert round_even: std.math.round(2.5) == 2 && std.math.round(3.5) == 4 && std.math.round(2.4) == 2
+}
+output c: Check = { }

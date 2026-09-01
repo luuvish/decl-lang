@@ -1,4 +1,3 @@
-dimension DataSize
 dimension Bandwidth = DataSize / Time
 type Delay = quantity<Time>
 type Config = {
