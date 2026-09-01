@@ -1,0 +1,7 @@
+// @expect-phase: checking
+// @expect-error: E4093
+// parses; a ref position may not navigate a module const (7.5, D32)
+type Node = { id: string, ... }
+type Edge = { target: ref<Node>, ... }
+const pool: Node[] = [{ id: "a" }]
+output e: Edge = { target: pool[0] }

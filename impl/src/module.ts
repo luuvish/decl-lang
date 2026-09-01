@@ -52,7 +52,7 @@ export function loadModules(entryPath: string, resolvePackage?: PackageResolver,
       catch { report('E3004', `module not found: ${abs}`); return null; }
     }
     const { decls, errors } = parseSource(src);
-    if (errors.length) { report('E1000', `${abs}: ${errors.length} parse error(s)`); return null; }
+    if (errors.length) { report('E2001', `${abs}: ${errors.length} parse error(s)`); return null; }
     const env = new Env();
     env.load(decls);
     for (const n of env.duplicates) report('E3001', `duplicate name ${n} in ${abs}`);

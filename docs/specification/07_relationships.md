@@ -213,7 +213,10 @@ output net: Network = {
 - **Legal targets** are values owned by evaluation roots — `output`
   and `input` values and their sub-values (D22). A module `const` is
   not a legal target; a navigation of one in a `ref` position is a
-  compile error. Cross-root references (a value in one output
+  compile error (E4093). Embedding a `const`-built record into a root
+  does **not** re-root the references it carries (D32) — a record
+  meant for several roots comes from a **constructor `func`** whose
+  literal each root binds in place. Cross-root references (a value in one output
   referencing another output's sub-value, or an input's) are legal.
 - A reference whose target does not exist — an out-of-range index, a
   missing key, a path into an absent optional member, or (from input

@@ -74,7 +74,10 @@ protected by the no-shadowing rule (D27), so they cannot be redeclared:
 bool  int  uint  float  string  quantity  ref  std
 ```
 
-*Counterexample:* `const type = 3` is a lexical error (keyword);
+*Counterexample:* `const type = 3` is a lexical error (keyword) —
+though member positions are their own name space (D33, §3.11):
+`type: string` as a record member, `x.type`, and `{ type: "a" }` are
+all legal;
 `const int = 3` is a name-resolution error (shadowing a predeclared
 name); `{ "type": "router" }` is a valid object — quoted keys are always
 strings.
@@ -132,6 +135,13 @@ whitespace — is a unit literal, a single token denoting a quantity (D15):
   name space**, which is separate from value and type names
   ([03. Types](03_types.md) §3.16); that check is semantic, not
   lexical.
+- **Token boundary**: a candidate unit literal is one only when the
+  trailing identifier cannot extend the number instead — `1e3` and
+  `1e-3` are floats (the exponent belongs to the number), `0x10`,
+  `0o755`, `0b101` are ints (the radix prefix wins). `250ms`, `0s`,
+  `1.5e3s`, and `5eV` are unit literals: the identifier begins where
+  no longer numeric reading exists. Longest-numeric-reading-first; no
+  lookahead is required.
 - With interposed whitespace, the same characters are two tokens
   (`10 ms` — a number and an identifier), which is a parse error in
   value positions.
@@ -204,6 +214,12 @@ const b = 2
 
 - The formatter's canonical form (D1): newline-separated when a construct
   spans lines, comma-separated on one line. Both always parse.
+- **Continuation points are exactly the grammar's** (ch. 11): a newline
+  may precede `else` (assert/type tails), a defaulting `=`, and the
+  `for`/`if` clauses of comprehensions; after `assert name:` a
+  continuation line must begin with an expression head the grammar
+  admits there — a condition wrapped in parentheses opens its `(` on
+  the colon line and breaks freely inside.
 - There are no semicolons; `;` is not a token of the language.
 
 ## 2.10 Operators and punctuation
@@ -235,7 +251,8 @@ template, pattern, or block comment; unknown escape; a number with
 leading zeros, a misplaced digit separator, or digits missing around a
 float dot; a unit literal on a non-decimal base; an unknown
 context-variable name; an unknown character; a keyword used as an
-identifier; `///` with nothing to document.
+identifier outside member positions (D33); `///` with nothing to
+document.
 
 ## Open questions
 

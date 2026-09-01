@@ -127,6 +127,10 @@ member types — reading a common member never requires discrimination
   the composed dimension; a fully cancelled dimension yields the plain
   numeric value.
 - Unary `-` negates `int`, `float`, or a quantity.
+- **Static result types (D31)**: `int` `+`/`-`/`*` over operands whose
+  static types are ranges or literals type as the interval-arithmetic
+  range of their endpoints; `/` and `%` type as `int`; `float`
+  arithmetic types as `float`.
 
 ## 4.5 Comparison, equality, membership
 
@@ -377,6 +381,10 @@ const eu_service = base with { region: "eu", replicas: 3 }
   D4). The result type is `base`'s type.
 - `with` cannot remove a member and cannot make a present optional
   member absent.
+- On an **unbound literal** (e.g. a constructor func's result before
+  it reaches a typed position), `with` merges entries and the result
+  stays unbound (D32); unbound literals support only member/index
+  access, `with`, and embedding — deeper reshaping chains are errors.
 
 ## 4.13 Constant expressions
 

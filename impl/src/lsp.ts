@@ -79,7 +79,7 @@ function analyze(uri: string) {
 
   const { errors } = parseSource(src);
   if (errors.length) {
-    for (const e of errors) push(e.row, e.col, e.col + 1, 'syntax error');
+    for (const e of errors) push(e.row, e.col, e.col + 1, 'syntax error', 'E2001');
   } else {
     const pkg = openPackageUniverse(path);
     const override = new Map<string, string>();

@@ -1,0 +1,9 @@
+type Payload = {
+    type: string
+    unit?: int
+    const label = `${type}`
+}
+input p: Payload
+const t = p.type
+const u = p?.unit ?? 0
+const lit = { type: "sensor", with: 1 }

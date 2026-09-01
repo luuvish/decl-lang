@@ -331,7 +331,7 @@ export class Env {
         if (ast.ext) {
           const ext = this.resolve(ast.ext) as any;      // anonymous record of overrides
           const merged: any = { t: 'rec', name: base.name, open: base.open, tail: base.tail,
-            members: base.members.map((m: any) => ({ ...m })), asserts: [...base.asserts] };
+            ctxDecls: base.ctxDecls, members: base.members.map((m: any) => ({ ...m })), asserts: [...base.asserts] };
           for (const om of ext.members) {
             const i = merged.members.findIndex((m: any) => m.name === om.name);
             if (i >= 0) merged.members[i] = om; else merged.members.push(om);
@@ -439,7 +439,8 @@ export class Env {
         rt.asserts.push({ kind: 'assert', name: m.name, cond: m.cond, tail: m.tail, origin: rt.name, menv: this });
       else if (m.m === 'when')
         rt.asserts.push({ kind: 'when', cond: m.cond, body: m.body, origin: rt.name, menv: this });
-      else if (m.m === 'context') { /* checked statically (D30); no runtime slot */ }
+      else if (m.m === 'context')
+        (rt.ctxDecls ??= []).push({ variable: m.variable, type: this.resolve(m.type), menv: this });
     }
   }
   mergeIsect(arms: RT[], name?: string): RT {

@@ -64,6 +64,11 @@ import * as topo from "./topology.decl"
   provenance is answerable by looking at the file alone.
 - Importing a name that is not exported, importing from a nonexistent
   module, or a collision with any existing binding is a compile error.
+- **Declaring-module scope**: an imported type's member expressions —
+  derived members, defaults, asserts, `$referrers` targets — resolve
+  names in the scope of the module that **declared** the type, not the
+  importer's. Instantiating an imported type never changes what its
+  own expressions mean; checking and evaluation both honor this.
 
 ## 8.4 Re-export
 

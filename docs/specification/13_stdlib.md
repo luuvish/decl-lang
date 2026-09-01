@@ -85,6 +85,9 @@ case arrives.
 | `length(s: string): int` | number of Unicode code points (not bytes, not UTF-16 units — fixed for determinism) |
 | `join(xs: string[], sep: string): string` | elements joined with `sep`; `""` on `[]` |
 | `starts_with(s: string, prefix: string): bool` | `true` iff `s` begins with `prefix` (code-point-wise) |
+| `ends_with(s: string, suffix: string): bool` | `true` iff `s` ends with `suffix` (code-point-wise) *(v0.1.6)* |
+| `contains(s: string, sub: string): bool` | `true` iff `sub` occurs in `s` (code-point-wise) *(v0.1.6)* |
+| `split(s: string, sep: string): string[]` | substrings between occurrences of `sep`, in order (`split("a->b", "->")` is `["a", "b"]`; `""` elements are kept); **domain: `sep != ""`** (E5008) *(v0.1.6)* |
 
 ## 13.7 `std.object`
 

@@ -1,9 +1,10 @@
 # Decl Documentation
 
-**Status: v0.1 — FROZEN (2026-08-31).** Phase 0 is complete: design
-docs, all thirteen specification chapters, the guide, the validation
-cases, and the evaluator spike that gated the freeze
-([ROADMAP.md](../ROADMAP.md) §0.6, `spike/FINDINGS.md`). The normative
+**Status: v0.2 (2026-09-01)** — v0.1 frozen 2026-08-31, then revised
+through the v0.2 cycle: the candidates collected while implementing
+Phases 2–5 ([design/03_v02_revision_candidates.md](design/03_v02_revision_candidates.md))
+were adjudicated as revisions v0.1.4–v0.1.8 (D31–D33, D29 amended, and
+clarifications — see [REVISIONS.md](REVISIONS.md)). The normative
 specification below is the single source of truth for every
 implementation phase.
 
@@ -20,8 +21,8 @@ charter and chapters remains a defect to fix on sight (§1.4).
 |---|---|
 | [00. Vision and Background](design/00_vision.md) | Why this language exists: the config-language landscape, the agent-era turn, lessons and defect review from the previous Decl iteration, and the checklist of issues the new spec must resolve (informative) |
 | [01. Design Requirements](design/01_requirements.md) | Goals, non-goals, capability requirements (describe / generate / validate / modules / tooling), the generality benchmark, and the quality bar — with the vision checklist promoted to requirements |
-| [02. Design Decisions](design/02_design_decisions.md) | The charter: principles P1–P7, decisions D1–D30, the rejected-syntax table, the comprehensive example, vision-checklist traceability, and the revision-tracked decision log — spec chapters must not contradict it |
-| [03. v0.2 Revision Candidates](design/03_v02_revision_candidates.md) | Findings from implementing Phases 2–4 and the Phase 5 real-world sweeps, collected as candidates for the v0.2 revision cycle: spec defects, underspecified semantics, extension demands, and implementation gaps (informative until adjudicated) |
+| [02. Design Decisions](design/02_design_decisions.md) | The charter: principles P1–P7, decisions D1–D33, the rejected-syntax table, the comprehensive example, vision-checklist traceability, and the revision-tracked decision log — spec chapters must not contradict it |
+| [03. v0.2 Revision Candidates](design/03_v02_revision_candidates.md) | Findings from implementing Phases 2–4 and the Phase 5 real-world sweeps, adjudicated 2026-09-01 into revisions v0.1.4–v0.1.8 (the v0.2 cycle); each entry records its outcome |
 
 ### Language specification (normative — the single source of truth)
 
@@ -38,7 +39,7 @@ charter and chapters remains a defect to fix on sight (§1.4).
 | [09. Evaluation Semantics](specification/09_semantics.md) | Pipeline, dependency graph, laziness, determinism and numeric rules, invalidation, partial evaluation, termination |
 | [10. Data Interchange](specification/10_interchange.md) | Input binding, serialization policy, canonical JSON text, total round-trip idempotence, JSON-only scope |
 | [11. Grammar](specification/11_grammar.md) | The formal grammar (EBNF): declarations, types, members, expressions, data documents, disambiguation notes — wins over prose on conflict |
-| [12. Errors and Diagnostic Codes](specification/12_errors.md) | Code scheme and bands, machine-readable report format, ordering and conformance scope, the full v0.1 registry |
+| [12. Errors and Diagnostic Codes](specification/12_errors.md) | Code scheme and bands, machine-readable report format, ordering and conformance scope, the append-only registry |
 | [13. Standard Library](specification/13_stdlib.md) | The complete `std.*` surface: array/math/int/float/string/object/map functions, the SI unit catalog, reserved `std.graph` |
 
 ### Guide (informative)

@@ -34,6 +34,7 @@ export class Engine {
         return { __q: true, dim: u.key, value: e.num * u.toBase };
       }
       case 'paren': return this.ev(e.x, sc);
+      case 'pattern': return { __pat: true, re: e.re };
       case 'mapcomp': {
         const entries: [string, any][] = [];
         const rec = (ci: number, locals: Map<string, any>) => {
@@ -281,6 +282,10 @@ export class Engine {
     if (op === '??') { const l = this.ev(le, sc); return l === ABSENT || l === null ? this.ev(re, sc) : l; }
     const l = this.ev(le, sc), r = this.ev(re, sc);
     if (op === '..' || op === '..<') return { __range: true, lo: l, hi: r, excl: op === '..<' };
+    if (op === 'matches') {
+      if (typeof l !== 'string' || !r || !r.__pat) throw new EvalErr('matches needs a string and a pattern');
+      return new RegExp(`^(?:${r.re})$`).test(l);
+    }
     if (op === '==') return valueEq(l, r);
     if (op === '!=') return !valueEq(l, r);
     if (op === 'in') {
@@ -417,6 +422,12 @@ export class Engine {
       case 'string.of': return this.toStr(a[0]);
       case 'string.join': return this.matArr(a[0]).join(a[1]);
       case 'string.starts_with': return (a[0] as string).startsWith(a[1] as string);
+      case 'string.ends_with': return (a[0] as string).endsWith(a[1] as string);
+      case 'string.contains': return (a[0] as string).includes(a[1] as string);
+      case 'string.split': {
+        if (a[1] === '') return domain('separator must be non-empty');
+        return { __arr: true, items: (a[0] as string).split(a[1] as string), path: [] };
+      }
       case 'ref.path': {
         if (!isRef(a[0])) throw new EvalErr('ref.path on non-reference');
         return pathStr(a[0].segs);
@@ -554,6 +565,10 @@ export class Engine {
       case 'prim': {
         if (rt.name === 'int' && typeof raw === 'bigint') return raw;
         if (rt.name === 'float' && typeof raw === 'number') return raw;
+        // interchange leniency (D29): an integer lexeme binds where
+        // float is expected iff it is exactly representable in binary64
+        if (rt.name === 'float' && typeof raw === 'bigint' && BigInt(Number(raw)) === raw && isFinite(Number(raw)))
+          return Number(raw);
         if (rt.name === 'bool' && typeof raw === 'boolean') return raw;
         if (rt.name === 'string' && typeof raw === 'string') return raw;
         if (rt.name === 'null' && raw === null) return raw;
@@ -561,6 +576,8 @@ export class Engine {
       }
       case 'lit': return valueEq(raw, rt.v) || (typeof rt.v === 'bigint' && typeof raw === 'bigint' && raw === rt.v) || raw === rt.v ? raw : fail(`expected ${JSON.stringify(String(rt.v))}`);
       case 'range': {
+        if (rt.base === 'float' && typeof raw === 'bigint' && BigInt(Number(raw)) === raw && isFinite(Number(raw)))
+          raw = Number(raw);   // interchange leniency (D29)
         const ok = rt.base === 'int' ? typeof raw === 'bigint' : typeof raw === 'number';
         if (!ok) return fail(`expected ${rt.base} in range`);
         const hi = rt.excl ? raw < rt.hi : raw <= rt.hi;

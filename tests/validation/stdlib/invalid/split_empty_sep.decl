@@ -1,0 +1,5 @@
+// @expect-phase: binding
+// @expect-error: E5008
+// evaluates; split's separator must be non-empty (13.6)
+type T = { const k = std.string.split("abc", "") }
+output t: T = { }

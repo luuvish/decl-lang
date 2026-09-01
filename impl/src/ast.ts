@@ -47,6 +47,7 @@ export type Expr =
   | { e: 'member'; x: Expr; name: string; safe?: boolean }
   | { e: 'index'; x: Expr; i: Expr }
   | { e: 'with'; base: Expr; patch: Expr }
+  | { e: 'pattern'; re: string }
   | { e: 'match'; subject: Expr; arms: { v: string; type?: TypeAst; body: Expr }[] };
 
 export type Decl = DeclBody & { exported?: boolean };

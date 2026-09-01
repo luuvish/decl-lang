@@ -1,0 +1,8 @@
+// @expect-phase: checking
+// @expect-error: E4090
+// parses; the embedding site must satisfy the declared $parent bound
+type Child = {
+    $parent: ref<{ width: int, ... }>
+    const w = $parent.width
+}
+type Bad = { kid: Child }

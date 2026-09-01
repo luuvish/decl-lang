@@ -1,0 +1,7 @@
+const ok = "si0" matches /si[0-9]+/
+const not_ok = "mi0" matches /si[0-9]+/
+type T = {
+    assert m1: ok
+    assert m2: !not_ok
+}
+output t: T = { }

@@ -1,0 +1,4 @@
+// @expect-phase: checking
+// @expect-error: E4071
+// parses; matches needs a string left operand (4.5)
+const bad = 5 matches /[0-9]+/

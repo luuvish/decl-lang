@@ -363,6 +363,11 @@ function lowerExpr(n: Node): Expr {
     }
     case 'array_comprehension':
       return { e: 'comp', head: lowerExpr(req(n, 'head')), clauses: kids(n, 'for_clause').map(lowerFor) };
+    case 'matches_expression': {
+      const [l, r] = n.namedChildren.filter(Boolean);
+      return { e: 'bin', op: 'matches', l: lowerExpr(l!), r: lowerExpr(r!) };
+    }
+    case 'pattern': return { e: 'pattern', re: n.text.slice(1, -1) };
     case 'match_expression': {
       const arms = kids(n, 'match_arm').map(a => {
         const body = a.childForFieldName('body')!;

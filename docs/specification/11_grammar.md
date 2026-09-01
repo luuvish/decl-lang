@@ -35,7 +35,10 @@ IDENT     = [_A-Za-z][_A-Za-z0-9]*                 — §2.3
 INT       = decimal | 0x… | 0o… | 0b…              — §2.6
 FLOAT     = decimal float forms                     — §2.6
 UNIT-LIT  = decimal INT or FLOAT immediately
-            followed by IDENT (one token)           — §2.7
+            followed by IDENT (one token); the
+            numeric reading is longest-first, so
+            exponents and radix prefixes never
+            split into number + unit               — §2.7
 STRING    = "…" with JSON escapes                   — §2.8
 TEMPLATE  = `…${ }…` (text parts and holes)         — §2.8
 PATTERN   = /…/ — non-empty body of literal text

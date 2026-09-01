@@ -684,6 +684,67 @@ diagnostic width_mismatch(src: int, dst: int) {
 
 ---
 
+### D31. Static assignability is precise, then deferred — never silently wrong *(revision, 2026-09-01)*
+
+- One judgment still decides every checking site (D13); this decision
+  fixes what the checker must **infer** and what it may **defer**, so
+  the frozen corpus (guide, benchmarks) is sound under `S ⊑ T`.
+- **Interval inference**: `+`, `-`, `*` over `int` operands whose
+  static types are ranges or literals infer the **range** obtained by
+  endpoint interval arithmetic — `9000 + i` with `i: 0..<3` infers
+  `9000..9002`, which is `⊑ 1..65535`. (`/` and `%` infer `int`.)
+- **Same-kind refinement deferral**: where the expected type is a
+  refinement (range, pattern, literal set, predicate) and the inferred
+  type has the same base kind but membership is not statically
+  provable, the site **defers to binding-time validation** instead of
+  erroring — a template flowing into a pattern-typed member is legal
+  and checked when the value exists. A base-**kind** mismatch stays a
+  static error.
+- Rationale: both alternative readings fail — strict rejection makes
+  the spec's own examples ill-typed; silent acceptance makes `⊑`
+  vacuous. Precision where arithmetic decides, deferral where only the
+  value can.
+
+### D32. Roots own places; unbound literals are inert *(revision, 2026-09-01)*
+
+- **Embedding a module `const` record into a root does not re-root the
+  references it carries.** A `const` is not an evaluation root (D22,
+  §7.5), so a record built inside one and shared into several
+  `output`s would give its internal references const-rooted places —
+  E4093, and now checked **statically** where navigation makes it
+  visible. There is no implicit re-rooting: copying a value while
+  silently rewriting the places inside it would contradict D26's
+  explicit-reference principle.
+- **The normative idiom is a constructor `func`** returning the
+  literal: each `output` evaluates its own copy in place, so internal
+  references bind to that root's places. (The Phase 5 service-graph
+  example is the reference use.)
+- **An unbound literal is inert.** A record or array literal — a
+  constructor func's result included — supports exactly: member and
+  index access, `with` (entry merge), and embedding into a typed
+  position, where it binds. Reshaping chains beyond that (e.g.
+  comprehending over an unbound literal's entries and re-embedding the
+  pieces) are **errors**, not undefined behavior; write the shape you
+  mean with constructor parameters instead.
+
+### D33. Member positions are their own name space *(revision, 2026-09-01)*
+
+- **Keywords are ordinary member names** in member positions: record
+  member declarations (`type: string`), member access after `.` / `?.`
+  (`x.type`), and object-literal keys (`{ type: "a" }`). Real-world
+  documents routinely use fields named `type`, `unit`, `input` —
+  forcing `$this["type"]` for a dot-spellable name contradicted §3.11's
+  own quoting rule.
+- References to such members from sibling expressions read naturally
+  (`` const label = `${type}` `` inside the record): where no keyword
+  reading is grammatically possible, the word is an identifier.
+  Declaration positions outside records are unchanged — `const type =
+  3` at module level stays an error (§2.3).
+- Literal keywords `true` / `false` / `null` are **not** member names
+  (they stay literals everywhere).
+
+---
+
 ## H. Interchange
 
 ### D29. Serialization policy and total round-trip
@@ -703,6 +764,12 @@ diagnostic width_mismatch(src: int, dst: int) {
   slot of any name (without this, intra-root references would break
   the round-trip below: an input can never share its output's name).
   Member order follows D23.
+- **Interchange leniency for whole floats** *(amended, v0.1.7)*: where
+  `float` is expected, an integer lexeme in a bound document binds iff
+  exactly representable in binary64 (real-world documents serialize
+  whole floats as `500`); output stays canonical (`500.0`), and the
+  reverse direction (float lexeme where `int` is expected) stays an
+  error.
 - **Round-trip idempotence is normative and total** *(V1)*: for every
   value the language can produce, serializing and re-binding the output
   as `input` succeeds, validates, and re-serializes byte-identically.

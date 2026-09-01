@@ -1,5 +1,15 @@
 # v0.2 Revision Candidates
 
+> **Adjudicated 2026-09-01** — the cycle is complete and **v0.2 is
+> declared** (see `../REVISIONS.md`). Outcomes: A1 → v0.1.4 (D31) ·
+> A2 → v0.1.4 clarification · A3 → v0.1.4 registry (E1xxx/E2xxx) ·
+> B1+B2 → v0.1.5 (D32, E4093 now static) · B3+B4 → v0.1.5
+> clarifications · C1 → v0.1.8 (D33, grammar + wasm updated) ·
+> C2 → v0.1.7 (D29 amended) · C3 → v0.1.6 (`split`/`contains`/
+> `ends_with`) · C4 → no language change (idiom stands) · D1/D2/D4 →
+> implemented (E4090/E4093 static checks, `matches` evaluation +
+> static E4071) · D3 → remains a documented linker limitation.
+
 Findings collected while implementing Phases 2–4 against the frozen
 v0.1 specification and validating it on real-world corpora in Phase 5.
 Nothing here changes v0.1: each entry is a candidate for the v0.2
@@ -26,7 +36,7 @@ change). Entries are ordered by category, then by weight of evidence.
   same token-boundary rule explicitly.
 - **A3. No parsing-error code band in §12.** The registry starts at
   E3xxx; tools need a code for "syntax error" (the implementation uses a
-  provisional `E1000`). Reserve and define an E1xxx band.
+  provisional code). Reserve and define an E1xxx band.
 
 ## B. Underspecified semantics surfaced by use
 

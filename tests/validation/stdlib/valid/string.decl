@@ -3,5 +3,9 @@ type Check = {
     assert length_ok: std.string.length("hello") == 5 && std.string.length("") == 0
     assert join_ok: std.string.join(["a", "b", "c"], "-") == "a-b-c" && std.string.join([], ",") == ""
     assert starts_ok: std.string.starts_with("service", "ser") && !std.string.starts_with("service", "srv")
+    assert ends_ok: std.string.ends_with("service", "ice") && !std.string.ends_with("service", "vic")
+    assert contains_ok: std.string.contains("a->b.c", "->") && !std.string.contains("abc", "z")
+    assert split_ok: std.string.join(std.string.split("a->b->c", "->"), ",") == "a,b,c"
+    assert split_keeps_empty: std.array.count(std.string.split("a::b", ":")) == 3
 }
 output c: Check = { }

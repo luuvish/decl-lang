@@ -105,6 +105,20 @@ A diagnostic serializes as:
 | E2003 | malformed declaration |
 | E2004 | misplaced separator |
 
+### E1xxx — lexical (§2.11)
+
+| Code | Condition |
+|---|---|
+| E1001 | malformed or unknown token (§2.11: invalid UTF-8 or BOM, unterminated literal/template/pattern/comment, unknown escape, malformed number, keyword as identifier, unknown `$`-token or character) |
+| E1002 | unit literal on a non-decimal base (§2.7) |
+
+### E2xxx — syntax (ch. 11)
+
+| Code | Condition |
+|---|---|
+| E2001 | input does not match the grammar |
+| E2002 | rejected-syntax form (`;`, `let`, ternary `?:`, `where`, wildcard import/export — §2, D16) |
+
 ### E3xxx — names, modules, packages (§5.1, ch. 8)
 
 | Code | Condition |

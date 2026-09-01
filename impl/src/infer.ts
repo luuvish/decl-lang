@@ -177,6 +177,9 @@ const STD: Record<string, { arity: number; ret: RT | null }> = {
   'string.of': { arity: 1, ret: PRIM('string') },
   'string.join': { arity: 2, ret: PRIM('string') },
   'string.starts_with': { arity: 2, ret: PRIM('bool') },
+  'string.ends_with': { arity: 2, ret: PRIM('bool') },
+  'string.contains': { arity: 2, ret: PRIM('bool') },
+  'string.split': { arity: 2, ret: { t: 'arr', elem: PRIM('string') } },
   'map.entries': { arity: 1, ret: null },
   'ref.path': { arity: 1, ret: PRIM('string') },
   'math.abs': { arity: 1, ret: null },
@@ -218,6 +221,7 @@ export function requireVal(cx: ICtx, e: Expr, ty: Ty, what: string): Ty {
 export function infer(cx: ICtx, e: Expr): Ty {
   switch (e.e) {
     case 'lit': return { rt: { t: 'lit', v: e.v }, abs: false };
+    case 'pattern': return { rt: { t: 'pattern', src: e.re, re: new RegExp(`^(?:${e.re})$`) }, abs: false };
     case 'unitlit': {
       try { return { rt: { t: 'quantity', dim: cx.env.unitInfo(e.unit).key }, abs: false }; }
       catch (err: any) { cx.report('E4073', err.message); return UNK; }
@@ -389,7 +393,11 @@ function inferBin(cx: ICtx, e: Expr & { e: 'bin' }): Ty {
   }
   const l = requireVal(cx, e.l, infer(cx, e.l), `as \`${op}\` operand`);
   const r = requireVal(cx, e.r, infer(cx, e.r), `as \`${op}\` operand`);
-  if (op === '==' || op === '!=' || op === 'matches') return BOOL;
+  if (op === 'matches') {
+    if (l.rt && numKind(l.rt) !== 'string') cx.report('E4071', '`matches` needs a string left operand');
+    return BOOL;
+  }
+  if (op === '==' || op === '!=') return BOOL;
   const lk = numKind(l.rt), rk = numKind(r.rt);
   const cmp = ['<', '<=', '>', '>='].includes(op);
   if (lk === 'quantity' || rk === 'quantity') {
@@ -662,7 +670,12 @@ function placeTy(cx: ICtx, e: Expr): Ty {
     case 'paren': return placeTy(cx, e.x);
     case 'member': return memberCore(cx, placeTy(cx, e.x), e);
     case 'index': return indexCore(cx, placeTy(cx, e.x), e);
-    default: return infer(cx, e);
+    default:
+      // the spine root must be a root-derived place, never a module
+      // const (§7.5, D32)
+      if (e.e === 'name' && !cx.vars.has(e.name) && cx.env.consts.has(e.name))
+        cx.report('E4093', `\`ref\` position navigates module const ${e.name} — not a root-derived place (§7.5)`);
+      return infer(cx, e);
   }
 }
 

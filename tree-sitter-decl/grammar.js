@@ -225,7 +225,16 @@ module.exports = grammar({
       'when', field('condition', $._expression),
       '{', optional(sepList($, choice($.assert_member, $.when_member))), '}',
     ),
-    _member_name: $ => choice($.identifier, $.string),
+    // member positions are their own name space (D33): keywords are
+    // ordinary member names after '.', in declarations, and as object
+    // keys — real-world documents use fields like `type`
+    _member_name: $ => choice($.identifier, $.string, alias($.keyword_name, $.identifier)),
+    keyword_name: _ => choice(
+      'type', 'const', 'func', 'output', 'input', 'import', 'export',
+      'diagnostic', 'dimension', 'unit', 'assert', 'when', 'if', 'then',
+      'else', 'match', 'for', 'in', 'with', 'as', 'from',
+      'error', 'warn', 'info', 'matches',
+    ),
 
     function_type: $ => seq(
       '(', optional(commaList($._type)), ')', '=>', $._type,

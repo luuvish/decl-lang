@@ -299,12 +299,22 @@ export function checkModule(decls: Decl[], linked?: Env): Diag[] {
     // scope (§8.3) — same rule the engine follows at evaluation
     const cxFor = (menv: Env | undefined): ICtx =>
       menv && menv !== cxR.env ? { ...cxR, env: menv } : cxR;
+    // D30/E4090: an embedded type's declared $parent bound must hold
+    // at this site — the container is the parent
+    const checkEmbedding = (memberRt: RT, memberName: string) => {
+      for (const cd of (memberRt?.ctxDecls ?? []) as any[]) {
+        if (cd.variable !== '$parent') continue;
+        const bound = cd.type?.t === 'ref' ? cd.type.target : null;
+        if (bound && !subsumes(env, rt, bound))
+          report('E4090', `embedding site ${rt.name ?? 'record'}.${memberName} fails ${memberRt.name ?? 'the member type'}'s $parent bound (§7.3)`);
+      }
+    };
     for (const m of rt.members) {
       if (m.kind === 'der' && m.expr) checkExpr(cxFor(m.menv), m.expr, m.type ?? null);
       if (m.kind === 'dflt' && m.dflt) checkExpr(cxFor(m.menv), m.dflt, m.type ?? null);
-      if (m.type?.t === 'rec') checkRecordExprs(m.type, cxFor(m.menv));
-      if (m.type?.t === 'arr' && m.type.elem?.t === 'rec') checkRecordExprs(m.type.elem, cxFor(m.menv));
-      if (m.type?.t === 'map' && m.type.val?.t === 'rec') checkRecordExprs(m.type.val, cxFor(m.menv));
+      if (m.type?.t === 'rec') { checkEmbedding(m.type, m.name); checkRecordExprs(m.type, cxFor(m.menv)); }
+      if (m.type?.t === 'arr' && m.type.elem?.t === 'rec') { checkEmbedding(m.type.elem, m.name); checkRecordExprs(m.type.elem, cxFor(m.menv)); }
+      if (m.type?.t === 'map' && m.type.val?.t === 'rec') { checkEmbedding(m.type.val, m.name); checkRecordExprs(m.type.val, cxFor(m.menv)); }
     }
     for (const a of rt.asserts) {
       if (a.kind === 'assert') checkMemberAst(cxFor(a.menv), { m: 'assert', name: a.name, cond: a.cond, tail: a.tail });

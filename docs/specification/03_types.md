@@ -219,10 +219,13 @@ type Router = {
 
 - Member names are strings: written bare when identifier-shaped,
   quoted otherwise (`"my-key": int` — closed records must be able to
-  declare any JSON key, P3). A reserved keyword as a name is also
-  quoted (`"type": string` — the bare form cannot lex). Quoting a name
-  that could be written bare is an error (one form per name); access
-  forms are §4.3.
+  declare any JSON key, P3). **Member positions are their own name
+  space (D33, v0.1.8)**: reserved keywords are ordinary bare member
+  names — `type: string` declares, `x.type` accesses, `{ type: "a" }`
+  constructs — and sibling expressions reference such members plainly
+  (`` `${type}` ``). Only the literal keywords `true`/`false`/`null`
+  are not member names. Quoting a name that could be written bare is
+  an error (one form per name); access forms are §4.3.
 - Members divide into **value members** — required `x: T`, optional
   `x?: T`, defaulted `x: T = e`, derived `const x = e` — and
   **constraint members** — `assert`, `when` (D19). A record body may
@@ -515,6 +518,14 @@ One judgment serves every checking site (D13):
   iff the location's type `⊑ T`), and a `ref<S>`-typed expression in a
   non-reference `T` position denotes the target's value (assignable
   iff `S ⊑ T`).
+- **Inference precision and deferral (D31).** The inferred type `S`
+  is as precise as arithmetic allows: `+`/`-`/`*` over `int` operands
+  of range or literal type infer the interval-arithmetic range of the
+  endpoints (`/` and `%` infer `int`). Where `T` is a refinement of
+  the same base kind (range, pattern, literal set, predicate) and
+  `S ⊑ T` is not statically decidable, the site **defers to
+  binding-time validation** instead of erroring; only a base-kind
+  mismatch is a static error.
 - **Literal construction** — an object/array literal checked against `T`
   is checked member-wise (each provided member against its declared
   type; required members present; defaulted/derived members *omitted*

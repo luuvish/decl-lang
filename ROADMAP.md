@@ -36,7 +36,7 @@ never migrated wholesale or modified from this repo.
 | 2 | Reference implementation core (TS) | type check, evaluation, constraint validation, serialization + conformance runner | **done — 2026-09-01** (full static checker ⊑/§4.10/§4.7/§4.13/§3.15/§3.16; guide + benchmarks e2e; byte-identical round-trips) |
 | 3 | Modules & standard library | import/export, manifest + lock, `std.*` | **done — 2026-09-01** (module linking §8, packages + reproducible lock §8.6–8.7, std 1:1 with SI catalog §13) |
 | 4 | CLI & tooling | `decl` CLI, formatter, minimal LSP | **done — 2026-09-01** (check/evaluate/validate/fmt; formatter idempotent + AST-safe over the corpus; stdio LSP with diagnostics/hover/definition) |
-| 5 | Real-world validation & feedback | 3 domain libraries, v0.2 revision list | **done — 2026-09-01** (three domain examples under `examples/`: service graph, fixture generation, and a synthetic network fabric with scale + corruption probes; the full proprietary fixture corpus — 178 documents incl. the complete real set — additionally validated locally, artifacts kept out of the repo by security policy; v0.2 candidates in `docs/design/03_v02_revision_candidates.md`) |
+| 5 | Real-world validation & feedback + v0.2 cycle | 3 domain examples, v0.2 revisions adjudicated | **done — 2026-09-01** (three domain examples under `examples/`: service graph, fixture generation, and a synthetic network fabric with scale + corruption probes; the full proprietary fixture corpus — 178 documents incl. the complete real set — additionally validated locally, artifacts kept out of the repo by security policy; v0.2 candidates adjudicated 2026-09-01 → revisions v0.1.4–v0.1.8, **v0.2 declared**) |
 
 ---
 

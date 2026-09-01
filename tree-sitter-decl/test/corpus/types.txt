@@ -239,3 +239,57 @@ type Child = Parent { label: string, port: 1..1024 }
               (int))
             (number_literal
               (int))))))))
+
+================================================================================
+keywords as member names (D33)
+================================================================================
+
+type T = {
+    type: string
+    unit?: int
+    const label = `${type}`
+}
+const a = t.type
+const b = { type: "x", with: 1 }
+const c = t?.else
+
+--------------------------------------------------------------------------------
+
+(module
+  (type_declaration
+    name: (identifier)
+    type: (record_type
+      (value_member
+        name: (identifier)
+        type: (named_type
+          (qualified_name
+            (identifier))))
+      (value_member
+        name: (identifier)
+        type: (named_type
+          (qualified_name
+            (identifier))))
+      (derived_member
+        name: (identifier)
+        value: (template_string
+          (interpolation
+            (identifier))))))
+  (const_declaration
+    name: (identifier)
+    value: (member_access
+      (identifier)
+      (identifier)))
+  (const_declaration
+    name: (identifier)
+    value: (object
+      (object_entry
+        key: (identifier)
+        value: (string))
+      (object_entry
+        key: (identifier)
+        value: (int))))
+  (const_declaration
+    name: (identifier)
+    value: (safe_access
+      (identifier)
+      (identifier))))

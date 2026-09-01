@@ -58,8 +58,13 @@ literal-construction check of §3.18 followed by the ordinary pipeline:
 Binding never mutates the document notionally: absent stays absent
 (no null-for-missing invention), `null` binds as the value `null`
 (the target type must admit it), and numbers bind as `int` or `float`
-by their lexical form (§2.6) — `8080` does not bind where `float` is
-expected, nor `1.0` where `int` is.
+by their lexical form (§2.6) — `1.0` does not bind where `int` is
+expected. One asymmetric leniency exists at this boundary *(D29
+amended, v0.1.7)*: where **`float`** is expected, an **integer
+lexeme** binds iff it is exactly representable in binary64 — real
+documents routinely serialize whole floats as `500`. The bound value
+is the float; re-serialization emits the canonical `500.0`. The
+reverse never holds: a float lexeme does not bind as `int`.
 
 ## 10.3 Serialization policy
 
