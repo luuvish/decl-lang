@@ -24,7 +24,7 @@ node test/modules.ts      # multi-module linking + evaluation (§8)
 node test/packages.ts     # packages, decl.toml, lock reproducibility (§8.6–8.7)
 node src/conformance.ts   # judge every tests/validation fixture by phase
 node test/fmt.ts          # formatter idempotency + AST safety over the corpus
-node test/cli.ts          # decl check / eval / validate / fmt end to end
+node test/cli.ts          # decl check / evaluate / validate / fmt end to end
 node test/lsp.ts          # LSP diagnostics / hover / definition over stdio
 npm test                  # all of the above
 ```
@@ -137,7 +137,7 @@ module files in canonical path order, verified fail-closed
 under `<root>/decl_modules/<name>/`, and the lock is line-based
 `name version sha256` in name order.
 
-Tooling (Phase 4): the `decl` CLI (`check` / `eval` / `validate` with
+Tooling (Phase 4): the `decl` CLI (`check` / `evaluate` / `validate` with
 `--expect-errors` / `fmt --check`), the canonical formatter (§2.1/D1 —
 LF, 4-space indent, normalized spacing, line structure preserved), and
 the stdio LSP server (diagnostics → hover → definition).

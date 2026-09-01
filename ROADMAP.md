@@ -183,7 +183,7 @@ tests pass · a fixture exists for every stdlib function.
 
 ## Phase 4 — CLI & tooling
 
-- `decl` CLI: `check` (parse + types), `eval` (output evaluation → JSON),
+- `decl` CLI: `check` (parse + types), `evaluate` (output evaluation → JSON),
   `validate` (input binding validation, `--expect-errors` support), `fmt`
 - Formatter: enforce the canonical form the spec defines
 - Minimal LSP surface, in order: diagnostics → hover → definition. The
