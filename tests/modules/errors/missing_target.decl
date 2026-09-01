@@ -1,0 +1,2 @@
+import { x } from "./nowhere.decl"
+const y = x

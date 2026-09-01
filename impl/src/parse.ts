@@ -30,7 +30,10 @@ export function parseSource(src: string): ParseResult {
   for (const c of tree.rootNode.namedChildren) {
     if (!c || c.type === 'ERROR') continue;
     const d = lowerDecl(c);
-    if (d) decls.push(d);
+    if (d) {
+      if (c.previousSibling?.text === 'export' || d.d === 're_export') d.exported = true;
+      decls.push(d);
+    }
   }
   return { decls, errors };
 }
@@ -94,10 +97,22 @@ function lowerDecl(n: Node): Decl | null {
       if (dim) return { d: 'unit', name: req(n, 'name').text, dim: dim.text };
       return { d: 'unit', name: req(n, 'name').text, factor: lowerExpr(field(n, 'factor')!), base: field(n, 'base')!.text };
     }
-    case 'import_declaration': return { d: 'import' };
-    case 're_export_declaration': return { d: 're_export' };
+    case 'import_declaration': {
+      const from = JSON.parse(kid(n, 'string')!.text);
+      const ni = kid(n, 'named_imports');
+      if (ni) return { d: 'import', from, names: kids(ni, 'import_item').map(lowerImportItem) };
+      return { d: 'import', from, ns: kid(n, 'identifier')!.text };
+    }
+    case 're_export_declaration':
+      return { d: 're_export', from: JSON.parse(kid(n, 'string')!.text),
+        names: kids(n, 'import_item').map(lowerImportItem) };
     default: return null;
   }
+}
+
+function lowerImportItem(it: Node): { name: string; as?: string } {
+  const ids = it.namedChildren.filter(Boolean);
+  return { name: ids[0]!.text, as: ids[1]?.text };
 }
 
 function maybeTail(n: Node): ElseTail | undefined {

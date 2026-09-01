@@ -1,0 +1,2 @@
+import { secret } from "./lib.decl"
+const use = secret

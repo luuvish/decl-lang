@@ -86,6 +86,10 @@ export class Env {
   diagnostics: Diag[] = [];
   constEval?: (name: string) => any;   // installed by the Engine (§4.13)
   exprEval?: (e: Expr) => any;         // installed by the Engine (unit factors)
+  // module linking (§8.3): local name -> the exporting module + original
+  // name; namespace name -> that module's export surface
+  imports = new Map<string, { env: Env; name: string }>();
+  namespaces = new Map<string, { env: Env; exports: Map<string, { env: Env; name: string }> }>();
   onConstDiag?: (d: Diag) => void;     // installed by the checker
   private constDiagSeen = new Set<string>();
 
@@ -298,7 +302,16 @@ export class Env {
         if (ast.name === 'ref') return { t: 'ref', target: this.resolve(ast.args[0]) };
         if (['int', 'float', 'bool', 'string'].includes(ast.name) && !ast.args.length && !ast.ext)
           return { t: 'prim', name: ast.name };
-        const decl = this.typeAsts.get(ast.name);
+        let decl = this.typeAsts.get(ast.name);
+        if (!decl) {
+          const im = this.imports.get(ast.name);
+          if (im) return im.env.resolve({ ...ast, name: im.name }, name);
+          if (ast.name.includes('.')) {
+            const [ns, ...rest] = ast.name.split('.');
+            const ex = this.namespaces.get(ns)?.exports.get(rest.join('.'));
+            if (ex) return ex.env.resolve({ ...ast, name: ex.name }, name);
+          }
+        }
         if (!decl) throw new Error(`unknown type ${ast.name}`);
         let base: RT;
         if (decl.params?.length) base = this.instantiate(ast, decl);
@@ -415,15 +428,17 @@ export class Env {
   }
 
   fillRecord(rt: any, members: MemberAst[]) {
+    // member expressions and asserts evaluate in their declaring
+    // module's scope (§8.3) — carry it on each entry
     for (const m of members) {
       if (m.m === 'value')
-        rt.members.push({ kind: m.dflt ? 'dflt' : m.opt ? 'opt' : 'req', name: m.name, type: this.resolve(m.type), dflt: m.dflt });
+        rt.members.push({ kind: m.dflt ? 'dflt' : m.opt ? 'opt' : 'req', name: m.name, type: this.resolve(m.type), dflt: m.dflt, menv: this });
       else if (m.m === 'derived')
-        rt.members.push({ kind: 'der', name: m.name, type: m.type ? this.resolve(m.type) : undefined, expr: m.expr });
+        rt.members.push({ kind: 'der', name: m.name, type: m.type ? this.resolve(m.type) : undefined, expr: m.expr, menv: this });
       else if (m.m === 'assert')
-        rt.asserts.push({ kind: 'assert', name: m.name, cond: m.cond, tail: m.tail, origin: rt.name });
+        rt.asserts.push({ kind: 'assert', name: m.name, cond: m.cond, tail: m.tail, origin: rt.name, menv: this });
       else if (m.m === 'when')
-        rt.asserts.push({ kind: 'when', cond: m.cond, body: m.body, origin: rt.name });
+        rt.asserts.push({ kind: 'when', cond: m.cond, body: m.body, origin: rt.name, menv: this });
       else if (m.m === 'context') { /* checked statically (D30); no runtime slot */ }
     }
   }

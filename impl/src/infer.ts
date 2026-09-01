@@ -227,6 +227,9 @@ export function infer(cx: ICtx, e: Expr): Ty {
       const o = env.outputs.find(o => o.name === e.name);
       if (o) return { rt: tryResolve(env, o.type), abs: false };
       if (env.inputs.has(e.name)) return { rt: tryResolve(env, env.inputs.get(e.name)!.type), abs: false };
+      const im = env.imports.get(e.name);
+      if (im) return importedTy(cx, im);
+      if (env.namespaces.has(e.name)) { cx.report('E3008', `namespace name ${e.name} used as a value`); return UNK; }
       if (env.typeAsts.has(e.name)) { cx.report('E3008', `type/namespace name ${e.name} used as a value`); return UNK; }
       cx.report('E3003', `unknown name ${e.name}`);
       return UNK;
@@ -475,8 +478,28 @@ function indexCore(cx: ICtx, b: Ty, e: Expr & { e: 'index' }): Ty {
   return UNK;
 }
 
+// a name imported from another module, typed in that module's scope
+function importedTy(cx: ICtx, ex: { env: Env; name: string }): Ty {
+  const t = ex.env;
+  if (t.consts.has(ex.name)) return { rt: tryResolve(t, (t.consts.get(ex.name) as any).type), abs: false };
+  if (t.funcs.has(ex.name)) {
+    const f = t.funcs.get(ex.name)!;
+    return { rt: { t: 'func', params: f.params.map(p => tryResolve(t, p.type) ?? { t: 'any' }), ret: tryResolve(t, f.ret) ?? null }, abs: false };
+  }
+  const o = t.outputs.find(o => o.name === ex.name);
+  if (o) return { rt: tryResolve(t, o.type), abs: false };
+  if (t.inputs.has(ex.name)) return { rt: tryResolve(t, t.inputs.get(ex.name)!.type), abs: false };
+  if (t.typeAsts.has(ex.name)) { cx.report('E3008', `type name ${ex.name} used as a value`); return UNK; }
+  return UNK;
+}
+
 function inferMember(cx: ICtx, e: Expr & { e: 'member' }): Ty {
   if (stdPath(e) !== null) return UNK;   // std.* namespace path (typed at the call)
+  if (e.x.e === 'name' && !cx.vars.has(e.x.name) && cx.env.namespaces.has(e.x.name)) {
+    const ex = cx.env.namespaces.get(e.x.name)!.exports.get(e.name);
+    if (!ex) { cx.report('E3005', `namespace ${e.x.name} has no export ${e.name}`); return UNK; }
+    return importedTy(cx, ex);
+  }
   const b = infer(cx, e.x);
   const key = pathKey(e.x);
   if (!e.safe) {

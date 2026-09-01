@@ -9,7 +9,7 @@ import type { Diag, RecInst, RT, Seg, Slot } from './semantics.ts';
 import type { Expr, TemplateParts } from './ast.ts';
 import { subsumes } from './subsume.ts';
 
-type Scope = { inst: RecInst | null; locals: Map<string, any>; rootName: string };
+type Scope = { inst: RecInst | null; locals: Map<string, any>; rootName: string; menv?: Env };
 type Pre = { __pre: 'obj'; entries: [string, PreVal][] } | { __pre: 'arr'; items: ({ spread: boolean; v: PreVal })[] };
 type PreVal = { __expr: Expr; scope: Scope } | any;
 
@@ -64,12 +64,9 @@ export class Engine {
           const v = this.slotLookup(sc.inst, e.name);
           if (v !== undefined) return v;
         }
-        if (this.env.consts.has(e.name)) return this.forceConst(e.name, sc.rootName);
-        if (this.env.funcs.has(e.name)) {
-          const f = this.env.funcs.get(e.name)!;
-          return { __clo: true, params: f.params.map(p => p.name), body: f.body,
-                   scope: { inst: null, locals: new Map(), rootName: sc.rootName } };
-        }
+        const menv = sc.menv ?? this.env;
+        const bound = this.moduleValue(menv, e.name, sc.rootName);
+        if (bound !== undefined) return bound;
         if (e.name === 'std') return { __std: true, path: [] };
         if (this.env.roots.has(e.name)) return this.env.roots.get(e.name);
         throw new EvalErr(`unknown name ${e.name}`);
@@ -108,7 +105,7 @@ export class Engine {
         let catchAll: { v: string; body: Expr } | null = null;
         for (const arm of e.arms) {
           if (!arm.type) { catchAll = arm; continue; }
-          if (this.memberOf(subj, this.env.resolve(arm.type), sc)) return run(arm);
+          if (this.memberOf(subj, (sc.menv ?? this.env).resolve(arm.type), sc)) return run(arm);
         }
         if (catchAll) return run(catchAll);
         throw new EvalErr('match: no arm matched');
@@ -132,6 +129,7 @@ export class Engine {
       }
       case 'member': {
         const x0 = this.ev(e.x, sc);
+        if (x0 && x0.__nsref) return this.nsValue(x0, e.name, sc);
         if (e.safe && (x0 === null || x0 === ABSENT)) return ABSENT;
         const x = this.deref(x0);
         return this.access(x, e.name);
@@ -191,9 +189,38 @@ export class Engine {
     if (e.e === 'member') {
       const x = this.evCallee(e.x, sc);
       if (x && x.__std) return { __std: true, path: [...x.path, e.name] };
+      if (x && x.__nsref) return this.nsValue(x, e.name, sc);
       return this.access(this.deref(x), e.name);
     }
     return this.ev(e, sc);
+  }
+  // module-level value lookup in a module's own scope (consts, funcs,
+  // imports, namespaces) — undefined when the name is not module-bound
+  moduleValue(menv: Env, name: string, rootName: string): any {
+    if (menv.consts.has(name)) return this.forceConstIn(menv, name, rootName);
+    if (menv.funcs.has(name)) {
+      const f = menv.funcs.get(name)!;
+      return { __clo: true, params: f.params.map(p => p.name), body: f.body,
+               scope: { inst: null, locals: new Map(), rootName, menv } };
+    }
+    const im = menv.imports.get(name);
+    if (im) {
+      const v = this.moduleValue(im.env, im.name, rootName);
+      if (v !== undefined) return v;
+      if (this.env.roots.has(im.name)) return this.env.roots.get(im.name);   // imported output/input root
+      return undefined;
+    }
+    const ns = menv.namespaces.get(name);
+    if (ns) return { __nsref: true, ...ns };
+    return undefined;
+  }
+  nsValue(ns: any, name: string, sc: Scope): any {
+    const ex = ns.exports.get(name);
+    if (!ex) throw new EvalErr(`namespace has no export ${name}`);
+    const v = this.moduleValue(ex.env, ex.name, sc.rootName);
+    if (v !== undefined) return v;
+    if (this.env.roots.has(ex.name)) return this.env.roots.get(ex.name);
+    throw new EvalErr(`${name} is not a value`);
   }
   // quantity arithmetic (§3.16): +/-/compare need equal dimensions;
   // * and / compose exponent vectors; a vector cancelling to zero is a
@@ -617,7 +644,7 @@ export class Engine {
       case 'pred': {
         const v = this.bind(raw, rt.base, path, parent, sc);
         for (const p of rt.preds) {
-          const fn = this.ev(p, { inst: null, locals: new Map(), rootName: sc.rootName });
+          const fn = this.ev(p, { inst: null, locals: new Map(), rootName: sc.rootName, menv: sc.menv });
           let ok: any;
           try { ok = this.call(fn, [v], sc); } catch { ok = false; }
           if (ok !== true) return fail(`predicate ${JSON.stringify(exprName(p))} not satisfied`);
@@ -695,12 +722,14 @@ export class Engine {
       slots: new Map(), entryOrder: entries.map(([k]) => k), extras: new Map(),
     };
     if (this.noReg === 0) this.env.registry.push(inst);
-    const isc: Scope = { inst, locals: new Map(), rootName: sc.rootName };
+    (inst as any).menv = sc.menv;   // module scope for asserts/diagnostics
+    const isc0: Scope = { inst, locals: new Map(), rootName: sc.rootName, menv: sc.menv };
     const supplied = new Map(entries);
 
     for (const m of rt.members) {
       const has = supplied.has(m.name);
       const types = m.conj ?? [m.type];
+      const isc: Scope = m.menv ? { ...isc0, menv: m.menv } : isc0;
       const mkCheck = (rawV: any) => () => {
         let v: any;
         for (const ty of types) v = this.bind(rawV, ty, [...path, m.name], inst, isc);
@@ -811,12 +840,14 @@ export class Engine {
       throw e;
     }
   }
-  forceConst(name: string, rootName: string): any {
-    const c = this.env.consts.get(name)!;
+  forceConst(name: string, rootName: string): any { return this.forceConstIn(this.env, name, rootName); }
+  forceConstIn(env: Env, name: string, rootName: string): any {
+    const c = env.consts.get(name)!;
     if (c.state === 'ok') return c.value;
     c.state = 'ok';
-    c.value = this.ev(c.expr, { inst: null, locals: new Map(), rootName });
-    if (c.value && (c.value.__pre || c.value.__jobj)) c.value = this.materialize(c.value, [name], null, { inst: null, locals: new Map(), rootName });
+    const sc = { inst: null, locals: new Map(), rootName, menv: env };
+    c.value = this.ev(c.expr, sc);
+    if (c.value && (c.value.__pre || c.value.__jobj)) c.value = this.materialize(c.value, [name], null, sc);
     return c.value;
   }
 
@@ -834,8 +865,9 @@ export class Engine {
     for (const inst of this.env.registry) this.runAsserts(inst, inst.rt.asserts, rootName);
   }
   runAsserts(inst: RecInst, asserts: any[], rootName: string) {
-    const sc: Scope = { inst, locals: new Map(), rootName };
+    const sc0: Scope = { inst, locals: new Map(), rootName, menv: (inst as any).menv };
     for (const a of asserts) {
+      const sc: Scope = a.menv ? { ...sc0, menv: a.menv } : sc0;
       if (a.kind === 'when') {
         let cond: any;
         try { cond = this.ev(a.cond, sc); } catch (e) { if (e instanceof Taint || e instanceof EvalErr) continue; throw e; }
@@ -862,9 +894,9 @@ export class Engine {
         for (const p of a.tail.template) msg += typeof p === 'string' ? p : this.toStr(this.ev(p, sc));
         this.env.report({ severity: a.tail.severity, id, message: msg, path: pathStr(inst.path), code: a.tail.severity === 'error' ? 'E6001' : a.tail.severity === 'warn' ? 'W6001' : 'I6001' });
       } else {
-        const d = this.env.diags.get(a.tail.name)!;
+        const d = ((inst as any).menv as Env | undefined)?.diags.get(a.tail.name) ?? this.env.diags.get(a.tail.name)!;
         const args = a.tail.args.map((x: Expr) => this.ev(x, sc));
-        const psc: Scope = { inst: null, locals: new Map(d.params.map((p: any, i: number) => [p.name, args[i]])), rootName };
+        const psc: Scope = { inst: null, locals: new Map(d.params.map((p: any, i: number) => [p.name, args[i]])), rootName, menv: (inst as any).menv };
         let msg = '';
         for (const p of d.template) msg += typeof p === 'string' ? p : this.toStr(this.ev(p, psc));
         this.env.report({ severity: d.severity, id, message: msg, path: pathStr(inst.path), code: d.severity === 'error' ? 'E6001' : 'W6001' });

@@ -1,0 +1,10 @@
+export type Service = {
+    name: string
+    port: 1..65535 = 8080
+    const endpoint = `${name}:${port}`
+}
+export const MAX = 16
+export func cap(n: int): int = std.math.min(n, MAX)
+export dimension Speed = Length / Time
+export unit mps: Speed
+const secret = 99

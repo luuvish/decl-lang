@@ -1,0 +1,9 @@
+import { Topo, PublicService } from "./topology.decl"
+import { MAX as LIMIT, cap } from "./schemas.decl"
+export output net: Topo = {
+    services: [{ name: "a" }, { name: "b", port: 9000 }]
+}
+export output first: PublicService = { name: "solo" }
+export output capped: int = cap(40)
+export output vel: quantity<Speed> = 3mps
+export output limit_used: int = LIMIT - 1

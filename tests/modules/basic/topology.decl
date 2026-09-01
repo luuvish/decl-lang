@@ -1,0 +1,7 @@
+import * as sch from "./schemas.decl"
+export type Topo = {
+    services: sch.Service[]
+    const n = std.array.count(services)
+    assert bounded: n <= sch.MAX
+}
+export { Service as PublicService } from "./schemas.decl"

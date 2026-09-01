@@ -1,0 +1,2 @@
+import { X } from "./b.decl"
+export const A = X + 1

@@ -1,0 +1,2 @@
+import { pub } from "./root_b.decl"
+export output x: int = pub

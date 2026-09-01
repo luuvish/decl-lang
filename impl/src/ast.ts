@@ -49,7 +49,8 @@ export type Expr =
   | { e: 'with'; base: Expr; patch: Expr }
   | { e: 'match'; subject: Expr; arms: { v: string; type?: TypeAst; body: Expr }[] };
 
-export type Decl =
+export type Decl = DeclBody & { exported?: boolean };
+type DeclBody =
   | { d: 'type'; name: string; params?: { name: string; type?: TypeAst }[]; type: TypeAst; tail?: ElseTail }
   | { d: 'const'; name: string; type?: TypeAst; expr: Expr }
   | { d: 'func'; name: string; params: { name: string; type: TypeAst }[]; ret?: TypeAst; body: Expr }
@@ -58,5 +59,5 @@ export type Decl =
   | { d: 'diagnostic'; name: string; params: { name: string; type: TypeAst }[]; severity: string; template: TemplateParts }
   | { d: 'dimension'; name: string; terms?: { name: string; exp: number }[] }
   | { d: 'unit'; name: string; dim?: string; factor?: Expr; base?: string }
-  | { d: 'import' }
-  | { d: 're_export' };
+  | { d: 'import'; from: string; names?: { name: string; as?: string }[]; ns?: string }
+  | { d: 're_export'; from: string; names: { name: string; as?: string }[] };

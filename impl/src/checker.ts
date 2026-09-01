@@ -17,14 +17,14 @@ import { makeCtx, infer, checkExpr, requireVal, applyGuards, guardsOf, tryResolv
 import type { ICtx, Ty } from './infer.ts';
 import { Engine } from './engine.ts';
 
-export function checkModule(decls: Decl[]): Diag[] {
+export function checkModule(decls: Decl[], linked?: Env): Diag[] {
   const out: Diag[] = [];
   const report = (code: string, message: string) =>
     out.push({ code, message, severity: 'error', path: '' });
 
-  const env = new Env();
-  env.load(decls);
-  new Engine(env);                     // installs env.constEval / env.exprEval (§4.13, §3.16)
+  const env = linked ?? new Env();
+  if (!linked) env.load(decls);
+  if (!env.constEval) new Engine(env); // installs env.constEval / env.exprEval (§4.13, §3.16)
   env.onConstDiag = d => out.push(d);  // constant-evaluation errors surface here
   for (const n of env.duplicates) report('E3001', `duplicate name ${n} in module`);
   for (const d of env.finalizeUnitSpace()) out.push(d);   // §3.16 unit/dimension spaces

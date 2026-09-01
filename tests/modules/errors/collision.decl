@@ -1,0 +1,2 @@
+import { pub } from "./lib.decl"
+const pub = 3
