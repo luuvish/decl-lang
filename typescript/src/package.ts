@@ -1,6 +1,6 @@
 // Packages, decl.toml, and decl.lock (§8.6–8.7): exact-pinned
 // dependencies, fail-closed manifests, content-hashed reproducibility.
-// Implementation conventions (documented in impl/README.md): dependency
+// Implementation conventions (documented in typescript/README.md): dependency
 // packages live under <root>/decl_modules/<name>/ in a flat layout, and
 // the lock file is line-based `name version sha256` in name order.
 import { readFileSync, readdirSync, statSync, existsSync, writeFileSync } from 'node:fs';

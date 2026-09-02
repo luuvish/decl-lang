@@ -44,16 +44,40 @@ decl validate cfg.decl --input deployed=doc.json --expect-errors E4001
 decl fmt --check src/*.decl                # canonical formatting
 ```
 
-The TypeScript reference implementation (`impl/`) is the complete
-toolchain — checker, evaluator, formatter, and the `decl-lsp` language
-server. The **native runtimes** in `rust/` and `python/decl/runtime`
-implement the evaluation half (parse → resolve → bind/evaluate/validate
-→ serialize, modules) without Node or wasm and are held byte-identical
-to the reference by a differential test over every example and
-fixture. Python users also get an API (`decl.evaluate`, `decl.check`,
+Python users also get an API (`decl.evaluate`, `decl.check`,
 `decl.validate`, `decl.format_source`); JavaScript users import the
 library entry of `decl-lang`. See [packaging/README.md](packaging/README.md)
 for the channels and release procedure.
+
+## Implementations
+
+Decl is implemented three times, and the three must be
+indistinguishable: **one behavior, three implementations**.
+
+| Directory | Language | Package | Scope |
+|---|---|---|---|
+| [`typescript/`](typescript/README.md) | TypeScript — the **reference implementation** | npm `decl-lang` | everything: parser binding, static checker, evaluator, validation, formatter, `decl-lsp`, packages, the browser bundle |
+| [`rust/`](rust/README.md) | Rust — native runtime | crates.io `decl-lang` | the evaluation half: parse → resolve → bind/evaluate/validate → serialize, modules (`decl evaluate` / `decl validate`) |
+| [`python/`](python/README.md) | Python — native runtime + package | PyPI `decl` | the evaluation half natively, plus a Python API; `check` / `fmt` / `decl-lsp` through the bundled reference |
+| `tree-sitter-decl/` | C (tree-sitter) | — | the one grammar every implementation compiles or loads |
+| `tests/` | — | — | the shared conformance corpus (`validation/`, `modules/`, `packages/`) and the parity harness (`parity/`) |
+
+Each implementation mirrors the same module layout (`parse`, `semantics`,
+`subsume`, `engine`, `module`, `cli`), so a rule of the language lives in
+the same-named file in all three. A change to the language's behavior
+lands in all three in one change, and the gate is:
+
+```bash
+make verify        # each implementation's tests, then tests/parity/differential.py
+```
+
+The parity harness evaluates every output-bearing example and fixture
+with the Rust and Python runtimes and diffs their reports — `ok`,
+canonical JSON, diagnostics — byte for byte against the reference, then
+does the same for documents bound to `input` roots. CI runs it on every
+push (`.github/workflows/verify.yml`). The static checker, formatter,
+and language server exist only in the reference today; that gap is
+tracked in [ROADMAP.md](ROADMAP.md).
 
 ## Status
 
@@ -64,7 +88,7 @@ complete: the tree-sitter grammar, the TypeScript reference
 implementation with its full static checker, modules and packages with
 a reproducible lock, the complete standard library, the `decl` CLI /
 formatter / LSP, and real-world validation on three domain examples
-(`examples/`). Ten test suites (`impl/`, `npm test`) and the fixture
+(`examples/`). Ten test suites (`typescript/`, `npm test`) and the fixture
 corpus (`tests/validation`) are the conformance baseline.
 
 ## Documents
@@ -76,7 +100,8 @@ corpus (`tests/validation`) are the conformance baseline.
 - [docs/](docs/README.md) — language documentation: design charter,
   the normative specification (13 chapters), the guide, and the
   benchmark cases
-- [impl/](impl/README.md) — the reference implementation, CLI, formatter,
-  and LSP server
+- [typescript/](typescript/README.md) — the reference implementation, CLI,
+  formatter, and LSP server; [rust/](rust/README.md) and
+  [python/](python/README.md) — the native runtimes
 - [examples/](examples/) — domain examples used for real-world validation
 - [packaging/](packaging/README.md) — distribution channels and releases

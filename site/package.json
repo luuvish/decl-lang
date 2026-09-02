@@ -5,7 +5,7 @@
   "description": "The Decl language website: Starlight docs synced from ../docs, and the browser playground",
   "scripts": {
     "sync": "node scripts/sync-docs.mjs",
-    "playground": "cd ../impl && node scripts/build-web.mjs",
+    "playground": "cd ../typescript && node scripts/build-web.mjs",
     "prepare:content": "npm run sync && npm run playground",
     "dev": "npm run prepare:content && astro dev",
     "build": "npm run prepare:content && astro build --force",

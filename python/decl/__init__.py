@@ -1,8 +1,9 @@
 """Python API for the Decl language.
 
-Thin, faithful wrappers over the ``decl`` CLI's machine-readable modes:
-every function runs the bundled reference implementation and returns
-its JSON — no second implementation of the language exists here.
+``evaluate`` and ``validate`` run the native Python runtime
+(``decl.runtime``, byte-identical to the reference implementation —
+see tests/parity/differential.py); ``check`` and the formatter are thin
+wrappers over the bundled reference implementation's ``--json`` modes.
 
     >>> import decl
     >>> decl.evaluate("site.decl", root="site")        # -> the evaluated value (dict/list/...)
@@ -61,7 +62,7 @@ def evaluate(path: str | os.PathLike[str], root: str | None = None) -> Any:
     """Evaluate a module's outputs on the native runtime. With ``root`` returns
     that output's value; otherwise a dict of every universe root. Raises
     DeclError with diagnostics on failure."""
-    from .runtime.__main__ import evaluate_file
+    from .runtime.cli import evaluate_file
     code, text, diags = evaluate_file(str(path), root)
     if code != 0 or text is None:
         raise DeclError("evaluation failed", [dict(file=str(path), **d) for d in diags])
@@ -78,7 +79,7 @@ def validate(
     document as ``(name, json_path)``). Returns diagnostics. With
     ``expect_errors`` the error-code set must match exactly; DeclError
     carries the mismatch otherwise."""
-    from .runtime.__main__ import validate_file
+    from .runtime.cli import validate_file
     diags = [dict(file=str(path), **d) for d in validate_file(str(path), f"{input[0]}={input[1]}" if input else None)]
     if expect_errors is not None:
         want = sorted(expect_errors)

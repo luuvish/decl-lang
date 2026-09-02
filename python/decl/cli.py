@@ -18,7 +18,7 @@ def main(argv: list[str] | None = None) -> int:
     args = sys.argv[1:] if argv is None else argv
     if args and args[0] in NATIVE_COMMANDS and "--node" not in args:
         try:
-            from .runtime.__main__ import main as native_main
+            from .runtime.cli import main as native_main
         except ImportError as e:   # grammar extension missing — fall back to Node
             print(f"decl: native runtime unavailable ({e}); using the bundled reference implementation", file=sys.stderr)
         else:

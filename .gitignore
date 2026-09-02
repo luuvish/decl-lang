@@ -2,7 +2,7 @@
 node_modules/
 dist/
 build/
-impl/*.tgz
+typescript/*.tgz
 python/decl/_js/
 python/LICENSE
 python/dist/
@@ -10,13 +10,13 @@ python/build/
 python/.venv/
 *.egg-info/
 __pycache__/
-impl/LICENSE
+typescript/LICENSE
 python/decl/_tree_sitter/src/
 python/decl/_tree_sitter/*.so
 rust/target/
 rust/grammar/
 rust/LICENSE
-# website: generated from docs/ and impl/ at build time (site/scripts/sync-docs.mjs)
+# website: generated from docs/ and typescript/ at build time (site/scripts/sync-docs.mjs)
 site/.astro/
 site/public/playground/
 site/src/content/docs/specification/

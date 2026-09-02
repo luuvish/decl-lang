@@ -10,7 +10,7 @@ on:
       - 'docs/**'
       - 'examples/**'
       - 'site/**'
-      - 'impl/**'
+      - 'typescript/**'
       - 'tree-sitter-decl/**'
       - 'python/README.md'
       - 'rust/README.md'
@@ -36,7 +36,7 @@ jobs:
           node-version: 24
       - name: Install the reference implementation
         run: npm ci
-        working-directory: impl
+        working-directory: typescript
       - name: Install the site
         run: npm ci
         working-directory: site

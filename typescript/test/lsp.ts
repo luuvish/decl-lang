@@ -14,7 +14,7 @@ const check = (name: string, cond: boolean, detail = '') => {
   else { fail++; console.log(`  FAIL ${name} ${detail}`); }
 };
 
-const server = spawn('node', [join(root, 'impl/src/lsp.ts')], { stdio: ['pipe', 'pipe', 'inherit'] });
+const server = spawn('node', [join(root, 'typescript/src/lsp.ts')], { stdio: ['pipe', 'pipe', 'inherit'] });
 let buf = Buffer.alloc(0);
 const pendingReplies = new Map<number, (r: any) => void>();
 const notifications: any[] = [];

@@ -1,5 +1,5 @@
 """End-to-end parity for the native Python runtime — the reference
-implementation's impl/test/e2e.ts scenarios: benchmark round-trips
+implementation's typescript/test/e2e.ts scenarios: benchmark round-trips
 byte-identical under renamed roots, root-cause diagnostics on a
 corrupted document, layered configs, and the guide module."""
 from __future__ import annotations
@@ -9,8 +9,8 @@ import sys
 from pathlib import Path
 
 from decl.runtime.engine import Engine
-from decl.runtime.modules import sort_diags
-from decl.runtime.parser import parse_source
+from decl.runtime.module import sort_diags
+from decl.runtime.parse import parse_source
 from decl.runtime.semantics import ABSENT, ArrV, Env, JObj, Quantity, Scope, read_json
 
 ROOT = Path(__file__).resolve().parent.parent.parent

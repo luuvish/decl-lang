@@ -7,7 +7,7 @@ import { writeFileSync, readFileSync, mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '../..');
-const cli = join(root, 'impl/src/cli.ts');
+const cli = join(root, 'typescript/src/cli.ts');
 let pass = 0, fail = 0;
 const check = (name: string, cond: boolean, detail = '') => {
   if (cond) { pass++; console.log(`  ok   ${name}`); }

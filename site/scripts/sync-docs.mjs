@@ -13,7 +13,7 @@ const OUT = resolve(SITE, 'src/content/docs');
 const SAMPLES = resolve(SITE, 'src/samples/synced');
 const BASE = (process.env.SITE_BASE ?? '/decl-lang').replace(/\/$/, '');
 const REPO = 'https://github.com/luuvish/decl-lang';
-const CLI = resolve(ROOT, 'impl/src/cli.ts');
+const CLI = resolve(ROOT, 'typescript/src/cli.ts');
 
 /** repo-relative source path -> site route (no base, no trailing slash) */
 const routes = new Map();
@@ -59,7 +59,7 @@ for (const d of (existsSync(resolve(ROOT, 'examples')) ? readdirSync(resolve(ROO
   const entry = files.includes('main.decl') ? 'main.decl' : files.length === 1 ? files[0] : null;
   add(`examples/${d}`, `examples/${d}`, { domain: true, files, entry, title: domainTitles[d] ?? d, order: 10 });
 }
-add('impl/README.md', 'tooling/javascript', { title: 'JavaScript / npm' });
+add('typescript/README.md', 'tooling/javascript', { title: 'JavaScript / npm' });
 add('python/README.md', 'tooling/python', { title: 'Python / PyPI' });
 add('rust/README.md', 'tooling/rust', { title: 'Rust / crates.io' });
 

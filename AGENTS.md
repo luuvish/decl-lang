@@ -34,6 +34,44 @@ Sibling repositories used as reference (do not modify from here):
   every affected chapter, and `docs/REVISIONS.md` in one change.
 - Update the doc index in `docs/README.md` when adding documentation.
 
+## Implementations — one behavior, three times
+
+| Directory | Role | Package |
+|---|---|---|
+| `typescript/` | the **reference implementation**: parser binding, static checker, evaluator, formatter, `decl-lsp`, packages, browser bundle | npm `decl-lang` |
+| `rust/` | native runtime (evaluate / validate) | crates.io `decl-lang` |
+| `python/` | native runtime (evaluate / validate) + Python API; `check`/`fmt`/`lsp` delegate to the bundled reference | PyPI `decl` |
+| `tree-sitter-decl/` | the single grammar all three use | — |
+| `tests/` | shared corpus (`validation/`, `modules/`, `packages/`) and the parity harness (`parity/`) | — |
+
+The three mirror one module layout; a language rule lives in the
+same-named file everywhere:
+
+| Concept | `typescript/src` | `rust/src` | `python/decl/runtime` |
+|---|---|---|---|
+| AST | `ast.ts` | `ast.rs` | dict-shaped, built by `parse.py` |
+| CST → AST | `parse.ts` | `parse.rs` | `parse.py` |
+| values, environment, type resolution | `semantics.ts` | `semantics.rs` | `semantics.py` |
+| subsumption ⊑ | `subsume.ts` | `subsume.rs` | `subsume.py` |
+| binding, evaluation, validation, serialization | `engine.ts` | `engine.rs` | `engine.py` |
+| modules and the universe | `module.ts` | `module.rs` | `module.py` |
+| command line | `cli.ts` | `cli.rs` (+ `main.rs`) | `cli.py` (+ `__main__.py`) |
+| checker, inference, formatter, LSP, packages, web bundle | `checker.ts`, `infer.ts`, `fmt.ts`, `lsp.ts`, `package.ts`, `web.ts` | — | — |
+
+Rules:
+
+- **Every behavior change lands in all three implementations in one
+  change** (the TypeScript reference first; then Rust and Python, which
+  are faithful ports — keep their structure and names aligned).
+- **`make verify` is the gate** and must pass before a commit: each
+  implementation's own tests, then `tests/parity/differential.py`,
+  which diffs the Rust and Python runtimes against the reference byte
+  for byte (`ok`, canonical JSON, diagnostic codes/ids/paths) over
+  every output-bearing example and fixture and over documents bound to
+  `input` roots. CI runs the same gate (`.github/workflows/verify.yml`).
+- A parity difference is a defect in whichever side diverges from the
+  specification — fix the implementation, never the expectation.
+
 ## Website (`site/`)
 
 The website (Astro Starlight, published to GitHub Pages by
@@ -42,7 +80,7 @@ package READMEs by `site/scripts/sync-docs.mjs` at build time; the
 synced pages under `site/src/content/docs/` are gitignored. Never edit
 them — edit `docs/`. Hand-written pages are the landing page
 (`index.mdx`), `start/`, and `playground.mdx`. The playground bundles
-`impl/src/web.ts` for the browser (`impl/scripts/build-web.mjs`).
+`typescript/src/web.ts` for the browser (`typescript/scripts/build-web.mjs`).
 Every ```decl block on the site must evaluate cleanly with the reference
 implementation.
 

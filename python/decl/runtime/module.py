@@ -7,7 +7,7 @@ import os
 from typing import Any, Optional
 
 from .engine import Engine
-from .parser import parse_source
+from .parse import parse_source
 from .semantics import Env, Scope
 
 

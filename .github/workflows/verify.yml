@@ -1,0 +1,27 @@
+# The gate: each implementation's own tests, then the parity check that
+# the TypeScript reference, the Rust runtime, and the Python runtime are
+# byte-for-byte indistinguishable (tests/parity/differential.py).
+name: verify
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: rust
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: make verify

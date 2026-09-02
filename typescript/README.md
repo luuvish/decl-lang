@@ -88,11 +88,11 @@ open/change (syntax errors positioned exactly; checker diagnostics
 anchored to the name they mention), hover (declaration kind + source
 line), and definition — both following named, renamed, and namespace
 imports one hop, with open buffers overriding the disk. Point any LSP
-client at `node impl/src/lsp.ts` for `.decl` files, e.g. in VS Code
+client at `node typescript/src/lsp.ts` for `.decl` files, e.g. in VS Code
 via a generic LSP client extension, or in Neovim:
 
 ```lua
-vim.lsp.start({ name = 'decl', cmd = { 'node', '<repo>/impl/src/lsp.ts' }, filetypes = { 'decl' } })
+vim.lsp.start({ name = 'decl', cmd = { 'node', '<repo>/typescript/src/lsp.ts' }, filetypes = { 'decl' } })
 ```
 
 ## Status
