@@ -10,9 +10,9 @@ The `decl` command ships through four channels. Registry package names differ wh
 | Channel | Install | What you get |
 |---|---|---|
 | npm | `npm install -g decl-lang` | The reference implementation: `decl` (check, evaluate, validate, fmt) and `decl-lsp`. Needs Node.js ≥ 20. |
-| PyPI | `pip install decl` | A native Python runtime for `evaluate` / `validate` and a Python API. `check` / `fmt` / `decl-lsp` run the bundled reference under Node (`pip install 'decl[node]'` lets pip provide Node). |
+| PyPI | `pip install decl-lang` | A native Python runtime for `evaluate` / `validate` and a Python API. `check` / `fmt` / `decl-lsp` run the bundled reference under Node (`pip install 'decl-lang[node]'` lets pip provide Node). |
 | crates.io | `cargo install decl-lang` | A native Rust runtime: `decl evaluate` and `decl validate`, no Node or wasm. |
-| Homebrew | `brew install luuvish/decl/decl` | The npm package through a tap. |
+| Homebrew | `brew install luuvish/tap/decl-lang` | The npm package through a tap. |
 
 All channels produce **byte-identical output**: the native runtimes are held to the reference by a differential test over every example and fixture in the repository.
 

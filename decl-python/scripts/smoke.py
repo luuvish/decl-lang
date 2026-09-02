@@ -29,7 +29,7 @@ def sh(*cmd: str, cwd: str | Path | None = None, env: dict | None = None) -> sub
     return subprocess.run(list(cmd), cwd=cwd, env=env, capture_output=True, text=True, check=False)
 
 
-wheels = sorted((HERE / "dist").glob("decl-*.whl"))
+wheels = sorted((HERE / "dist").glob("decl_lang-*.whl"))
 check("wheel built", bool(wheels), "run `python -m build` first")
 wheel = wheels[-1]
 print(f"  wheel {wheel.name} ({wheel.stat().st_size // 1024} KB)")

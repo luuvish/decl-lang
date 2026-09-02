@@ -32,9 +32,9 @@ The `decl` command ships through several channels:
 
 ```bash
 npm install -g decl-lang          # npm — the reference implementation (Node.js ≥ 20)
-pip install decl                  # PyPI — native Python runtime + the reference for check/fmt/lsp
+pip install decl-lang             # PyPI — native Python runtime + the reference for check/fmt/lsp
 cargo install decl-lang           # crates.io — native Rust runtime (evaluate / validate)
-brew install luuvish/decl/decl    # Homebrew tap
+brew install luuvish/tap/decl-lang    # Homebrew tap
 ```
 
 ```bash
@@ -60,7 +60,7 @@ side is one npm workspace (root `package.json`), Rust a Cargo workspace
 |---|---|---|---|
 | [`decl-typescript/`](decl-typescript/README.md) | TypeScript — the **reference implementation** | npm `decl-lang` | everything: parser binding, static checker, evaluator, validation, formatter, `decl-lsp`, packages, the browser bundle |
 | [`decl-rust/`](decl-rust/README.md) | Rust — native runtime | crates.io `decl-lang` | the evaluation half: parse → resolve → bind/evaluate/validate → serialize, modules (`decl evaluate` / `decl validate`) |
-| [`decl-python/`](decl-python/README.md) | Python — native runtime + package | PyPI `decl` | the evaluation half natively, plus a Python API; `check` / `fmt` / `decl-lsp` through the bundled reference |
+| [`decl-python/`](decl-python/README.md) | Python — native runtime + package | PyPI `decl-lang` | the evaluation half natively, plus a Python API; `check` / `fmt` / `decl-lsp` through the bundled reference |
 | `tree-sitter-decl/` | C (tree-sitter) | — | the one grammar every implementation compiles or loads |
 | `tests/` | — | — | the shared conformance corpus (`validation/`, `modules/`, `packages/`) and the parity harness (`parity/`) |
 

@@ -3,7 +3,7 @@
 The Python package ships the same bytes as the npm package (``_js/``:
 ``cli.js``, ``lsp.js``, ``index.js`` and the two wasm files). Node is
 found, in order, from ``$DECL_NODE``, the ``nodejs-wheel-binaries``
-package (``pip install 'decl[node]'``), or ``node`` on ``PATH``.
+package (``pip install 'decl-lang[node]'``), or ``node`` on ``PATH``.
 """
 from __future__ import annotations
 
@@ -44,7 +44,7 @@ def node_executable() -> str:
             return cand
     raise NodeNotFound(
         "decl needs Node.js >= %d: install it from https://nodejs.org, "
-        "or run `pip install 'decl[node]'` to get one through pip, "
+        "or run `pip install 'decl-lang[node]'` to get one through pip, "
         "or point $DECL_NODE at a node executable." % MIN_NODE_MAJOR
     )
 

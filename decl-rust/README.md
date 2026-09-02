@@ -40,7 +40,7 @@ example and fixture that produces output.
 
 The static checker, the formatter, and the language server live in the
 reference implementation (`npm install -g decl-lang`, or
-`pip install decl`): use those for `decl check`, `decl fmt`, and
+`pip install decl-lang`): use those for `decl check`, `decl fmt`, and
 `decl-lsp`.
 
 ## Building from source

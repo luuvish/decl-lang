@@ -1,16 +1,15 @@
 # Packaging and distribution
 
 Decl ships under one user-visible name — the `decl` command — through
-four channels. Registry package names differ where `decl` was already
-taken (npm and crates.io hold unrelated `decl` packages; Homebrew core
-and PyPI do not), so the package is `decl-lang` there and the binary is
-`decl` everywhere.
+four channels. The package is `decl-lang` on every registry (the
+project's name; `decl` itself is taken on npm and crates.io), the
+import name in Python is `decl`, and the binary is `decl` everywhere.
 
 | Channel | Package | Install | Status |
 |---|---|---|---|
 | npm | `decl-lang` | `npm install -g decl-lang` | prepared (`decl-typescript/`) |
-| PyPI | `decl` (the name is free there) | `pip install decl` / `pip install 'decl[node]'` | prepared (`decl-python/`) |
-| Homebrew | tap `luuvish/decl`, formula `decl` | `brew install luuvish/decl/decl` | prepared (`homebrew/`) |
+| PyPI | `decl-lang` | `pip install decl-lang` / `pip install 'decl-lang[node]'` | prepared (`decl-python/`) |
+| Homebrew | tap `luuvish/tap`, formula `decl-lang` | `brew install luuvish/tap/decl-lang` | prepared (`homebrew/`) |
 | crates.io | `decl-lang` (bin `decl`) | `cargo install decl-lang` | prepared (`decl-rust/`, native runtime) |
 
 npm and Homebrew ship **the same bytes**: `decl-typescript/dist/` — the esbuild
@@ -22,7 +21,7 @@ binary the way a user would, and the native runtimes are held
 byte-identical to the reference by `tests/parity/differential.py`
 (`--rust` for the crate).
 
-## PyPI — `decl`
+## PyPI — `decl-lang`
 
 `decl-python/` is a Python package with a native core: `decl.runtime` is a
 pure-Python port of the evaluator (`decl evaluate` / `decl validate`,
@@ -32,7 +31,7 @@ scripts `decl` / `decl-lsp` hand every other command (`check`, `fmt`,
 the language server) to the bundled JavaScript under Node.js ≥ 20; the
 API's `decl.check` / `decl.format_source` do the same over the CLI's
 `--json` reports. Node comes from `$DECL_NODE`, the optional
-`nodejs-wheel-binaries` dependency (`pip install 'decl[node]'`), or
+`nodejs-wheel-binaries` dependency (`pip install 'decl-lang[node]'`), or
 `PATH`. `npm run build` in `decl-typescript/` mirrors `dist/` into
 `decl-python/decl/_js/` and the grammar sources into
 `decl-python/decl/_tree_sitter/src/` (both gitignored, included in the
@@ -45,7 +44,7 @@ python -m build                                # platform wheel (C extension) + 
 make -C ../.. parity                              # the three implementations byte-identical (tests/parity)
 python scripts/e2e.py                          # the reference e2e scenarios on the native runtime
 python scripts/smoke.py                        # install the wheel into a venv and drive it
-python -m twine upload dist/*                  # publish (first time: create the PyPI project `decl`)
+python -m twine upload dist/*                  # publish (first time: create the PyPI project `decl-lang`)
 ```
 
 The sdist needs a C compiler at install time; publish platform wheels
@@ -96,36 +95,36 @@ decl-lsp                # stdio language server for editors
 
 and the library (`import { initParser, parseSource, checkModule, loadModules, runUniverse } from 'decl-lang'`).
 
-## Homebrew — tap `luuvish/decl`
+## Homebrew — tap `luuvish/tap`
 
 Homebrew core requires an established project (public repository,
 tagged stable releases, a notability bar), so distribution starts from a
-tap. The formula lives in `homebrew/Formula/decl.rb`; a tap is simply a
-GitHub repository named `homebrew-decl` holding that directory.
+tap. The formula lives in `homebrew/Formula/decl-lang.rb`; a tap is simply a
+GitHub repository named `homebrew-tap` holding that directory.
 
 ```bash
 # one-time: create the tap repository
-gh repo create luuvish/homebrew-decl --public --description "Homebrew tap for the decl language"
-git clone git@github.com:luuvish/homebrew-decl.git
-cp -r packaging/homebrew/Formula homebrew-decl/
+gh repo create luuvish/homebrew-tap --public --description "Homebrew tap for the decl language"
+git clone git@github.com:luuvish/homebrew-tap.git
+cp -r packaging/homebrew/Formula homebrew-tap/
 # after `npm publish`, pin the tarball checksum:
-shasum -a 256 decl-typescript/decl-lang-0.2.0.tgz        # or: brew fetch --build-from-source ./Formula/decl.rb
-# edit sha256 in Formula/decl.rb, then
-cd homebrew-decl && brew install --build-from-source ./Formula/decl.rb && brew test decl
-git add Formula && git commit -m "decl 0.2.0" && git push
+shasum -a 256 decl-typescript/decl-lang-0.2.0.tgz        # or: brew fetch --build-from-source ./Formula/decl-lang.rb
+# edit sha256 in Formula/decl-lang.rb, then
+cd homebrew-tap && brew install --build-from-source ./Formula/decl-lang.rb && brew test decl-lang
+git add Formula && git commit -m "decl-lang 0.2.0" && git push
 ```
 
 Users then run:
 
 ```bash
-brew tap luuvish/decl
-brew install decl
+brew tap luuvish/tap
+brew install decl-lang
 ```
 
 The formula depends on `node` and installs the npm tarball under
 `libexec` (`std_npm_args`), linking `decl` and `decl-lsp` into `bin` —
 the same artifact npm users get, verified by the formula's `test` block.
-Submitting to homebrew-core later keeps the formula name `decl` (free
+Submitting to homebrew-core later keeps the formula name `decl-lang` (free
 in core as of 2026-09-02).
 
 ## Release checklist
@@ -139,4 +138,4 @@ in core as of 2026-09-02).
    unclaimed as of 2026-09-02); `python -m twine upload dist/*`;
    `cargo publish`.
 5. Tag the repository: `git tag v0.2.0 && git push --tags`.
-6. Update `homebrew/Formula/decl.rb` `url`/`sha256`, push to the tap.
+6. Update `homebrew/Formula/decl-lang.rb` `url`/`sha256`, push to the tap.

@@ -1,4 +1,4 @@
-# Homebrew formula for the `decl` CLI (tap: luuvish/homebrew-decl).
+# Homebrew formula for the `decl` CLI (tap: luuvish/homebrew-tap, installed as `luuvish/tap/decl-lang`).
 # Installs the published npm package `decl-lang` under libexec and links
 # the `decl` and `decl-lsp` binaries — the standard Homebrew pattern for
 # Node-based command-line tools.
@@ -6,8 +6,8 @@
 # Release procedure (see ../../README.md): publish decl-lang to npm, then
 # confirm `sha256` against the registry tarball — `npm pack` is
 # reproducible, but verify with `brew fetch --build-from-source
-# ./Formula/decl.rb` before pushing the tap.
-class Decl < Formula
+# ./Formula/decl-lang.rb` before pushing the tap.
+class DeclLang < Formula
   desc "Declarative language for describing, generating, and validating structured data"
   homepage "https://github.com/luuvish/decl-lang"
   url "https://registry.npmjs.org/decl-lang/-/decl-lang-0.2.0.tgz"

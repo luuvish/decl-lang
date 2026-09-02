@@ -40,7 +40,7 @@ Sibling repositories used as reference (do not modify from here):
 |---|---|---|
 | `decl-typescript/` | the **reference implementation**: parser binding, static checker, evaluator, formatter, `decl-lsp`, packages, browser bundle | npm `decl-lang` |
 | `decl-rust/` | native runtime (evaluate / validate) | crates.io `decl-lang` |
-| `decl-python/` | native runtime (evaluate / validate) + Python API; `check`/`fmt`/`lsp` delegate to the bundled reference | PyPI `decl` |
+| `decl-python/` | native runtime (evaluate / validate) + Python API; `check`/`fmt`/`lsp` delegate to the bundled reference | PyPI `decl-lang` |
 | `tree-sitter-decl/` | the single grammar all three use | — |
 | `tests/` | shared corpus (`validation/`, `modules/`, `packages/`) and the parity harness (`parity/`) | — |
 

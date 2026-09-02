@@ -1,5 +1,5 @@
 {
-  "name": "decl-monorepo",
+  "name": "decl-lang-monorepo",
   "private": true,
   "description": "Decl — one language, three implementations (decl-typescript, decl-rust, decl-python), the shared grammar and conformance corpus, and the website",
   "workspaces": [

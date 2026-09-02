@@ -17,8 +17,8 @@ run the bundled reference implementation (JavaScript + tree-sitter
 wasm) under Node.js ≥ 20.
 
 ```bash
-pip install decl              # evaluate/validate need no Node; check/fmt/lsp use the node on your PATH
-pip install 'decl[node]'      # or let pip provide Node.js too
+pip install decl-lang         # evaluate/validate need no Node; check/fmt/lsp use the node on your PATH
+pip install 'decl-lang[node]'      # or let pip provide Node.js too
 ```
 
 ## Command line
