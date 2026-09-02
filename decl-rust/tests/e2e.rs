@@ -83,6 +83,10 @@ fn formatter_canonical_form() {
         ("continuation hangs", "type T = {\n    assert a: x > 0\nelse warn `bad`\n}\n", "type T = {\n    assert a: x > 0\n        else warn `bad`\n}\n"),
         ("lambda spacing", "const f = std.array.all(xs,(x)=>x>0)\n", "const f = std.array.all(xs, (x) => x > 0)\n"),
         ("array suffix after a record attaches", "input s: {a: int, ...}[]\n", "input s: { a: int, ... }[]\n"),
+        ("func body hangs after =", "func f(n: int): int =\nn + 1\n", "func f(n: int): int =\n    n + 1\n"),
+        ("lambda body hangs after =>", "const xs = std.array.filter(ys, (y) =>\ny > 0)\n", "const xs = std.array.filter(ys, (y) =>\n        y > 0)\n"),
+        ("operator at line end continues", "const s = a +\nb\n", "const s = a +\n    b\n"),
+        ("a closing type angle does not continue", "type P = {\n    $parent: ref<{ a: int, ... }>\n    b: int\n}\n", "type P = {\n    $parent: ref<{ a: int, ... }>\n    b: int\n}\n"),
     ];
     for (name, input, want) in cases {
         assert_eq!(format(input).unwrap_or_else(|e| format!("THROW {e}")), want, "{name}");
@@ -124,6 +128,35 @@ fn formatter_idempotent_and_ast_safe_over_corpus() {
     assert!(idem_fail == 0, "fmt(fmt(x)) == fmt(x) on {} parseable files", idem + idem_fail);
     assert!(token_fail == 0, "formatting preserves the AST on all files");
     eprintln!("({skipped} unparseable fixtures skipped by design)");
+}
+
+// ---------------- the command line ----------------
+#[test]
+fn cli_evaluate_binds_inputs_and_roots_them() {
+    let dir = std::env::temp_dir().join(format!("decl-cli-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let decl = dir.join("main.decl");
+    std::fs::write(&decl, "type Cfg = { host: string, port: int = 80 }\ninput base: Cfg\noutput copy: Cfg = base\n").unwrap();
+    let doc = dir.join("base.json");
+    std::fs::write(&doc, "{\"host\": \"example\"}\n").unwrap();
+    let decl_s = decl.to_str().unwrap().to_string();
+    let bind = format!("base={}", doc.display());
+    let run = |args: &[&str]| Command::new(env!("CARGO_BIN_EXE_decl")).args(args).output().unwrap();
+    // --input binds the document; --root may name the bound input
+    let out = run(&["evaluate", &decl_s, "--input", &bind, "--root", "base"]);
+    assert!(out.status.success(), "evaluate --input --root <input> succeeds: {}", String::from_utf8_lossy(&out.stderr));
+    assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), "{\"host\":\"example\",\"port\":80}");
+    // an output reading the bound input completes from the document
+    let out = run(&["evaluate", &decl_s, "--input", &bind]);
+    assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), "{\"copy\":{\"host\":\"example\",\"port\":80}}");
+    // nothing bound: the fallback-less input demanded by an output is E5006 at the output
+    let out = run(&["evaluate", &decl_s]);
+    assert!(!out.status.success());
+    assert!(String::from_utf8_lossy(&out.stderr).contains("error [E5006] at copy: input base is not bound"), "{}", String::from_utf8_lossy(&out.stderr));
+    // a root that does not exist
+    let out = run(&["evaluate", &decl_s, "--input", &bind, "--root", "nope"]);
+    assert!(!out.status.success() && String::from_utf8_lossy(&out.stderr).contains("no root named nope"));
+    let _ = std::fs::remove_dir_all(&dir);
 }
 
 // ---------------- LSP over stdio ----------------

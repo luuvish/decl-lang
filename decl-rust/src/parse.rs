@@ -92,6 +92,26 @@ impl<'a> Lower<'a> {
     fn kid<'b>(&self, n: Node<'b>, kind: &str) -> Option<Node<'b>> {
         self.named(n).into_iter().find(|c| c.kind() == kind)
     }
+    // `true` / `false` / `null` are anonymous keyword tokens in the grammar:
+    // an operand position may hold one, so operands are the named children
+    // plus those literals (never the operator or punctuation tokens)
+    fn is_lit_keyword(&self, c: Node) -> bool {
+        !c.is_named() && ["true", "false", "null"].contains(&self.text(c).as_str())
+    }
+    fn operands<'b>(&self, n: Node<'b>) -> Vec<Node<'b>> {
+        self.all(n).into_iter().filter(|c| c.is_named() || self.is_lit_keyword(*c)).collect()
+    }
+    // checked child access: a tree with errors may lack the children the
+    // grammar promises, and lowering must fail (E2001), never panic
+    fn first<'b>(&self, n: Node<'b>) -> LR<Node<'b>> {
+        self.named(n).into_iter().next().ok_or_else(|| format!("{}: missing child", n.kind()))
+    }
+    fn first_operand<'b>(&self, n: Node<'b>) -> LR<Node<'b>> {
+        self.operands(n).into_iter().next().ok_or_else(|| format!("{}: missing operand", n.kind()))
+    }
+    fn at<'b>(&self, v: &[Node<'b>], i: usize) -> LR<Node<'b>> {
+        v.get(i).copied().ok_or_else(|| format!("missing operand {i}"))
+    }
     fn json_string(&self, n: Node) -> LR<String> {
         json_unquote(&self.text(n).replace('\n', "\\n"))
     }
@@ -106,7 +126,7 @@ impl<'a> Lower<'a> {
                         .into_iter()
                         .map(|p| {
                             let nc = self.named(p);
-                            Ok(Param { name: self.text(nc[0]), ty: if nc.len() > 1 { Some(self.ty(nc[1])?) } else { None } })
+                            Ok(Param { name: self.text(self.at(&nc, 0)?), ty: if nc.len() > 1 { Some(self.ty(nc[1])?) } else { None } })
                         })
                         .collect::<LR<Vec<_>>>()?,
                     None => vec![],
@@ -156,13 +176,13 @@ impl<'a> Lower<'a> {
             "import_declaration" => {
                 let from = self.json_string(self.kid(n, "string").ok_or("from")?)?;
                 match self.kid(n, "named_imports") {
-                    Some(ni) => DeclBody::Import { from, names: Some(self.import_items(ni)), ns: None },
+                    Some(ni) => DeclBody::Import { from, names: Some(self.import_items(ni)?), ns: None },
                     None => DeclBody::Import { from, names: None, ns: Some(self.text(self.kid(n, "identifier").ok_or("ns")?)) },
                 }
             }
             "re_export_declaration" => DeclBody::ReExport {
                 from: self.json_string(self.kid(n, "string").ok_or("from")?)?,
-                names: self.import_items(n),
+                names: self.import_items(n)?,
             },
             _ => return Ok(None),
         };
@@ -173,16 +193,16 @@ impl<'a> Lower<'a> {
             .into_iter()
             .map(|p| {
                 let nc = self.named(p);
-                Ok(Param { name: self.text(nc[0]), ty: Some(self.ty(nc[1])?) })
+                Ok(Param { name: self.text(self.at(&nc, 0)?), ty: Some(self.ty(self.at(&nc, 1)?)?) })
             })
             .collect()
     }
-    fn import_items(&self, n: Node) -> Vec<ImportItem> {
+    fn import_items(&self, n: Node) -> LR<Vec<ImportItem>> {
         self.kids(n, "import_item")
             .into_iter()
             .map(|it| {
                 let ids = self.named(it);
-                ImportItem { name: self.text(ids[0]), alias: ids.get(1).map(|a| self.text(*a)) }
+                Ok(ImportItem { name: self.text(self.at(&ids, 0)?), alias: ids.get(1).map(|a| self.text(*a)) })
             })
             .collect()
     }
@@ -210,7 +230,7 @@ impl<'a> Lower<'a> {
                     let s = match t.as_str() { "\\n" => "\n", "\\t" => "\t", "\\r" => "\r", other => &other[1..] };
                     parts.push(TPart::Text(s.to_string()));
                 }
-                "interpolation" => parts.push(TPart::Expr(self.expr(self.named(c)[0])?)),
+                "interpolation" => parts.push(TPart::Expr(self.expr(self.first_operand(c)?)?)),
                 _ => {}
             }
         }
@@ -222,15 +242,15 @@ impl<'a> Lower<'a> {
         Ok(match n.kind() {
             "union_type" => TypeAst::Union(self.named(n).into_iter().map(|c| self.ty(c)).collect::<LR<_>>()?),
             "intersection_type" => TypeAst::Isect(self.named(n).into_iter().map(|c| self.ty(c)).collect::<LR<_>>()?),
-            "nullable_type" => TypeAst::Union(vec![self.ty(self.named(n)[0])?, TypeAst::Prim("null".into())]),
+            "nullable_type" => TypeAst::Union(vec![self.ty(self.first(n)?)?, TypeAst::Prim("null".into())]),
             "array_type" => {
-                let elem = Box::new(self.ty(self.named(n)[0])?);
+                let elem = Box::new(self.ty(self.first(n)?)?);
                 let range = self.kid(n, "array_size_range").or_else(|| self.field(n, "size").filter(|s| s.kind() == "range_expression"));
                 if let Some(r) = range {
                     let ends: Vec<Value> = self.named(r).into_iter().map(|c| self.const_num(c)).collect::<LR<_>>()?;
                     let excl = self.all(r).iter().any(|c| !c.is_named() && self.text(*c) == "..<");
-                    let lo = num_or_name(&ends[0]);
-                    let hi = num_or_name(&ends[1]);
+                    let lo = num_or_name(ends.get(0).ok_or("range endpoint")?);
+                    let hi = num_or_name(ends.get(1).ok_or("range endpoint")?);
                     return Ok(match hi {
                         Value::Int(h) => TypeAst::Array { elem, lo: Some(lo), hi: Some(Value::Int(if excl { h - 1 } else { h })), excl: false },
                         other => TypeAst::Array { elem, lo: Some(lo), hi: Some(other), excl },
@@ -244,7 +264,7 @@ impl<'a> Lower<'a> {
             }
             "range_type" => {
                 let nc = self.named(n);
-                TypeAst::Range { lo: self.const_num(nc[0])?, hi: self.const_num(nc[1])?, excl: self.text(n).contains("..<") }
+                TypeAst::Range { lo: self.const_num(self.at(&nc, 0)?)?, hi: self.const_num(self.at(&nc, 1)?)?, excl: self.text(n).contains("..<") }
             }
             "number_literal" => TypeAst::Lit(self.const_num(n)?),
             "string" => TypeAst::Lit(Value::Str(self.json_string(n)?)),
@@ -252,7 +272,7 @@ impl<'a> Lower<'a> {
                 let t = self.text(n);
                 TypeAst::Pattern(t[1..t.len() - 1].to_string())
             }
-            "paren_type" => self.ty(self.named(n)[0])?,
+            "paren_type" => self.ty(self.first(n)?)?,
             "record_type" => {
                 let mut open = false;
                 let mut members = Vec::new();
@@ -307,7 +327,7 @@ impl<'a> Lower<'a> {
             }
             if c.kind() == "dimension_term" {
                 let nc = self.named(c);
-                let ident = nc.iter().find(|x| x.kind() == "identifier").unwrap();
+                let Some(ident) = nc.iter().find(|x| x.kind() == "identifier") else { continue };
                 let num = nc.iter().find(|x| x.kind() == "int");
                 let mut exp: i32 = num.map(|x| self.text(*x).parse().unwrap_or(1)).unwrap_or(1);
                 if self.all(c).iter().any(|x| !x.is_named() && self.text(*x) == "-") {
@@ -323,7 +343,7 @@ impl<'a> Lower<'a> {
         match n.kind() {
             "number_literal" => {
                 let neg = self.text(n).trim_start().starts_with('-');
-                let v = self.const_num(self.named(n)[0])?;
+                let v = self.const_num(self.first(n)?)?;
                 Ok(if neg { neg_value(v) } else { v })
             }
             "int" => Ok(Value::Int(parse_int(&self.text(n))?)),
@@ -393,32 +413,33 @@ impl<'a> Lower<'a> {
             "identifier" => Expr::Name(self.text(n)),
             "context_variable" => Expr::Ctx(self.text(n)),
             "referrers_expression" => Expr::Referrers { ty: self.text(self.req(n, "type")?), member: self.json_string(self.req(n, "member")?)? },
-            "paren_expression" => Expr::Paren(self.expr(self.named(n)[0])?),
-            "unary_expression" => Expr::Un { op: self.text(self.all(n)[0]), x: self.expr(self.named(n)[0])? },
+            "paren_expression" => Expr::Paren(self.expr(self.first_operand(n)?)?),
+            "unary_expression" => Expr::Un { op: self.text(self.all(n).into_iter().next().ok_or("operator")?), x: self.expr(self.first_operand(n)?)? },
             "if_expression" => Expr::If { c: self.expr(self.req(n, "condition")?)?, t: self.expr(self.req(n, "then")?)?, f: self.expr(self.req(n, "else")?)? },
             "lambda" => Expr::Lambda {
-                params: self.kids(n, "lambda_parameter").into_iter().map(|p| self.text(self.named(p)[0])).collect(),
+                params: self.kids(n, "lambda_parameter").into_iter().map(|p| self.first(p).map(|c| self.text(c))).collect::<LR<_>>()?,
                 body: self.expr(self.req(n, "body")?)?,
             },
             "with_expression" => {
-                let nc = self.named(n);
-                Expr::With { base: self.expr(nc[0])?, patch: self.expr(nc[1])? }
+                let nc = self.operands(n);
+                Expr::With { base: self.expr(self.at(&nc, 0)?)?, patch: self.expr(self.at(&nc, 1)?)? }
             }
             "member_access" | "safe_access" => {
-                let nc = self.named(n);
+                let nc = self.operands(n);
+                let name_n = self.at(&nc, 1)?;
                 Expr::Member {
-                    x: self.expr(nc[0])?,
-                    name: if nc[1].kind() == "string" { self.json_string(nc[1])? } else { self.text(nc[1]) },
+                    x: self.expr(self.at(&nc, 0)?)?,
+                    name: if name_n.kind() == "string" { self.json_string(name_n)? } else { self.text(name_n) },
                     safe: n.kind() == "safe_access",
                 }
             }
             "index_access" => {
-                let nc = self.named(n);
-                Expr::Index { x: self.expr(nc[0])?, i: self.expr(nc[1])? }
+                let nc = self.operands(n);
+                Expr::Index { x: self.expr(self.at(&nc, 0)?)?, i: self.expr(self.at(&nc, 1)?)? }
             }
             "call" => {
-                let cs: Vec<Node> = self.all(n).into_iter().filter(|c| c.is_named() || ["true", "false", "null"].contains(&self.text(*c).as_str())).collect();
-                Expr::Call { fun: self.expr(cs[0])?, args: cs[1..].iter().map(|c| self.expr(*c)).collect::<LR<_>>()? }
+                let cs = self.operands(n);
+                Expr::Call { fun: self.expr(self.at(&cs, 0)?)?, args: cs.iter().skip(1).map(|c| self.expr(*c)).collect::<LR<_>>()? }
             }
             "object" => {
                 if let Some(comp) = self.kid(n, "map_comprehension") {
@@ -428,7 +449,7 @@ impl<'a> Lower<'a> {
                 for en in self.kids(n, "object_entry") {
                     match self.field(en, "key") {
                         Some(k) => entries.push((if k.kind() == "string" { self.json_string(k)? } else { self.text(k) }, self.expr(self.req(en, "value")?)?)),
-                        None => entries.push(("...".to_string(), self.expr(self.named(en)[0])?)),
+                        None => entries.push(("...".to_string(), self.expr(self.first(en)?)?)),
                     }
                 }
                 Expr::Obj(entries)
@@ -456,7 +477,7 @@ impl<'a> Lower<'a> {
             },
             "matches_expression" => {
                 let nc = self.named(n);
-                Expr::Bin { op: "matches".into(), l: self.expr(nc[0])?, r: self.expr(nc[1])? }
+                Expr::Bin { op: "matches".into(), l: self.expr(self.at(&nc, 0)?)?, r: self.expr(self.at(&nc, 1)?)? }
             }
             "pattern" => {
                 let t = self.text(n);
@@ -467,14 +488,15 @@ impl<'a> Lower<'a> {
                 for a in self.kids(n, "match_arm") {
                     let body = self.req(a, "body")?;
                     let others: Vec<Node> = self.named(a).into_iter().filter(|c| c.id() != body.id()).collect();
-                    arms.push(MatchArm { v: self.text(others[0]), ty: if others.len() > 1 { Some(self.ty(others[1])?) } else { None }, body: self.expr(body)? });
+                    arms.push(MatchArm { v: self.text(self.at(&others, 0)?), ty: if others.len() > 1 { Some(self.ty(others[1])?) } else { None }, body: self.expr(body)? });
                 }
                 Expr::Match { subject: self.expr(self.req(n, "subject")?)?, arms }
             }
             k if BIN.contains(&k) => {
-                let nc = self.named(n);
-                let op = self.all(n).into_iter().filter(|c| !c.is_named()).map(|c| self.text(c)).find(|t| !t.trim().is_empty()).ok_or("op")?;
-                Expr::Bin { op, l: self.expr(nc[0])?, r: self.expr(nc[1])? }
+                let nc = self.operands(n);
+                // the operator is the one anonymous child that is not an operand
+                let op = self.all(n).into_iter().filter(|c| !c.is_named() && !self.is_lit_keyword(*c)).map(|c| self.text(c)).find(|t| !t.trim().is_empty()).ok_or("op")?;
+                Expr::Bin { op, l: self.expr(self.at(&nc, 0)?)?, r: self.expr(self.at(&nc, 1)?)? }
             }
             _ => match self.text(n).as_str() {
                 "true" => Expr::Lit(Value::Bool(true)),

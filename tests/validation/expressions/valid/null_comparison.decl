@@ -1,0 +1,13 @@
+// `null` is an ordinary value: comparing against it is plain equality, and
+// `P != null` narrows P in the true branch (§4.5, §4.10)
+type Slot = {
+    buffer: int? = null
+    const configured = buffer != null
+    const cleared = buffer == null
+    const size = if buffer != null then buffer else 0
+}
+type Rack = {
+    slots: Slot[] = []
+    const any_set = std.array.any(slots, (s) => s.buffer != null)
+}
+output r: Rack = { slots: [{ }, { buffer: 64 }] }

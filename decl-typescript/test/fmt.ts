@@ -33,6 +33,10 @@ console.log('== canonical-form spot checks ==');
     ['continuation hangs', 'type T = {\n    assert a: x > 0\nelse warn `bad`\n}\n', 'type T = {\n    assert a: x > 0\n        else warn `bad`\n}\n'],
     ['lambda spacing', 'const f = std.array.all(xs,(x)=>x>0)\n', 'const f = std.array.all(xs, (x) => x > 0)\n'],
     ['array suffix after a record attaches', 'input s: {a: int, ...}[]\n', 'input s: { a: int, ... }[]\n'],
+    ['func body hangs after =', 'func f(n: int): int =\nn + 1\n', 'func f(n: int): int =\n    n + 1\n'],
+    ['lambda body hangs after =>', 'const xs = std.array.filter(ys, (y) =>\ny > 0)\n', 'const xs = std.array.filter(ys, (y) =>\n        y > 0)\n'],
+    ['operator at line end continues', 'const s = a +\nb\n', 'const s = a +\n    b\n'],
+    ['a closing type angle does not continue', 'type P = {\n    $parent: ref<{ a: int, ... }>\n    b: int\n}\n', 'type P = {\n    $parent: ref<{ a: int, ... }>\n    b: int\n}\n'],
   ];
   for (const [name, input, want] of cases) {
     let got = '';

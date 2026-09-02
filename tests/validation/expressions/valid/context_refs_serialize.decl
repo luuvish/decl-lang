@@ -1,0 +1,11 @@
+// $this and $parent are references: a member holding one serializes as a
+// canonical path, never as a copy of the containing value (§7.3)
+type Child = {
+    $parent: ref<{ name: string, ... }>
+    label: string
+    const owner = $parent
+    const me = $this
+    const owner_name = $parent.name
+}
+type Parent = { name: string, kids: Child[] = [] }
+output p: Parent = { name: "p", kids: [{ label: "k" }] }

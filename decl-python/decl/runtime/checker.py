@@ -238,11 +238,19 @@ def check_module(decls: list, linked: Optional[Env] = None) -> list:
                 report("E4030", f"override widens inherited member {om['name']} ({decl_name or t['name']})")
 
     # ---------- resolution-level checks ----------
+    resolve_reported: set = set()
+
     def map_resolve_err(msg: str, where: str) -> None:
+        key = f"{msg}|{where}"
+        if key in resolve_reported:
+            return   # one resolution failure, one report
+        resolve_reported.add(key)
         if re.search(r"unknown dimension|circular dimension", msg):
             report("E3003", f"{msg} (in {where})")
         elif re.search(r"unknown unit", msg):
             report("E4073", f"{msg} (in {where})")
+        elif re.search(r"pattern interpolation of .*: unknown type", msg):
+            report("E3003", f"{msg} (in {where})")
         elif re.search(r"unknown type", msg):
             report("E3003", f"{msg} (in {where})")
         elif re.search(r"generic arity", msg):
@@ -251,6 +259,12 @@ def check_module(decls: list, linked: Optional[Env] = None) -> list:
             report("E4023", f"{msg} (in {where})")
         elif re.search(r"non-constant value argument", msg):
             report("E4021", f"{msg} (in {where})")
+        elif re.search(r"pattern interpolation", msg):
+            report("E4117", f"{msg} (in {where})")
+        elif re.search(r"malformed pattern", msg):
+            report("E1004", f"{msg} (in {where})")
+        else:
+            report("E4001", f"{msg} (in {where})")   # never drop a resolution failure silently
 
     def resolve_or_report(t: Optional[dict], where: str) -> Optional[dict]:
         if not t:
@@ -355,6 +369,7 @@ def check_module(decls: list, linked: Optional[Env] = None) -> list:
             mt = {"t": "isectN", "arms": m["conj"]} if m.get("conj") else m.get("type")
             vars_[m["name"]] = TY(mt, m["kind"] == "opt")
         vars_["$this"] = TY(rt)
+        vars_["$path"] = TY({"t": "prim", "name": "string"})
         if ast and ast["k"] == "record":
             for m in ast["members"]:
                 if m["m"] == "context":
@@ -398,16 +413,24 @@ def check_module(decls: list, linked: Optional[Env] = None) -> list:
         def cx_for(menv) -> Ctx:
             return cx_r.with_env(menv) if (menv is not None and menv is not cx_r.env) else cx_r
 
-        # D30/E4090: an embedded type's declared $parent bound must hold
-        # at this site — the container is the parent
-        def check_embedding(member_rt: dict, member_name: str) -> None:
+        # D30/E4090: an embedded type's declared bounds must hold at this
+        # site — the container is the parent, the collection's key or index
+        # type is what $key ranges over (none for a direct member)
+        def check_embedding(member_rt: dict, member_name: str, key_rt: Optional[dict]) -> None:
+            site = f"{rt.get('name') or 'record'}.{member_name}"
+            who = member_rt.get("name") or "the member type"
             for cd in member_rt.get("ctx_decls") or []:
-                if cd["variable"] != "$parent":
-                    continue
-                bound = cd["type"]["target"] if (cd.get("type") and cd["type"]["t"] == "ref") else None
-                if bound and not subsumes(env, rt, bound):
-                    report("E4090", f"embedding site {rt.get('name') or 'record'}.{member_name} fails {member_rt.get('name') or 'the member type'}'s $parent bound (§7.3)")
+                if cd["variable"] == "$parent":
+                    bound = cd["type"]["target"] if (cd.get("type") and cd["type"]["t"] == "ref") else None
+                    if bound and not subsumes(env, rt, bound):
+                        report("E4090", f"embedding site {site} fails {who}'s $parent bound (§7.3)")
+                elif cd["variable"] == "$key":
+                    if not key_rt:
+                        report("E4090", f"embedding site {site} gives $key no meaning: {who} is a direct member, not a collection element (§7.3)")
+                    elif not subsumes(env, key_rt, cd["type"]):
+                        report("E4090", f"embedding site {site} fails {who}'s $key bound (§7.3)")
 
+        INT = {"t": "prim", "name": "int"}
         for m in rt["members"]:
             mt = m.get("type")
             if m["kind"] == "der" and m.get("expr"):
@@ -415,13 +438,13 @@ def check_module(decls: list, linked: Optional[Env] = None) -> list:
             if m["kind"] == "dflt" and m.get("dflt"):
                 check_expr(cx_for(m.get("menv")), m["dflt"], mt)
             if mt and mt["t"] == "rec":
-                check_embedding(mt, m["name"])
+                check_embedding(mt, m["name"], None)
                 check_record_exprs(mt, cx_for(m.get("menv")))
             if mt and mt["t"] == "arr" and mt.get("elem") and mt["elem"]["t"] == "rec":
-                check_embedding(mt["elem"], m["name"])
+                check_embedding(mt["elem"], m["name"], INT)
                 check_record_exprs(mt["elem"], cx_for(m.get("menv")))
             if mt and mt["t"] == "map" and mt.get("val") and mt["val"]["t"] == "rec":
-                check_embedding(mt["val"], m["name"])
+                check_embedding(mt["val"], m["name"], mt["key"])
                 check_record_exprs(mt["val"], cx_for(m.get("menv")))
         for a in rt["asserts"]:
             if a["kind"] == "assert":
@@ -437,6 +460,44 @@ def check_module(decls: list, linked: Optional[Env] = None) -> list:
         except Exception:
             continue
         check_record_exprs(rt, cx0, decl["ast"])
+
+    # D30/E4090 for $root: every record type owned (transitively) by an
+    # evaluation root must have its declared $root bound met by the root's
+    # own type — checked once per root declaration
+    def check_root_bounds(root_name: str, root_rt: dict) -> None:
+        seen: set = set()
+
+        def walk(t: Optional[dict]) -> None:
+            if not t or id(t) in seen:
+                return
+            seen.add(id(t))
+            k = t["t"]
+            if k == "rec":
+                for cd in t.get("ctx_decls") or []:
+                    if cd["variable"] != "$root":
+                        continue
+                    bound = cd["type"]["target"] if (cd.get("type") and cd["type"]["t"] == "ref") else None
+                    if bound and not subsumes(env, root_rt, bound):
+                        report("E4090", f"root {root_name} fails {t.get('name') or 'a member type'}'s $root bound (§7.3)")
+                for m in t["members"]:
+                    walk(m.get("type"))
+            elif k == "arr":
+                walk(t.get("elem"))
+            elif k == "map":
+                walk(t.get("val"))
+            elif k in ("union", "isectN"):
+                for a in t["arms"]:
+                    walk(a)
+            elif k == "pred":
+                walk(t.get("base"))
+        walk(root_rt)
+
+    for d in decls:
+        if d["d"] not in ("output", "input"):
+            continue
+        rt = try_resolve(env, d["type"])
+        if rt:
+            check_root_bounds(d["name"], rt)
     for d in decls:
         k = d["d"]
         if k == "const":

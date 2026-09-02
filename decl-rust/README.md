@@ -21,7 +21,8 @@ decl check schema.decl                         # static checks, module-aware (ex
 decl evaluate site.decl                        # evaluate every output -> {"name": value, ...}
 decl evaluate site.decl --root site            # one output -> its canonical JSON
 decl evaluate site.decl --json                 # {"ok", "value", "diagnostics"} report
-decl validate cfg.decl --input deployed=doc.json   # bind a document to an input root
+decl evaluate cfg.decl --input deployed=doc.json --root deployed   # bind a document, emit its completed value
+decl validate cfg.decl --input deployed=doc.json   # bind a document to an input root (diagnostics only)
 decl validate tests/validation                 # judge a fixture corpus
 decl fmt src/*.decl                            # canonical formatting in place (--check: exit 1 if not canonical)
 decl-lsp                                       # language server over stdio

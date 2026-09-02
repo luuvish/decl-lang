@@ -234,6 +234,9 @@ class Env:
     def __init__(self) -> None:
         self.type_asts: dict = {}
         self.type_memo: dict = {}
+        # names being spliced into a pattern right now, across nested
+        # resolutions — a mutually recursive pair is a cycle, not a stack overflow
+        self.pattern_visiting: set = set()
         self.consts: dict = {}
         self.funcs: dict = {}
         self.duplicates: list = []
@@ -459,7 +462,12 @@ class Env:
             is_f = is_float(lo) or is_float(hi)
             return {"t": "range", "lo": lo, "hi": hi, "excl": ast["excl"], "base": "float" if is_f else "int"}
         if k == "pattern":
-            return {"t": "pattern", "src": ast["re"], "re": re.compile(f"(?:{ast['re']})")}
+            src = self.expand_pattern(ast["re"])
+            try:
+                compiled = re.compile(f"(?:{src})")
+            except re.error as e:
+                raise RuntimeError(f"malformed pattern /{ast['re']}/: {e}")
+            return {"t": "pattern", "src": src, "re": compiled}
         if k == "map":
             return {"t": "map", "key": self.resolve(ast["key"]), "val": self.resolve(ast["val"])}
         if k == "array":
@@ -519,7 +527,13 @@ class Env:
             if decl["ast"]["k"] == "record":
                 base = {"t": "rec", "name": n, "members": [], "asserts": [], "open": decl["ast"]["open"], "tail": decl.get("tail")}
                 self.type_memo[n] = base
-                self.fill_record(base, decl["ast"]["members"])
+                # a member that fails to resolve must not leave a half-filled
+                # record memoized (later lookups would miss its later members)
+                try:
+                    self.fill_record(base, decl["ast"]["members"])
+                except BaseException:
+                    self.type_memo.pop(n, None)
+                    raise
             else:
                 base = self.resolve(decl["ast"], n)
                 if base["t"] in ("rec", "union"):
@@ -529,8 +543,17 @@ class Env:
                 self.type_memo[n] = base
         if ast.get("ext"):
             ext = self.resolve(ast["ext"])
+            # an extension may narrow a context declaration (§7.3): its
+            # declaration replaces the inherited one for that variable
+            ctx_decls = list(base.get("ctx_decls") or [])
+            for cd in ext.get("ctx_decls") or []:
+                idx = next((i for i, x in enumerate(ctx_decls) if x["variable"] == cd["variable"]), -1)
+                if idx >= 0:
+                    ctx_decls[idx] = cd
+                else:
+                    ctx_decls.append(cd)
             merged = {"t": "rec", "name": base.get("name"), "open": base.get("open"), "tail": base.get("tail"),
-                      "ctx_decls": base.get("ctx_decls"),
+                      "ctx_decls": ctx_decls if ctx_decls else None,
                       "members": [dict(m) for m in base["members"]], "asserts": list(base["asserts"])}
             for om in ext["members"]:
                 idx = next((i for i, m in enumerate(merged["members"]) if m["name"] == om["name"]), -1)
@@ -541,6 +564,83 @@ class Env:
             merged["asserts"].extend(ext["asserts"])
             return merged
         return base
+
+    # §3.6: `${T}` inside a pattern splices another type — a string-shaped
+    # T (pattern, string literal, union of those) as its regular language,
+    # an integer-shaped T (int literal, int range, union) as the decimal
+    # representations of its members
+    def expand_pattern(self, re_: str) -> str:
+        visiting = self.pattern_visiting
+
+        def arm_fragment(arm: str, text: str) -> str:
+            m = re.fullmatch(r'"((?:[^"\\]|\\.)*)"', arm)
+            if m:
+                return self.pattern_fragment({"t": "lit", "v": json.loads(f'"{m.group(1)}"')}, text)
+            m = re.fullmatch(r"(-?[0-9]+)\.\.(<?)(-?[0-9]+)", arm)
+            if m:
+                return self.pattern_fragment({"t": "range", "base": "int", "lo": int(m.group(1)), "hi": int(m.group(3)),
+                                              "excl": m.group(2) == "<"}, text)
+            if re.fullmatch(r"-?[0-9]+", arm):
+                return self.pattern_fragment({"t": "lit", "v": int(arm)}, text)
+            if not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_.]*", arm):
+                raise RuntimeError(f"pattern interpolation of {text}: not a type (§3.6)")
+            if arm in visiting:
+                raise RuntimeError(f"pattern interpolation of {arm} is circular")
+            visiting.add(arm)
+            try:
+                rt = self.resolve({"k": "named", "name": arm, "args": [], "preds": None, "ext": None})
+            except Exception as e:
+                visiting.discard(arm)
+                if str(e).startswith("unknown type"):
+                    raise RuntimeError(f"pattern interpolation of {arm}: unknown type")
+                raise
+            visiting.discard(arm)
+            return self.pattern_fragment(rt, arm)
+
+        def splice(m: "re.Match") -> str:
+            text = m.group(1).strip()
+            # the spliced type: a union of string literals, int literals, int
+            # ranges, and named types — the type-expression subset that fits
+            # inside a pattern token
+            frags = [arm_fragment(arm.strip(), text) for arm in text.split("|")]
+            return frags[0] if len(frags) == 1 else f"(?:{'|'.join(frags)})"
+
+        return re.sub(r"\$\{([^}]*)\}", splice, re_)
+
+    def pattern_fragment(self, rt: dict, name: str) -> str:
+        def esc(s: str) -> str:
+            return re.sub(r"[.*+?^${}()|\[\]\\/]", lambda m: "\\" + m.group(0), s)
+
+        def bad():
+            raise RuntimeError(f"pattern interpolation of {name}: type is neither string- nor integer-shaped (§3.6)")
+
+        t = rt["t"]
+        if t == "pattern":
+            return f"(?:{rt['src']})"
+        if t == "lit":
+            if is_str(rt["v"]):
+                return esc(rt["v"])
+            if is_int(rt["v"]):
+                return str(rt["v"])
+            bad()
+        if t == "range":
+            if rt["base"] != "int" or not is_int(rt["lo"]) or not is_int(rt["hi"]):
+                bad()
+            hi = rt["hi"] - 1 if rt["excl"] else rt["hi"]
+            if hi - rt["lo"] >= 65536:
+                raise RuntimeError(f"pattern interpolation of {name}: range too large (limit 65536 values)")
+            return "(?:" + "|".join(str(v) for v in range(rt["lo"], hi + 1)) + ")"
+        if t == "union":
+            return "(?:" + "|".join(self.pattern_fragment(a, name) for a in rt["arms"]) + ")"
+        if t == "pred":
+            return self.pattern_fragment(rt["base"], name)
+        if t == "prim":
+            if rt["name"] == "string":
+                return ".*"
+            if rt["name"] == "int":
+                return "-?[0-9]+"
+            bad()
+        bad()
 
     # §3.15 generics
     def instantiate(self, ast: dict, decl: dict) -> dict:
@@ -578,7 +678,11 @@ class Env:
         if body["k"] == "record":
             rt = {"t": "rec", "name": shown, "members": [], "asserts": [], "open": body["open"], "tail": decl.get("tail")}
             self.type_memo[key] = rt
-            self.fill_record(rt, body["members"])
+            try:
+                self.fill_record(rt, body["members"])
+            except BaseException:
+                self.type_memo.pop(key, None)
+                raise
         else:
             rt = self.resolve(body, shown)
             if rt["t"] in ("rec", "union"):

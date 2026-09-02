@@ -1,0 +1,7 @@
+// @expect-phase: checking
+// @expect-error: E4117
+// a record type is neither string- nor integer-shaped: it cannot be spliced into a pattern (§3.6)
+type R = { a: int }
+type P = /x${R}/
+type T = { p: P }
+output t: T = { p: "xR" }

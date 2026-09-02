@@ -17,10 +17,7 @@ def run_pipeline(decls: list) -> dict:
     eng = Engine(env)
     for o in env.outputs:
         sc = Scope(None, {}, o["name"])
-        try:
-            env.roots[o["name"]] = eng.bind(eng.ev(o["expr"], sc), env.resolve(o["type"]), [o["name"]], None, sc)
-        except Exception:
-            pass
+        eng.bind_root(o["name"], o["expr"], env.resolve(o["type"]), sc, True)
     for v in list(env.roots.values()):
         eng.force_all(v, False)
     eng.phase = 2

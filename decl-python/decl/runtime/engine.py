@@ -26,6 +26,7 @@ class Engine:
         self.deferred_slots: list = []
         self.no_reg = 0
         self.phase = 1
+        self.failed_inputs: set = set()
         env.const_eval = lambda name: self.force_const_in(env, name, "")
         env.expr_eval = lambda e: self.ev(e, Scope(None, {}, ""))
 
@@ -82,15 +83,39 @@ class Engine:
                 return StdRef([])
             if name in self.env.roots:
                 return self.env.roots[name]
+            inp = self.demand_input(menv, name)
+            if inp is not _UNDEF:
+                return inp
             raise EvalErr(f"unknown name {name}")
         if k == "ctx":
+            # $this / $parent / $root are references (§7.3): each denotes an
+            # instance that contains the current one, so a value reading would
+            # be a self-containing value; $key and $path are plain values
             n = e["name"]
+            inst = sc.inst
             if n == "$this":
-                return sc.inst
+                if inst is None:
+                    raise EvalErr("$this outside a record instance", "E4090")
+                return Ref(inst.path)
             if n == "$parent":
-                return sc.inst.parent if sc.inst is not None else None
+                if inst is None or inst.parent is None:
+                    raise EvalErr("$parent: the evaluation root has no owner", "E4090")
+                return Ref(inst.parent.path)
+            if n == "$root":
+                if not sc.root_name or sc.root_name not in self.env.roots:
+                    raise EvalErr("$root outside an evaluation root", "E4090")
+                return Ref([sc.root_name])
+            if n == "$key":
+                # the key or index under which $this sits in its parent's
+                # collection: the last path segment, present only when the
+                # instance is a collection element (not a direct member)
+                if inst is None or inst.parent is None or len(inst.path) < len(inst.parent.path) + 2:
+                    raise EvalErr("$key: the instance is not a collection element", "E4090")
+                return inst.path[-1]
             if n == "$path":
-                return path_str(sc.inst.path)
+                if inst is None:
+                    raise EvalErr("$path outside a record instance", "E4090")
+                return path_str(inst.path)
             raise EvalErr(f"unsupported context var {n}")
         if k == "referrers":
             return self.referrers(e["type"], e["member"], sc)
@@ -253,8 +278,8 @@ class Engine:
             if v is not _UNDEF:
                 return v
             if im["name"] in self.env.roots:
-                return self.env.roots[im["name"]]
-            return _UNDEF
+                return self.env.roots[im["name"]]   # imported output/input root
+            return self.demand_input(im["env"], im["name"])
         ns = menv.namespaces.get(name)
         if ns is not None:
             return NsRef(ns["env"], ns["exports"])
@@ -269,7 +294,45 @@ class Engine:
             return v
         if ex["name"] in self.env.roots:
             return self.env.roots[ex["name"]]
+        inp = self.demand_input(ex["env"], ex["name"])
+        if inp is not _UNDEF:
+            return inp
         raise EvalErr(f"{name} is not a value")
+
+    # an input demanded by evaluation (§5.6, §9.4): the bound document if
+    # the tool bound one, else its fallback — bound on first demand and
+    # memoized as a root; a fallback-less unbound input is E5006 at the
+    # demanding path. Returns _UNDEF when `name` is not an input.
+    def demand_input(self, menv: Env, name: str) -> Any:
+        decl = menv.inputs.get(name)
+        if decl is None:
+            return _UNDEF
+        if name in self.env.roots:
+            return self.env.roots[name]
+        if name in self.failed_inputs:
+            raise Taint()
+        if decl.get("fallback") is None:
+            raise EvalErr(f"input {name} is not bound", "E5006")
+        sc = Scope(None, {}, name, menv)
+        try:
+            v = self.bind(self.ev(decl["fallback"], sc), menv.resolve(decl["type"]), [name], None, sc)
+            self.env.roots[name] = v
+            return v
+        except Taint:
+            self.failed_inputs.add(name)
+            raise
+
+    # bind an evaluation root (an output's expression, or an input's
+    # document / fallback): a failing root is reported at its own path and
+    # left unset — its demanders are tainted, nothing else is
+    def bind_root(self, name: str, raw: Any, rt: dict, sc: Scope, via_expr: bool) -> None:
+        try:
+            v = self.bind(self.ev(raw, sc), rt, [name], None, sc) if via_expr else self.bind(raw, rt, [name], None, sc)
+            self.env.roots[name] = v
+        except EvalErr as e:
+            self.env.report({"severity": "error", "message": e.msg, "path": name, "code": e.code})
+        except (Taint, DeferSig):
+            pass
 
     def q_arith(self, op: str, l: Any, r: Any) -> Any:
         if op in ("+", "-"):
@@ -331,6 +394,8 @@ class Engine:
         if op == "!=":
             return not value_eq(l, r)
         if op == "in":
+            if isinstance(r, Ref):
+                r = self.deref(r)   # the container may be reached through a reference ($this, $parent)
             if isinstance(r, RangeV):
                 return l >= r.lo and (l < r.hi if r.excl else l <= r.hi)
             if isinstance(r, (PreArr, PreObj)):
@@ -877,11 +942,19 @@ class Engine:
         v = self.ev_nav(e, sc)
         if isinstance(v, Segs):
             return v.segs
+        if isinstance(v, Ref):
+            return v.segs   # $this / $parent / $root, or a reference read through
         if isinstance(v, (RecInst, ArrV, MapV)):
             return v.path
         return None
 
     def ev_nav(self, e: dict, sc: Scope) -> Any:
+        # a conditional in a ref position chooses between places (§7.4):
+        # only the taken branch is navigated
+        if e["e"] == "if":
+            return self.ev_nav(e["t"], sc) if self.truthy(self.ev(e["c"], sc)) else self.ev_nav(e["f"], sc)
+        if e["e"] == "paren":
+            return self.ev_nav(e["x"], sc)
         if e["e"] == "member":
             x = self.deref(self.ev_nav(e["x"], sc))
             v = self.access(x, e["name"])

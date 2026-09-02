@@ -17,8 +17,7 @@ export function runPipeline(decls: Decl[]): Pipeline {
   const eng = new Engine(env);
   for (const o of env.outputs) {
     const sc = { inst: null, locals: new Map<string, any>(), rootName: o.name };
-    try { env.roots.set(o.name, eng.bind(eng.ev(o.expr, sc), env.resolve(o.type), [o.name], null, sc)); }
-    catch { }
+    eng.bindRoot(o.name, o.expr, env.resolve(o.type), sc, true);
   }
   for (const v of env.roots.values()) eng.forceAll(v, false);
   eng.phase = 2;

@@ -186,6 +186,25 @@ for label, decl, name, doc in cases:
         detail[n] = f"ref={codes(ref)} | {n}={codes(nat)}"
     row(f"{label} ({len(ref)} diagnostic(s))", verdicts, detail)
 
+# ---------------------------------------------------------------- evaluate --input
+# the same documents bound and emitted: the completed value of the bound
+# root (--root names the input) must be byte-identical, and so must the
+# verdict and the diagnostic codes when the document is invalid
+print(f"== evaluate --input: {len(cases)} documents")
+for label, decl, name, doc in cases:
+    args = ["evaluate", str(decl), "--input", f"{name}={doc}", "--root", name, "--json"]
+    ref = report(REF, args)
+    verdicts, detail = {}, {}
+    for n, prefix in RUNTIMES.items():
+        nat = report(prefix, args)
+        ok = ref.get("ok") == nat.get("ok") and codes(ref.get("diagnostics", [])) == codes(nat.get("diagnostics", []))
+        if ok and ref.get("ok"):
+            ok = canonical(ref["value"]) == canonical(nat["value"])
+        verdicts[n] = ok
+        detail[n] = (f"ref ok={ref.get('ok')} codes={codes(ref.get('diagnostics', []))[:3]} | "
+                     f"{n} ok={nat.get('ok')} codes={codes(nat.get('diagnostics', []))[:3]} {nat.get('stderr', '')}")
+    row(f"{label} (evaluate --input)", verdicts, detail)
+
 # ---------------------------------------------------------------- fmt
 fmt_files: list[Path] = []
 for d in ("tests/validation", "tests/modules", "tests/packages", "docs/examples", "examples"):

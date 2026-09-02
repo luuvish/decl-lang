@@ -1,0 +1,6 @@
+// @expect-phase: binding
+// @expect-error: E5006
+// a fallback-less input demanded by an output, with nothing bound (§5.6)
+type Cfg = { host: string }
+input base: Cfg
+output copy: Cfg = base

@@ -1,0 +1,8 @@
+// @expect-phase: checking
+// @expect-error: E4117
+// @expect-message: is circular
+// two patterns splicing each other denote no finite language (§3.6)
+type A = /x${B}/
+type B = /y${A}/
+type T = { a: A }
+output t: T = { a: "xy" }

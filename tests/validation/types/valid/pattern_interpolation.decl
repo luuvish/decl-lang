@@ -1,0 +1,16 @@
+// `${T}` splices a type into a pattern (§3.6): a string-shaped T as its
+// language, an integer-shaped T as the decimal forms of its members
+type Ident = /[a-z][a-z0-9]*/
+type Lane = /si${0..7}/
+type Wide = /m${"in" | "out"}/
+type EdgeName = /${Ident}->${Ident}/
+type Wiring = {
+    edges: { [EdgeName]: { name: EdgeName } } = { }
+    lane: Lane
+    wide: Wide
+}
+output w: Wiring = {
+    edges: { "a->b": { name: "a->b" } }
+    lane: "si3"
+    wide: "mout"
+}

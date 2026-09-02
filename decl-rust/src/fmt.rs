@@ -22,6 +22,12 @@ const ATOMS: [&str; 7] = ["string", "template_string", "pattern", "unit_literal"
 const BIN_OPS: [&str; 24] = ["=", "==", "!=", "<=", ">=", "+", "*", "/", "%", "&&", "||", "??", "|>", "=>", "<<", ">>", "in", "matches", "with", "then", "else", "for", "if", "as"];
 const BIN_OPS_EXTRA: [&str; 1] = ["from"];
 const CONT_STARTERS: [&str; 22] = ["else", "=", "for", "if", "&&", "||", "|>", "??", ".", "?.", "+", "-", "*", "/", "==", "!=", "<=", ">=", "<", ">", "=>", "then"];
+// a line whose last token leaves an expression open (`=`, `=>`, a binary
+// operator, `then`/`else`) makes the next line a continuation too
+const CONT_ENDERS: [&str; 29] = [
+    "=", "=>", "&&", "||", "|>", "??", "+", "-", "*", "/", "%", "==", "!=", "<=", ">=", "<", ">", "&", "|", "^", "<<", ">>", "..", "..<",
+    "then", "else", "in", "with", "matches",
+];
 const KEYWORDS: [&str; 27] = ["type", "const", "func", "output", "input", "export", "import", "diagnostic", "dimension", "unit", "assert", "when", "if", "then", "else", "match", "for", "in", "with", "as", "from", "true", "false", "null", "error", "warn", "info"];
 const KEYWORDS_EXTRA: [&str; 1] = ["matches"];
 
@@ -162,6 +168,7 @@ pub fn format(src: &str) -> Result<String, String> {
     let mut out: Vec<String> = vec![];
     let mut depth: usize = 0;
     let mut last_row_end: i64 = -1; // last original row consumed (multiline atoms span rows)
+    let mut last_code: Option<&Leaf> = None; // the previous line's last non-comment token
     for line in &lines {
         let first = &line[0];
         if (first.row as i64) <= last_row_end {
@@ -174,8 +181,11 @@ pub fn format(src: &str) -> Result<String, String> {
         // indentation: bracket depth, closers on the line start dedent first
         let closers = line.iter().take_while(|l| l.text == ")" || l.text == "]" || l.text == "}").count();
         let mut indent = depth.saturating_sub(closers);
-        // a line starting with a continuation token hangs one level deeper
-        if closers == 0 && CONT_STARTERS.contains(&first.text.as_str()) {
+        // a line starting with a continuation token, or following a line that
+        // left an expression open, hangs one level deeper
+        // (`ref<...>` closes a type, it opens nothing)
+        let after_open = last_code.map(|l| !is_atom(&l.kind) && CONT_ENDERS.contains(&l.text.as_str()) && !is_type_angle(l)).unwrap_or(false);
+        if closers == 0 && (CONT_STARTERS.contains(&first.text.as_str()) || after_open) {
             indent = depth + 1;
         }
         let mut text = "    ".repeat(indent);
@@ -203,6 +213,9 @@ pub fn format(src: &str) -> Result<String, String> {
             }
             prev2 = prev;
             prev = Some(l);
+            if !l.kind.ends_with("comment") {
+                last_code = Some(l);
+            }
             last_row_end = last_row_end.max(l.end_row as i64);
         }
         out.push(text.trim_end_matches([' ', '\t']).to_string());

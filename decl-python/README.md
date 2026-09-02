@@ -22,6 +22,7 @@ pip install decl-lang
 ```bash
 decl check schema.decl                   # parse + static checks (module-aware)
 decl evaluate site.decl --root site      # evaluate outputs -> JSON
+decl evaluate cfg.decl --input deployed=doc.json --root deployed   # bind a document, emit its completed value
 decl validate cfg.decl --input deployed=doc.json --expect-errors E4001
 decl validate tests/validation           # judge a fixture corpus
 decl fmt --check src/*.decl              # canonical formatting

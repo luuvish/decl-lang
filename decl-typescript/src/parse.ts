@@ -50,6 +50,11 @@ function collectErrors(n: Node, out: { row: number; col: number }[]) {
 }
 
 const field = (n: Node, name: string): Node | null => n.childForFieldName(name);
+// `true` / `false` / `null` are anonymous keyword tokens in the grammar:
+// an operand position may hold one, so operands are the named children
+// plus those literals (never the operator or punctuation tokens)
+const isLitKeyword = (c: Node | null): c is Node => !!c && !c.isNamed && ['true', 'false', 'null'].includes(c.text);
+const operands = (n: Node): Node[] => n.children.filter((c): c is Node => !!c && (c.isNamed || isLitKeyword(c)));
 const req = (n: Node, name: string): Node => {
   const c = field(n, name);
   if (!c) throw new Error(`lower: ${n.type} missing field ${name}`);
@@ -140,7 +145,7 @@ function lowerTemplateParts(n: Node): TemplateParts {
     if (!c) continue;
     if (c.type === 'template_chars') parts.push(c.text);
     else if (c.type === 'template_escape') parts.push(unescape(c.text));
-    else if (c.type === 'interpolation') parts.push(lowerExpr(c.namedChildren[0]!));
+    else if (c.type === 'interpolation') parts.push(lowerExpr(operands(c)[0]!));
   }
   return parts;
 }
@@ -314,9 +319,9 @@ function lowerExpr(n: Node): Expr {
     case 'context_variable': return { e: 'ctx', name: n.text };
     case 'referrers_expression':
       return { e: 'referrers', type: req(n, 'type').text, member: JSON.parse(req(n, 'member').text) };
-    case 'paren_expression': return { e: 'paren', x: lowerExpr(n.namedChildren[0]!) };
+    case 'paren_expression': return { e: 'paren', x: lowerExpr(operands(n)[0]!) };
     case 'unary_expression':
-      return { e: 'un', op: n.children[0]!.text, x: lowerExpr(n.namedChildren[0]!) };
+      return { e: 'un', op: n.children[0]!.text, x: lowerExpr(operands(n)[0]!) };
     case 'if_expression':
       return { e: 'if', c: lowerExpr(req(n, 'condition')), t: lowerExpr(req(n, 'then')), f: lowerExpr(req(n, 'else')) };
     case 'lambda':
@@ -324,17 +329,17 @@ function lowerExpr(n: Node): Expr {
         params: kids(n, 'lambda_parameter').map(p => p.namedChildren[0]!.text),
         body: lowerExpr(req(n, 'body')) };
     case 'with_expression': {
-      const [base, patch] = n.namedChildren.filter(Boolean);
+      const [base, patch] = operands(n);
       return { e: 'with', base: lowerExpr(base!), patch: lowerExpr(patch!) };
     }
     case 'member_access': case 'safe_access': {
-      const [x, name] = n.namedChildren.filter(Boolean);
+      const [x, name] = operands(n);
       return { e: 'member', x: lowerExpr(x!),
         name: name!.type === 'string' ? JSON.parse(name!.text) : name!.text,
         safe: n.type === 'safe_access' || undefined };
     }
     case 'index_access': {
-      const [x, i] = n.namedChildren.filter(Boolean);
+      const [x, i] = operands(n);
       return { e: 'index', x: lowerExpr(x!), i: lowerExpr(i!) };
     }
     case 'call': {
@@ -382,15 +387,9 @@ function lowerExpr(n: Node): Expr {
     }
     default:
       if (BIN_NODES.has(n.type)) {
-        const [l, r] = n.namedChildren.filter(Boolean);
-        const op = n.children.find(c => c && !c.isNamed && c.text.trim() !== '')!.text;
-        if (n.type === 'relational_expression' || n.type === 'range_expression'
-          || n.type === 'equality_expression' || n.type === 'shift_expression'
-          || n.type === 'additive_expression' || n.type === 'multiplicative_expression') {
-          // operator is the middle anonymous child
-          const mid = n.children.filter(c => c && !c.isNamed).map(c => c!.text);
-          return { e: 'bin', op: mid[0], l: lowerExpr(l!), r: lowerExpr(r!) };
-        }
+        const [l, r] = operands(n);
+        // the operator is the one anonymous child that is not an operand
+        const op = n.children.find(c => c && !c.isNamed && !isLitKeyword(c) && c.text.trim() !== '')!.text;
         return { e: 'bin', op, l: lowerExpr(l!), r: lowerExpr(r!) };
       }
       if (n.text === 'true') return { e: 'lit', v: true };

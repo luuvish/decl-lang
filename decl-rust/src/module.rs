@@ -2,7 +2,7 @@
 //! §8.8): files are modules, the import graph is acyclic, exports are
 //! explicit; packages (§8.6–8.7) plug in through the resolver hook.
 use crate::ast::*;
-use crate::engine::Engine;
+use crate::engine::{Engine, RootSrc};
 use crate::package::Resolver;
 use crate::parse::parse_source;
 use crate::semantics::*;
@@ -269,7 +269,10 @@ fn link_universe(mods: &[Rc<Module>], entry: &Rc<Module>, diags: &mut Vec<Diag>)
     }
 }
 
+/// a document bound to an input (§10): `module` is the one declaring the
+/// input (the entry when unset)
 pub struct Bind {
+    pub module: Option<Rc<Module>>,
     pub input: String,
     pub raw: Value,
 }
@@ -279,27 +282,26 @@ pub fn run_universe(mods: &[Rc<Module>], entry: &Rc<Module>, binds: Vec<Bind>) -
     for m in mods {
         eng.install_hooks(&m.env, true);
     }
+    // bound documents first: an output may read an input (§5.5), and a
+    // bound input is a root of the universe (§9.2); unbound inputs with a
+    // fallback bind on first demand (§9.4)
+    for b in binds {
+        let m = b.module.clone().unwrap_or_else(|| entry.clone());
+        let decl = m.env.inputs.borrow().get(&b.input).cloned();
+        let Some((ty_ast, _)) = decl else { continue };
+        let sc = Scope::new(&b.input, Some(m.env.clone()));
+        match m.env.resolve(&ty_ast, None) {
+            Ok(rt) => eng.bind_root(&b.input, RootSrc::Doc(b.raw), &rt, &sc),
+            Err(e) => entry.env.report(Diag::error(e, b.input.clone(), None)),
+        }
+    }
     for m in mods {
         let outs = m.env.outputs.borrow().clone();
         for (name, ty_ast, expr) in outs {
             let sc = Scope::new(&name, Some(m.env.clone()));
-            let bound = (|| -> R<Value> {
-                let v = eng.ev(&expr, &sc)?;
-                let rt = m.env.resolve(&ty_ast, None).or_else(|e| err(e))?;
-                eng.bind(v, &rt, &[Seg::Name(name.clone())], None, &sc)
-            })();
-            if let Ok(v) = bound {
-                entry.env.set_root(&name, v);
-            }
-        }
-    }
-    for b in binds {
-        let decl = entry.env.inputs.borrow().get(&b.input).cloned();
-        let Some((ty_ast, _)) = decl else { continue };
-        let sc = Scope::new(&b.input, Some(entry.env.clone()));
-        if let Ok(rt) = entry.env.resolve(&ty_ast, None) {
-            if let Ok(v) = eng.bind(b.raw, &rt, &[Seg::Name(b.input.clone())], None, &sc) {
-                entry.env.set_root(&b.input, v);
+            match m.env.resolve(&ty_ast, None) {
+                Ok(rt) => eng.bind_root(&name, RootSrc::Expr(&expr), &rt, &sc),
+                Err(e) => entry.env.report(Diag::error(e, name.clone(), None)),
             }
         }
     }

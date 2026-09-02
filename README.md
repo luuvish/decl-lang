@@ -40,6 +40,7 @@ brew install luuvish/tap/decl-lang    # Homebrew tap
 ```bash
 decl check schema.decl                     # parse + static checks (module-aware)
 decl evaluate site.decl --root site        # evaluate outputs -> JSON
+decl evaluate cfg.decl --input deployed=doc.json --root deployed   # bind a document, emit its completed value
 decl validate cfg.decl --input deployed=doc.json --expect-errors E4001
 decl fmt --check src/*.decl                # canonical formatting
 ```

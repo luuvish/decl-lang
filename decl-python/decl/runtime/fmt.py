@@ -30,6 +30,11 @@ BIN_OPS = {"=", "==", "!=", "<=", ">=", "+", "*", "/", "%", "&&", "||", "??",
            "|>", "=>", "<<", ">>", "in", "matches", "with", "then", "else", "for", "if", "as", "from"}
 CONT_STARTERS = {"else", "=", "for", "if", "&&", "||", "|>", "??", ".", "?.",
                  "+", "-", "*", "/", "==", "!=", "<=", ">=", "<", ">", "=>", "then"}
+# a line whose last token leaves an expression open (`=`, `=>`, a binary
+# operator, `then`/`else`) makes the next line a continuation too
+CONT_ENDERS = {"=", "=>", "&&", "||", "|>", "??", "+", "-", "*", "/", "%",
+               "==", "!=", "<=", ">=", "<", ">", "&", "|", "^", "<<", ">>", "..", "..<",
+               "then", "else", "in", "with", "matches"}
 KEYWORDS = {"type", "const", "func", "output", "input", "export", "import",
             "diagnostic", "dimension", "unit", "assert", "when", "if", "then", "else", "match", "for",
             "in", "with", "as", "from", "true", "false", "null", "error", "warn", "info", "matches"}
@@ -132,6 +137,7 @@ def format_source(src: str) -> str:
     out: list = []
     depth = 0
     last_row_end = -1   # last original row consumed (multiline atoms span rows)
+    last_code: Optional[Leaf] = None   # the previous line's last non-comment token
     for line in lines:
         first = line[0]
         if first.row <= last_row_end:
@@ -147,8 +153,11 @@ def format_source(src: str) -> str:
             else:
                 break
         indent = max(0, depth - closers)
-        # a line starting with a continuation token hangs one level deeper
-        if closers == 0 and first.text in CONT_STARTERS:
+        # a line starting with a continuation token, or following a line that
+        # left an expression open, hangs one level deeper
+        if closers == 0 and (first.text in CONT_STARTERS
+                             or (last_code is not None and last_code.type not in ATOMS and last_code.text in CONT_ENDERS
+                                 and not _is_type_angle(last_code))):   # `ref<...>` closes a type, it opens nothing
             indent = depth + 1
         text = "    " * indent
         prev: Optional[Leaf] = None
@@ -168,6 +177,8 @@ def format_source(src: str) -> str:
                     elif ch in "}])":
                         depth = max(0, depth - 1)
             prev2, prev = prev, l
+            if not l.type.endswith("comment"):
+                last_code = l
             last_row_end = max(last_row_end, l.end_row)
         out.append(re.sub(r"[ \t]+$", "", text))
     return "\n".join(out) + "\n"

@@ -22,6 +22,17 @@ def _field(n: Node, name: str) -> Optional[Node]:
     return n.child_by_field_name(name)
 
 
+# `true` / `false` / `null` are anonymous keyword tokens in the grammar:
+# an operand position may hold one, so operands are the named children
+# plus those literals (never the operator or punctuation tokens)
+def _is_lit_keyword(c: Optional[Node]) -> bool:
+    return c is not None and not c.is_named and _text(c) in ("true", "false", "null")
+
+
+def _operands(n: Node) -> list:
+    return [c for c in n.children if c.is_named or _is_lit_keyword(c)]
+
+
 def _req(n: Node, name: str) -> Node:
     c = n.child_by_field_name(name)
     if c is None:
@@ -157,7 +168,7 @@ def lower_template_parts(n: Node) -> list:
         elif c.type == "template_escape":
             parts.append(re.sub(r"\\(.)", lambda m: _UNESC.get(m.group(1), m.group(1)), _text(c)))
         elif c.type == "interpolation":
-            parts.append(lower_expr(c.named_children[0]))
+            parts.append(lower_expr(_operands(c)[0]))
     return parts
 
 
@@ -344,9 +355,9 @@ def lower_expr(n: Node) -> dict:
     if t == "referrers_expression":
         return {"e": "referrers", "type": _text(_req(n, "type")), "member": json.loads(_text(_req(n, "member")))}
     if t == "paren_expression":
-        return {"e": "paren", "x": lower_expr(n.named_children[0])}
+        return {"e": "paren", "x": lower_expr(_operands(n)[0])}
     if t == "unary_expression":
-        return {"e": "un", "op": _text(n.children[0]), "x": lower_expr(n.named_children[0])}
+        return {"e": "un", "op": _text(n.children[0]), "x": lower_expr(_operands(n)[0])}
     if t == "if_expression":
         return {"e": "if", "c": lower_expr(_req(n, "condition")), "t": lower_expr(_req(n, "then")),
                 "f": lower_expr(_req(n, "else"))}
@@ -354,15 +365,15 @@ def lower_expr(n: Node) -> dict:
         return {"e": "lambda", "params": [_text(p.named_children[0]) for p in _kids(n, "lambda_parameter")],
                 "body": lower_expr(_req(n, "body"))}
     if t == "with_expression":
-        base, patch = n.named_children[:2]
+        base, patch = _operands(n)[:2]
         return {"e": "with", "base": lower_expr(base), "patch": lower_expr(patch)}
     if t in ("member_access", "safe_access"):
-        x, name = n.named_children[:2]
+        x, name = _operands(n)[:2]
         return {"e": "member", "x": lower_expr(x),
                 "name": json.loads(_text(name)) if name.type == "string" else _text(name),
                 "safe": True if t == "safe_access" else None}
     if t == "index_access":
-        x, i = n.named_children[:2]
+        x, i = _operands(n)[:2]
         return {"e": "index", "x": lower_expr(x), "i": lower_expr(i)}
     if t == "call":
         cs = [c for c in n.children if c.is_named or _text(c) in _KW_LITS]
@@ -412,9 +423,10 @@ def lower_expr(n: Node) -> dict:
                          "body": lower_expr(body)})
         return {"e": "match", "subject": lower_expr(_req(n, "subject")), "arms": arms}
     if t in _BIN_NODES:
-        l, r = n.named_children[:2]
-        anon = [_text(c) for c in n.children if not c.is_named and _text(c).strip() != ""]
-        return {"e": "bin", "op": anon[0], "l": lower_expr(l), "r": lower_expr(r)}
+        l, r = _operands(n)[:2]
+        # the operator is the one anonymous child that is not an operand
+        op = next(_text(c) for c in n.children if not c.is_named and not _is_lit_keyword(c) and _text(c).strip() != "")
+        return {"e": "bin", "op": op, "l": lower_expr(l), "r": lower_expr(r)}
     txt = _text(n)
     if txt == "true":
         return {"e": "lit", "v": True}

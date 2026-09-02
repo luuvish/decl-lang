@@ -1,0 +1,10 @@
+// @expect-phase: checking
+// @expect-error: E4090
+// @expect-message: $key bound
+// an array's index type int does not satisfy a pattern-typed $key (§7.3)
+type Port = {
+    $key: /[sm]i[0-9]+/
+    const name = $key
+}
+type Node = { items: Port[] }
+output n: Node = { items: [{ }] }

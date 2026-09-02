@@ -272,7 +272,13 @@ export class Env {
         const isF = typeof lo === 'number' || typeof hi === 'number';
         return { t: 'range', lo, hi, excl: ast.excl, base: isF ? 'float' : 'int' };
       }
-      case 'pattern': return { t: 'pattern', src: ast.re, re: new RegExp(`^(?:${ast.re})$`) };
+      case 'pattern': {
+        const src = this.expandPattern(ast.re);
+        let re: RegExp;
+        try { re = new RegExp(`^(?:${src})$`); }
+        catch (e: any) { throw new Error(`malformed pattern /${ast.re}/: ${e.message}`); }
+        return { t: 'pattern', src, re };
+      }
       case 'map': return { t: 'map', key: this.resolve(ast.key), val: this.resolve(ast.val) };
       case 'array': {
         const lo = this.constNum(ast.lo), hi0 = this.constNum(ast.hi);
@@ -320,7 +326,10 @@ export class Env {
           if (decl.ast.k === 'record') {
             base = { t: 'rec', name: ast.name, members: [], asserts: [], open: decl.ast.open, tail: decl.tail };
             this.typeMemo.set(ast.name, base);
-            this.fillRecord(base, decl.ast.members);
+            // a member that fails to resolve must not leave a half-filled
+            // record memoized (later lookups would miss its later members)
+            try { this.fillRecord(base, decl.ast.members); }
+            catch (e) { this.typeMemo.delete(ast.name); throw e; }
           } else {
             base = this.resolve(decl.ast, ast.name);
             if (base.t === 'rec' || base.t === 'union') base.name = ast.name;
@@ -330,8 +339,16 @@ export class Env {
         }
         if (ast.ext) {
           const ext = this.resolve(ast.ext) as any;      // anonymous record of overrides
+          // an extension may narrow a context declaration (§7.3): its
+          // declaration replaces the inherited one for that variable
+          const ctxDecls = [...(base.ctxDecls ?? [])];
+          for (const cd of ext.ctxDecls ?? []) {
+            const i = ctxDecls.findIndex((x: any) => x.variable === cd.variable);
+            if (i >= 0) ctxDecls[i] = cd; else ctxDecls.push(cd);
+          }
           const merged: any = { t: 'rec', name: base.name, open: base.open, tail: base.tail,
-            ctxDecls: base.ctxDecls, members: base.members.map((m: any) => ({ ...m })), asserts: [...base.asserts] };
+            ctxDecls: ctxDecls.length ? ctxDecls : undefined,
+            members: base.members.map((m: any) => ({ ...m })), asserts: [...base.asserts] };
           for (const om of ext.members) {
             const i = merged.members.findIndex((m: any) => m.name === om.name);
             if (i >= 0) merged.members[i] = om; else merged.members.push(om);
@@ -341,6 +358,66 @@ export class Env {
         }
         return base;
       }
+    }
+  }
+  // §3.6: `${T}` inside a pattern splices another type — a string-shaped
+  // T (pattern, string literal, union of those) as its regular language,
+  // an integer-shaped T (int literal, int range, union) as the decimal
+  // representations of its members
+  // names being spliced right now, across nested resolutions — a
+  // mutually recursive pair (`/x${B}/`, `/y${A}/`) is a cycle, not a stack overflow
+  patternVisiting = new Set<string>();
+  expandPattern(re: string): string {
+    const visiting = this.patternVisiting;
+    return re.replace(/\$\{([^}]*)\}/g, (_, inner: string) => {
+      const text = inner.trim();
+      // the spliced type: a union of string literals, int literals, int
+      // ranges, and named types — the type-expression subset that fits
+      // inside a pattern token
+      const arms = text.split('|').map(a => a.trim());
+      const frags = arms.map(arm => {
+        let m: RegExpExecArray | null;
+        if ((m = /^"((?:[^"\\]|\\.)*)"$/.exec(arm))) return this.patternFragment({ t: 'lit', v: JSON.parse(`"${m[1]}"`) }, text);
+        if ((m = /^(-?[0-9]+)\.\.(<?)(-?[0-9]+)$/.exec(arm)))
+          return this.patternFragment({ t: 'range', base: 'int', lo: BigInt(m[1]), hi: BigInt(m[3]), excl: m[2] === '<' }, text);
+        if (/^-?[0-9]+$/.test(arm)) return this.patternFragment({ t: 'lit', v: BigInt(arm) }, text);
+        if (!/^[A-Za-z_][A-Za-z0-9_.]*$/.test(arm)) throw new Error(`pattern interpolation of ${text}: not a type (§3.6)`);
+        if (visiting.has(arm)) throw new Error(`pattern interpolation of ${arm} is circular`);
+        visiting.add(arm);
+        let rt: RT;
+        try { rt = this.resolve({ k: 'named', name: arm, args: [] }); }
+        catch (e: any) {
+          visiting.delete(arm);
+          if (/^unknown type/.test(e.message)) throw new Error(`pattern interpolation of ${arm}: unknown type`);
+          throw e;
+        }
+        visiting.delete(arm);
+        return this.patternFragment(rt, arm);
+      });
+      return frags.length === 1 ? frags[0] : `(?:${frags.join('|')})`;
+    });
+  }
+  patternFragment(rt: RT, name: string): string {
+    const esc = (s: string) => s.replace(/[.*+?^${}()|[\]\\\/]/g, '\\$&');
+    const bad = (): never => { throw new Error(`pattern interpolation of ${name}: type is neither string- nor integer-shaped (§3.6)`); };
+    switch (rt.t) {
+      case 'pattern': return `(?:${rt.src})`;
+      case 'lit':
+        if (typeof rt.v === 'string') return esc(rt.v);
+        if (typeof rt.v === 'bigint') return rt.v.toString();
+        return bad();
+      case 'range': {
+        if (rt.base !== 'int' || typeof rt.lo !== 'bigint' || typeof rt.hi !== 'bigint') return bad();
+        const hi = rt.excl ? rt.hi - 1n : rt.hi;
+        if (hi - rt.lo >= 65536n) throw new Error(`pattern interpolation of ${name}: range too large (limit 65536 values)`);
+        const alts: string[] = [];
+        for (let v = rt.lo; v <= hi; v++) alts.push(v.toString());
+        return `(?:${alts.join('|')})`;
+      }
+      case 'union': return `(?:${rt.arms.map((a: RT) => this.patternFragment(a, name)).join('|')})`;
+      case 'pred': return this.patternFragment(rt.base, name);
+      case 'prim': return rt.name === 'string' ? '.*' : rt.name === 'int' ? '-?[0-9]+' : bad();
+      default: return bad();
     }
   }
   // §3.15: substitute arguments, check value arguments against their
@@ -382,7 +459,8 @@ export class Env {
     if (body.k === 'record') {
       rt = { t: 'rec', name: shown, members: [], asserts: [], open: body.open, tail: decl.tail };
       this.typeMemo.set(key, rt);
-      this.fillRecord(rt, body.members);
+      try { this.fillRecord(rt, body.members); }
+      catch (e) { this.typeMemo.delete(key); throw e; }
     } else {
       rt = this.resolve(body, shown);
       if (rt.t === 'rec' || rt.t === 'union') rt.name = shown;

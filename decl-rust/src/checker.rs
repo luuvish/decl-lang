@@ -413,11 +413,19 @@ pub fn check_module(decls: &[Decl], linked: Option<Rc<Env>>) -> Vec<Diag> {
     };
 
     // ---------- resolution-level checks ----------
+    let resolve_reported: RefCell<HashSet<String>> = RefCell::new(HashSet::new());
+    let pattern_unknown = regex::Regex::new(r"pattern interpolation of .*: unknown type").unwrap();
     let map_resolve_err = |msg: &str, where_: &str| {
+        let key = format!("{msg}|{where_}");
+        if !resolve_reported.borrow_mut().insert(key) {
+            return; // one resolution failure, one report
+        }
         if msg.contains("unknown dimension") || msg.contains("circular dimension") {
             rep("E3003", format!("{msg} (in {where_})"));
         } else if msg.contains("unknown unit") {
             rep("E4073", format!("{msg} (in {where_})"));
+        } else if pattern_unknown.is_match(msg) {
+            rep("E3003", format!("{msg} (in {where_})"));
         } else if msg.contains("unknown type") {
             rep("E3003", format!("{msg} (in {where_})"));
         } else if msg.contains("generic arity") {
@@ -426,6 +434,12 @@ pub fn check_module(decls: &[Decl], linked: Option<Rc<Env>>) -> Vec<Diag> {
             rep("E4023", format!("{msg} (in {where_})"));
         } else if msg.contains("non-constant value argument") {
             rep("E4021", format!("{msg} (in {where_})"));
+        } else if msg.contains("pattern interpolation") {
+            rep("E4117", format!("{msg} (in {where_})"));
+        } else if msg.contains("malformed pattern") {
+            rep("E1004", format!("{msg} (in {where_})"));
+        } else {
+            rep("E4001", format!("{msg} (in {where_})")); // never drop a resolution failure silently
         }
     };
     let resolve_or_report = |t: Option<&TypeAst>, where_: &str| -> Option<RT> {
@@ -567,6 +581,7 @@ pub fn check_module(decls: &[Decl], linked: Option<Rc<Env>>) -> Vec<Diag> {
             c.vars.insert(m.name.clone(), Ty { rt: member_ty(&m), abs: m.kind == MKind::Opt });
         }
         c.vars.insert("$this".into(), tyv(Some(rt.clone())));
+        c.vars.insert("$path".into(), tyv(Some(ty(RTk::Prim("string".into())))));
         if let Some(TypeAst::Record { members, .. }) = ast {
             for m in members {
                 if let MemberAst::Context { variable, ty } = m {
@@ -643,24 +658,32 @@ pub fn check_module(decls: &[Decl], linked: Option<Rc<Env>>) -> Vec<Diag> {
                 _ => cx_r.clone(),
             }
         };
-        // D30/E4090: an embedded type's declared $parent bound must hold
-        // at this site — the container is the parent
-        let check_embedding = |member_rt: &RT, member_name: &str| {
+        // D30/E4090: an embedded type's declared bounds must hold at this
+        // site — the container is the parent, the collection's key or index
+        // type is what $key ranges over (none for a direct member)
+        let check_embedding = |member_rt: &RT, member_name: &str, key_rt: Option<&RT>| {
             let RTk::Rec(mrec) = &member_rt.k else { return };
+            let site = format!("{}.{member_name}", rt.name.borrow().clone().unwrap_or_else(|| "record".into()));
+            let who = member_rt.name.borrow().clone().unwrap_or_else(|| "the member type".into());
             for (var, cty) in mrec.ctx_decls.borrow().iter() {
-                if var != "$parent" {
-                    continue;
-                }
-                let RTk::Ref(bound) = &cty.k else { continue };
-                if !subsumes(env, rt, bound) {
-                    rep("E4090", format!(
-                        "embedding site {}.{member_name} fails {}'s $parent bound (§7.3)",
-                        rt.name.borrow().clone().unwrap_or_else(|| "record".into()),
-                        member_rt.name.borrow().clone().unwrap_or_else(|| "the member type".into())
-                    ));
+                if var == "$parent" {
+                    let RTk::Ref(bound) = &cty.k else { continue };
+                    if !subsumes(env, rt, bound) {
+                        rep("E4090", format!("embedding site {site} fails {who}'s $parent bound (§7.3)"));
+                    }
+                } else if var == "$key" {
+                    match key_rt {
+                        None => rep("E4090", format!("embedding site {site} gives $key no meaning: {who} is a direct member, not a collection element (§7.3)")),
+                        Some(k) => {
+                            if !subsumes(env, k, cty) {
+                                rep("E4090", format!("embedding site {site} fails {who}'s $key bound (§7.3)"));
+                            }
+                        }
+                    }
                 }
             }
         };
+        let int_rt: RT = ty(RTk::Prim("int".into()));
         let members = rec.members.borrow().clone();
         for m in &members {
             if m.kind == MKind::Der {
@@ -674,14 +697,14 @@ pub fn check_module(decls: &[Decl], linked: Option<Rc<Env>>) -> Vec<Diag> {
                 }
             }
             let Some(mt) = &m.ty else { continue };
-            let nested: Option<RT> = match &mt.k {
-                RTk::Rec(_) => Some(mt.clone()),
-                RTk::Arr { elem, .. } if is_rec(elem) => Some(elem.clone()),
-                RTk::Map { val, .. } if is_rec(val) => Some(val.clone()),
+            let nested: Option<(RT, Option<RT>)> = match &mt.k {
+                RTk::Rec(_) => Some((mt.clone(), None)),
+                RTk::Arr { elem, .. } if is_rec(elem) => Some((elem.clone(), Some(int_rt.clone()))),
+                RTk::Map { key, val } if is_rec(val) => Some((val.clone(), Some(key.clone()))),
                 _ => None,
             };
-            if let Some(n) = nested {
-                check_embedding(&n, &m.name);
+            if let Some((n, key_rt)) = nested {
+                check_embedding(&n, &m.name, key_rt.as_ref());
                 check_record_exprs(env, rep, is_bool_ty, rec_ctx, seen, &n, &cx_for(&m.menv), None);
             }
         }
@@ -703,6 +726,47 @@ pub fn check_module(decls: &[Decl], linked: Option<Rc<Env>>) -> Vec<Diag> {
         }
         let Ok(rt) = env.resolve(&named(name), None) else { continue };
         check_record_exprs(&env, &rep, &is_bool_ty, &rec_ctx, &seen_recs, &rt, &cx0, Some(&decl.ast));
+    }
+    // D30/E4090 for $root: every record type owned (transitively) by an
+    // evaluation root must have its declared $root bound met by the root's
+    // own type — checked once per root declaration
+    fn walk_root_bounds(env: &Rc<Env>, rep: &dyn Fn(&str, String), root_name: &str, root_rt: &RT, t: &RT, seen: &mut HashSet<usize>) {
+        let id = Rc::as_ptr(t) as usize;
+        if !seen.insert(id) {
+            return;
+        }
+        match &t.k {
+            RTk::Rec(r) => {
+                for (var, cty) in r.ctx_decls.borrow().iter() {
+                    if var != "$root" {
+                        continue;
+                    }
+                    let RTk::Ref(bound) = &cty.k else { continue };
+                    if !subsumes(env, root_rt, bound) {
+                        rep("E4090", format!("root {root_name} fails {}'s $root bound (§7.3)", t.name.borrow().clone().unwrap_or_else(|| "a member type".into())));
+                    }
+                }
+                for m in rec_members(t) {
+                    if let Some(mt) = &m.ty {
+                        walk_root_bounds(env, rep, root_name, root_rt, mt, seen);
+                    }
+                }
+            }
+            RTk::Arr { elem, .. } => walk_root_bounds(env, rep, root_name, root_rt, elem, seen),
+            RTk::Map { val, .. } => walk_root_bounds(env, rep, root_name, root_rt, val, seen),
+            RTk::Union(arms) | RTk::IsectN(arms) => arms.iter().for_each(|a| walk_root_bounds(env, rep, root_name, root_rt, a, seen)),
+            RTk::Pred { base, .. } => walk_root_bounds(env, rep, root_name, root_rt, base, seen),
+            _ => {}
+        }
+    }
+    for d in decls {
+        let (name, ty_ast) = match &d.body {
+            DeclBody::Output { name, ty, .. } | DeclBody::Input { name, ty, .. } => (name, ty),
+            _ => continue,
+        };
+        if let Some(rt) = try_resolve(&env, Some(ty_ast)) {
+            walk_root_bounds(&env, &rep, name, &rt, &rt, &mut HashSet::new());
+        }
     }
     for d in decls {
         match &d.body {

@@ -837,6 +837,15 @@ def _place_ty(cx: Ctx, e: dict) -> dict:
         return _member_core(cx, _place_ty(cx, e["x"]), e)
     if k == "index":
         return _index_core(cx, _place_ty(cx, e["x"]), e)
+    if k == "if":
+        # a conditional between places is a place: each branch is read in
+        # the ref position, the condition as an ordinary value (§7.4)
+        c = require_val(cx, e["c"], infer(cx, e["c"]), "as a condition")
+        if c["rt"] and not _is_boolish(c["rt"]):
+            cx.report("E4001", "`if` condition is not bool")
+        t = _place_ty(apply_guards(cx, guards_of(e["c"], True)), e["t"])
+        f = _place_ty(apply_guards(cx, guards_of(e["c"], False)), e["f"])
+        return TY(mk_union([t["rt"], f["rt"]]), t["abs"] or f["abs"])
     # the spine root must be a root-derived place, never a module const (§7.5, D32)
     if k == "name" and e["name"] not in cx.vars and e["name"] in cx.env.consts:
         cx.report("E4093", f"`ref` position navigates module const {e['name']} — not a root-derived place (§7.5)")

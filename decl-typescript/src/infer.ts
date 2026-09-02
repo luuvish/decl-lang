@@ -670,6 +670,15 @@ function placeTy(cx: ICtx, e: Expr): Ty {
     case 'paren': return placeTy(cx, e.x);
     case 'member': return memberCore(cx, placeTy(cx, e.x), e);
     case 'index': return indexCore(cx, placeTy(cx, e.x), e);
+    case 'if': {
+      // a conditional between places is a place: each branch is read in
+      // the ref position, the condition as an ordinary value (§7.4)
+      const c = requireVal(cx, e.c, infer(cx, e.c), 'as a condition');
+      if (c.rt && !isBoolish(c.rt)) cx.report('E4001', '`if` condition is not bool');
+      const t = placeTy(applyGuards(cx, guardsOf(e.c, true)), e.t);
+      const f = placeTy(applyGuards(cx, guardsOf(e.c, false)), e.f);
+      return { rt: mkUnion([t.rt, f.rt]), abs: t.abs || f.abs };
+    }
     default:
       // the spine root must be a root-derived place, never a module
       // const (§7.5, D32)

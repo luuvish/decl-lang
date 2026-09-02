@@ -420,6 +420,9 @@ pub type ExprEval = Rc<dyn Fn(&Rc<Expr>) -> R<Value>>;
 pub struct Env {
     pub type_asts: RefCell<HashMap<String, Rc<TypeEntry>>>,
     pub type_memo: RefCell<HashMap<String, RT>>,
+    // names being spliced into a pattern right now, across nested
+    // resolutions — a mutually recursive pair is a cycle, not a stack overflow
+    pub pattern_visiting: RefCell<Vec<String>>,
     pub consts: RefCell<HashMap<String, Rc<ConstEntry>>>,
     pub funcs: RefCell<HashMap<String, Rc<FuncEntry>>>,
     pub duplicates: RefCell<Vec<String>>,
@@ -458,6 +461,7 @@ impl Env {
         let env = Env {
             type_asts: RefCell::new(HashMap::new()),
             type_memo: RefCell::new(HashMap::new()),
+            pattern_visiting: RefCell::new(vec![]),
             consts: RefCell::new(HashMap::new()),
             funcs: RefCell::new(HashMap::new()),
             duplicates: RefCell::new(vec![]),
@@ -783,7 +787,11 @@ impl Env {
                 let is_f = matches!(lo, Value::Float(_)) || matches!(hi, Value::Float(_));
                 ty(RTk::Range { lo, hi, excl: *excl, base: if is_f { "float".into() } else { "int".into() } })
             }
-            TypeAst::Pattern(src) => ty(RTk::Pattern { src: src.clone(), re: Regex::new(&format!("^(?:{src})$")).map_err(|e| e.to_string())? }),
+            TypeAst::Pattern(src) => {
+                let expanded = self.expand_pattern(src)?;
+                let re = Regex::new(&format!("^(?:{expanded})$")).map_err(|e| format!("malformed pattern /{src}/: {e}"))?;
+                ty(RTk::Pattern { src: expanded, re })
+            }
             TypeAst::Map { key, val } => ty(RTk::Map { key: self.resolve(key, None)?, val: self.resolve(val, None)? }),
             TypeAst::Array { elem, lo, hi, excl } => {
                 let lo = lo.as_ref().map(|v| self.const_num(v));
@@ -862,7 +870,12 @@ impl Env {
                             *rt.name.borrow_mut() = Some(n.clone());
                             *rt.tail.borrow_mut() = decl.tail.clone();
                             self.type_memo.borrow_mut().insert(n.clone(), rt.clone());
-                            self.fill_record(&rt, members)?;
+                            // a member that fails to resolve must not leave a half-filled
+                            // record memoized (later lookups would miss its later members)
+                            if let Err(e) = self.fill_record(&rt, members) {
+                                self.type_memo.borrow_mut().remove(n);
+                                return Err(e);
+                            }
                             rt
                         }
                         other => {
@@ -900,10 +913,134 @@ impl Env {
         }
         let mut asserts = br.asserts.borrow().clone();
         asserts.extend(er.asserts.borrow().iter().cloned());
-        let rt = ty(RTk::Rec(RecType { open: br.open, members: RefCell::new(members), asserts: RefCell::new(asserts), ctx_decls: RefCell::new(br.ctx_decls.borrow().clone()) }));
+        // an extension may narrow a context declaration (§7.3): its
+        // declaration replaces the inherited one for that variable
+        let mut ctx_decls: Vec<(String, RT)> = br.ctx_decls.borrow().clone();
+        for cd in er.ctx_decls.borrow().iter() {
+            if let Some(i) = ctx_decls.iter().position(|(v, _)| *v == cd.0) {
+                ctx_decls[i] = cd.clone();
+            } else {
+                ctx_decls.push(cd.clone());
+            }
+        }
+        let rt = ty(RTk::Rec(RecType { open: br.open, members: RefCell::new(members), asserts: RefCell::new(asserts), ctx_decls: RefCell::new(ctx_decls) }));
         *rt.name.borrow_mut() = base.name.borrow().clone();
         *rt.tail.borrow_mut() = base.tail.borrow().clone();
         rt
+    }
+
+    // §3.6: `${T}` inside a pattern splices another type — a string-shaped
+    // T (pattern, string literal, union of those) as its regular language,
+    // an integer-shaped T (int literal, int range, union) as the decimal
+    // representations of its members
+    fn expand_pattern(self: &Rc<Env>, re: &str) -> Result<String, String> {
+        let hole = Regex::new(r"\$\{([^}]*)\}").unwrap();
+        let mut out = String::new();
+        let mut last = 0;
+        for m in hole.captures_iter(re) {
+            let whole = m.get(0).unwrap();
+            out.push_str(&re[last..whole.start()]);
+            last = whole.end();
+            let text = m.get(1).unwrap().as_str().trim().to_string();
+            // the spliced type: a union of string literals, int literals, int
+            // ranges, and named types — the type-expression subset that fits
+            // inside a pattern token
+            let arms: Vec<String> = text.split('|').map(|a| a.trim().to_string()).collect();
+            let mut frags: Vec<String> = vec![];
+            let str_lit = Regex::new(r#"^"((?:[^"\\]|\\.)*)"$"#).unwrap();
+            let int_range = Regex::new(r"^(-?[0-9]+)\.\.(<?)(-?[0-9]+)$").unwrap();
+            let int_lit = Regex::new(r"^-?[0-9]+$").unwrap();
+            let ident = Regex::new(r"^[A-Za-z_][A-Za-z0-9_.]*$").unwrap();
+            for arm in &arms {
+                if str_lit.is_match(arm) {
+                    let v = crate::parse::json_unquote(arm)?;
+                    frags.push(self.pattern_fragment(&ty(RTk::Lit(Value::Str(v))), &text)?);
+                    continue;
+                }
+                if let Some(c) = int_range.captures(arm) {
+                    let lo = c[1].parse::<BigInt>().map_err(|e| e.to_string())?;
+                    let hi = c[3].parse::<BigInt>().map_err(|e| e.to_string())?;
+                    let rt = ty(RTk::Range { lo: Value::Int(lo), hi: Value::Int(hi), excl: &c[2] == "<", base: "int".into() });
+                    frags.push(self.pattern_fragment(&rt, &text)?);
+                    continue;
+                }
+                if int_lit.is_match(arm) {
+                    let v = arm.parse::<BigInt>().map_err(|e| e.to_string())?;
+                    frags.push(self.pattern_fragment(&ty(RTk::Lit(Value::Int(v))), &text)?);
+                    continue;
+                }
+                if !ident.is_match(arm) {
+                    return Err(format!("pattern interpolation of {text}: not a type (§3.6)"));
+                }
+                if self.pattern_visiting.borrow().iter().any(|v| v == arm) {
+                    return Err(format!("pattern interpolation of {arm} is circular"));
+                }
+                self.pattern_visiting.borrow_mut().push(arm.clone());
+                let resolved = self.resolve(&TypeAst::Named { name: arm.clone(), args: vec![], preds: None, ext: None }, None);
+                self.pattern_visiting.borrow_mut().retain(|v| v != arm);
+                let rt = match resolved {
+                    Ok(rt) => rt,
+                    Err(e) => {
+                        if e.starts_with("unknown type") {
+                            return Err(format!("pattern interpolation of {arm}: unknown type"));
+                        }
+                        return Err(e);
+                    }
+                };
+                frags.push(self.pattern_fragment(&rt, arm)?);
+            }
+            if frags.len() == 1 {
+                out.push_str(&frags[0]);
+            } else {
+                out.push_str(&format!("(?:{})", frags.join("|")));
+            }
+        }
+        out.push_str(&re[last..]);
+        Ok(out)
+    }
+    fn pattern_fragment(self: &Rc<Env>, rt: &RT, name: &str) -> Result<String, String> {
+        let esc = |s: &str| -> String {
+            let mut o = String::with_capacity(s.len());
+            for c in s.chars() {
+                if ".*+?^${}()|[]\\/".contains(c) {
+                    o.push('\\');
+                }
+                o.push(c);
+            }
+            o
+        };
+        let bad = || Err(format!("pattern interpolation of {name}: type is neither string- nor integer-shaped (§3.6)"));
+        match &rt.k {
+            RTk::Pattern { src, .. } => Ok(format!("(?:{src})")),
+            RTk::Lit(Value::Str(s)) => Ok(esc(s)),
+            RTk::Lit(Value::Int(i)) => Ok(i.to_string()),
+            RTk::Lit(_) => bad(),
+            RTk::Range { lo, hi, excl, base } => {
+                let (Value::Int(lo), Value::Int(hi)) = (lo, hi) else { return bad() };
+                if base != "int" {
+                    return bad();
+                }
+                let hi = if *excl { hi - 1 } else { hi.clone() };
+                if &hi - lo >= BigInt::from(65536) {
+                    return Err(format!("pattern interpolation of {name}: range too large (limit 65536 values)"));
+                }
+                let mut alts: Vec<String> = vec![];
+                let mut v = lo.clone();
+                while v <= hi {
+                    alts.push(v.to_string());
+                    v += 1;
+                }
+                Ok(format!("(?:{})", alts.join("|")))
+            }
+            RTk::Union(arms) => {
+                let parts = arms.iter().map(|a| self.pattern_fragment(a, name)).collect::<Result<Vec<_>, _>>()?;
+                Ok(format!("(?:{})", parts.join("|")))
+            }
+            RTk::Pred { base, .. } => self.pattern_fragment(base, name),
+            RTk::Prim(n) if n == "string" => Ok(".*".into()),
+            RTk::Prim(n) if n == "int" => Ok("-?[0-9]+".into()),
+            _ => bad(),
+        }
     }
 
     // §3.15 generics
@@ -953,8 +1090,11 @@ impl Env {
                 let rt = ty(RTk::Rec(rec_type(*open)));
                 *rt.name.borrow_mut() = Some(shown);
                 *rt.tail.borrow_mut() = decl.tail.clone();
-                self.type_memo.borrow_mut().insert(key, rt.clone());
-                self.fill_record(&rt, members)?;
+                self.type_memo.borrow_mut().insert(key.clone(), rt.clone());
+                if let Err(e) = self.fill_record(&rt, members) {
+                    self.type_memo.borrow_mut().remove(&key);
+                    return Err(e);
+                }
                 rt
             }
             other => {

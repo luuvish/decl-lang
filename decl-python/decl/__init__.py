@@ -6,6 +6,7 @@ tests/parity/differential.py.
 
     >>> import decl
     >>> decl.evaluate("site.decl", root="site")        # -> the evaluated value (dict/list/...)
+    >>> decl.evaluate("cfg.decl", root="deployed", inputs=[("deployed", "doc.json")])
     >>> decl.check("schema.decl")                        # -> [] when clean, else diagnostics
     >>> decl.validate("cfg.decl", input=("deployed", "doc.json"))
     >>> decl.format_source("const x=1+2\\n")             # -> 'const x = 1 + 2\\n'
@@ -47,14 +48,24 @@ def check(*paths: str | os.PathLike[str]) -> list[Diagnostic]:
     return [dict(file=d["file"], **{k: v for k, v in d.items() if k != "file"}) for d in check_files([str(p) for p in paths])]
 
 
-def evaluate(path: str | os.PathLike[str], root: str | None = None) -> Any:
-    """Evaluate a module's outputs on the native runtime. With ``root`` returns
-    that output's value; otherwise a dict of every universe root. Raises
-    DeclError with diagnostics on failure."""
-    from .runtime.cli import evaluate_file
-    code, text, diags = evaluate_file(str(path), root)
+def evaluate(
+    path: str | os.PathLike[str],
+    root: str | None = None,
+    *,
+    inputs: Iterable[tuple[str, str | os.PathLike[str]]] | None = None,
+) -> Any:
+    """Evaluate a module on the native runtime, first binding the ``inputs``
+    documents given as ``(name, json_path)`` pairs. With ``root`` returns that
+    root's value (an output, or an input bound here or demanded through its
+    fallback); otherwise a dict of every output. Raises DeclError with
+    diagnostics on failure."""
+    from .runtime.cli import CliError, evaluate_file
+    try:
+        code, text, diags = evaluate_file(str(path), root, [f"{name}={file}" for name, file in (inputs or [])])
+    except CliError as e:
+        raise DeclError(str(e), [{"file": str(path), **d} for d in e.diagnostics]) from None
     if code != 0 or text is None:
-        raise DeclError("evaluation failed", [dict(file=str(path), **d) for d in diags])
+        raise DeclError("evaluation failed", [{"file": str(path), **d} for d in diags])
     return json.loads(text)
 
 
@@ -69,14 +80,19 @@ def validate(
     path: str | os.PathLike[str],
     *,
     input: tuple[str, str | os.PathLike[str]] | None = None,
+    inputs: Iterable[tuple[str, str | os.PathLike[str]]] | None = None,
     expect_errors: Iterable[str] | None = None,
 ) -> list[Diagnostic]:
-    """Validate a file on the native runtime (optionally binding an input
-    document as ``(name, json_path)``). Returns diagnostics. With
-    ``expect_errors`` the error-code set must match exactly; DeclError
-    carries the mismatch otherwise."""
-    from .runtime.cli import validate_file
-    parse_errors, found = validate_file(str(path), f"{input[0]}={input[1]}" if input else None)
+    """Validate a file on the native runtime, binding the input documents
+    given as ``(name, json_path)`` pairs (one as ``input``, or any number as
+    ``inputs``). Returns diagnostics. With ``expect_errors`` the error-code
+    set must match exactly; DeclError carries the mismatch otherwise."""
+    from .runtime.cli import CliError, validate_file
+    pairs = ([input] if input else []) + list(inputs or [])
+    try:
+        parse_errors, found = validate_file(str(path), [f"{name}={file}" for name, file in pairs])
+    except CliError as e:
+        raise DeclError(str(e)) from None
     if parse_errors:
         raise DeclError(f"{path}: {parse_errors} parse error(s)")
     diags = [dict(file=str(path), **d) for d in found]

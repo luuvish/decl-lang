@@ -182,6 +182,12 @@ output net: Network = {
 ```
 
 - Statically, the navigated location's type must be `⊑ T`.
+- **A conditional between places is a place** *(v0.2.1)*: in a
+  `ref<T>` position, `if c then a.ports[k] else b.spare` reads each
+  branch as a navigation — the expected type decides per branch, as
+  ever — and resolves only the taken one; the condition is an ordinary
+  value expression. A branch that is not a navigation is an error at
+  that branch.
 - In the interchange surface, the same reference is the canonical path
   **string** (`"net.services[0]"`) — the input-binding form and the
   serialized form (D29, [10. Interchange](10_interchange.md)); the

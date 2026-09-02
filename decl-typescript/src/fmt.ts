@@ -31,6 +31,11 @@ const BIN_OPS = new Set(['=', '==', '!=', '<=', '>=', '+', '*', '/', '%', '&&', 
   '|>', '=>', '<<', '>>', 'in', 'matches', 'with', 'then', 'else', 'for', 'if', 'as', 'from']);
 const CONT_STARTERS = new Set(['else', '=', 'for', 'if', '&&', '||', '|>', '??', '.', '?.',
   '+', '-', '*', '/', '==', '!=', '<=', '>=', '<', '>', '=>', 'then']);
+// a line whose last token leaves an expression open (`=`, `=>`, a binary
+// operator, `then`/`else`) makes the next line a continuation too
+const CONT_ENDERS = new Set(['=', '=>', '&&', '||', '|>', '??', '+', '-', '*', '/', '%',
+  '==', '!=', '<=', '>=', '<', '>', '&', '|', '^', '<<', '>>', '..', '..<',
+  'then', 'else', 'in', 'with', 'matches']);
 
 function isTypeAngle(l: Leaf): boolean {
   return (l.text === '<' || l.text === '>')
@@ -95,6 +100,7 @@ export function format(src: string): string {
   const out: string[] = [];
   let depth = 0;
   let lastRowEnd = -1;      // last original row consumed (multiline atoms span rows)
+  let lastCode: Leaf | null = null;   // the previous line's last non-comment token
   for (const line of lines) {
     const first = line[0];
     if (first.row <= lastRowEnd) continue;          // inside a multiline atom
@@ -104,8 +110,12 @@ export function format(src: string): string {
     let closers = 0;
     for (const l of line) { if ([')', ']', '}'].includes(l.text)) closers++; else break; }
     let indent = Math.max(0, depth - closers);
-    // a line starting with a continuation token hangs one level deeper
-    if (closers === 0 && CONT_STARTERS.has(first.text)) indent = depth + 1;
+    // a line starting with a continuation token, or following a line that
+    // left an expression open, hangs one level deeper
+    if (closers === 0 && (CONT_STARTERS.has(first.text)
+      || (lastCode !== null && !ATOMS.has(lastCode.type) && CONT_ENDERS.has(lastCode.text)
+        && !isTypeAngle(lastCode))))   // `ref<...>` closes a type, it opens nothing
+      indent = depth + 1;
     let text = '    '.repeat(indent);
     let prev: Leaf | null = null, prev2: Leaf | null = null;
     for (const l of line) {
@@ -123,6 +133,7 @@ export function format(src: string): string {
         }
       }
       prev2 = prev; prev = l;
+      if (!l.type.endsWith('comment')) lastCode = l;
       lastRowEnd = Math.max(lastRowEnd, l.endRow);
     }
     out.push(text.replace(/[ \t]+$/, ''));

@@ -70,12 +70,40 @@ export class Engine {
         if (bound !== undefined) return bound;
         if (e.name === 'std') return { __std: true, path: [] };
         if (this.env.roots.has(e.name)) return this.env.roots.get(e.name);
+        const inp = this.demandInput(menv, e.name);
+        if (inp !== undefined) return inp;
         throw new EvalErr(`unknown name ${e.name}`);
       }
       case 'ctx': {
-        if (e.name === '$this') return sc.inst;
-        if (e.name === '$parent') return sc.inst?.parent;
-        if (e.name === '$path') return pathStr(sc.inst!.path);
+        // $this / $parent / $root are references (§7.3): each denotes an
+        // instance that contains the current one, so a value reading would
+        // be a self-containing value; $key and $path are plain values
+        const inst = sc.inst;
+        if (e.name === '$this') {
+          if (!inst) throw new EvalErr('$this outside a record instance', 'E4090');
+          return { __ref: true, segs: inst.path };
+        }
+        if (e.name === '$parent') {
+          if (!inst || !inst.parent) throw new EvalErr('$parent: the evaluation root has no owner', 'E4090');
+          return { __ref: true, segs: inst.parent.path };
+        }
+        if (e.name === '$root') {
+          if (!sc.rootName || !this.env.roots.has(sc.rootName)) throw new EvalErr('$root outside an evaluation root', 'E4090');
+          return { __ref: true, segs: [sc.rootName] };
+        }
+        if (e.name === '$key') {
+          // the key or index under which $this sits in its parent's
+          // collection: the last path segment, present only when the
+          // instance is a collection element (not a direct member)
+          if (!inst || !inst.parent || inst.path.length < inst.parent.path.length + 2)
+            throw new EvalErr('$key: the instance is not a collection element', 'E4090');
+          const k = inst.path[inst.path.length - 1];
+          return typeof k === 'number' ? BigInt(k) : k;
+        }
+        if (e.name === '$path') {
+          if (!inst) throw new EvalErr('$path outside a record instance', 'E4090');
+          return pathStr(inst.path);
+        }
         throw new EvalErr(`unsupported context var ${e.name}`);
       }
       case 'referrers': return this.referrers(e.type, e.member, sc);
@@ -220,7 +248,7 @@ export class Engine {
       const v = this.moduleValue(im.env, im.name, rootName);
       if (v !== undefined) return v;
       if (this.env.roots.has(im.name)) return this.env.roots.get(im.name);   // imported output/input root
-      return undefined;
+      return this.demandInput(im.env, im.name);
     }
     const ns = menv.namespaces.get(name);
     if (ns) return { __nsref: true, ...ns };
@@ -232,7 +260,43 @@ export class Engine {
     const v = this.moduleValue(ex.env, ex.name, sc.rootName);
     if (v !== undefined) return v;
     if (this.env.roots.has(ex.name)) return this.env.roots.get(ex.name);
+    const inp = this.demandInput(ex.env, ex.name);
+    if (inp !== undefined) return inp;
     throw new EvalErr(`${name} is not a value`);
+  }
+  // an input demanded by evaluation (§5.6, §9.4): the bound document if
+  // the tool bound one, else its fallback — bound on first demand and
+  // memoized as a root; a fallback-less unbound input is E5006 at the
+  // demanding path. Returns undefined when `name` is not an input.
+  failedInputs = new Set<string>();
+  demandInput(menv: Env, name: string): any {
+    const decl = menv.inputs.get(name);
+    if (!decl) return undefined;
+    if (this.env.roots.has(name)) return this.env.roots.get(name);
+    if (this.failedInputs.has(name)) throw new Taint();
+    if (!decl.fallback) throw new EvalErr(`input ${name} is not bound`, 'E5006');
+    const sc: Scope = { inst: null, locals: new Map(), rootName: name, menv };
+    try {
+      const v = this.bind(this.ev(decl.fallback, sc), menv.resolve(decl.type), [name], null, sc);
+      this.env.roots.set(name, v);
+      return v;
+    } catch (e) {
+      if (e instanceof Taint) this.failedInputs.add(name);
+      throw e;
+    }
+  }
+  // bind an evaluation root (an output's expression, or an input's
+  // document / fallback): a failing root is reported at its own path and
+  // left unset — its demanders are tainted, nothing else is
+  bindRoot(name: string, raw: any, rt: RT, sc: Scope, viaExpr: boolean) {
+    try {
+      const v = viaExpr ? this.bind(this.ev(raw, sc), rt, [name], null, sc) : this.bind(raw, rt, [name], null, sc);
+      this.env.roots.set(name, v);
+    } catch (e) {
+      if (e instanceof EvalErr)
+        this.env.report({ severity: 'error', message: e.message, path: name, code: (e as any).code });
+      else if (!(e instanceof Taint) && !(e instanceof DeferSig)) throw e;
+    }
   }
   // quantity arithmetic (§3.16): +/-/compare need equal dimensions;
   // * and / compose exponent vectors; a vector cancelling to zero is a
@@ -280,7 +344,7 @@ export class Engine {
     if (op === '&&') return this.truthy(this.ev(le, sc)) ? this.truthy(this.ev(re, sc)) : false;
     if (op === '||') return this.truthy(this.ev(le, sc)) ? true : this.truthy(this.ev(re, sc));
     if (op === '??') { const l = this.ev(le, sc); return l === ABSENT || l === null ? this.ev(re, sc) : l; }
-    const l = this.ev(le, sc), r = this.ev(re, sc);
+    const l = this.ev(le, sc); let r = this.ev(re, sc);
     if (op === '..' || op === '..<') return { __range: true, lo: l, hi: r, excl: op === '..<' };
     if (op === 'matches') {
       if (typeof l !== 'string' || !r || !r.__pat) throw new EvalErr('matches needs a string and a pattern');
@@ -289,6 +353,7 @@ export class Engine {
     if (op === '==') return valueEq(l, r);
     if (op === '!=') return !valueEq(l, r);
     if (op === 'in') {
+      if (isRef(r)) r = this.deref(r);   // the container may be reached through a reference ($this, $parent)
       if (isRange(r)) return l >= r.lo && (r.excl ? l < r.hi : l <= r.hi);
       if (r && r.__pre) return this.matArr(r).some((x: any) => valueEq(l, x));
       if (isArr(r)) return r.items.some((x: any) => valueEq(l, x));
@@ -708,17 +773,16 @@ export class Engine {
   }
   evalPlace(e: Expr, sc: Scope): Seg[] | null {
     // navigation chain -> place; forgiving: evaluate then take path
-    try {
-      const v = this.evNav(e, sc);
-      if (v && v.__segs) return v.__segs;
-      const p = isRec(v) || isArr(v) || isMap(v) ? v.path : null;
-      return p;
-    } catch (err) {
-      if (err instanceof EvalErr || err instanceof Taint) throw err;
-      throw err;
-    }
+    const v = this.evNav(e, sc);
+    if (v && v.__segs) return v.__segs;
+    if (isRef(v)) return v.segs;                          // $this / $parent / $root, or a reference read through
+    return isRec(v) || isArr(v) || isMap(v) ? v.path : null;
   }
   evNav(e: Expr, sc: Scope): any {
+    // a conditional in a ref position chooses between places (§7.4):
+    // only the taken branch is navigated
+    if (e.e === 'if') return this.truthy(this.ev(e.c, sc)) ? this.evNav(e.t, sc) : this.evNav(e.f, sc);
+    if (e.e === 'paren') return this.evNav(e.x, sc);
     if (e.e === 'member') {
       const x = this.deref(this.evNav(e.x, sc));
       const v = this.access(x, e.name);

@@ -1,0 +1,18 @@
+// a conditional between places is a place: in a ref position each branch
+// is read as a navigation, and only the taken branch is resolved (§7.4)
+type Port = { name: string }
+type Link = {
+    $parent: ref<{ ports: { [string]: Port }, spare: Port, ... }>
+    own: bool
+    key: string
+    const target: ref<Port> = if own then $parent.ports[key] else $parent.spare
+}
+type Node = {
+    ports: { [string]: Port } = { }
+    spare: Port = { name: "spare" }
+    links: Link[] = []
+}
+output n: Node = {
+    ports: { a: { name: "a" } }
+    links: [{ own: true, key: "a" }, { own: false, key: "zz" }]
+}

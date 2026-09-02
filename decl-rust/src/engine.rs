@@ -20,6 +20,15 @@ pub struct Engine {
     pub deferred_slots: RefCell<Vec<(Inst, String)>>,
     no_reg: Cell<u32>,
     phase: Cell<u8>,
+    /// inputs whose fallback failed to bind: later demands are tainted, not re-reported
+    failed_inputs: RefCell<HashSet<String>>,
+}
+
+/// what an evaluation root is bound from: an output's expression, or an
+/// input's document (bound as-is)
+pub enum RootSrc<'a> {
+    Expr(&'a Rc<Expr>),
+    Doc(Value),
 }
 
 fn num_cmp(a: &Value, b: &Value) -> Option<Ordering> {
@@ -128,7 +137,7 @@ fn fmt_f(n: f64) -> String {
 impl Engine {
     /// an engine without registering itself as the environment's evaluator
     pub fn bare(env: Rc<Env>) -> Rc<Engine> {
-        Rc::new(Engine { env, deferred_slots: RefCell::new(vec![]), no_reg: Cell::new(0), phase: Cell::new(1) })
+        Rc::new(Engine { env, deferred_slots: RefCell::new(vec![]), no_reg: Cell::new(0), phase: Cell::new(1), failed_inputs: RefCell::new(HashSet::new()) })
     }
     pub fn new(env: Rc<Env>) -> Rc<Engine> {
         let eng = Self::bare(env.clone());
@@ -186,17 +195,54 @@ impl Engine {
                 if let Some(v) = self.env.root(name) {
                     return Ok(v);
                 }
+                if let Some(v) = self.demand_input(&menv, name)? {
+                    return Ok(v);
+                }
                 err(format!("unknown name {name}"))
             }
-            Expr::Ctx(n) => match n.as_str() {
-                "$this" => Ok(sc.inst.clone().map(Value::Rec).unwrap_or(Value::Null)),
-                "$parent" => Ok(sc.inst.as_ref().and_then(|i| i.borrow().parent.clone()).map(Value::Rec).unwrap_or(Value::Null)),
-                "$path" => match &sc.inst {
-                    Some(i) => Ok(Value::Str(path_str(&i.borrow().path, None))),
-                    None => err("$path outside a record"),
-                },
-                _ => err(format!("unsupported context var {n}")),
-            },
+            Expr::Ctx(n) => {
+                // $this / $parent / $root are references (§7.3): each denotes an
+                // instance that contains the current one, so a value reading would
+                // be a self-containing value; $key and $path are plain values
+                let inst = sc.inst.as_ref();
+                match n.as_str() {
+                    "$this" => match inst {
+                        Some(i) => Ok(Value::Ref(Rc::new(i.borrow().path.clone()))),
+                        None => err_code("$this outside a record instance", "E4090"),
+                    },
+                    "$parent" => match inst.and_then(|i| i.borrow().parent.clone()) {
+                        Some(p) => Ok(Value::Ref(Rc::new(p.borrow().path.clone()))),
+                        None => err_code("$parent: the evaluation root has no owner", "E4090"),
+                    },
+                    "$root" => {
+                        if sc.root_name.is_empty() || self.env.root(&sc.root_name).is_none() {
+                            return err_code("$root outside an evaluation root", "E4090");
+                        }
+                        Ok(Value::Ref(Rc::new(vec![Seg::Name(sc.root_name.clone())])))
+                    }
+                    "$key" => {
+                        // the key or index under which $this sits in its parent's
+                        // collection: the last path segment, present only when the
+                        // instance is a collection element (not a direct member)
+                        let Some(i) = inst else { return err_code("$key: the instance is not a collection element", "E4090") };
+                        let b = i.borrow();
+                        let Some(parent) = &b.parent else { return err_code("$key: the instance is not a collection element", "E4090") };
+                        if b.path.len() < parent.borrow().path.len() + 2 {
+                            return err_code("$key: the instance is not a collection element", "E4090");
+                        }
+                        Ok(match b.path.last() {
+                            Some(Seg::Idx(k)) => Value::Int(BigInt::from(*k)),
+                            Some(Seg::Name(k)) => Value::Str(k.clone()),
+                            None => Value::Absent,
+                        })
+                    }
+                    "$path" => match inst {
+                        Some(i) => Ok(Value::Str(path_str(&i.borrow().path, None))),
+                        None => err_code("$path outside a record instance", "E4090"),
+                    },
+                    _ => err(format!("unsupported context var {n}")),
+                }
+            }
             Expr::Referrers { ty, member } => self.referrers(ty, member, sc),
             Expr::Obj(entries) => Ok(Value::PreObj(Rc::new(
                 entries.iter().map(|(k, v)| (k.clone(), Value::PreVal(Rc::new(PreValV { expr: v.clone(), scope: sc.clone() })))).collect(),
@@ -435,7 +481,10 @@ impl Engine {
             if let Some(v) = self.module_value(&im.env, &im.name, root_name)? {
                 return Ok(Some(v));
             }
-            return Ok(self.env.root(&im.name));
+            if let Some(v) = self.env.root(&im.name) {
+                return Ok(Some(v)); // imported output/input root
+            }
+            return self.demand_input(&im.env, &im.name);
         }
         let ns = menv.namespaces.borrow().get(name).cloned();
         if let Some((_, exports)) = ns {
@@ -453,7 +502,60 @@ impl Engine {
         if let Some(v) = self.env.root(&ex.name) {
             return Ok(v);
         }
+        if let Some(v) = self.demand_input(&ex.env, &ex.name)? {
+            return Ok(v);
+        }
         err(format!("{name} is not a value"))
+    }
+    // an input demanded by evaluation (§5.6, §9.4): the bound document if
+    // the tool bound one, else its fallback — bound on first demand and
+    // memoized as a root; a fallback-less unbound input is E5006 at the
+    // demanding path. Returns None when `name` is not an input.
+    pub fn demand_input(&self, menv: &Rc<Env>, name: &str) -> R<Option<Value>> {
+        let decl = menv.inputs.borrow().get(name).cloned();
+        let Some((ty_ast, fallback)) = decl else { return Ok(None) };
+        if let Some(v) = self.env.root(name) {
+            return Ok(Some(v));
+        }
+        if self.failed_inputs.borrow().contains(name) {
+            return Err(Fail::Taint);
+        }
+        let Some(fallback) = fallback else { return err_code(format!("input {name} is not bound"), "E5006") };
+        let sc = Scope::new(name, Some(menv.clone()));
+        let bound = (|| -> R<Value> {
+            let v = self.ev(&fallback, &sc)?;
+            let rt = menv.resolve(&ty_ast, None).or_else(err)?;
+            self.bind(v, &rt, &[Seg::Name(name.to_string())], None, &sc)
+        })();
+        match bound {
+            Ok(v) => {
+                self.env.set_root(name, v.clone());
+                Ok(Some(v))
+            }
+            Err(e) => {
+                if matches!(e, Fail::Taint) {
+                    self.failed_inputs.borrow_mut().insert(name.to_string());
+                }
+                Err(e)
+            }
+        }
+    }
+    // bind an evaluation root (an output's expression, or an input's
+    // document / fallback): a failing root is reported at its own path and
+    // left unset — its demanders are tainted, nothing else is
+    pub fn bind_root(&self, name: &str, src: RootSrc, rt: &RT, sc: &Scope) {
+        let bound = (|| -> R<Value> {
+            let raw = match src {
+                RootSrc::Expr(e) => self.ev(e, sc)?,
+                RootSrc::Doc(v) => v,
+            };
+            self.bind(raw, rt, &[Seg::Name(name.to_string())], None, sc)
+        })();
+        match bound {
+            Ok(v) => self.env.set_root(name, v),
+            Err(Fail::Eval(e)) => self.env.report(Diag { severity: "error".into(), id: None, message: e.msg, path: name.to_string(), code: e.code }),
+            Err(Fail::Taint) | Err(Fail::Defer) => {}
+        }
     }
 
     fn q_arith(&self, op: &str, l: &Value, r: &Value) -> R<Value> {
@@ -551,7 +653,7 @@ impl Engine {
             _ => {}
         }
         let l = self.ev(le, sc)?;
-        let r = self.ev(re, sc)?;
+        let mut r = self.ev(re, sc)?;
         match op {
             ".." | "..<" => return Ok(Value::Range { lo: Box::new(l), hi: Box::new(r), excl: op == "..<" }),
             "matches" => {
@@ -562,6 +664,9 @@ impl Engine {
             "==" => return Ok(Value::Bool(value_eq(&l, &r))),
             "!=" => return Ok(Value::Bool(!value_eq(&l, &r))),
             "in" => {
+                if matches!(r, Value::Ref(_)) {
+                    r = self.deref(r)?; // the container may be reached through a reference ($this, $parent)
+                }
                 return match &r {
                     Value::Range { lo, hi, excl } => {
                         let ge = matches!(num_cmp(&l, lo), Some(Greater | Equal));
@@ -1329,6 +1434,7 @@ impl Engine {
         let v = self.ev_nav(e, sc)?;
         Ok(match &v {
             Value::Segs(p) => Some((**p).clone()),
+            Value::Ref(p) => Some((**p).clone()), // $this / $parent / $root, or a reference read through
             Value::Rec(_) | Value::Arr(_) | Value::Map(_) => v.place(),
             _ => None,
         })
@@ -1336,6 +1442,16 @@ impl Engine {
 
     fn ev_nav(&self, e: &Rc<Expr>, sc: &Scope) -> R<Value> {
         match &**e {
+            // a conditional in a ref position chooses between places (§7.4):
+            // only the taken branch is navigated
+            Expr::If { c, t, f } => {
+                if self.truthy(&self.ev(c, sc)?)? {
+                    self.ev_nav(t, sc)
+                } else {
+                    self.ev_nav(f, sc)
+                }
+            }
+            Expr::Paren(x) => self.ev_nav(x, sc),
             Expr::Member { x, name, .. } => {
                 let x = self.deref(self.ev_nav(x, sc)?)?;
                 let v = self.access(&x, name)?;

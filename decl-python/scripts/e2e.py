@@ -35,19 +35,10 @@ def pipeline(src: str, binds: list | None = None):
     env = Env()
     env.load(parsed["decls"])
     eng = Engine(env)
+    for name, raw in (binds or []):   # bound documents first (§9.2), then outputs
+        eng.bind_root(name, raw, env.resolve(env.inputs[name]["type"]), Scope(None, {}, name), False)
     for o in env.outputs:
-        sc = Scope(None, {}, o["name"])
-        try:
-            env.roots[o["name"]] = eng.bind(eng.ev(o["expr"], sc), env.resolve(o["type"]), [o["name"]], None, sc)
-        except Exception:
-            pass
-    for name, raw in (binds or []):
-        decl = env.inputs[name]
-        sc = Scope(None, {}, name)
-        try:
-            env.roots[name] = eng.bind(raw, env.resolve(decl["type"]), [name], None, sc)
-        except Exception:
-            pass
+        eng.bind_root(o["name"], o["expr"], env.resolve(o["type"]), Scope(None, {}, o["name"]), True)
     for v in list(env.roots.values()):
         eng.force_all(v, False)
     eng.phase = 2
@@ -191,6 +182,10 @@ for name, inp, want in [
     ("continuation hangs", "type T = {\n    assert a: x > 0\nelse warn `bad`\n}\n", "type T = {\n    assert a: x > 0\n        else warn `bad`\n}\n"),
     ("lambda spacing", "const f = std.array.all(xs,(x)=>x>0)\n", "const f = std.array.all(xs, (x) => x > 0)\n"),
     ("array suffix after a record attaches", "input s: {a: int, ...}[]\n", "input s: { a: int, ... }[]\n"),
+    ("func body hangs after =", "func f(n: int): int =\nn + 1\n", "func f(n: int): int =\n    n + 1\n"),
+    ("lambda body hangs after =>", "const xs = std.array.filter(ys, (y) =>\ny > 0)\n", "const xs = std.array.filter(ys, (y) =>\n        y > 0)\n"),
+    ("operator at line end continues", "const s = a +\nb\n", "const s = a +\n    b\n"),
+    ("a closing type angle does not continue", "type P = {\n    $parent: ref<{ a: int, ... }>\n    b: int\n}\n", "type P = {\n    $parent: ref<{ a: int, ... }>\n    b: int\n}\n"),
 ]:
     try:
         got = format_source(inp)
@@ -233,6 +228,30 @@ for f in files:
 check(f"fmt(fmt(x)) == fmt(x) on {idem + idem_fail} parseable files", idem_fail == 0, f"{idem_fail} failures")
 check("formatting preserves the AST on all files", token_fail == 0, f"{token_fail} failures")
 print(f"  ({skipped} unparseable fixtures skipped by design)")
+
+print("== command line: evaluate --input binds a document, --root names any root ==")
+cli_tmp = tempfile.mkdtemp(prefix="decl-cli-")
+fixture = str(ROOT / "tests/validation/declarations/valid/output_from_input_fallback.decl")
+doc_path = os.path.join(cli_tmp, "base.json")
+open(doc_path, "w").write('{"host": "h", "port": 8}')
+
+
+def run_cli(*args: str) -> tuple:
+    r = subprocess.run([sys.executable, "-m", "decl.runtime", "evaluate", *args],
+                       capture_output=True, text=True, cwd=str(ROOT / "decl-python"))
+    return r.returncode, r.stdout.strip(), r.stderr.strip()
+
+
+code, out, err = run_cli(fixture, "--input", f"base={doc_path}", "--root", "base")
+check("bound input emitted as the named root", code == 0 and out == '{"host":"h","port":8}', f"{code} {out} {err}")
+code, out, err = run_cli(fixture, "--input", f"base={doc_path}", "--root", "copy")
+check("output reads the bound document", code == 0 and out == '{"host":"h","port":8}', f"{code} {out} {err}")
+code, out, err = run_cli(fixture, "--root", "base")
+check("fallback-demanded input is a root", code == 0 and out == '{"host":"example","port":80}', f"{code} {out} {err}")
+code, out, err = run_cli(fixture, "--root", "nope")
+check("--root naming no root exits 1", code == 1 and err == "no root named nope", f"{code} {out} {err}")
+code, out, err = run_cli(fixture, "--input", "nope=x.json")
+check("--input naming no input is a usage error", code == 2 and err == "no input named nope", f"{code} {out} {err}")
 
 print("== language server over stdio ==")
 server = subprocess.Popen([sys.executable, "-m", "decl.runtime.lsp"], stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=sys.stderr, cwd=str(ROOT / "decl-python"))

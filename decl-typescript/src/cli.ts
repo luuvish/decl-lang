@@ -1,9 +1,10 @@
 #!/usr/bin/env node
 // The `decl` CLI (ROADMAP Phase 4):
 //   decl check <files...>                     parse + static checks (module-aware)
-//   decl evaluate <file> [--root <name>]          evaluate outputs -> JSON on stdout
+//   decl evaluate <file> [--input n=doc.json]... [--root <name>]
+//                                             bind documents, evaluate -> JSON on stdout
 //   decl validate <dir>                       judge a fixture corpus (@expect-* metadata)
-//   decl validate <file> [--input n=doc.json] [--expect-errors E1,E2]
+//   decl validate <file> [--input n=doc.json]... [--expect-errors E1,E2]
 //   decl fmt <files...> [--check]             canonical formatting (in place)
 import { readFileSync, writeFileSync, statSync } from 'node:fs';
 import { resolve as absPath } from 'node:path';
@@ -22,14 +23,28 @@ const args = process.argv.slice(2);
 const cmd = args.shift();
 
 const flags = new Map<string, string | boolean>();
+const inputFlags: string[] = [];   // --input name=doc.json, repeatable
 const positional: string[] = [];
 for (let i = 0; i < args.length; i++) {
   if (args[i].startsWith('--')) {
     const name = args[i].slice(2);
-    if (i + 1 < args.length && !args[i + 1].startsWith('--') && ['root', 'input', 'expect-errors'].includes(name))
-      flags.set(name, args[++i]);
-    else flags.set(name, true);
+    if (i + 1 < args.length && !args[i + 1].startsWith('--') && ['root', 'input', 'expect-errors'].includes(name)) {
+      if (name === 'input') inputFlags.push(args[++i]); else flags.set(name, args[++i]);
+    } else flags.set(name, true);
   } else positional.push(args[i]);
+}
+
+// the documents named by --input, each bound to the module that declares
+// its input (§10): `name=doc.json`
+function inputBinds(modules: { env: any }[]): { module?: any; input: string; raw: any }[] {
+  return inputFlags.map(spec => {
+    const eq = spec.indexOf('=');
+    if (eq < 0) { console.error(`--input expects name=doc.json, got ${spec}`); process.exit(2); }
+    const name = spec.slice(0, eq), file = spec.slice(eq + 1);
+    const module = modules.find(m => m.env.inputs.has(name));
+    if (!module) { console.error(`no input named ${name}`); process.exit(2); }
+    return { module, input: name, raw: readJson(readFileSync(file, 'utf8')) };
+  });
 }
 
 // --json: collect diagnostics as objects and emit one JSON array on
@@ -75,18 +90,22 @@ async function main(): Promise<number> {
       for (const m of modules)
         for (const d of checkModule(m.decls, m.env)) { printDiag(m.path, d); bad++; }
       if (bad) return 1;
-      const { eng, diags: ed } = runUniverse(modules, entry);
+      const { eng, diags: ed } = runUniverse(modules, entry, inputBinds(modules));
       const errs = ed.filter(d => d.severity === 'error');
       ed.forEach(d => printDiag(f, d));
       if (errs.length) return 1;
+      // every output, or the one root --root names (an output, or an input
+      // bound by --input / demanded through its fallback)
       const rootFlag = flags.get('root');
       const names = typeof rootFlag === 'string' ? [rootFlag]
         : modules.flatMap(m => m.env.outputs.map(o => o.name));
+      let missing = 0;
       const pieces = names.map(n => {
         const v = entry.env.roots.get(n);
-        if (v === undefined) { console.error(`no output named ${n}`); process.exitCode = 1; return null; }
+        if (v === undefined) { console.error(`no root named ${n}`); missing++; return null; }
         return `${JSON.stringify(n)}:${eng.serialize(v, n)}`;
       }).filter(Boolean);
+      if (missing) return 1;
       const text = names.length === 1 && typeof rootFlag === 'string'
         ? eng.serialize(entry.env.roots.get(names[0]), names[0])
         : `{${pieces.join(',')}}`;
@@ -113,13 +132,9 @@ async function main(): Promise<number> {
       checks.forEach(d => printDiag(target, d));
       let diags: Diag[] = [...checks];
       if (!checks.length) {
-        const inputFlag = flags.get('input');
-        if (typeof inputFlag === 'string') {
-          const [name, file] = inputFlag.split('=');
-          const { loadModules: _lm } = { loadModules };   // single-module path with a bound input
+        if (inputFlags.length) {
           const { modules, entry } = openUniverse(target);
-          const raw = readJson(readFileSync(file, 'utf8'));
-          const { diags: ed } = (await import('./module.ts')).runUniverse(modules, entry!, [{ input: name, raw }]);
+          const { diags: ed } = runUniverse(modules, entry!, inputBinds(modules));
           diags = [...diags, ...ed];
           ed.forEach(d => printDiag(target, d));
         } else {
@@ -168,9 +183,9 @@ async function main(): Promise<number> {
 function usage(): number {
   console.error(`usage:
   decl check <files...>
-  decl evaluate <file> [--root <name>]
+  decl evaluate <file> [--input name=doc.json]... [--root <name>]
   decl validate <dir>
-  decl validate <file> [--input name=doc.json] [--expect-errors E1,E2]
+  decl validate <file> [--input name=doc.json]... [--expect-errors E1,E2]
   decl fmt <files...> [--check]
   (check / validate accept --json: diagnostics as a JSON array on stdout)`);
   return 2;

@@ -185,21 +185,18 @@ def run_universe(mods: list, entry: Module, binds: Optional[list] = None) -> dic
         menv = m.env
         menv.const_eval = (lambda e_: (lambda n: eng.force_const_in(e_, n, "")))(menv)
         menv.expr_eval = (lambda e_: (lambda x: eng.ev(x, Scope(None, {}, "", e_))))(menv)
-    for m in mods:
-        for o in m.env.outputs:
-            sc = Scope(None, {}, o["name"], m.env)
-            try:
-                entry.env.roots[o["name"]] = eng.bind(eng.ev(o["expr"], sc), m.env.resolve(o["type"]), [o["name"]], None, sc)
-            except Exception:
-                pass
+    # bound documents first: an output may read an input (§5.5), and a
+    # bound input is a root of the universe (§9.2); unbound inputs with a
+    # fallback bind on first demand (§9.4)
     for b in (binds or []):
         m = b.get("module") or entry
         decl = m.env.inputs[b["input"]]
         sc = Scope(None, {}, b["input"], m.env)
-        try:
-            entry.env.roots[b["input"]] = eng.bind(b["raw"], m.env.resolve(decl["type"]), [b["input"]], None, sc)
-        except Exception:
-            pass
+        eng.bind_root(b["input"], b["raw"], m.env.resolve(decl["type"]), sc, False)
+    for m in mods:
+        for o in m.env.outputs:
+            sc = Scope(None, {}, o["name"], m.env)
+            eng.bind_root(o["name"], o["expr"], m.env.resolve(o["type"]), sc, True)
     for v in list(entry.env.roots.values()):
         eng.force_all(v, False)
     eng.phase = 2

@@ -1,0 +1,6 @@
+// an output may read an input (§5.5); while the tool binds nothing, the
+// input's fallback binds on first demand (§5.6, §9.4)
+type Cfg = { host: string, port: int = 80 }
+input base: Cfg = { host: "example" }
+output copy: Cfg = base
+output derived: { url: string } = { url: `${base.host}:${base.port}` }

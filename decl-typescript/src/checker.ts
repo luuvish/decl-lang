@@ -172,13 +172,21 @@ export function checkModule(decls: Decl[], linked?: Env): Diag[] {
     try { return env.resolve(ast); } catch { return undefined; }
   };
 
+  const resolveReported = new Set<string>();
   const mapResolveErr = (msg: string, where: string) => {
+    const key = `${msg}|${where}`;
+    if (resolveReported.has(key)) return;   // one resolution failure, one report
+    resolveReported.add(key);
     if (/unknown dimension|circular dimension/.test(msg)) report('E3003', `${msg} (in ${where})`);
     else if (/unknown unit/.test(msg)) report('E4073', `${msg} (in ${where})`);
+    else if (/pattern interpolation of .*: unknown type/.test(msg)) report('E3003', `${msg} (in ${where})`);
     else if (/unknown type/.test(msg)) report('E3003', `${msg} (in ${where})`);
     else if (/generic arity/.test(msg)) report('E4022', `${msg} (in ${where})`);
     else if (/outside parameter/.test(msg)) report('E4023', `${msg} (in ${where})`);
     else if (/non-constant value argument/.test(msg)) report('E4021', `${msg} (in ${where})`);
+    else if (/pattern interpolation/.test(msg)) report('E4117', `${msg} (in ${where})`);
+    else if (/malformed pattern/.test(msg)) report('E1004', `${msg} (in ${where})`);
+    else report('E4001', `${msg} (in ${where})`);   // never drop a resolution failure silently
   };
   const resolveOrReport = (t: TypeAst | undefined, where: string): RT | null => {
     if (!t) return null;
@@ -268,6 +276,7 @@ export function checkModule(decls: Decl[], linked?: Env): Diag[] {
       vars.set(m.name, { rt: mt, abs: m.kind === 'opt' });
     }
     vars.set('$this', { rt, abs: false });
+    vars.set('$path', { rt: { t: 'prim', name: 'string' }, abs: false });
     if (ast && ast.k === 'record')
       for (const m of ast.members)
         if (m.m === 'context') vars.set(m.variable, { rt: tryResolve(env, m.type), abs: false });
@@ -299,22 +308,31 @@ export function checkModule(decls: Decl[], linked?: Env): Diag[] {
     // scope (§8.3) — same rule the engine follows at evaluation
     const cxFor = (menv: Env | undefined): ICtx =>
       menv && menv !== cxR.env ? { ...cxR, env: menv } : cxR;
-    // D30/E4090: an embedded type's declared $parent bound must hold
-    // at this site — the container is the parent
-    const checkEmbedding = (memberRt: RT, memberName: string) => {
+    // D30/E4090: an embedded type's declared bounds must hold at this
+    // site — the container is the parent, the collection's key or index
+    // type is what $key ranges over (none for a direct member)
+    const checkEmbedding = (memberRt: RT, memberName: string, keyRt: RT | null) => {
+      const site = `${rt.name ?? 'record'}.${memberName}`;
+      const who = memberRt.name ?? 'the member type';
       for (const cd of (memberRt?.ctxDecls ?? []) as any[]) {
-        if (cd.variable !== '$parent') continue;
-        const bound = cd.type?.t === 'ref' ? cd.type.target : null;
-        if (bound && !subsumes(env, rt, bound))
-          report('E4090', `embedding site ${rt.name ?? 'record'}.${memberName} fails ${memberRt.name ?? 'the member type'}'s $parent bound (§7.3)`);
+        if (cd.variable === '$parent') {
+          const bound = cd.type?.t === 'ref' ? cd.type.target : null;
+          if (bound && !subsumes(env, rt, bound))
+            report('E4090', `embedding site ${site} fails ${who}'s $parent bound (§7.3)`);
+        } else if (cd.variable === '$key') {
+          if (!keyRt) report('E4090', `embedding site ${site} gives $key no meaning: ${who} is a direct member, not a collection element (§7.3)`);
+          else if (!subsumes(env, keyRt, cd.type))
+            report('E4090', `embedding site ${site} fails ${who}'s $key bound (§7.3)`);
+        }
       }
     };
+    const INT: RT = { t: 'prim', name: 'int' };
     for (const m of rt.members) {
       if (m.kind === 'der' && m.expr) checkExpr(cxFor(m.menv), m.expr, m.type ?? null);
       if (m.kind === 'dflt' && m.dflt) checkExpr(cxFor(m.menv), m.dflt, m.type ?? null);
-      if (m.type?.t === 'rec') { checkEmbedding(m.type, m.name); checkRecordExprs(m.type, cxFor(m.menv)); }
-      if (m.type?.t === 'arr' && m.type.elem?.t === 'rec') { checkEmbedding(m.type.elem, m.name); checkRecordExprs(m.type.elem, cxFor(m.menv)); }
-      if (m.type?.t === 'map' && m.type.val?.t === 'rec') { checkEmbedding(m.type.val, m.name); checkRecordExprs(m.type.val, cxFor(m.menv)); }
+      if (m.type?.t === 'rec') { checkEmbedding(m.type, m.name, null); checkRecordExprs(m.type, cxFor(m.menv)); }
+      if (m.type?.t === 'arr' && m.type.elem?.t === 'rec') { checkEmbedding(m.type.elem, m.name, INT); checkRecordExprs(m.type.elem, cxFor(m.menv)); }
+      if (m.type?.t === 'map' && m.type.val?.t === 'rec') { checkEmbedding(m.type.val, m.name, m.type.key); checkRecordExprs(m.type.val, cxFor(m.menv)); }
     }
     for (const a of rt.asserts) {
       if (a.kind === 'assert') checkMemberAst(cxFor(a.menv), { m: 'assert', name: a.name, cond: a.cond, tail: a.tail });
@@ -327,6 +345,37 @@ export function checkModule(decls: Decl[], linked?: Env): Diag[] {
     let rt: RT;
     try { rt = env.resolve({ k: 'named', name, args: [] }); } catch { continue; }
     checkRecordExprs(rt, cx0, decl.ast);
+  }
+  // D30/E4090 for $root: every record type owned (transitively) by an
+  // evaluation root must have its declared $root bound met by the root's
+  // own type — checked once per root declaration
+  const checkRootBounds = (rootName: string, rootRt: RT) => {
+    const seen = new Set<RT>();
+    const walk = (t: RT | undefined) => {
+      if (!t || seen.has(t)) return;
+      seen.add(t);
+      switch (t.t) {
+        case 'rec':
+          for (const cd of (t.ctxDecls ?? []) as any[]) {
+            if (cd.variable !== '$root') continue;
+            const bound = cd.type?.t === 'ref' ? cd.type.target : null;
+            if (bound && !subsumes(env, rootRt, bound))
+              report('E4090', `root ${rootName} fails ${t.name ?? 'a member type'}'s $root bound (§7.3)`);
+          }
+          for (const m of t.members) walk(m.type);
+          break;
+        case 'arr': walk(t.elem); break;
+        case 'map': walk(t.val); break;
+        case 'union': case 'isectN': t.arms.forEach(walk); break;
+        case 'pred': walk(t.base); break;
+      }
+    };
+    walk(rootRt);
+  };
+  for (const d of decls) {
+    if (d.d !== 'output' && d.d !== 'input') continue;
+    const rt = tryResolve(env, d.type);
+    if (rt) checkRootBounds(d.name, rt);
   }
   for (const d of decls) {
     if (d.d === 'const') checkExpr(cx0, d.expr, d.type ? resolveOrReport(d.type, `const ${d.name}`) : null);

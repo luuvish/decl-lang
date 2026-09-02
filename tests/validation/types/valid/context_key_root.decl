@@ -1,0 +1,26 @@
+// $key is the key or index under which an instance sits in its parent's
+// collection (a plain value); $root is the evaluation root, a reference
+// like $this and $parent (§7.3)
+type Port = {
+    $key: /[sm]i[0-9]+/
+    const name = $key
+    width: int = 32
+}
+type Lane = {
+    $key: int
+    const index = $key
+    const label = `lane${index}`
+}
+type Fabric = {
+    $root: ref<{ data_width: int, ... }>
+    data_width: int
+    ports: { [/[sm]i[0-9]+/]: Port } = { }
+    lanes: Lane[] = []
+    const at_root = $this == $root
+    const root_width = $root.data_width
+}
+output f: Fabric = {
+    data_width: 64
+    ports: { si0: { }, mi0: { width: 16 } }
+    lanes: [{ }, { }]
+}

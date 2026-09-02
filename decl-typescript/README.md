@@ -15,6 +15,7 @@ npm install -g decl-lang
 
 decl check schema.decl                   # parse + static checks (module-aware)
 decl evaluate site.decl --root site      # evaluate outputs -> JSON
+decl evaluate cfg.decl --input deployed=doc.json --root deployed   # bind a document, emit its completed value
 decl validate cfg.decl --input deployed=doc.json --expect-errors E4001
 decl validate tests/validation           # judge a fixture corpus
 decl fmt --check src/*.decl              # canonical formatting
@@ -79,7 +80,7 @@ npm test                  # all of the above
 
 ```bash
 node src/cli.ts check <files...>                      # parse + static checks (module-aware)
-node src/cli.ts evaluate <file> [--root <name>]       # evaluate outputs -> JSON
+node src/cli.ts evaluate <file> [--input n=doc.json]... [--root <name>]   # bind documents, evaluate -> JSON
 node src/cli.ts validate <dir>                        # judge a fixture corpus (@expect-*)
 node src/cli.ts validate <file> --input n=doc.json --expect-errors E4001
 node src/cli.ts fmt <files...> [--check]              # canonical formatting, idempotent

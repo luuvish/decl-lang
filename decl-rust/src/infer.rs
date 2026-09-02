@@ -1105,6 +1105,17 @@ fn place_ty(cx: &Ctx, e: &Rc<Expr>) -> Ty {
         Expr::Paren(x) => place_ty(cx, x),
         Expr::Member { x, .. } => member_core(cx, place_ty(cx, x), e),
         Expr::Index { x, .. } => index_core(cx, place_ty(cx, x), e),
+        Expr::If { c, t, f } => {
+            // a conditional between places is a place: each branch is read in
+            // the ref position, the condition as an ordinary value (§7.4)
+            let ct = require_val(cx, c, infer(cx, c), "as a condition");
+            if ct.rt.is_some() && !is_boolish(ct.rt.as_ref()) {
+                cx.report("E4001", "`if` condition is not bool".into());
+            }
+            let tt = place_ty(&apply_guards(cx, guards_of(c, true)), t);
+            let ft = place_ty(&apply_guards(cx, guards_of(c, false)), f);
+            Ty { rt: mk_union(vec![tt.rt, ft.rt]), abs: tt.abs || ft.abs }
+        }
         Expr::Name(n) if !cx.vars.contains_key(n) && cx.env.consts.borrow().contains_key(n) => {
             // the spine root must be a root-derived place, never a module const (§7.5, D32)
             cx.report("E4093", format!("`ref` position navigates module const {n} — not a root-derived place (§7.5)"));
