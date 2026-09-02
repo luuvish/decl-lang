@@ -1,39 +1,71 @@
 # Packaging and distribution
 
 Decl ships under one user-visible name — the `decl` command — through
-three channels. Registry package names differ where `decl` was already
+four channels. Registry package names differ where `decl` was already
 taken (npm and crates.io hold unrelated `decl` packages; Homebrew core
-does not), so the package is `decl-lang` and the binary is `decl`.
+and PyPI do not), so the package is `decl-lang` there and the binary is
+`decl` everywhere.
 
 | Channel | Package | Install | Status |
 |---|---|---|---|
 | npm | `decl-lang` | `npm install -g decl-lang` | prepared (`impl/`) |
 | PyPI | `decl` (the name is free there) | `pip install decl` / `pip install 'decl[node]'` | prepared (`python/`) |
 | Homebrew | tap `luuvish/decl`, formula `decl` | `brew install luuvish/decl/decl` | prepared (`homebrew/`) |
-| crates.io | `decl-lang` (bin `decl`) | `cargo install decl-lang` | reserved for the Rust runtime (ROADMAP Phase 5 decision pending) |
+| crates.io | `decl-lang` (bin `decl`) | `cargo install decl-lang` | prepared (`rust/`, native runtime) |
 
-All channels ship **the same bytes**: `impl/dist/` — the esbuild bundles
-of the CLI, LSP server, and library (web-tree-sitter included, zero
-runtime dependencies) plus the two wasm files — and every channel's
-smoke test drives the installed `decl` binary the way a user would.
+npm and Homebrew ship **the same bytes**: `impl/dist/` — the esbuild
+bundles of the CLI, LSP server, and library (web-tree-sitter included,
+zero runtime dependencies) plus the two wasm files. PyPI ships those
+bytes too, alongside its native runtime; crates.io is the native Rust
+runtime alone. Every channel's smoke test drives the installed `decl`
+binary the way a user would, and the native runtimes are held
+byte-identical to the reference by `python/scripts/differential.py`
+(`--rust` for the crate).
 
 ## PyPI — `decl`
 
-`python/` is a pure-Python package: console scripts `decl` / `decl-lsp`
-that hand the process to the bundled JavaScript under Node.js ≥ 20, and
-a small API (`decl.check`, `decl.evaluate`, `decl.validate`,
-`decl.format_source`) over the CLI's `--json` reports. Node comes from
-`$DECL_NODE`, the optional `nodejs-wheel-binaries` dependency
-(`pip install 'decl[node]'`), or `PATH`. `npm run build` in `impl/`
-mirrors `dist/` into `python/decl/_js/` (gitignored, included in the
+`python/` is a Python package with a native core: `decl.runtime` is a
+pure-Python port of the evaluator (`decl evaluate` / `decl validate`,
+`decl.evaluate` / `decl.validate`), and `decl._tree_sitter` compiles
+the grammar's C sources into a small extension module. The console
+scripts `decl` / `decl-lsp` hand every other command (`check`, `fmt`,
+the language server) to the bundled JavaScript under Node.js ≥ 20; the
+API's `decl.check` / `decl.format_source` do the same over the CLI's
+`--json` reports. Node comes from `$DECL_NODE`, the optional
+`nodejs-wheel-binaries` dependency (`pip install 'decl[node]'`), or
+`PATH`. `npm run build` in `impl/` mirrors `dist/` into
+`python/decl/_js/` and the grammar sources into
+`python/decl/_tree_sitter/src/` (both gitignored, included in the
 wheel/sdist as build artifacts).
 
 ```bash
-cd impl && npm run build                       # refreshes python/decl/_js
+cd impl && npm run build                       # refreshes python/decl/_js and the grammar sources
 cd ../python
-python -m build                                # dist/decl-0.2.0-py3-none-any.whl + sdist
+python -m build                                # platform wheel (C extension) + sdist
+python scripts/differential.py                 # native runtime vs reference: must be all identical
+python scripts/e2e.py                          # the reference e2e scenarios on the native runtime
 python scripts/smoke.py                        # install the wheel into a venv and drive it
 python -m twine upload dist/*                  # publish (first time: create the PyPI project `decl`)
+```
+
+The sdist needs a C compiler at install time; publish platform wheels
+(e.g. via `cibuildwheel`) for users without one.
+
+## crates.io — `decl-lang`
+
+`rust/` is the native Rust runtime: the grammar is compiled in by
+`build.rs` (from `../tree-sitter-decl/src` inside the repository, or
+from `grammar/` in the published crate — `npm run build` in `impl/`
+copies the sources there), and the `decl` binary offers `evaluate` and
+`validate` with the reference CLI's exact output format.
+
+```bash
+cd impl && npm run build                       # refreshes rust/grammar and rust/LICENSE
+cd ../rust
+cargo build --release
+./target/release/decl validate ../tests/validation
+cd ../python && python scripts/differential.py --rust   # must be all identical
+cd ../rust && cargo publish --dry-run          # then: cargo publish (first time: cargo login)
 ```
 
 ## npm — `decl-lang`
@@ -98,9 +130,13 @@ in core as of 2026-09-02).
 
 ## Release checklist
 
-1. Bump `version` in `impl/package.json` (spec version + patch).
+1. Bump `version` in `impl/package.json`, `python/pyproject.toml` and
+   `python/decl/__init__.py`, and `rust/Cargo.toml` (spec version + patch).
 2. `cd impl && npm run build && npm test && npm run smoke:dist`.
-3. `npm publish` (first time: `npm login`; the name `decl-lang` is
-   unclaimed as of 2026-09-02).
-4. Tag the repository: `git tag v0.2.0 && git push --tags`.
-5. Update `homebrew/Formula/decl.rb` `url`/`sha256`, push to the tap.
+3. `cd python && python scripts/differential.py && python scripts/differential.py --rust`
+   (after `cargo build --release` in `rust/`) — every line `same`.
+4. `npm publish` (first time: `npm login`; the name `decl-lang` is
+   unclaimed as of 2026-09-02); `python -m twine upload dist/*`;
+   `cargo publish`.
+5. Tag the repository: `git tag v0.2.0 && git push --tags`.
+6. Update `homebrew/Formula/decl.rb` `url`/`sha256`, push to the tap.

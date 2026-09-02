@@ -28,13 +28,12 @@ Design goals:
 
 ## Install
 
-The `decl` command (CLI, formatter, and the `decl-lsp` language server)
-ships through several channels — all the same reference implementation
-(Node.js ≥ 20; the tree-sitter grammar runs as wasm):
+The `decl` command ships through several channels:
 
 ```bash
-npm install -g decl-lang          # npm
-pip install decl                  # PyPI (or: pip install 'decl[node]' to get Node through pip)
+npm install -g decl-lang          # npm — the reference implementation (Node.js ≥ 20)
+pip install decl                  # PyPI — native Python runtime + the reference for check/fmt/lsp
+cargo install decl-lang           # crates.io — native Rust runtime (evaluate / validate)
 brew install luuvish/decl/decl    # Homebrew tap
 ```
 
@@ -45,7 +44,13 @@ decl validate cfg.decl --input deployed=doc.json --expect-errors E4001
 decl fmt --check src/*.decl                # canonical formatting
 ```
 
-Python users also get an API (`decl.evaluate`, `decl.check`,
+The TypeScript reference implementation (`impl/`) is the complete
+toolchain — checker, evaluator, formatter, and the `decl-lsp` language
+server. The **native runtimes** in `rust/` and `python/decl/runtime`
+implement the evaluation half (parse → resolve → bind/evaluate/validate
+→ serialize, modules) without Node or wasm and are held byte-identical
+to the reference by a differential test over every example and
+fixture. Python users also get an API (`decl.evaluate`, `decl.check`,
 `decl.validate`, `decl.format_source`); JavaScript users import the
 library entry of `decl-lang`. See [packaging/README.md](packaging/README.md)
 for the channels and release procedure.

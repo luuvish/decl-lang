@@ -15,7 +15,7 @@ never migrated wholesale or modified from this repo.
 |---|---|
 | Methodology | **Spec-first with an evidence gate** — author the complete specification, then a throwaway minimal-evaluator spike (§0.6) must meet it before v0.1 is frozen; implementation proper begins only after the freeze. Post-freeze spec changes are recorded as revisions. |
 | Parser | **tree-sitter as the single canonical parser**, written against the spec's formal grammar chapter. The reference implementation consumes it through bindings. |
-| Reference implementation | **TypeScript first, Rust later** — type checker, evaluator, and CLI in TypeScript (BigInt aligns with arbitrary-precision integers; `Number::toString` with shortest round-trip float printing). A Rust runtime is considered only after the spec and implementation stabilize. |
+| Reference implementation | **TypeScript first, Rust later** — type checker, evaluator, and CLI in TypeScript (BigInt aligns with arbitrary-precision integers; `Number::toString` with shortest round-trip float printing). A Rust runtime is considered only after the spec and implementation stabilize. *Done 2026-09-02:* native **Rust** (`rust/`, crate `decl-lang`) and **Python** (`python/decl/runtime`) runtimes port the evaluation half (parse → resolve → bind/evaluate/validate → serialize, modules); the static checker, formatter, and LSP stay in the reference. A differential test (`python/scripts/differential.py [--rust]`) keeps both byte-identical to the reference over every output-bearing example and fixture, plus document binding with root-cause diagnostics. |
 
 ## Reference assets
 
@@ -207,7 +207,9 @@ editor.
 - Collect spec defects and extension demands discovered in use; plan the v0.2
   revision
 - Decide whether to start the Rust runtime (when performance or deployment
-  needs are confirmed by measurement)
+  needs are confirmed by measurement) — *decided 2026-09-02: native Rust
+  and Python runtimes for the evaluation half, verified by differential
+  testing against the reference (see the decision table above)*
 
 **Exit criteria**: successful validation of at least part of the real
 fixture set · documented v0.2 revision list.

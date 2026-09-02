@@ -6,12 +6,18 @@ system, constraints with first-class diagnostics, references, physical
 quantities, generics, and modules. Pure, deterministic, terminating.
 
 This package ships the `decl` command-line tool, the canonical
-formatter, the `decl-lsp` language server, and a small Python API. The
-language runs on the bundled reference implementation (JavaScript +
-tree-sitter wasm) under Node.js ≥ 20.
+formatter, the `decl-lsp` language server, and a small Python API.
+
+`decl evaluate` and `decl validate` (and the `decl.evaluate` /
+`decl.validate` API) run on a **native Python runtime** — the
+tree-sitter grammar compiled as a C extension plus a pure-Python port
+of the evaluator, byte-identical to the reference implementation. The
+static checker (`decl check`), the formatter, and the language server
+run the bundled reference implementation (JavaScript + tree-sitter
+wasm) under Node.js ≥ 20.
 
 ```bash
-pip install decl              # uses the node on your PATH
+pip install decl              # evaluate/validate need no Node; check/fmt/lsp use the node on your PATH
 pip install 'decl[node]'      # or let pip provide Node.js too
 ```
 

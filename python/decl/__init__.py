@@ -58,16 +58,14 @@ def check(*paths: str | os.PathLike[str]) -> list[Diagnostic]:
 
 
 def evaluate(path: str | os.PathLike[str], root: str | None = None) -> Any:
-    """Evaluate a module's outputs. With ``root`` returns that output's value;
-    otherwise a dict of every universe root. Raises DeclError with diagnostics on failure."""
-    args = ["evaluate", str(path), "--json"]
-    if root is not None:
-        args += ["--root", root]
-    proc = run("cli.js", args, capture=True)
-    report = _json_stdout(proc)
-    if not report.get("ok"):
-        raise DeclError("evaluation failed", report.get("diagnostics", []))
-    return report.get("value")
+    """Evaluate a module's outputs on the native runtime. With ``root`` returns
+    that output's value; otherwise a dict of every universe root. Raises
+    DeclError with diagnostics on failure."""
+    from .runtime.__main__ import evaluate_file
+    code, text, diags = evaluate_file(str(path), root)
+    if code != 0 or text is None:
+        raise DeclError("evaluation failed", [dict(file=str(path), **d) for d in diags])
+    return json.loads(text)
 
 
 def validate(
@@ -76,18 +74,17 @@ def validate(
     input: tuple[str, str | os.PathLike[str]] | None = None,
     expect_errors: Iterable[str] | None = None,
 ) -> list[Diagnostic]:
-    """Validate a file (optionally binding an input document as ``(name, json_path)``).
-    Returns diagnostics. With ``expect_errors`` the CLI judges the error set and the
-    return value is empty on match; DeclError carries the mismatch otherwise."""
-    args = ["validate", str(path), "--json"]
-    if input is not None:
-        args += ["--input", f"{input[0]}={input[1]}"]
+    """Validate a file on the native runtime (optionally binding an input
+    document as ``(name, json_path)``). Returns diagnostics. With
+    ``expect_errors`` the error-code set must match exactly; DeclError
+    carries the mismatch otherwise."""
+    from .runtime.__main__ import validate_file
+    diags = [dict(file=str(path), **d) for d in validate_file(str(path), f"{input[0]}={input[1]}" if input else None)]
     if expect_errors is not None:
-        args += ["--expect-errors", ",".join(expect_errors)]
-    proc = run("cli.js", args, capture=True)
-    diags = _json_stdout(proc)
-    if expect_errors is not None and proc.returncode != 0:
-        raise DeclError(proc.stderr.strip() or "expected-error set did not match", diags)
+        want = sorted(expect_errors)
+        got = sorted(d.get("code") or "" for d in diags if d["severity"] == "error")
+        if set(want) != set(got):
+            raise DeclError(f"expected errors {want}, got {got}", diags)
     return diags
 
 

@@ -941,7 +941,8 @@ export class Engine {
   serialize(v: any, rootName: string): string {
     const fmtF = (n: number) => { const s = String(n); return /[.eE]/.test(s) ? s : s + '.0'; };
     const go = (x: any): string | undefined => {
-      if (x === ABSENT) return undefined;
+      // absent members and function values (closures, natives, std refs) are not data
+      if (x === ABSENT || (x && (x.__clo === true || x.__nat || x.__std))) return undefined;
       if (x === null) return 'null';
       if (typeof x === 'boolean') return String(x);
       if (typeof x === 'bigint') return x.toString();

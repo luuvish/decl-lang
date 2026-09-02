@@ -11,3 +11,8 @@ python/.venv/
 *.egg-info/
 __pycache__/
 impl/LICENSE
+python/decl/_tree_sitter/src/
+python/decl/_tree_sitter/*.so
+rust/target/
+rust/grammar/
+rust/LICENSE

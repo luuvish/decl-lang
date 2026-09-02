@@ -1,7 +1,9 @@
 """Console-script entry points: ``decl`` and ``decl-lsp``.
 
-Both hand the process over to the bundled JavaScript under Node with the
-user's arguments and exit status passed through unchanged.
+``evaluate`` and ``validate`` run on the native Python runtime
+(``decl.runtime``); ``check`` (the static checker), ``fmt``, and the
+language server hand the process to the bundled reference
+implementation under Node.js with the exit status passed through.
 """
 from __future__ import annotations
 
@@ -9,9 +11,19 @@ import sys
 
 from ._runtime import NodeNotFound, run
 
+NATIVE_COMMANDS = {"evaluate", "validate"}
+
 
 def main(argv: list[str] | None = None) -> int:
     args = sys.argv[1:] if argv is None else argv
+    if args and args[0] in NATIVE_COMMANDS and "--node" not in args:
+        try:
+            from .runtime.__main__ import main as native_main
+        except ImportError as e:   # grammar extension missing — fall back to Node
+            print(f"decl: native runtime unavailable ({e}); using the bundled reference implementation", file=sys.stderr)
+        else:
+            return native_main(args)
+    args = [a for a in args if a != "--node"]
     try:
         return run("cli.js", args).returncode
     except NodeNotFound as e:
