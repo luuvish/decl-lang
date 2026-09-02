@@ -4,7 +4,7 @@ generic value-argument checks."""
 from __future__ import annotations
 
 import re
-from typing import Any
+from typing import Any, Optional
 
 from .semantics import is_bool, is_float, is_int, is_str
 
@@ -175,3 +175,71 @@ def _lit_satisfies(env, v: Any, pred: dict) -> bool:
         return True
     except Exception:
         return False
+
+
+# ---------------- structural emptiness (§3.17; the checker's E4011/E4012) ----------------
+def _js_gt(a: Any, b: Any) -> bool:
+    """JavaScript `>`: strings compare lexically, a string against a number is NaN (false)"""
+    if is_str(a) and is_str(b):
+        return a > b
+    if is_str(a) or is_str(b):
+        return False
+    try:
+        return a > b
+    except TypeError:
+        return False
+
+
+def structurally_empty(env, t: dict) -> bool:
+    tt = t["t"]
+    if tt == "range":
+        hi = _dec(t["hi"]) if (t["excl"] and not is_str(t["hi"])) else t["hi"]
+        return _js_gt(t["lo"], hi)
+    if tt == "arr":
+        return t.get("lo") is not None and t.get("hi") is not None and _js_gt(t["lo"], t["hi"])
+    if tt == "isectN":
+        arms = t["arms"]
+        for i in range(len(arms)):
+            for j in range(i + 1, len(arms)):
+                if _disjoint(env, arms[i], arms[j]):
+                    return True
+        return any(structurally_empty(env, a) for a in arms)
+    if tt == "union":
+        return all(structurally_empty(env, a) for a in t["arms"])
+    return False
+
+
+def _kind_of(t: dict) -> Optional[str]:
+    tt = t["t"]
+    if tt == "prim":
+        return t["name"]
+    if tt == "lit":
+        return _lit_kind(t["v"])
+    if tt == "range":
+        return t["base"]
+    if tt == "pattern":
+        return "string"
+    if tt == "arr":
+        return "array"
+    if tt in ("rec", "map"):
+        return "object"
+    if tt == "quantity":
+        return "object"
+    return None
+
+
+def _disjoint(env, a: dict, b: dict) -> bool:
+    ka, kb = _kind_of(a), _kind_of(b)
+    if ka and kb and ka != kb:
+        return True
+    if a["t"] == "range" and b["t"] == "range" and a["base"] == b["base"]:
+        a_hi = _dec(a["hi"]) if a["excl"] else a["hi"]
+        b_hi = _dec(b["hi"]) if b["excl"] else b["hi"]
+        return _js_gt(a["lo"], b_hi) or _js_gt(b["lo"], a_hi)
+    if a["t"] == "lit" and b["t"] == "lit":
+        return not _val_eq(a["v"], b["v"])
+    if a["t"] == "lit" and b["t"] == "range":
+        return not (_lit_kind(a["v"]) == b["base"] and _in_range(a["v"], b))
+    if a["t"] == "range" and b["t"] == "lit":
+        return _disjoint(env, b, a)
+    return False

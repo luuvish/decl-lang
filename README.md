@@ -32,7 +32,7 @@ The `decl` command ships through several channels:
 
 ```bash
 npm install -g decl-lang          # npm — the reference implementation (Node.js ≥ 20)
-pip install decl-lang             # PyPI — native Python runtime + the reference for check/fmt/lsp
+pip install decl-lang             # PyPI — native Python runtime (check / evaluate / validate) + the reference for fmt/lsp
 cargo install decl-lang           # crates.io — native Rust runtime (evaluate / validate)
 brew install luuvish/tap/decl-lang    # Homebrew tap
 ```
@@ -59,8 +59,8 @@ side is one npm workspace (root `package.json`), Rust a Cargo workspace
 | Directory | Language | Package | Scope |
 |---|---|---|---|
 | [`decl-typescript/`](decl-typescript/README.md) | TypeScript — the **reference implementation** | npm `decl-lang` | everything: parser binding, static checker, evaluator, validation, formatter, `decl-lsp`, packages, the browser bundle |
-| [`decl-rust/`](decl-rust/README.md) | Rust — native runtime | crates.io `decl-lang` | the evaluation half: parse → resolve → bind/evaluate/validate → serialize, modules (`decl evaluate` / `decl validate`) |
-| [`decl-python/`](decl-python/README.md) | Python — native runtime + package | PyPI `decl-lang` | the evaluation half natively, plus a Python API; `check` / `fmt` / `decl-lsp` through the bundled reference |
+| [`decl-rust/`](decl-rust/README.md) | Rust — native runtime | crates.io `decl-lang` | the static checker and the evaluator: parse → check → resolve → bind/evaluate/validate → serialize, modules (`decl check` / `decl evaluate` / `decl validate`) |
+| [`decl-python/`](decl-python/README.md) | Python — native runtime + package | PyPI `decl-lang` | the static checker and the evaluator natively, plus a Python API; `fmt` / `decl-lsp` through the bundled reference |
 | `tree-sitter-decl/` | C (tree-sitter) | — | the one grammar every implementation compiles or loads |
 | `tests/` | — | — | the shared conformance corpus (`validation/`, `modules/`, `packages/`) and the parity harness (`parity/`) |
 
@@ -77,8 +77,8 @@ The parity harness evaluates every output-bearing example and fixture
 with the Rust and Python runtimes and diffs their reports — `ok`,
 canonical JSON, diagnostics — byte for byte against the reference, then
 does the same for documents bound to `input` roots. CI runs it on every
-push (`.github/workflows/verify.yml`). The static checker, formatter,
-and language server exist only in the reference today; that gap is
+push (`.github/workflows/verify.yml`). The formatter, the language
+server, and packages exist only in the reference today; that gap is
 tracked in [ROADMAP.md](ROADMAP.md).
 
 ## Status

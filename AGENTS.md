@@ -39,8 +39,8 @@ Sibling repositories used as reference (do not modify from here):
 | Directory | Role | Package |
 |---|---|---|
 | `decl-typescript/` | the **reference implementation**: parser binding, static checker, evaluator, formatter, `decl-lsp`, packages, browser bundle | npm `decl-lang` |
-| `decl-rust/` | native runtime (evaluate / validate) | crates.io `decl-lang` |
-| `decl-python/` | native runtime (evaluate / validate) + Python API; `check`/`fmt`/`lsp` delegate to the bundled reference | PyPI `decl-lang` |
+| `decl-rust/` | native checker + runtime (check / evaluate / validate) | crates.io `decl-lang` |
+| `decl-python/` | native checker + runtime (check / evaluate / validate) + Python API; `fmt`/`lsp` delegate to the bundled reference | PyPI `decl-lang` |
 | `tree-sitter-decl/` | the single grammar all three use | — |
 | `tests/` | shared corpus (`validation/`, `modules/`, `packages/`) and the parity harness (`parity/`) | — |
 
@@ -63,7 +63,8 @@ in the same-named file everywhere:
 | binding, evaluation, validation, serialization | `engine.ts` | `engine.rs` | `engine.py` |
 | modules and the universe | `module.ts` | `module.rs` | `module.py` |
 | command line | `cli.ts` | `cli.rs` (+ `main.rs`) | `cli.py` (+ `__main__.py`) |
-| checker, inference, formatter, LSP, packages, web bundle | `checker.ts`, `infer.ts`, `fmt.ts`, `lsp.ts`, `package.ts`, `web.ts` | — | — |
+| static checker, expression inference | `checker.ts`, `infer.ts` | `checker.rs`, `infer.rs` | `checker.py`, `infer.py` |
+| formatter, LSP, packages, web bundle | `fmt.ts`, `lsp.ts`, `package.ts`, `web.ts` | — | — |
 
 Rules:
 
@@ -72,10 +73,11 @@ Rules:
   are faithful ports — keep their structure and names aligned).
 - **`make verify` is the gate** and must pass before a commit: each
   implementation's own tests, then `tests/parity/differential.py`,
-  which diffs the Rust and Python runtimes against the reference byte
-  for byte (`ok`, canonical JSON, diagnostic codes/ids/paths) over
-  every output-bearing example and fixture and over documents bound to
-  `input` roots. CI runs the same gate (`.github/workflows/verify.yml`).
+  which diffs the Rust and Python implementations against the reference
+  byte for byte: `check --json` (codes and messages) over every fixture
+  and example, `evaluate --json` (`ok`, canonical JSON, diagnostics)
+  over every output-bearing module, and documents bound to `input`
+  roots. CI runs the same gate (`.github/workflows/verify.yml`).
 - A parity difference is a defect in whichever side diverges from the
   specification — fix the implementation, never the expectation.
 

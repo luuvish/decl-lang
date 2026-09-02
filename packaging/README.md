@@ -24,13 +24,13 @@ byte-identical to the reference by `tests/parity/differential.py`
 ## PyPI — `decl-lang`
 
 `decl-python/` is a Python package with a native core: `decl.runtime` is a
-pure-Python port of the evaluator (`decl evaluate` / `decl validate`,
-`decl.evaluate` / `decl.validate`), and `decl._tree_sitter` compiles
-the grammar's C sources into a small extension module. The console
-scripts `decl` / `decl-lsp` hand every other command (`check`, `fmt`,
-the language server) to the bundled JavaScript under Node.js ≥ 20; the
-API's `decl.check` / `decl.format_source` do the same over the CLI's
-`--json` reports. Node comes from `$DECL_NODE`, the optional
+pure-Python port of the static checker and the evaluator (`decl check`
+/ `decl evaluate` / `decl validate`, `decl.check` / `decl.evaluate` /
+`decl.validate`), and `decl._tree_sitter` compiles the grammar's C
+sources into a small extension module. The console scripts `decl` /
+`decl-lsp` hand the formatter and the language server to the bundled
+JavaScript under Node.js ≥ 20; the API's `decl.format_source` does the
+same. Node comes from `$DECL_NODE`, the optional
 `nodejs-wheel-binaries` dependency (`pip install 'decl-lang[node]'`), or
 `PATH`. `npm run build` in `decl-typescript/` mirrors `dist/` into
 `decl-python/decl/_js/` and the grammar sources into
@@ -52,11 +52,11 @@ The sdist needs a C compiler at install time; publish platform wheels
 
 ## crates.io — `decl-lang`
 
-`decl-rust/` is the native Rust runtime: the grammar is compiled in by
+`decl-rust/` is the native Rust implementation: the grammar is compiled in by
 `build.rs` (from `../tree-sitter-decl/src` inside the repository, or
 from `grammar/` in the published crate — `npm run build` in `decl-typescript/`
-copies the sources there), and the `decl` binary offers `evaluate` and
-`validate` with the reference CLI's exact output format.
+copies the sources there), and the `decl` binary offers `check`,
+`evaluate`, and `validate` with the reference CLI's exact output format.
 
 ```bash
 npm run build -w decl-lang                     # refreshes decl-rust/grammar and decl-rust/LICENSE

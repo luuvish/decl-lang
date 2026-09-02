@@ -1,9 +1,9 @@
 """Console-script entry points: ``decl`` and ``decl-lsp``.
 
-``evaluate`` and ``validate`` run on the native Python runtime
-(``decl.runtime``); ``check`` (the static checker), ``fmt``, and the
-language server hand the process to the bundled reference
-implementation under Node.js with the exit status passed through.
+``check``, ``evaluate``, and ``validate`` run on the native Python
+implementation (``decl.runtime``); ``fmt`` and the language server hand
+the process to the bundled reference implementation under Node.js with
+the exit status passed through.
 """
 from __future__ import annotations
 
@@ -11,7 +11,7 @@ import sys
 
 from ._runtime import NodeNotFound, run
 
-NATIVE_COMMANDS = {"evaluate", "validate"}
+NATIVE_COMMANDS = {"check", "evaluate", "validate"}
 
 
 def main(argv: list[str] | None = None) -> int:

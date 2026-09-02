@@ -1,6 +1,7 @@
-//! `decl evaluate` / `decl validate` (cli.ts). Output is byte-identical to
+//! `decl check` / `decl evaluate` / `decl validate` (cli.ts). Output is byte-identical to
 //! the reference implementation's CLI so the three implementations can
 //! be diffed (tests/parity/differential.py).
+use crate::checker::check_module;
 use crate::module::{load_modules, run_pipeline, run_universe, Bind};
 use crate::parse::parse_source;
 use crate::semantics::{json_str, read_json, Diag};
@@ -8,7 +9,7 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
 fn usage() -> i32 {
-    eprintln!("usage:\n  decl evaluate <file> [--root <name>] [--json]\n  decl validate <dir>\n  decl validate <file> [--input name=doc.json] [--json]");
+    eprintln!("usage:\n  decl check <file>... [--json]\n  decl evaluate <file> [--root <name>] [--json]\n  decl validate <dir>\n  decl validate <file> [--input name=doc.json] [--expect-errors E1,E2] [--json]");
     2
 }
 
@@ -34,6 +35,13 @@ pub fn evaluate(file: &str, root: Option<&str>) -> (i32, Option<String>, Vec<Dia
     if !r.diags.is_empty() {
         return (1, None, r.diags);
     }
+    let checks: Vec<(String, Diag)> = r.modules.iter().flat_map(|m| {
+        let path = m.path.display().to_string();
+        check_module(&m.decls, Some(m.env.clone())).into_iter().map(move |d| (path.clone(), d)).collect::<Vec<_>>()
+    }).collect();
+    if !checks.is_empty() {
+        return (1, None, checks.into_iter().map(|(_, d)| d).collect());
+    }
     let (eng, diags) = run_universe(&r.modules, &entry, vec![]);
     if diags.iter().any(|d| d.severity == "error") {
         return (1, None, diags);
@@ -57,23 +65,48 @@ pub fn evaluate(file: &str, root: Option<&str>) -> (i32, Option<String>, Vec<Dia
     (0, Some(format!("{{{}}}", pieces.join(","))), diags)
 }
 
-/// evaluate a module's outputs, optionally binding one input document
-pub fn validate_file(file: &str, input: Option<&str>) -> Vec<Diag> {
-    let r = load_modules(Path::new(file));
-    let Some(entry) = r.entry else { return r.diags };
-    if !r.diags.is_empty() {
-        return r.diags;
+/// static checks, then evaluation (optionally binding one input document);
+/// Err carries the parse-error count
+pub fn validate_file(file: &str, input: Option<&str>) -> Result<Vec<Diag>, usize> {
+    let src = std::fs::read_to_string(file).unwrap_or_default();
+    let parsed = parse_source(&src);
+    if !parsed.errors.is_empty() {
+        return Err(parsed.errors.len());
     }
-    let mut binds = vec![];
-    if let Some(spec) = input {
-        if let Some((name, path)) = spec.split_once('=') {
-            let text = std::fs::read_to_string(path).unwrap_or_default();
-            if let Ok(raw) = read_json(&text) {
-                binds.push(Bind { input: name.to_string(), raw });
+    let checks = check_module(&parsed.decls, None);
+    let mut diags = checks.clone();
+    if checks.is_empty() {
+        if let Some(spec) = input {
+            let r = load_modules(Path::new(file));
+            if let (Some(entry), Some((name, path))) = (r.entry, spec.split_once('=')) {
+                let text = std::fs::read_to_string(path).unwrap_or_default();
+                let mut binds = vec![];
+                if let Ok(raw) = read_json(&text) {
+                    binds.push(Bind { input: name.to_string(), raw });
+                }
+                diags.extend(run_universe(&r.modules, &entry, binds).1);
             }
+        } else {
+            let (env, _) = run_pipeline(&parsed.decls);
+            diags.extend(env.diagnostics_vec());
         }
     }
-    run_universe(&r.modules, &entry, binds).1
+    Ok(diags)
+}
+
+/// `decl check`: load each entry (following imports), report load
+/// diagnostics and every module's static findings, tagged with their file
+pub fn check_files(paths: &[String]) -> Vec<(String, Diag)> {
+    let mut out = vec![];
+    for f in paths {
+        let r = load_modules(Path::new(f));
+        out.extend(r.diags.into_iter().map(|d| (f.clone(), d)));
+        for m in &r.modules {
+            let path = m.path.display().to_string();
+            out.extend(check_module(&m.decls, Some(m.env.clone())).into_iter().map(|d| (path.clone(), d)));
+        }
+    }
+    out
 }
 
 /// runtime-level judgment of a corpus fixture: valid fixtures evaluate
@@ -86,26 +119,37 @@ fn judge_fixture(file: &Path, is_valid: bool) -> (Option<bool>, String) {
     };
     let phase = meta("expect-phase");
     let want = meta("expect-error").unwrap_or_default();
+    let want_msg = meta("expect-message").unwrap_or_default();
     let parsed = parse_source(&src);
+    let json_of = |ds: &[Diag]| format!("[{}]", ds.iter().map(|d| d.to_json(None)).collect::<Vec<_>>().join(","));
+    let hit = |ds: &[Diag]| ds.iter().any(|d| d.code.as_deref() == Some(want.as_str())) && (want_msg.is_empty() || ds.iter().any(|d| d.message.contains(&want_msg)));
     if is_valid {
+        // a valid fixture must parse, check clean, AND evaluate its outputs
+        // without error-severity diagnostics
         if !parsed.errors.is_empty() {
             return (Some(false), format!("{} parse errors", parsed.errors.len()));
         }
-        let (env, _) = run_pipeline(&parsed.decls);
-        let errs: Vec<Diag> = env.diagnostics_vec().into_iter().filter(|d| d.severity == "error").collect();
-        return (Some(errs.is_empty()), errs.iter().take(2).map(|d| d.to_json(None)).collect::<Vec<_>>().join(" "));
+        let checks = check_module(&parsed.decls, None);
+        let eval_errs: Vec<Diag> = if checks.is_empty() {
+            let (env, _) = run_pipeline(&parsed.decls);
+            env.diagnostics_vec().into_iter().filter(|d| d.severity == "error").collect()
+        } else {
+            vec![]
+        };
+        let all: Vec<Diag> = checks.into_iter().chain(eval_errs).collect();
+        return (Some(all.is_empty()), json_of(&all));
     }
     match phase.as_deref() {
-        Some("parsing") => (Some(!parsed.errors.is_empty()), "expected parse errors".into()),
-        Some("binding") => {
-            if !parsed.errors.is_empty() {
-                return (Some(false), "parse errors".into());
-            }
-            let (env, _) = run_pipeline(&parsed.decls);
-            let diags = env.diagnostics_vec();
-            (Some(diags.iter().any(|d| d.code.as_deref() == Some(want.as_str()))), diags.iter().take(3).map(|d| d.to_json(None)).collect::<Vec<_>>().join(" "))
+        Some("parsing") => (Some(!parsed.errors.is_empty()), "expected parse errors, got none".into()),
+        Some("checking") => {
+            let checks = if parsed.errors.is_empty() { check_module(&parsed.decls, None) } else { vec![] };
+            (Some(hit(&checks)), json_of(&checks))
         }
-        other => (None, format!("phase {other:?} needs the static checker")),
+        Some("binding") => {
+            let diags = if parsed.errors.is_empty() { run_pipeline(&parsed.decls).0.diagnostics_vec() } else { vec![] };
+            (Some(hit(&diags)), json_of(&diags))
+        }
+        other => (Some(false), format!("unknown phase {other:?}")),
     }
 }
 
@@ -146,6 +190,22 @@ pub fn main(args: Vec<String>) -> i32 {
     let json = flags.contains_key("json");
     let mut collected: Vec<String> = vec![];
     match cmd.as_str() {
+        "check" => {
+            if pos.is_empty() {
+                return usage();
+            }
+            let diags = check_files(&pos);
+            for (file, d) in &diags {
+                print_diag(file, d, json, &mut collected);
+            }
+            if diags.is_empty() {
+                eprintln!("ok: {} entry file(s) check clean", pos.len());
+            }
+            if json {
+                println!("[{}]", collected.join(","));
+            }
+            if diags.is_empty() { 0 } else { 1 }
+        }
         "evaluate" => {
             let Some(f) = pos.first() else { return usage() };
             let (code, text, diags) = evaluate(f, flags.get("root").map(|s| s.as_str()));
@@ -165,29 +225,51 @@ pub fn main(args: Vec<String>) -> i32 {
             if tp.is_dir() {
                 let mut files = vec![];
                 walk(tp, &mut files);
-                let (mut ok, mut fail, mut skipped) = (0, 0, 0);
+                let (mut ok, mut fail) = (0, 0);
                 for f in files {
                     let is_valid = f.to_string_lossy().contains("/valid/");
                     match judge_fixture(&f, is_valid) {
-                        (None, _) => skipped += 1,
                         (Some(true), _) => ok += 1,
-                        (Some(false), detail) => {
+                        (_, detail) => {
                             fail += 1;
                             eprintln!("FAIL {} {detail}", f.display());
                         }
                     }
                 }
-                eprintln!("{ok} ok, {fail} failed, {skipped} skipped (checking phase)");
+                eprintln!("{ok} ok, {fail} failed");
                 if fail > 0 { 1 } else { 0 }
             } else {
-                let diags = validate_file(target, flags.get("input").map(|s| s.as_str()));
+                let diags = match validate_file(target, flags.get("input").map(|s| s.as_str())) {
+                    Ok(d) => d,
+                    Err(n) => {
+                        eprintln!("{target}: {n} parse error(s)");
+                        return 1;
+                    }
+                };
                 for d in &diags {
                     print_diag(target, d, json, &mut collected);
                 }
                 if json {
                     println!("[{}]", collected.join(","));
                 }
-                if diags.iter().any(|d| d.severity == "error") { 1 } else { 0 }
+                let err_codes: Vec<String> = diags.iter().filter(|d| d.severity == "error").map(|d| d.code.clone().unwrap_or_default()).collect();
+                if let Some(expect) = flags.get("expect-errors") {
+                    let want: Vec<String> = expect.split(',').map(|w| w.trim().to_string()).filter(|w| !w.is_empty()).collect();
+                    let missing: Vec<&String> = want.iter().filter(|w| !err_codes.contains(w)).collect();
+                    let extra: Vec<&String> = err_codes.iter().filter(|c| !want.contains(c)).collect();
+                    if !missing.is_empty() || !extra.is_empty() {
+                        if !missing.is_empty() {
+                            eprintln!("expected error(s) not reported: {}", missing.iter().map(|s| s.as_str()).collect::<Vec<_>>().join(", "));
+                        }
+                        if !extra.is_empty() {
+                            eprintln!("unexpected error(s): {}", extra.iter().map(|s| s.as_str()).collect::<Vec<_>>().join(", "));
+                        }
+                        return 1;
+                    }
+                    eprintln!("ok: expected errors reported ({})", if want.is_empty() { "none".to_string() } else { want.join(", ") });
+                    return 0;
+                }
+                if err_codes.is_empty() { 0 } else { 1 }
             }
         }
         _ => usage(),

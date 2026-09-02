@@ -5,9 +5,9 @@ validating structured data — a JSON superset with a strong static type
 system, constraints with first-class diagnostics, references, physical
 quantities, generics, and modules. Pure, deterministic, terminating.
 
-This crate is the **native Rust runtime**: the tree-sitter grammar is
-compiled in, and `decl` evaluates and validates modules with no Node.js
-or wasm involved.
+This crate is the **native Rust implementation**: the tree-sitter
+grammar is compiled in, and `decl` checks, evaluates, and validates
+modules with no Node.js or wasm involved.
 
 ```bash
 cargo install decl-lang
@@ -16,6 +16,7 @@ cargo install decl-lang
 ## Command line
 
 ```bash
+decl check schema.decl                         # static checks, module-aware (exit 1 on errors)
 decl evaluate site.decl                        # evaluate every output -> {"name": value, ...}
 decl evaluate site.decl --root site            # one output -> its canonical JSON
 decl evaluate site.decl --json                 # {"ok", "value", "diagnostics"} report
@@ -29,19 +30,20 @@ was reported.
 
 ## Scope
 
-The runtime covers the evaluation half of the language: parsing, type
-resolution (generics, dimension algebra, the SI unit catalog), binding
-with lazy slots and cycle detection, `$referrers`, assertions with
-diagnostic templates, and canonical serialization. Its output is
+The crate covers the static checker and the evaluator: parsing, the
+static checks of chapters 3–4 (type resolution with generics and
+dimension algebra, inference, assignability, the absence discipline,
+`match` exhaustiveness), binding with lazy slots and cycle detection,
+`$referrers`, assertions with diagnostic templates, and canonical
+serialization. Its output is
 byte-identical to the reference implementation — the repository's
 parity harness (`tests/parity/differential.py`, run by `make verify`)
 diffs the Rust and Python runtimes against the reference over every
 example and fixture that produces output.
 
-The static checker, the formatter, and the language server live in the
-reference implementation (`npm install -g decl-lang`, or
-`pip install decl-lang`): use those for `decl check`, `decl fmt`, and
-`decl-lsp`.
+The formatter and the language server live in the reference
+implementation (`npm install -g decl-lang`, or
+`pip install decl-lang`): use those for `decl fmt` and `decl-lsp`.
 
 ## Building from source
 

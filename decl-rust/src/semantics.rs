@@ -312,6 +312,11 @@ pub struct RecType {
     pub open: bool,
     pub members: RefCell<Vec<Member>>,
     pub asserts: RefCell<Vec<AssertItem>>,
+    /// `context $parent: ref<T>` declarations (D30), checked at embedding sites
+    pub ctx_decls: RefCell<Vec<(String, RT)>>,
+}
+pub fn rec_type(open: bool) -> RecType {
+    RecType { open, members: RefCell::new(vec![]), asserts: RefCell::new(vec![]), ctx_decls: RefCell::new(vec![]) }
 }
 
 #[derive(Clone)]
@@ -391,6 +396,7 @@ pub struct ConstEntry {
 }
 pub struct FuncEntry {
     pub params: Vec<Param>,
+    pub ret: Option<TypeAst>,
     pub body: Rc<Expr>,
 }
 pub struct TypeEntry {
@@ -434,6 +440,11 @@ pub struct Env {
     pub unit_memo: RefCell<HashMap<String, (String, f64)>>,
     pub base_unit_of: RefCell<HashMap<String, String>>,
     pub space_diags: RefCell<Vec<Diag>>,
+    /// declaration order (HashMaps do not keep it; diagnostics follow it)
+    pub type_order: RefCell<Vec<String>>,
+    pub unit_order: RefCell<Vec<String>>,
+    /// installed by the checker: constant-evaluation errors go here instead of the report
+    pub const_diag_sink: RefCell<Option<Rc<RefCell<Vec<Diag>>>>>,
 }
 
 const SI_PREFIXES: [(&str, f64); 20] = [
@@ -467,6 +478,9 @@ impl Env {
             unit_memo: RefCell::new(HashMap::new()),
             base_unit_of: RefCell::new(HashMap::new()),
             space_diags: RefCell::new(vec![]),
+            type_order: RefCell::new(vec![]),
+            unit_order: RefCell::new(vec![]),
+            const_diag_sink: RefCell::new(None),
         };
         env.seed_units();
         Rc::new(env)
@@ -479,6 +493,7 @@ impl Env {
             if m.contains_key(sym) {
                 return;
             }
+            self.unit_order.borrow_mut().push(sym.to_string());
             m.insert(
                 sym.to_string(),
                 match dim {
@@ -557,17 +572,21 @@ impl Env {
                     if self.unit_decls.borrow().contains_key(name) {
                         self.space_diags.borrow_mut().push(Diag::error(format!("unit {name} redeclared"), String::new(), Some("E4073")));
                     } else {
+                        self.unit_order.borrow_mut().push(name.clone());
                         self.unit_decls.borrow_mut().insert(name.clone(), UnitDecl { dim: dim.clone(), factor: factor.clone(), base: base.clone() });
                     }
                 }
                 DeclBody::Type { name, params, ty, tail } => {
+                    if !self.type_asts.borrow().contains_key(name) {
+                        self.type_order.borrow_mut().push(name.clone());
+                    }
                     self.type_asts.borrow_mut().insert(name.clone(), Rc::new(TypeEntry { ast: ty.clone(), tail: tail.clone(), params: params.clone() }));
                 }
                 DeclBody::Const { name, ty, expr } => {
                     self.consts.borrow_mut().insert(name.clone(), Rc::new(ConstEntry { expr: expr.clone(), ty: ty.clone(), state: Cell::new(false), value: RefCell::new(Value::Null) }));
                 }
-                DeclBody::Func { name, params, body, .. } => {
-                    self.funcs.borrow_mut().insert(name.clone(), Rc::new(FuncEntry { params: params.clone(), body: body.clone() }));
+                DeclBody::Func { name, params, ret, body } => {
+                    self.funcs.borrow_mut().insert(name.clone(), Rc::new(FuncEntry { params: params.clone(), ret: ret.clone(), body: body.clone() }));
                 }
                 DeclBody::Output { name, ty, expr } => self.outputs.borrow_mut().push((name.clone(), ty.clone(), expr.clone())),
                 DeclBody::Input { name, ty, fallback } => {
@@ -632,7 +651,11 @@ impl Env {
                 return;
             }
             self.const_diag_seen.borrow_mut().insert(key);
-            self.report(Diag::error(message, String::new(), Some(code)));
+            let d = Diag::error(message, String::new(), Some(code));
+            match &*self.const_diag_sink.borrow() {
+                Some(sink) => sink.borrow_mut().push(d),
+                None => self.report(d),
+            }
         };
         match ce(&name) {
             Ok(Value::Int(i)) => Value::Int(i),
@@ -681,6 +704,32 @@ impl Env {
     }
     pub fn unit_info(&self, sym: &str) -> Result<(String, f64), String> {
         self.unit_info_v(sym, &mut vec![])
+    }
+    /// §3.16 unit/dimension-space findings for the checker: the load-time
+    /// redeclarations plus unresolvable units and duplicate base units
+    pub fn finalize_unit_space(&self) -> Vec<Diag> {
+        let mut out = self.space_diags.borrow().clone();
+        let mut base_seen: HashMap<String, String> = HashMap::new();
+        let syms = self.unit_order.borrow().clone();
+        for sym in syms {
+            let has_dim = self.unit_decls.borrow().get(&sym).map(|u| u.dim.is_some()).unwrap_or(false);
+            match self.unit_info(&sym) {
+                Ok((key, _)) => {
+                    if has_dim {
+                        if let Some(prev) = base_seen.get(&key) {
+                            out.push(Diag::error(format!("second base unit {sym} for dimension {key} (base is {prev})"), String::new(), Some("E4073")));
+                        } else {
+                            base_seen.insert(key, sym.clone());
+                        }
+                    }
+                }
+                Err(msg) => {
+                    let code = if msg.contains("unknown dimension") || msg.contains("circular dimension") { "E3003" } else { "E4073" };
+                    out.push(Diag::error(msg, String::new(), Some(code)));
+                }
+            }
+        }
+        out
     }
     fn unit_info_v(&self, sym: &str, visiting: &mut Vec<String>) -> Result<(String, f64), String> {
         if let Some(v) = self.unit_memo.borrow().get(sym) {
@@ -758,7 +807,7 @@ impl Env {
                 }
             }
             TypeAst::Record { members, open } => {
-                let rt = ty(RTk::Rec(RecType { open: *open, members: RefCell::new(vec![]), asserts: RefCell::new(vec![]) }));
+                let rt = ty(RTk::Rec(rec_type(*open)));
                 *rt.name.borrow_mut() = name.map(|s| s.to_string());
                 self.fill_record(&rt, members)?;
                 rt
@@ -809,7 +858,7 @@ impl Env {
                 } else {
                     let b = match &decl.ast {
                         TypeAst::Record { members, open } => {
-                            let rt = ty(RTk::Rec(RecType { open: *open, members: RefCell::new(vec![]), asserts: RefCell::new(vec![]) }));
+                            let rt = ty(RTk::Rec(rec_type(*open)));
                             *rt.name.borrow_mut() = Some(n.clone());
                             *rt.tail.borrow_mut() = decl.tail.clone();
                             self.type_memo.borrow_mut().insert(n.clone(), rt.clone());
@@ -851,7 +900,7 @@ impl Env {
         }
         let mut asserts = br.asserts.borrow().clone();
         asserts.extend(er.asserts.borrow().iter().cloned());
-        let rt = ty(RTk::Rec(RecType { open: br.open, members: RefCell::new(members), asserts: RefCell::new(asserts) }));
+        let rt = ty(RTk::Rec(RecType { open: br.open, members: RefCell::new(members), asserts: RefCell::new(asserts), ctx_decls: RefCell::new(br.ctx_decls.borrow().clone()) }));
         *rt.name.borrow_mut() = base.name.borrow().clone();
         *rt.tail.borrow_mut() = base.tail.borrow().clone();
         rt
@@ -901,7 +950,7 @@ impl Env {
         let body = subst_type(&decl.ast, &types, &values);
         let rt = match &body {
             TypeAst::Record { members, open } => {
-                let rt = ty(RTk::Rec(RecType { open: *open, members: RefCell::new(vec![]), asserts: RefCell::new(vec![]) }));
+                let rt = ty(RTk::Rec(rec_type(*open)));
                 *rt.name.borrow_mut() = Some(shown);
                 *rt.tail.borrow_mut() = decl.tail.clone();
                 self.type_memo.borrow_mut().insert(key, rt.clone());
@@ -952,7 +1001,7 @@ impl Env {
                 MemberAst::When { cond, body } => r.asserts.borrow_mut().push(AssertItem {
                     when: true, name: String::new(), cond: cond.clone(), tail: None, body: body.clone(), origin: origin.clone(), menv: Some(self.clone()),
                 }),
-                MemberAst::Context { .. } => {}
+                MemberAst::Context { variable, ty: t } => r.ctx_decls.borrow_mut().push((variable.clone(), self.resolve(t, None)?)),
             }
         }
         Ok(())
@@ -979,7 +1028,7 @@ impl Env {
             }
             asserts.extend(r.asserts.borrow().iter().map(|x| AssertItem { origin: x.origin.clone().or_else(|| a.name.borrow().clone()), ..x.clone() }));
         }
-        let rt = ty(RTk::Rec(RecType { open, members: RefCell::new(members), asserts: RefCell::new(asserts) }));
+        let rt = ty(RTk::Rec(RecType { open, members: RefCell::new(members), asserts: RefCell::new(asserts), ctx_decls: RefCell::new(vec![]) }));
         *rt.name.borrow_mut() = name.map(|s| s.to_string());
         rt
     }

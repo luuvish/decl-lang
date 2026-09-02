@@ -345,6 +345,27 @@ class Env:
     def report(self, d: dict) -> None:
         self.diagnostics.append(d)
 
+    def finalize_unit_space(self) -> list:
+        """§3.16 unit/dimension-space findings for the checker: the load-time
+        redeclarations plus unresolvable units and duplicate base units."""
+        out = list(self.space_diags)
+        base_seen: dict = {}
+        for sym, u in list(self.unit_decls.items()):
+            try:
+                info = self.unit_info(sym)
+                if u.get("dim") is not None:
+                    prev = base_seen.get(info["key"])
+                    if prev:
+                        out.append({"severity": "error", "code": "E4073",
+                                    "message": f"second base unit {sym} for dimension {info['key']} (base is {prev})", "path": ""})
+                    else:
+                        base_seen[info["key"]] = sym
+            except Exception as e:
+                msg = str(e)
+                code = "E3003" if ("unknown dimension" in msg or "circular dimension" in msg) else "E4073"
+                out.append({"severity": "error", "code": code, "message": msg, "path": ""})
+        return out
+
     # §4.13: a named endpoint in a constant position evaluates at elaboration time
     def const_num(self, v: Any) -> Any:
         if not is_str(v) or self.const_eval is None or v not in self.consts:

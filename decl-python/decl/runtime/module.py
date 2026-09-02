@@ -32,7 +32,7 @@ def load_modules(entry_path: str, source_override: Optional[dict] = None) -> dic
     def resolve_spec(spec: str, from_dir: str) -> Optional[str]:
         if spec.startswith("./") or spec.startswith("../"):
             return os.path.normpath(os.path.join(from_dir, spec))
-        report("E3010", f'package import "{spec}" is not supported by this runtime (relative imports only)')
+        report("E3010", f'package import "{spec}" outside a package (no manifest)')
         return None
 
     def load(path: str) -> Optional[Module]:

@@ -59,13 +59,13 @@ decl validate services.decl --input deployed=prod.json
     ```bash
     pip install decl-lang
     ```
-    Native Python runtime for `evaluate` / `validate` plus a Python API; `check`, `fmt`, and the language server run the bundled reference.
+    Native Python implementation of `check` / `evaluate` / `validate` plus a Python API; `fmt` and the language server run the bundled reference.
   </TabItem>
   <TabItem label="cargo">
     ```bash
     cargo install decl-lang
     ```
-    Native Rust runtime: `decl evaluate` and `decl validate` with no Node or wasm.
+    Native Rust implementation: `decl check`, `decl evaluate`, and `decl validate` with no Node or wasm.
   </TabItem>
   <TabItem label="brew">
     ```bash

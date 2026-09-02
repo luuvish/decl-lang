@@ -1,7 +1,9 @@
 //! The `decl` binary — the native Rust runtime's command line (cli.rs).
 mod ast;
+mod checker;
 mod cli;
 mod engine;
+mod infer;
 mod module;
 mod parse;
 mod semantics;

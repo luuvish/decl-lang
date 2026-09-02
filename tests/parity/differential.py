@@ -2,13 +2,15 @@
 
 Decl ships a TypeScript reference implementation (decl-typescript), a Rust
 runtime (decl-rust), and a Python runtime (decl-python). They must be
-indistinguishable: over every module with outputs in the fixture corpus,
-the documentation examples, and the domain examples, each runtime's
-`evaluate --json` report must carry the same `ok`, byte-identical
-canonical output, and the same diagnostics; and binding documents to
-input roots (`validate --input`) must yield the same root-cause
-diagnostics. The reference is the oracle; both natives are diffed
-against it, which makes the three pairwise identical.
+indistinguishable: over every module in the fixture corpus (valid and
+invalid), the documentation examples, and the domain examples, each
+implementation's `check --json` must report the same static diagnostics
+(codes and messages); over every module with outputs, `evaluate --json`
+must carry the same `ok`, byte-identical canonical output, and the same
+diagnostics; and binding documents to input roots (`validate --input`)
+must yield the same root-cause diagnostics. The reference is the oracle;
+both natives are diffed against it, which makes the three pairwise
+identical.
 
     python tests/parity/differential.py                 # rust and python vs reference
     python tests/parity/differential.py --only rust     # one runtime
@@ -105,6 +107,29 @@ def row(label: str, verdicts: dict[str, bool], detail: dict[str, str]) -> None:
         if not verdicts[n]:
             print(f"      {n}: {detail[n]}")
 
+
+# ---------------------------------------------------------------- check
+def check_key(diags: list) -> list:
+    return sorted((d.get("code") or "", d.get("message") or "") for d in diags)
+
+
+check_files: list[Path] = sorted((ROOT / "tests/validation").rglob("*.decl")) + sorted((ROOT / "docs/examples").glob("*.decl"))
+for d in sorted((ROOT / "examples").iterdir()):
+    if d.is_dir():
+        mods = sorted(d.glob("*.decl"))
+        entry = d / "main.decl" if (d / "main.decl").exists() else (mods[0] if len(mods) == 1 else None)
+        if entry:
+            check_files.append(entry)
+
+print(f"== check: {len(check_files)} modules, reference vs {', '.join(names)} (codes and messages)")
+for p in check_files:
+    ref = diagnostics(REF, ["check", str(p), "--json"])
+    verdicts, detail = {}, {}
+    for n, prefix in RUNTIMES.items():
+        nat = diagnostics(prefix, ["check", str(p), "--json"])
+        verdicts[n] = check_key(ref) == check_key(nat)
+        detail[n] = f"ref={check_key(ref)[:3]} | {n}={check_key(nat)[:3]}"
+    row(str(p.relative_to(ROOT)), verdicts, detail)
 
 # ---------------------------------------------------------------- evaluate
 files: list[Path] = []

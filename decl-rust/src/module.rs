@@ -37,7 +37,7 @@ impl Loader {
         if spec.starts_with("./") || spec.starts_with("../") {
             return Some(normalize(&from_dir.join(spec)));
         }
-        self.report("E3010", format!("package import \"{spec}\" is not supported by this runtime (relative imports only)"));
+        self.report("E3010", format!("package import \"{spec}\" outside a package (no manifest)"));
         None
     }
     fn load(&mut self, path: &Path) -> Option<Rc<Module>> {

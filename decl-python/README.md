@@ -8,16 +8,16 @@ quantities, generics, and modules. Pure, deterministic, terminating.
 This package ships the `decl` command-line tool, the canonical
 formatter, the `decl-lsp` language server, and a small Python API.
 
-`decl evaluate` and `decl validate` (and the `decl.evaluate` /
-`decl.validate` API) run on a **native Python runtime** — the
-tree-sitter grammar compiled as a C extension plus a pure-Python port
-of the evaluator, byte-identical to the reference implementation. The
-static checker (`decl check`), the formatter, and the language server
-run the bundled reference implementation (JavaScript + tree-sitter
-wasm) under Node.js ≥ 20.
+`decl check`, `decl evaluate`, and `decl validate` (and the
+`decl.check` / `decl.evaluate` / `decl.validate` API) run on a **native
+Python implementation** — the tree-sitter grammar compiled as a C
+extension plus a pure-Python port of the static checker and the
+evaluator, byte-identical to the reference implementation. The
+formatter and the language server run the bundled reference
+implementation (JavaScript + tree-sitter wasm) under Node.js ≥ 20.
 
 ```bash
-pip install decl-lang         # evaluate/validate need no Node; check/fmt/lsp use the node on your PATH
+pip install decl-lang         # check/evaluate/validate need no Node; fmt/lsp use the node on your PATH
 pip install 'decl-lang[node]'      # or let pip provide Node.js too
 ```
 

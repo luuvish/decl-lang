@@ -1,9 +1,9 @@
 """Python API for the Decl language.
 
-``evaluate`` and ``validate`` run the native Python runtime
+``check``, ``evaluate``, and ``validate`` run the native Python runtime
 (``decl.runtime``, byte-identical to the reference implementation —
-see tests/parity/differential.py); ``check`` and the formatter are thin
-wrappers over the bundled reference implementation's ``--json`` modes.
+see tests/parity/differential.py); the formatter is a thin wrapper over
+the bundled reference implementation.
 
     >>> import decl
     >>> decl.evaluate("site.decl", root="site")        # -> the evaluated value (dict/list/...)
@@ -53,9 +53,10 @@ def _json_stdout(proc) -> Any:
 
 
 def check(*paths: str | os.PathLike[str]) -> list[Diagnostic]:
-    """Parse and statically check entry files (module-aware). Returns diagnostics; empty means clean."""
-    proc = run("cli.js", ["check", *map(str, paths), "--json"], capture=True)
-    return _json_stdout(proc)
+    """Parse and statically check entry files (module-aware) on the native
+    runtime. Returns diagnostics; empty means clean."""
+    from .runtime.cli import check_files
+    return [dict(file=d["file"], **{k: v for k, v in d.items() if k != "file"}) for d in check_files([str(p) for p in paths])]
 
 
 def evaluate(path: str | os.PathLike[str], root: str | None = None) -> Any:
@@ -80,7 +81,10 @@ def validate(
     ``expect_errors`` the error-code set must match exactly; DeclError
     carries the mismatch otherwise."""
     from .runtime.cli import validate_file
-    diags = [dict(file=str(path), **d) for d in validate_file(str(path), f"{input[0]}={input[1]}" if input else None)]
+    parse_errors, found = validate_file(str(path), f"{input[0]}={input[1]}" if input else None)
+    if parse_errors:
+        raise DeclError(f"{path}: {parse_errors} parse error(s)")
+    diags = [dict(file=str(path), **d) for d in found]
     if expect_errors is not None:
         want = sorted(expect_errors)
         got = sorted(d.get("code") or "" for d in diags if d["severity"] == "error")

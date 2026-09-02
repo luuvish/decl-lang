@@ -15,7 +15,7 @@ never migrated wholesale or modified from this repo.
 |---|---|
 | Methodology | **Spec-first with an evidence gate** — author the complete specification, then a throwaway minimal-evaluator spike (§0.6) must meet it before v0.1 is frozen; implementation proper begins only after the freeze. Post-freeze spec changes are recorded as revisions. |
 | Parser | **tree-sitter as the single canonical parser**, written against the spec's formal grammar chapter. The reference implementation consumes it through bindings. |
-| Reference implementation | **TypeScript first, Rust later** — type checker, evaluator, and CLI in TypeScript (BigInt aligns with arbitrary-precision integers; `Number::toString` with shortest round-trip float printing). A Rust runtime is considered only after the spec and implementation stabilize. *Done 2026-09-02:* native **Rust** (`decl-rust/`, crate `decl-lang`) and **Python** (`decl-python/decl/runtime`) runtimes port the evaluation half (parse → resolve → bind/evaluate/validate → serialize, modules); the static checker, formatter, and LSP stay in the reference. The layout is parallel (`decl-typescript/`, `decl-rust/`, `decl-python/`, same module names) and `make verify` — each implementation's tests, then `tests/parity/differential.py` — keeps the three byte-identical over every output-bearing example and fixture, plus document binding with root-cause diagnostics; CI runs it on every push. *Open:* the static checker, formatter, and LSP exist only in the reference; porting them so all three cover the whole language is the remaining parity gap. |
+| Reference implementation | **TypeScript first, Rust later** — type checker, evaluator, and CLI in TypeScript (BigInt aligns with arbitrary-precision integers; `Number::toString` with shortest round-trip float printing). A Rust runtime is considered only after the spec and implementation stabilize. *Done 2026-09-02:* native **Rust** (`decl-rust/`, crate `decl-lang`) and **Python** (`decl-python/decl/runtime`) runtimes port the static checker and the evaluation half (parse → check → resolve → bind/evaluate/validate → serialize, modules); the formatter, LSP, and packages stay in the reference. The layout is parallel (`decl-typescript/`, `decl-rust/`, `decl-python/`, same module names) and `make verify` — each implementation's tests, then `tests/parity/differential.py` — keeps the three byte-identical over every output-bearing example and fixture, plus document binding with root-cause diagnostics; CI runs it on every push. *Open:* the formatter, the LSP, and packages exist only in the reference; porting them so all three cover the whole language is the remaining parity gap (the checker was ported 2026-09-02). |
 
 ## Reference assets
 
@@ -208,7 +208,7 @@ editor.
   revision
 - Decide whether to start the Rust runtime (when performance or deployment
   needs are confirmed by measurement) — *decided 2026-09-02: native Rust
-  and Python runtimes for the evaluation half, verified by differential
+  and Python implementations of the checker and the evaluation half, verified by differential
   testing against the reference (see the decision table above)*
 
 **Exit criteria**: successful validation of at least part of the real

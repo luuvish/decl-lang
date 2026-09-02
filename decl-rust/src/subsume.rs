@@ -186,3 +186,67 @@ fn lit_satisfies(env: &Rc<Env>, v: &Value, base: &RT, preds: &[Rc<Expr>]) -> boo
     }
     true
 }
+
+// ---------------- structural emptiness (§3.17; the checker's E4011/E4012) ----------------
+/// JavaScript `>`: strings compare lexically, a string against a number is NaN (false)
+fn js_gt(a: &Value, b: &Value) -> bool {
+    match (a, b) {
+        (Value::Str(x), Value::Str(y)) => x > y,
+        (Value::Str(_), _) | (_, Value::Str(_)) => false,
+        _ => num_ge(a, b) && !value_eq(a, b),
+    }
+}
+
+pub fn structurally_empty(env: &Rc<Env>, t: &RT) -> bool {
+    match &t.k {
+        RTk::Range { lo, hi, excl, .. } => {
+            let h = if *excl && !matches!(hi, Value::Str(_)) { dec(hi) } else { hi.clone() };
+            js_gt(lo, &h)
+        }
+        RTk::Arr { lo, hi, .. } => matches!((lo, hi), (Some(l), Some(h)) if l > h),
+        RTk::IsectN(arms) => {
+            for i in 0..arms.len() {
+                for j in i + 1..arms.len() {
+                    if disjoint(env, &arms[i], &arms[j]) {
+                        return true;
+                    }
+                }
+            }
+            arms.iter().any(|a| structurally_empty(env, a))
+        }
+        RTk::Union(arms) => arms.iter().all(|a| structurally_empty(env, a)),
+        _ => false,
+    }
+}
+
+fn kind_of(t: &RT) -> Option<String> {
+    Some(match &t.k {
+        RTk::Prim(n) => n.clone(),
+        RTk::Lit(v) => lit_kind(v).to_string(),
+        RTk::Range { base, .. } => base.clone(),
+        RTk::Pattern { .. } => "string".into(),
+        RTk::Arr { .. } => "array".into(),
+        RTk::Rec(_) | RTk::Map { .. } | RTk::Quantity(_) => "object".into(),
+        _ => return None,
+    })
+}
+
+fn disjoint(env: &Rc<Env>, a: &RT, b: &RT) -> bool {
+    let (ka, kb) = (kind_of(a), kind_of(b));
+    if let (Some(x), Some(y)) = (&ka, &kb) {
+        if x != y {
+            return true;
+        }
+    }
+    match (&a.k, &b.k) {
+        (RTk::Range { lo: alo, hi: ahi, excl: aexcl, base: abase }, RTk::Range { lo: blo, hi: bhi, excl: bexcl, base: bbase }) if abase == bbase => {
+            let a_hi = if *aexcl { dec(ahi) } else { ahi.clone() };
+            let b_hi = if *bexcl { dec(bhi) } else { bhi.clone() };
+            js_gt(alo, &b_hi) || js_gt(blo, &a_hi)
+        }
+        (RTk::Lit(x), RTk::Lit(y)) => !lit_eq(x, y),
+        (RTk::Lit(v), RTk::Range { lo, hi, excl, base }) => !(lit_kind(v) == base && in_range(v, lo, hi, *excl)),
+        (RTk::Range { .. }, RTk::Lit(_)) => disjoint(env, b, a),
+        _ => false,
+    }
+}
