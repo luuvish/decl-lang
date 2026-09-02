@@ -16,3 +16,14 @@ python/decl/_tree_sitter/*.so
 rust/target/
 rust/grammar/
 rust/LICENSE
+# website: generated from docs/ and impl/ at build time (site/scripts/sync-docs.mjs)
+site/.astro/
+site/public/playground/
+site/src/content/docs/specification/
+site/src/content/docs/guide/
+site/src/content/docs/design/
+site/src/content/docs/examples/
+site/src/content/docs/tooling/
+site/src/content/docs/revisions.md
+site/src/content/docs/documentation.md
+site/src/samples/synced/

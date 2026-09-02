@@ -1,0 +1,58 @@
+# Build the website (Starlight over docs/ + the browser playground) and
+# publish it to GitHub Pages on every push to main.
+# One-time setup: repository Settings -> Pages -> Source: "GitHub Actions".
+name: site
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'docs/**'
+      - 'examples/**'
+      - 'site/**'
+      - 'impl/**'
+      - 'tree-sitter-decl/**'
+      - 'python/README.md'
+      - 'rust/README.md'
+      - '.github/workflows/site.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - name: Install the reference implementation
+        run: npm ci
+        working-directory: impl
+      - name: Install the site
+        run: npm ci
+        working-directory: site
+      - name: Build (sync docs, bundle the playground, render)
+        run: npm run build
+        working-directory: site
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: site/dist
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4

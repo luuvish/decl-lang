@@ -16,13 +16,15 @@ export const WASM = [
 ].find(p => existsSync(p)) ?? join(here, 'tree-sitter-decl.wasm');
 
 let language: Language | null = null;
-export async function initParser(): Promise<void> {
+/** where the two wasm files live — the browser build passes URLs */
+export type ParserOptions = { grammar?: string; runtime?: string };
+export async function initParser(opts: ParserOptions = {}): Promise<void> {
   if (language) return;
   // web-tree-sitter's runtime (tree-sitter.wasm) is shipped beside the
   // bundled files; in the source tree it resolves from node_modules
-  const local = join(here, 'tree-sitter.wasm');
-  await Parser.init(existsSync(local) ? { locateFile: () => local } : undefined);
-  language = await Language.load(WASM);
+  const local = opts.runtime ?? join(here, 'tree-sitter.wasm');
+  await Parser.init(opts.runtime || existsSync(local) ? { locateFile: () => local } : undefined);
+  language = await Language.load(opts.grammar ?? WASM);
 }
 
 export type ParseResult = { decls: Decl[]; errors: { row: number; col: number }[] };

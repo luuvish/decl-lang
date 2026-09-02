@@ -1,0 +1,202 @@
+{
+  "$schema": "https://raw.githubusercontent.com/martinring/tmlanguage/master/tmlanguage.json",
+  "name": "decl",
+  "displayName": "Decl",
+  "scopeName": "source.decl",
+  "fileTypes": ["decl"],
+  "patterns": [
+    { "include": "#comments" },
+    { "include": "#declarations" },
+    { "include": "#expressions" }
+  ],
+  "repository": {
+    "comments": {
+      "patterns": [
+        { "name": "comment.line.documentation.decl", "match": "///.*$" },
+        { "name": "comment.line.double-slash.decl", "match": "//.*$" },
+        {
+          "name": "comment.block.decl",
+          "begin": "/\\*",
+          "end": "\\*/",
+          "patterns": [{ "include": "#comments" }]
+        }
+      ]
+    },
+    "declarations": {
+      "patterns": [
+        {
+          "match": "\\b(import|export)\\b",
+          "name": "keyword.control.import.decl"
+        },
+        {
+          "match": "\\b(from|as)\\b",
+          "name": "keyword.control.import.decl"
+        },
+        {
+          "match": "\\b(type)\\s+([A-Za-z_][A-Za-z0-9_]*)",
+          "captures": {
+            "1": { "name": "keyword.declaration.type.decl" },
+            "2": { "name": "entity.name.type.decl" }
+          }
+        },
+        {
+          "match": "\\b(func|diagnostic)\\s+([A-Za-z_][A-Za-z0-9_]*)",
+          "captures": {
+            "1": { "name": "keyword.declaration.function.decl" },
+            "2": { "name": "entity.name.function.decl" }
+          }
+        },
+        {
+          "match": "\\b(output|input)\\s+([A-Za-z_][A-Za-z0-9_]*)",
+          "captures": {
+            "1": { "name": "keyword.declaration.decl" },
+            "2": { "name": "entity.name.function.root.decl" }
+          }
+        },
+        {
+          "match": "\\b(const)\\s+([A-Za-z_][A-Za-z0-9_]*)",
+          "captures": {
+            "1": { "name": "keyword.declaration.const.decl" },
+            "2": { "name": "variable.other.constant.decl" }
+          }
+        },
+        {
+          "match": "\\b(dimension|unit)\\s+([A-Za-z_][A-Za-z0-9_]*)",
+          "captures": {
+            "1": { "name": "keyword.declaration.decl" },
+            "2": { "name": "entity.name.type.unit.decl" }
+          }
+        },
+        {
+          "match": "\\b(assert)\\s+([A-Za-z_][A-Za-z0-9_]*)\\s*(:)",
+          "captures": {
+            "1": { "name": "keyword.control.assert.decl" },
+            "2": { "name": "entity.name.tag.assert.decl" },
+            "3": { "name": "punctuation.separator.decl" }
+          }
+        },
+        {
+          "match": "\\b(else)\\s+(error|warn|info)\\b",
+          "captures": {
+            "1": { "name": "keyword.control.decl" },
+            "2": { "name": "keyword.other.severity.decl" }
+          }
+        },
+        {
+          "match": "\\b(severity|message)\\s*(=)\\s*(error|warn|info)?",
+          "captures": {
+            "1": { "name": "variable.other.property.decl" },
+            "2": { "name": "keyword.operator.assignment.decl" },
+            "3": { "name": "keyword.other.severity.decl" }
+          }
+        }
+      ]
+    },
+    "expressions": {
+      "patterns": [
+        { "include": "#strings" },
+        { "include": "#numbers" },
+        {
+          "match": "\\$(this|parent|path|root|key|referrers)\\b",
+          "name": "variable.language.context.decl"
+        },
+        {
+          "match": "\\b(if|then|else|for|in|match|with|matches|when|assert)\\b",
+          "name": "keyword.control.decl"
+        },
+        {
+          "match": "\\b(true|false|null)\\b",
+          "name": "constant.language.decl"
+        },
+        {
+          "match": "\\b(int|float|bool|string|quantity|ref|map|any)\\b",
+          "name": "support.type.primitive.decl"
+        },
+        {
+          "match": "\\b(std)\\b((?:\\.[a-z_][a-z0-9_]*)*)",
+          "captures": {
+            "1": { "name": "support.class.std.decl" },
+            "2": { "name": "support.function.std.decl" }
+          }
+        },
+        {
+          "match": "\\b([A-Za-z_][A-Za-z0-9_]*)\\s*(\\?)?\\s*(:)(?!:)",
+          "captures": {
+            "1": { "name": "variable.other.property.decl" },
+            "2": { "name": "keyword.operator.optional.decl" },
+            "3": { "name": "punctuation.separator.key-value.decl" }
+          }
+        },
+        {
+          "match": "\\b([a-z_][A-Za-z0-9_]*)(?=\\s*\\()",
+          "name": "entity.name.function.call.decl"
+        },
+        {
+          "match": "\\b[A-Z][A-Za-z0-9_]*\\b",
+          "name": "entity.name.type.decl"
+        },
+        {
+          "match": "\\|>|\\?\\?|\\?\\.|=>|\\.\\.<|\\.\\.|&&|\\|\\||==|!=|<=|>=|<<|>>|[-+*/%<>=!&|^~]",
+          "name": "keyword.operator.decl"
+        },
+        {
+          "match": "[{}()\\[\\]]",
+          "name": "punctuation.bracket.decl"
+        },
+        {
+          "match": "[,.]",
+          "name": "punctuation.separator.decl"
+        }
+      ]
+    },
+    "strings": {
+      "patterns": [
+        {
+          "name": "string.quoted.double.decl",
+          "begin": "\"",
+          "end": "\"",
+          "patterns": [{ "name": "constant.character.escape.decl", "match": "\\\\." }]
+        },
+        {
+          "name": "string.template.decl",
+          "begin": "`",
+          "end": "`",
+          "patterns": [
+            { "name": "constant.character.escape.decl", "match": "\\\\." },
+            {
+              "name": "meta.interpolation.decl",
+              "begin": "\\$\\{",
+              "beginCaptures": { "0": { "name": "punctuation.section.interpolation.begin.decl" } },
+              "end": "\\}",
+              "endCaptures": { "0": { "name": "punctuation.section.interpolation.end.decl" } },
+              "patterns": [{ "include": "#expressions" }]
+            }
+          ]
+        },
+        {
+          "name": "string.regexp.pattern.decl",
+          "match": "(?<=[:=(,|]\\s|[:=(,|]|matches\\s|else\\s)/(?:[^/\\\\\\n]|\\\\.)+/"
+        }
+      ]
+    },
+    "numbers": {
+      "patterns": [
+        { "name": "constant.numeric.hex.decl", "match": "\\b0[xX][0-9a-fA-F][0-9a-fA-F_]*\\b" },
+        { "name": "constant.numeric.octal.decl", "match": "\\b0[oO][0-7][0-7_]*\\b" },
+        { "name": "constant.numeric.binary.decl", "match": "\\b0[bB][01][01_]*\\b" },
+        {
+          "match": "\\b((?:0|[1-9][0-9_]*)(?:\\.[0-9][0-9_]*)?(?:[eE][+-]?[0-9]+)?)([A-DF-Za-df-z][A-Za-z0-9]*|[eE][A-Za-z][A-Za-z0-9]*|[eE])\\b",
+          "captures": {
+            "1": { "name": "constant.numeric.quantity.decl" },
+            "2": { "name": "keyword.other.unit.decl" }
+          }
+        },
+        {
+          "name": "constant.numeric.float.decl",
+          "match": "\\b(?:0|[1-9][0-9_]*)(?:\\.[0-9][0-9_]*(?:[eE][+-]?[0-9]+)?|[eE][+-]?[0-9]+)\\b"
+        },
+        { "name": "constant.numeric.integer.decl", "match": "\\b(?:0|[1-9][0-9_]*)\\b" }
+      ]
+    }
+  }
+}

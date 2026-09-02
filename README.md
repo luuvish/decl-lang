@@ -69,6 +69,9 @@ corpus (`tests/validation`) are the conformance baseline.
 
 ## Documents
 
+- **Website** — <https://luuvish.github.io/decl-lang/>: the guide, the
+  specification, the examples, and a browser playground (built from
+  `docs/` by [site/](site/README.md))
 - [ROADMAP.md](ROADMAP.md) — development roadmap; owns the plan and progress
 - [docs/](docs/README.md) — language documentation: design charter,
   the normative specification (13 chapters), the guide, and the

@@ -1,0 +1,19 @@
+// describe: types carry the value rules
+type Service = {
+    name: /[a-z][a-z0-9-]*/
+    port: 1024..65535 = 8080
+    replicas: 1..64 = 1
+    timeout: quantity<Time> = 250ms
+    const endpoint = `${name}:${port}`   // derived, never supplied
+    assert grpc_ports: name != "grpc" || port >= 9000
+        else warn `grpc convention is 9000+`
+}
+
+// generate: values from the description
+output demo: Service[] = [
+    { name: "gateway" }
+    { name: "auth", port: 9001, replicas: 2 }
+]
+
+// validate: bind external documents to the same schema
+input deployed: Service[]

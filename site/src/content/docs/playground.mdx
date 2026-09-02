@@ -1,0 +1,13 @@
+---
+title: Playground
+description: Write Decl in the browser — the reference implementation compiled to run client-side.
+tableOfContents: false
+sidebar:
+  order: 3
+---
+
+import Playground from '../../components/Playground.astro';
+
+The reference implementation runs in your browser (tree-sitter as WebAssembly, the evaluator as JavaScript). Edit the source and the outputs and diagnostics update as you type. Single-module only: `import` needs a file system, and `input` roots are declared but not bound here.
+
+<Playground />

@@ -34,6 +34,18 @@ Sibling repositories used as reference (do not modify from here):
   every affected chapter, and `docs/REVISIONS.md` in one change.
 - Update the doc index in `docs/README.md` when adding documentation.
 
+## Website (`site/`)
+
+The website (Astro Starlight, published to GitHub Pages by
+`.github/workflows/site.yml`) is generated **from** `docs/` and the
+package READMEs by `site/scripts/sync-docs.mjs` at build time; the
+synced pages under `site/src/content/docs/` are gitignored. Never edit
+them — edit `docs/`. Hand-written pages are the landing page
+(`index.mdx`), `start/`, and `playground.mdx`. The playground bundles
+`impl/src/web.ts` for the browser (`impl/scripts/build-web.mjs`).
+Every ```decl block on the site must evaluate cleanly with the reference
+implementation.
+
 ## Code Style (for future phases)
 
 - **Decl files**: 4-space indentation, no tabs, 100-char line width

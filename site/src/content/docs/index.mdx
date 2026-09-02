@@ -1,0 +1,85 @@
+---
+title: Decl
+description: A declarative language for describing, generating, and validating structured data — a JSON superset with types, constraints, references, quantities, generics, and modules.
+template: splash
+hero:
+  tagline: Describe structured data, generate values from the description, and validate documents against it. A JSON superset with a strong static type system, constraints with first-class diagnostics, references, physical quantities, generics, and modules. Pure, deterministic, terminating.
+  actions:
+    - text: Decl by example
+      link: /decl-lang/guide/01_overview_by_example/
+      icon: right-arrow
+    - text: Try it in the browser
+      link: /decl-lang/playground/
+      icon: rocket
+      variant: secondary
+    - text: Install
+      link: /decl-lang/start/install/
+      variant: minimal
+---
+
+import { Card, CardGrid, Code, Tabs, TabItem, LinkCard } from '@astrojs/starlight/components';
+import hero from '../../samples/hero.decl?raw';
+import heroOut from '../../samples/synced/hero.json?raw';
+
+<CardGrid stagger>
+  <Card title="Describe" icon="document">
+    Types, defaults, derived members, and constraints live in one flat schema. No domain keywords — graphs, configs, and hardware are all just records, references, and rules.
+  </Card>
+  <Card title="Generate" icon="setting">
+    Comprehensions and derivations turn a description into canonical JSON, byte-identical on every run and every implementation.
+  </Card>
+  <Card title="Validate" icon="approve-check">
+    Bind external documents to the same types. Every failure is a diagnostic with a path, a code, and a root cause — never a cascade.
+  </Card>
+</CardGrid>
+
+## One file, three capabilities
+
+<div class="two-col">
+  <Code code={hero} lang="decl" title="services.decl" />
+  <Code code={heroOut} lang="json" title="decl evaluate services.decl" />
+</div>
+
+The same `Service` type that generated `demo` validates `deployed` documents from the outside world:
+
+```bash
+decl validate services.decl --input deployed=prod.json
+```
+
+## Install
+
+<Tabs syncKey="channel">
+  <TabItem label="npm">
+    ```bash
+    npm install -g decl-lang
+    ```
+    The reference implementation: checker, evaluator, formatter, and the `decl-lsp` language server (Node.js ≥ 20).
+  </TabItem>
+  <TabItem label="pip">
+    ```bash
+    pip install decl
+    ```
+    Native Python runtime for `evaluate` / `validate` plus a Python API; `check`, `fmt`, and the language server run the bundled reference.
+  </TabItem>
+  <TabItem label="cargo">
+    ```bash
+    cargo install decl-lang
+    ```
+    Native Rust runtime: `decl evaluate` and `decl validate` with no Node or wasm.
+  </TabItem>
+  <TabItem label="brew">
+    ```bash
+    brew install luuvish/decl/decl
+    ```
+    The npm package through a Homebrew tap.
+  </TabItem>
+</Tabs>
+
+## Read on
+
+<CardGrid>
+  <LinkCard title="Decl by example" href="/decl-lang/guide/01_overview_by_example/" description="One scenario end to end — describe, generate, validate — with the JSON and diagnostics it produces." />
+  <LinkCard title="Specification" href="/decl-lang/specification/01_introduction/" description="The normative v0.2 specification: types, expressions, constraints, modules, semantics, grammar, errors, and the standard library." />
+  <LinkCard title="Examples" href="/decl-lang/examples/" description="A hardware interconnect, an API config schema, and a fixture sweep — written with no domain keywords." />
+  <LinkCard title="Design" href="/decl-lang/design/00_vision/" description="Why the language is shaped this way: vision, requirements, and the decision charter." />
+</CardGrid>
