@@ -31,9 +31,9 @@ Design goals:
 The `decl` command ships through several channels:
 
 ```bash
-npm install -g decl-lang          # npm — the reference implementation (Node.js ≥ 20)
-pip install decl-lang             # PyPI — native Python runtime (check / evaluate / validate) + the reference for fmt/lsp
-cargo install decl-lang           # crates.io — native Rust runtime (evaluate / validate)
+npm install -g decl-lang          # npm — the TypeScript reference implementation (Node.js ≥ 20)
+pip install decl-lang             # PyPI — the native Python implementation (no Node.js)
+cargo install decl-lang           # crates.io — the native Rust implementation
 brew install luuvish/tap/decl-lang    # Homebrew tap
 ```
 
@@ -58,28 +58,29 @@ side is one npm workspace (root `package.json`), Rust a Cargo workspace
 
 | Directory | Language | Package | Scope |
 |---|---|---|---|
-| [`decl-typescript/`](decl-typescript/README.md) | TypeScript — the **reference implementation** | npm `decl-lang` | everything: parser binding, static checker, evaluator, validation, formatter, `decl-lsp`, packages, the browser bundle |
-| [`decl-rust/`](decl-rust/README.md) | Rust — native runtime | crates.io `decl-lang` | the static checker and the evaluator: parse → check → resolve → bind/evaluate/validate → serialize, modules (`decl check` / `decl evaluate` / `decl validate`) |
-| [`decl-python/`](decl-python/README.md) | Python — native runtime + package | PyPI `decl-lang` | the static checker and the evaluator natively, plus a Python API; `fmt` / `decl-lsp` through the bundled reference |
+| [`decl-typescript/`](decl-typescript/README.md) | TypeScript — the **reference implementation** | npm `decl-lang` | the whole language: parser binding, static checker, evaluator, validation, packages, formatter, `decl-lsp`; plus the browser bundle for the website |
+| [`decl-rust/`](decl-rust/README.md) | Rust — native implementation | crates.io `decl-lang` | the whole language, natively: `decl check` / `evaluate` / `validate` / `fmt`, packages, and `decl-lsp` — no Node or wasm |
+| [`decl-python/`](decl-python/README.md) | Python — native implementation + API | PyPI `decl-lang` | the whole language, natively: `decl check` / `evaluate` / `validate` / `fmt`, packages, `decl-lsp`, and a Python API — no Node.js |
 | `tree-sitter-decl/` | C (tree-sitter) | — | the one grammar every implementation compiles or loads |
 | `tests/` | — | — | the shared conformance corpus (`validation/`, `modules/`, `packages/`) and the parity harness (`parity/`) |
 
 Each implementation mirrors the same module layout (`parse`, `semantics`,
-`subsume`, `engine`, `module`, `cli`), so a rule of the language lives in
-the same-named file in all three. A change to the language's behavior
+`subsume`, `infer`, `checker`, `engine`, `module`, `package`, `fmt`, `lsp`,
+`cli`), so a rule of the language lives in the same-named file in all three. A change to the language's behavior
 lands in all three in one change, and the gate is:
 
 ```bash
 make verify        # each implementation's tests, then tests/parity/differential.py
 ```
 
-The parity harness evaluates every output-bearing example and fixture
-with the Rust and Python runtimes and diffs their reports — `ok`,
-canonical JSON, diagnostics — byte for byte against the reference, then
-does the same for documents bound to `input` roots. CI runs it on every
-push (`.github/workflows/verify.yml`). The formatter, the language
-server, and packages exist only in the reference today; that gap is
-tracked in [ROADMAP.md](ROADMAP.md).
+The parity harness diffs the Rust and Python implementations against the
+reference byte for byte: static diagnostics over every fixture and
+example (`check`), evaluation reports (`ok`, canonical JSON,
+diagnostics) over every output-bearing module, documents bound to
+`input` roots, formatter output for every parseable module, package
+resolution and lock diagnostics, and one scripted language-server
+session. CI runs it on every push (`.github/workflows/verify.yml`). Only
+the browser bundle of the website is reference-only.
 
 ## Status
 

@@ -662,7 +662,7 @@ impl Engine {
         Ok(v)
     }
 
-    fn resolve_segs(&self, segs: &[Seg]) -> R<Value> {
+    pub fn resolve_segs(&self, segs: &[Seg]) -> R<Value> {
         let mut cur = match segs.first() {
             Some(Seg::Name(n)) => self.env.root(n).unwrap_or(Value::Undef),
             _ => Value::Undef,

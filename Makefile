@@ -5,6 +5,7 @@
 #                      runtime, and the Python runtime are indistinguishable
 #   make parity        only the cross-implementation differential
 #   make test-<lang>   one implementation (typescript | rust | python)
+#   make site          the website (sync docs, copy the playground bundle, render)
 #
 # Layout: decl-typescript (npm workspace member `decl-lang`),
 # decl-rust (Cargo workspace member), decl-python (pip).
@@ -35,6 +36,7 @@ build-rust:
 	cargo build --release
 
 test-rust: build-rust
+	cargo test --release
 	target/release/decl validate tests/validation
 
 # ---- Python (native runtime + package) ----

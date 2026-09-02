@@ -53,19 +53,19 @@ decl validate services.decl --input deployed=prod.json
     ```bash
     npm install -g decl-lang
     ```
-    The reference implementation: checker, evaluator, formatter, and the `decl-lsp` language server (Node.js ≥ 20).
+    The TypeScript reference implementation: `decl` and the `decl-lsp` language server (Node.js ≥ 20).
   </TabItem>
   <TabItem label="pip">
     ```bash
     pip install decl-lang
     ```
-    Native Python implementation of `check` / `evaluate` / `validate` plus a Python API; `fmt` and the language server run the bundled reference.
+    The native Python implementation: `decl`, `decl-lsp`, and a Python API — no Node.js.
   </TabItem>
   <TabItem label="cargo">
     ```bash
     cargo install decl-lang
     ```
-    Native Rust implementation: `decl check`, `decl evaluate`, and `decl validate` with no Node or wasm.
+    The native Rust implementation: `decl` and `decl-lsp` with no Node or wasm.
   </TabItem>
   <TabItem label="brew">
     ```bash

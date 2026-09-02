@@ -31,6 +31,7 @@ console.log('== canonical-form spot checks ==');
     ['blank lines collapse', 'const a = 1\n\n\n\nconst b = 2\n', 'const a = 1\n\nconst b = 2\n'],
     ['continuation hangs', 'type T = {\n    assert a: x > 0\nelse warn `bad`\n}\n', 'type T = {\n    assert a: x > 0\n        else warn `bad`\n}\n'],
     ['lambda spacing', 'const f = std.array.all(xs,(x)=>x>0)\n', 'const f = std.array.all(xs, (x) => x > 0)\n'],
+    ['array suffix after a record attaches', 'input s: {a: int, ...}[]\n', 'input s: { a: int, ... }[]\n'],
   ];
   for (const [name, input, want] of cases) {
     let got = '';
@@ -51,8 +52,10 @@ console.log('== idempotency + safety over the corpus ==');
     const src = readFileSync(f, 'utf8');
     if (parseSource(src).errors.length) { skipped++; continue; }   // invalid-parsing fixtures
     let once = '', twice = '';
-    try { once = format(src); twice = format(once); }
+    try { once = format(src); }
     catch { skipped++; continue; }
+    try { twice = format(once); }
+    catch (e: any) { idemFail++; console.log(`  SECOND PASS FAILS ${f.slice(root.length + 1)}: ${e.message}`); continue; }
     if (once === twice) idem++;
     else { idemFail++; console.log(`  NOT IDEMPOTENT ${f.slice(root.length + 1)}`); }
     if (parseSource(once).errors.length === 0 && tokens(once) === tokens(src)) tokenSafe++;

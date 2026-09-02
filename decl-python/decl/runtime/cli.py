@@ -1,4 +1,4 @@
-"""Native runtime CLI: `python -m decl.runtime evaluate|validate ...`.
+"""The `decl` command line: check / evaluate / validate / fmt.
 Output formats match the reference `decl` CLI byte for byte so the
 three implementations can be diffed (tests/parity/differential.py)."""
 from __future__ import annotations
@@ -9,7 +9,9 @@ import re
 import sys
 
 from .checker import check_module
+from .fmt import format_source
 from .module import load_modules, run_universe
+from .package import open_package_universe, verify_lock
 from .parse import parse_source
 from .semantics import read_json
 
@@ -24,9 +26,19 @@ def _print_diag(file: str, d: dict, collected, json_mode: bool) -> None:
     print(f"{file}: {d['severity']}{code}{id_}{at}: {d['message']}", file=sys.stderr)
 
 
+def open_universe(file: str) -> dict:
+    """The module graph of an entry file inside its package universe
+    (manifest and lock diagnostics first), as the reference CLI opens it."""
+    abs_ = os.path.abspath(file)
+    pkg = open_package_universe(abs_)
+    pre = (pkg["diags"] + verify_lock(pkg)) if pkg else []
+    r = load_modules(abs_, None, pkg["resolver"] if pkg else None)
+    return {"modules": r["modules"], "entry": r["entry"], "diags": pre + r["diags"]}
+
+
 def evaluate_file(path: str, root: str | None):
     """Returns (exit_code, value_text, diagnostics)."""
-    r = load_modules(path)
+    r = open_universe(path)
     if r["diags"] or r["entry"] is None:
         return 1, None, r["diags"]
     entry = r["entry"]
@@ -65,7 +77,7 @@ def validate_file(path: str, input_spec: str | None):
     if not checks:
         if input_spec:
             name, _, file = input_spec.partition("=")
-            r = load_modules(path)
+            r = open_universe(path)
             with open(file, encoding="utf-8") as f:
                 raw = read_json(f.read())
             if r["entry"] is not None:
@@ -80,7 +92,7 @@ def check_files(paths: list[str]) -> list:
     diagnostics and every module's static findings, tagged with their file."""
     out: list = []
     for f in paths:
-        r = load_modules(f)
+        r = open_universe(f)
         out += [dict(d, file=f) for d in r["diags"]]
         for m in r["modules"]:
             out += [dict(d, file=m.path) for d in check_module(m.decls, m.env)]
@@ -150,7 +162,7 @@ def judge_fixture(file: str, is_valid: bool) -> dict:
 
 def main(argv: list[str]) -> int:
     if not argv:
-        print("usage: python -m decl.runtime check <file>... | evaluate <file> [--root name] [--json] | validate <dir|file> [--input n=f] [--expect-errors E1,E2] [--json]", file=sys.stderr)
+        print("usage: decl check <file>... [--json] | evaluate <file> [--root name] [--json] | validate <dir|file> [--input n=f] [--expect-errors E1,E2] [--json] | fmt <file>... [--check]", file=sys.stderr)
         return 2
     cmd, args = argv[0], argv[1:]
     flags: dict = {}
@@ -182,6 +194,29 @@ def main(argv: list[str]) -> int:
         if json_mode:
             print(json.dumps(collected, ensure_ascii=False, default=str))
         return 1 if diags else 0
+    if cmd == "fmt":
+        if not pos:
+            print("usage: decl fmt <file>... [--check]", file=sys.stderr)
+            return 2
+        changed = bad = 0
+        for f in pos:
+            with open(f, encoding="utf-8") as fh:
+                src = fh.read()
+            try:
+                out = format_source(src)
+            except ValueError as e:
+                print(f"{f}: {e}", file=sys.stderr)
+                bad += 1
+                continue
+            if out != src:
+                changed += 1
+                if flags.get("check"):
+                    print(f"would reformat {f}", file=sys.stderr)
+                else:
+                    with open(f, "w", encoding="utf-8") as fh:
+                        fh.write(out)
+                    print(f"reformatted {f}", file=sys.stderr)
+        return 1 if (bad or (flags.get("check") and changed)) else 0
     if cmd == "evaluate":
         code, text, diags = evaluate_file(pos[0], flags.get("root"))
         for d in diags:

@@ -34,7 +34,7 @@ Failures never cascade: a member that fails to bind is *invalidated*, and everyt
 
 ## Editors
 
-`decl-lsp` speaks the Language Server Protocol over stdio and provides diagnostics, hover, and go-to-definition. Point your editor's generic LSP client at it for `.decl` files:
+`decl-lsp` (from any of the three packages) speaks the Language Server Protocol over stdio and provides diagnostics, hover, and go-to-definition. Point your editor's generic LSP client at it for `.decl` files:
 
 - **VS Code**: a generic LSP client extension configured with `command: decl-lsp`, `languageId: decl`.
 - **Neovim**: `vim.lsp.start({ name = 'decl', cmd = { 'decl-lsp' }, root_dir = vim.fs.root(0, { 'decl.toml', '.git' }) })` from a `FileType decl` autocommand.

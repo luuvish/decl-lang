@@ -5,20 +5,16 @@ validating structured data — a JSON superset with a strong static type
 system, constraints with first-class diagnostics, references, physical
 quantities, generics, and modules. Pure, deterministic, terminating.
 
-This package ships the `decl` command-line tool, the canonical
-formatter, the `decl-lsp` language server, and a small Python API.
-
-`decl check`, `decl evaluate`, and `decl validate` (and the
-`decl.check` / `decl.evaluate` / `decl.validate` API) run on a **native
-Python implementation** — the tree-sitter grammar compiled as a C
-extension plus a pure-Python port of the static checker and the
-evaluator, byte-identical to the reference implementation. The
-formatter and the language server run the bundled reference
-implementation (JavaScript + tree-sitter wasm) under Node.js ≥ 20.
+This package is a **native Python implementation** of the whole
+language — the tree-sitter grammar compiled as a C extension plus a
+pure-Python port of the static checker, the evaluator, packages, the
+canonical formatter, and the language server, byte-identical to the
+reference implementation. It ships the `decl` command-line tool, the
+`decl-lsp` language server, and a small Python API. No Node.js is
+involved.
 
 ```bash
-pip install decl-lang         # check/evaluate/validate need no Node; fmt/lsp use the node on your PATH
-pip install 'decl-lang[node]'      # or let pip provide Node.js too
+pip install decl-lang
 ```
 
 ## Command line

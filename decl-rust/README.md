@@ -5,9 +5,10 @@ validating structured data — a JSON superset with a strong static type
 system, constraints with first-class diagnostics, references, physical
 quantities, generics, and modules. Pure, deterministic, terminating.
 
-This crate is the **native Rust implementation**: the tree-sitter
-grammar is compiled in, and `decl` checks, evaluates, and validates
-modules with no Node.js or wasm involved.
+This crate is the **native Rust implementation** of the whole language:
+the tree-sitter grammar is compiled in, `decl` checks, evaluates,
+validates, and formats modules (packages included), and `decl-lsp` is
+the language server — no Node.js or wasm involved.
 
 ```bash
 cargo install decl-lang
@@ -22,6 +23,8 @@ decl evaluate site.decl --root site            # one output -> its canonical JSO
 decl evaluate site.decl --json                 # {"ok", "value", "diagnostics"} report
 decl validate cfg.decl --input deployed=doc.json   # bind a document to an input root
 decl validate tests/validation                 # judge a fixture corpus
+decl fmt src/*.decl                            # canonical formatting in place (--check: exit 1 if not canonical)
+decl-lsp                                       # language server over stdio
 ```
 
 Diagnostics go to stderr as `file: severity [code] id at path: message`,
@@ -30,20 +33,17 @@ was reported.
 
 ## Scope
 
-The crate covers the static checker and the evaluator: parsing, the
-static checks of chapters 3–4 (type resolution with generics and
-dimension algebra, inference, assignability, the absence discipline,
-`match` exhaustiveness), binding with lazy slots and cycle detection,
-`$referrers`, assertions with diagnostic templates, and canonical
-serialization. Its output is
+The crate covers the whole language: parsing, the static checks of
+chapters 3–4 (type resolution with generics and dimension algebra,
+inference, assignability, the absence discipline, `match`
+exhaustiveness), binding with lazy slots and cycle detection,
+`$referrers`, assertions with diagnostic templates, canonical
+serialization, modules and packages (`decl.toml`, `decl.lock`), the
+canonical formatter, and the language server. Its output is
 byte-identical to the reference implementation — the repository's
 parity harness (`tests/parity/differential.py`, run by `make verify`)
 diffs the Rust and Python runtimes against the reference over every
 example and fixture that produces output.
-
-The formatter and the language server live in the reference
-implementation (`npm install -g decl-lang`, or
-`pip install decl-lang`): use those for `decl fmt` and `decl-lsp`.
 
 ## Building from source
 

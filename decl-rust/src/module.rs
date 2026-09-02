@@ -1,7 +1,9 @@
-//! Module loading, linking, and universe evaluation (module.ts) —
-//! relative imports; package specifiers report E3010 for now.
+//! Module loading, linking, and universe evaluation (module.ts, §8.1–8.5,
+//! §8.8): files are modules, the import graph is acyclic, exports are
+//! explicit; packages (§8.6–8.7) plug in through the resolver hook.
 use crate::ast::*;
 use crate::engine::Engine;
+use crate::package::Resolver;
 use crate::parse::parse_source;
 use crate::semantics::*;
 use std::cell::RefCell;
@@ -27,6 +29,8 @@ struct Loader {
     order: Vec<Rc<Module>>,
     visiting: Vec<PathBuf>,
     diags: Vec<Diag>,
+    resolver: Option<Resolver>,
+    overrides: HashMap<PathBuf, String>,
 }
 
 impl Loader {
@@ -37,8 +41,17 @@ impl Loader {
         if spec.starts_with("./") || spec.starts_with("../") {
             return Some(normalize(&from_dir.join(spec)));
         }
-        self.report("E3010", format!("package import \"{spec}\" outside a package (no manifest)"));
-        None
+        let Some(resolver) = self.resolver.clone() else {
+            self.report("E3010", format!("package import \"{spec}\" outside a package (no manifest)"));
+            return None;
+        };
+        match resolver(spec, from_dir) {
+            Ok(p) => Some(p),
+            Err((code, message)) => {
+                self.report(&code, message);
+                None
+            }
+        }
     }
     fn load(&mut self, path: &Path) -> Option<Rc<Module>> {
         let abs = normalize(&std::path::absolute(path).unwrap_or_else(|_| path.to_path_buf()));
@@ -50,12 +63,15 @@ impl Loader {
             self.report("E3007", format!("module import cycle: {}", cycle.join(" -> ")));
             return None;
         }
-        let src = match std::fs::read_to_string(&abs) {
-            Ok(s) => s,
-            Err(_) => {
-                self.report("E3004", format!("module not found: {}", abs.display()));
-                return None;
-            }
+        let src = match self.overrides.get(&abs) {
+            Some(s) => s.clone(),
+            None => match std::fs::read_to_string(&abs) {
+                Ok(s) => s,
+                Err(_) => {
+                    self.report("E3004", format!("module not found: {}", abs.display()));
+                    return None;
+                }
+            },
         };
         let parsed = parse_source(&src);
         if !parsed.errors.is_empty() {
@@ -167,8 +183,17 @@ fn normalize(p: &Path) -> PathBuf {
     out
 }
 
-pub fn load_modules(entry: &Path) -> LoadResult {
-    let mut ld = Loader { modules: HashMap::new(), order: vec![], visiting: vec![], diags: vec![] };
+/// `resolver` maps package specifiers to paths (packages, §8.6);
+/// `overrides` maps absolute paths to buffer contents (editors)
+pub fn load_modules(entry: &Path, resolver: Option<&Resolver>, overrides: Option<&HashMap<PathBuf, String>>) -> LoadResult {
+    let mut ld = Loader {
+        modules: HashMap::new(),
+        order: vec![],
+        visiting: vec![],
+        diags: vec![],
+        resolver: resolver.cloned(),
+        overrides: overrides.cloned().unwrap_or_default(),
+    };
     let entry_m = ld.load(entry);
     if let Some(e) = &entry_m {
         link_universe(&ld.order, e, &mut ld.diags);

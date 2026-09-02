@@ -38,9 +38,9 @@ Sibling repositories used as reference (do not modify from here):
 
 | Directory | Role | Package |
 |---|---|---|
-| `decl-typescript/` | the **reference implementation**: parser binding, static checker, evaluator, formatter, `decl-lsp`, packages, browser bundle | npm `decl-lang` |
-| `decl-rust/` | native checker + runtime (check / evaluate / validate) | crates.io `decl-lang` |
-| `decl-python/` | native checker + runtime (check / evaluate / validate) + Python API; `fmt`/`lsp` delegate to the bundled reference | PyPI `decl-lang` |
+| `decl-typescript/` | the **reference implementation**: the whole language (parser binding, checker, evaluator, packages, formatter, `decl-lsp`) plus the browser bundle for the website | npm `decl-lang` |
+| `decl-rust/` | the whole language natively: `decl` (check / evaluate / validate / fmt, packages) and `decl-lsp` | crates.io `decl-lang` |
+| `decl-python/` | the whole language natively: `decl`, `decl-lsp`, and a Python API — no Node.js | PyPI `decl-lang` |
 | `tree-sitter-decl/` | the single grammar all three use | — |
 | `tests/` | shared corpus (`validation/`, `modules/`, `packages/`) and the parity harness (`parity/`) | — |
 
@@ -62,9 +62,12 @@ in the same-named file everywhere:
 | subsumption ⊑ | `subsume.ts` | `subsume.rs` | `subsume.py` |
 | binding, evaluation, validation, serialization | `engine.ts` | `engine.rs` | `engine.py` |
 | modules and the universe | `module.ts` | `module.rs` | `module.py` |
-| command line | `cli.ts` | `cli.rs` (+ `main.rs`) | `cli.py` (+ `__main__.py`) |
+| packages: manifest, resolver, lock | `package.ts` | `package.rs` | `package.py` |
 | static checker, expression inference | `checker.ts`, `infer.ts` | `checker.rs`, `infer.rs` | `checker.py`, `infer.py` |
-| formatter, LSP, packages, web bundle | `fmt.ts`, `lsp.ts`, `package.ts`, `web.ts` | — | — |
+| canonical formatter | `fmt.ts` | `fmt.rs` | `fmt.py` |
+| language server (stdio) | `lsp.ts` | `lsp.rs` (+ `lsp_main.rs`) | `lsp.py` |
+| command line | `cli.ts` | `cli.rs` (+ `main.rs`) | `cli.py` (+ `__main__.py`) |
+| browser bundle for the website | `web.ts` | — | — |
 
 Rules:
 
@@ -76,8 +79,9 @@ Rules:
   which diffs the Rust and Python implementations against the reference
   byte for byte: `check --json` (codes and messages) over every fixture
   and example, `evaluate --json` (`ok`, canonical JSON, diagnostics)
-  over every output-bearing module, and documents bound to `input`
-  roots. CI runs the same gate (`.github/workflows/verify.yml`).
+  over every output-bearing module, documents bound to `input` roots,
+  `fmt` output over every parseable module, package resolution and lock
+  diagnostics, and one scripted `decl-lsp` session. CI runs the same gate (`.github/workflows/verify.yml`).
 - A parity difference is a defect in whichever side diverges from the
   specification — fix the implementation, never the expectation.
 

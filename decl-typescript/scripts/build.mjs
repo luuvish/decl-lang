@@ -3,8 +3,8 @@
 // Node 20+, plus the browser bundle (dist/web.js — `decl-lang/web`, what
 // the website's playground runs) with Node built-ins shimmed; ship both
 // wasm files next to them; carry the repository LICENSE into the package
-// root; and mirror dist/ and the grammar sources into the sibling Python
-// and Rust packages so every channel ships the same bytes.
+// root; and copy the grammar sources into the sibling Python and Rust
+// packages, which compile them natively.
 import { build } from 'esbuild';
 import { mkdirSync, copyFileSync, existsSync, rmSync, readdirSync } from 'node:fs';
 import { join, dirname, basename, resolve } from 'node:path';
@@ -55,11 +55,7 @@ copyFileSync(runtimeWasm, 'dist/tree-sitter.wasm');
 if (existsSync(join(REPO, 'LICENSE'))) copyFileSync(join(REPO, 'LICENSE'), 'LICENSE');
 
 // the sibling packages (decl-python, decl-rust)
-const py = '../decl-python/decl/_js';
 if (existsSync('../decl-python/decl')) {
-  rmSync(py, { recursive: true, force: true });
-  mkdirSync(py, { recursive: true });
-  for (const f of readdirSync('dist')) copyFileSync(join('dist', f), join(py, f));
   copyFileSync(join(REPO, 'LICENSE'), '../decl-python/LICENSE');
   // the grammar C sources for the native Python parser extension
   const gsrc = join(GRAMMAR, 'src'), gdst = '../decl-python/decl/_tree_sitter/src';
@@ -77,4 +73,4 @@ if (existsSync('../decl-python/decl')) {
     copyFileSync(join(REPO, 'LICENSE'), '../decl-rust/LICENSE');
   }
 }
-console.log('built dist/ (cli.js, lsp.js, index.js, web.js, tree-sitter-decl.wasm, tree-sitter.wasm)' + (existsSync(py) ? ' + mirrored to decl-python/decl/_js' : ''));
+console.log('built dist/ (cli.js, lsp.js, index.js, web.js, tree-sitter-decl.wasm, tree-sitter.wasm) + grammar sources synced to decl-python and decl-rust');

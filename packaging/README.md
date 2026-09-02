@@ -14,31 +14,28 @@ import name in Python is `decl`, and the binary is `decl` everywhere.
 
 npm and Homebrew ship **the same bytes**: `decl-typescript/dist/` — the esbuild
 bundles of the CLI, LSP server, and library (web-tree-sitter included,
-zero runtime dependencies) plus the two wasm files. PyPI ships those
-bytes too, alongside its native runtime; crates.io is the native Rust
-runtime alone. Every channel's smoke test drives the installed `decl`
+zero runtime dependencies) plus the two wasm files. PyPI and crates.io
+ship the native Python and Rust implementations of the same language. Every channel's smoke test drives the installed `decl`
 binary the way a user would, and the native runtimes are held
 byte-identical to the reference by `tests/parity/differential.py`
 (`--rust` for the crate).
 
 ## PyPI — `decl-lang`
 
-`decl-python/` is a Python package with a native core: `decl.runtime` is a
-pure-Python port of the static checker and the evaluator (`decl check`
-/ `decl evaluate` / `decl validate`, `decl.check` / `decl.evaluate` /
-`decl.validate`), and `decl._tree_sitter` compiles the grammar's C
-sources into a small extension module. The console scripts `decl` /
-`decl-lsp` hand the formatter and the language server to the bundled
-JavaScript under Node.js ≥ 20; the API's `decl.format_source` does the
-same. Node comes from `$DECL_NODE`, the optional
+`decl-python/` is a fully native Python implementation: `decl.runtime` is
+a pure-Python port of the whole language (checker, evaluator, packages,
+formatter, language server) behind the console scripts `decl` /
+`decl-lsp` and the API (`decl.check` / `decl.evaluate` /
+`decl.validate` / `decl.format_source`), and `decl._tree_sitter`
+compiles the grammar's C sources into a small extension module. No
+Node.js is involved. Node comes from `$DECL_NODE`, the optional
 `nodejs-wheel-binaries` dependency (`pip install 'decl-lang[node]'`), or
-`PATH`. `npm run build` in `decl-typescript/` mirrors `dist/` into
-`decl-python/decl/_js/` and the grammar sources into
-`decl-python/decl/_tree_sitter/src/` (both gitignored, included in the
-wheel/sdist as build artifacts).
+`npm run build` in `decl-typescript/` copies the grammar sources into
+`decl-python/decl/_tree_sitter/src/` (gitignored; `setup.py` copies them
+itself from a fresh checkout).
 
 ```bash
-npm run build -w decl-lang                     # refreshes decl-python/decl/_js and the grammar sources
+npm run build -w decl-lang                     # refreshes the grammar sources
 cd ../python
 python -m build                                # platform wheel (C extension) + sdist
 make -C ../.. parity                              # the three implementations byte-identical (tests/parity)
@@ -55,8 +52,9 @@ The sdist needs a C compiler at install time; publish platform wheels
 `decl-rust/` is the native Rust implementation: the grammar is compiled in by
 `build.rs` (from `../tree-sitter-decl/src` inside the repository, or
 from `grammar/` in the published crate — `npm run build` in `decl-typescript/`
-copies the sources there), and the `decl` binary offers `check`,
-`evaluate`, and `validate` with the reference CLI's exact output format.
+copies the sources there); the `decl` binary offers `check`, `evaluate`,
+`validate`, and `fmt` with the reference CLI's exact output format, and
+`decl-lsp` is the language server.
 
 ```bash
 npm run build -w decl-lang                     # refreshes decl-rust/grammar and decl-rust/LICENSE

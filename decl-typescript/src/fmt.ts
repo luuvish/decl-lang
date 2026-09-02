@@ -59,8 +59,8 @@ function spaced(a: Leaf, b: Leaf, prev: Leaf | null): boolean {
     return !(KEYWORDY.test(at) && !isKeyword(at)) && at !== ')' && at !== ']' && !isTypeAngle(a);
   }
   if (bt === '[') {
-    // index/size brackets attach; array literals stand off
-    return !(KEYWORDY.test(at) || at === ')' || at === ']' || isTypeAngle(a));
+    // index/size brackets attach (also after a record type or literal: `{...}[]`); array literals stand off
+    return !(KEYWORDY.test(at) || at === ')' || at === ']' || at === '}' || isTypeAngle(a));
   }
   if (at === '{' || bt === '}') return true;                     // { a: 1 }
   if (bt === '{' || at === '}') return true;

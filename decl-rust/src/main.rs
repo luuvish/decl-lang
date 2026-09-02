@@ -1,14 +1,4 @@
-//! The `decl` binary — the native Rust runtime's command line (cli.rs).
-mod ast;
-mod checker;
-mod cli;
-mod engine;
-mod infer;
-mod module;
-mod parse;
-mod semantics;
-mod subsume;
-
+//! The `decl` binary — check / evaluate / validate / fmt (cli.rs).
 fn main() {
-    std::process::exit(cli::main(std::env::args().skip(1).collect()));
+    std::process::exit(decl_lang::cli::main(std::env::args().skip(1).collect()));
 }

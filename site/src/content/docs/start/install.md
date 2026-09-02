@@ -9,18 +9,18 @@ The `decl` command ships through four channels. Registry package names differ wh
 
 | Channel | Install | What you get |
 |---|---|---|
-| npm | `npm install -g decl-lang` | The reference implementation: `decl` (check, evaluate, validate, fmt) and `decl-lsp`. Needs Node.js ≥ 20. |
-| PyPI | `pip install decl-lang` | A native Python implementation of `check` / `evaluate` / `validate` and a Python API. `fmt` / `decl-lsp` run the bundled reference under Node (`pip install 'decl-lang[node]'` lets pip provide Node). |
-| crates.io | `cargo install decl-lang` | A native Rust implementation: `decl check`, `decl evaluate`, and `decl validate`, no Node or wasm. |
+| npm | `npm install -g decl-lang` | The TypeScript reference implementation: `decl` (check, evaluate, validate, fmt) and `decl-lsp`. Needs Node.js ≥ 20. |
+| PyPI | `pip install decl-lang` | The native Python implementation: `decl` (check, evaluate, validate, fmt), `decl-lsp`, and a Python API. No Node.js. |
+| crates.io | `cargo install decl-lang` | The native Rust implementation: `decl` (check, evaluate, validate, fmt) and `decl-lsp`, no Node or wasm. |
 | Homebrew | `brew install luuvish/tap/decl-lang` | The npm package through a tap. |
 
-All channels produce **byte-identical output**: the native runtimes are held to the reference by a differential test over every example and fixture in the repository.
+All channels produce **byte-identical output**: the three implementations are held together by a differential test over every example and fixture in the repository — diagnostics, evaluated JSON, formatter output, packages, and a language-server session.
 
 ## Which one?
 
-- **Editing Decl or running a full toolchain** (static checks, formatting, an editor server): npm or Homebrew.
-- **Embedding evaluation in a Python project**: PyPI — `decl.evaluate("site.decl", root="site")` returns plain dicts and lists.
-- **A single static binary for CI or deployment**: crates.io.
+- **Node.js already around**: npm or Homebrew — the reference implementation itself.
+- **Python projects**: PyPI — the same toolchain plus `decl.evaluate("site.decl", root="site")` returning plain dicts and lists.
+- **A single static binary for CI, editors, or deployment**: crates.io.
 
 ## From source
 

@@ -8,8 +8,7 @@ __pycache__/
 # decl-typescript: packed tarballs and the LICENSE copied in by the build
 decl-typescript/*.tgz
 decl-typescript/LICENSE
-# decl-python: the mirrored reference bundle, grammar sources, and the extension
-decl-python/decl/_js/
+# decl-python: grammar sources and the extension
 decl-python/decl/_tree_sitter/src/
 decl-python/decl/_tree_sitter/*.so
 decl-python/LICENSE

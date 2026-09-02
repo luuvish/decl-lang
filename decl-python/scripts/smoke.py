@@ -1,6 +1,6 @@
 """Smoke-test the Python package the way a user gets it: build the wheel,
 install it into a fresh venv, and drive the installed `decl` console
-script and the `decl` API (Node from PATH or from `decl[node]`)."""
+script and the `decl` API — fully native, no Node.js involved."""
 from __future__ import annotations
 
 import json

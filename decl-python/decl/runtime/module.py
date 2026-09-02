@@ -1,6 +1,6 @@
 """Module loading, linking, and universe evaluation — port of module.ts
-(relative imports; package specifiers report E3010 until the package
-layer is ported)."""
+(§8.1–8.5, §8.8): files are modules, the import graph is acyclic, exports
+are explicit; packages (§8.6–8.7) plug in through the resolver hook."""
 from __future__ import annotations
 
 import os
@@ -19,7 +19,11 @@ class Module:
         self.exports: dict = {}
 
 
-def load_modules(entry_path: str, source_override: Optional[dict] = None) -> dict:
+def load_modules(entry_path: str, source_override: Optional[dict] = None, resolve_package=None) -> dict:
+    """Load the module graph from `entry_path`. `source_override` maps
+    absolute paths to buffer contents (editors); `resolve_package(spec,
+    from_dir)` maps a package specifier to a path or to a `{code, message}`
+    diagnostic (packages, §8.6)."""
     diags: list = []
 
     def report(code: str, message: str) -> None:
@@ -32,7 +36,13 @@ def load_modules(entry_path: str, source_override: Optional[dict] = None) -> dic
     def resolve_spec(spec: str, from_dir: str) -> Optional[str]:
         if spec.startswith("./") or spec.startswith("../"):
             return os.path.normpath(os.path.join(from_dir, spec))
-        report("E3010", f'package import "{spec}" outside a package (no manifest)')
+        if resolve_package is None:
+            report("E3010", f'package import "{spec}" outside a package (no manifest)')
+            return None
+        r = resolve_package(spec, from_dir)
+        if isinstance(r, str):
+            return r
+        report(r["code"], r["message"])
         return None
 
     def load(path: str) -> Optional[Module]:

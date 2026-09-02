@@ -8,9 +8,12 @@ implementation's `check --json` must report the same static diagnostics
 (codes and messages); over every module with outputs, `evaluate --json`
 must carry the same `ok`, byte-identical canonical output, and the same
 diagnostics; and binding documents to input roots (`validate --input`)
-must yield the same root-cause diagnostics. The reference is the oracle;
-both natives are diffed against it, which makes the three pairwise
-identical.
+must yield the same root-cause diagnostics; `fmt` must produce the same
+bytes for every parseable module; packages (manifests, the resolver, the
+lock) must report the same diagnostics; and the language servers must
+answer one scripted editor session identically. The reference is the
+oracle; both natives are diffed against it, which makes the three
+pairwise identical.
 
     python tests/parity/differential.py                 # rust and python vs reference
     python tests/parity/differential.py --only rust     # one runtime
@@ -38,10 +41,13 @@ only = None
 if "--only" in sys.argv:
     only = sys.argv[sys.argv.index("--only") + 1]
 RUNTIMES: dict[str, list[str]] = {}
+LSP_SERVERS: dict[str, list[str]] = {}
 if only in (None, "rust"):
     RUNTIMES["rust"] = [str(RUST_BIN)]
+    LSP_SERVERS["rust"] = [str(ROOT / "target/release/decl-lsp")]
 if only in (None, "python"):
     RUNTIMES["python"] = [PYTHON, "-m", "decl.runtime"]
+    LSP_SERVERS["python"] = [PYTHON, "-m", "decl.runtime.lsp"]
 if not RUNTIMES:
     sys.exit(f"unknown runtime {only!r} (rust | python)")
 
@@ -179,6 +185,147 @@ for label, decl, name, doc in cases:
         verdicts[n] = codes(ref) == codes(nat)
         detail[n] = f"ref={codes(ref)} | {n}={codes(nat)}"
     row(f"{label} ({len(ref)} diagnostic(s))", verdicts, detail)
+
+# ---------------------------------------------------------------- fmt
+fmt_files: list[Path] = []
+for d in ("tests/validation", "tests/modules", "tests/packages", "docs/examples", "examples"):
+    fmt_files += sorted((ROOT / d).rglob("*.decl"))
+fmt_tmp = Path(tempfile.mkdtemp(prefix="decl-parity-fmt-"))
+
+
+def fmt_with(cmd: list[str], src: str) -> tuple:
+    p = fmt_tmp / "x.decl"
+    p.write_text(src, encoding="utf-8")
+    r = subprocess.run(cmd + ["fmt", str(p)], capture_output=True, text=True, check=False, cwd=str(ROOT))
+    return (r.returncode, p.read_text(encoding="utf-8"))
+
+
+print(f"== fmt: {len(fmt_files)} modules, byte-identical output")
+for p in fmt_files:
+    src = p.read_text(encoding="utf-8")
+    ref = fmt_with(REF, src)
+    verdicts, detail = {}, {}
+    for n, prefix in RUNTIMES.items():
+        nat = fmt_with(prefix, src)
+        verdicts[n] = ref == nat
+        detail[n] = f"ref exit {ref[0]} | {n} exit {nat[0]}" + ("" if ref[1] == nat[1] else " (text differs)")
+    row(str(p.relative_to(ROOT)), verdicts, detail)
+
+# ---------------------------------------------------------------- packages
+print("== packages: manifests, resolver, lock (check + evaluate)")
+for entry in sorted((ROOT / "tests/packages").glob("*/main.decl")):
+    for cmd_name in ("check", "evaluate"):
+        ref = report(REF, [cmd_name, str(entry), "--json"]) if cmd_name == "evaluate" else diagnostics(REF, [cmd_name, str(entry), "--json"])
+        verdicts, detail = {}, {}
+        for n, prefix in RUNTIMES.items():
+            nat = report(prefix, [cmd_name, str(entry), "--json"]) if cmd_name == "evaluate" else diagnostics(prefix, [cmd_name, str(entry), "--json"])
+            if cmd_name == "evaluate":
+                ok = ref.get("ok") == nat.get("ok") and check_key(ref.get("diagnostics", [])) == check_key(nat.get("diagnostics", []))
+                if ok and ref.get("ok"):
+                    ok = canonical(ref["value"]) == canonical(nat["value"])
+                detail[n] = f"ref={check_key(ref.get('diagnostics', []))[:2]} | {n}={check_key(nat.get('diagnostics', []))[:2]}"
+            else:
+                ok = check_key(ref) == check_key(nat)
+                detail[n] = f"ref={check_key(ref)[:2]} | {n}={check_key(nat)[:2]}"
+            verdicts[n] = ok
+        row(f"{entry.relative_to(ROOT)} ({cmd_name})", verdicts, detail)
+
+# ---------------------------------------------------------------- lsp
+import re as _re
+
+
+class LspSession:
+    """one scripted editor session; every message the server sends back is recorded"""
+
+    def __init__(self, cmd: list[str]):
+        self.p = subprocess.Popen(cmd, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, cwd=str(ROOT))
+        self.next_id = 0
+        self.log: list = []
+
+    def _send(self, msg: dict) -> None:
+        body = json.dumps(msg).encode("utf-8")
+        self.p.stdin.write(f"Content-Length: {len(body)}\r\n\r\n".encode() + body)
+        self.p.stdin.flush()
+
+    def _recv(self) -> dict:
+        header = b""
+        while not header.endswith(b"\r\n\r\n"):
+            ch = self.p.stdout.read(1)
+            if not ch:
+                raise RuntimeError("server closed")
+            header += ch
+        n = int(_re.search(rb"Content-Length: (\d+)", header).group(1))
+        return json.loads(self.p.stdout.read(n).decode("utf-8"))
+
+    def request(self, method: str, params: dict):
+        self.next_id += 1
+        self._send({"jsonrpc": "2.0", "id": self.next_id, "method": method, "params": params})
+        while True:
+            m = self._recv()
+            self.log.append(m)
+            if m.get("id") == self.next_id:
+                return m.get("result")
+
+    def notify(self, method: str, params: dict) -> None:
+        self._send({"jsonrpc": "2.0", "method": method, "params": params})
+
+    def diagnostics(self, uri: str) -> dict:
+        while True:
+            m = self._recv()
+            self.log.append(m)
+            if m.get("method") == "textDocument/publishDiagnostics" and m["params"]["uri"] == uri:
+                return m["params"]
+
+    def close(self) -> None:
+        self.p.stdin.close()
+        self.p.wait(timeout=10)
+
+
+def lsp_transcript(cmd: list[str]) -> list:
+    d = Path(tempfile.mkdtemp(prefix="decl-parity-lsp-"))
+    (d / "lib.decl").write_text("export type Service = { name: string, port: 1..65535 = 8080 }\nexport const MAX = 16\n")
+    main = d / "main.decl"
+    main.write_text("")
+    uri = main.as_uri()
+    s = LspSession(cmd)
+    out = []
+    init = s.request("initialize", {"processId": None, "rootUri": None, "capabilities": {}})
+    out.append(("initialize", init))
+    s.notify("initialized", {})
+    for i, text in enumerate(["const x = \n", "type Bad = 10..3\n", 'import { Service, MAX as LIMIT } from "./lib.decl"\nconst top = LIMIT\nexport output s: Service = { name: "a" }\n', "const dup = 1\nconst dup = 2\n"], 1):
+        if i == 1:
+            s.notify("textDocument/didOpen", {"textDocument": {"uri": uri, "languageId": "decl", "version": 1, "text": text}})
+        else:
+            s.notify("textDocument/didChange", {"textDocument": {"uri": uri, "version": i}, "contentChanges": [{"text": text}]})
+        ds = s.diagnostics(uri)["diagnostics"]
+        for x in ds:
+            x["message"] = x["message"].replace(str(d), "<dir>")
+        out.append((f"diagnostics {i}", ds))
+    s.notify("textDocument/didChange", {"textDocument": {"uri": uri, "version": 9}, "contentChanges": [{"text": 'import { Service, MAX as LIMIT } from "./lib.decl"\nconst top = LIMIT\nexport output s: Service = { name: "a" }\n'}]})
+    s.diagnostics(uri)
+    for label, pos in [("hover top", (1, 7)), ("hover LIMIT", (1, 13)), ("hover Service", (2, 19)), ("hover nothing", (0, 0))]:
+        out.append((label, s.request("textDocument/hover", {"textDocument": {"uri": uri}, "position": {"line": pos[0], "character": pos[1]}})))
+    for label, pos in [("definition Service", (2, 19)), ("definition LIMIT", (1, 13)), ("definition top", (1, 7))]:
+        r = s.request("textDocument/definition", {"textDocument": {"uri": uri}, "position": {"line": pos[0], "character": pos[1]}})
+        if r and "uri" in r:
+            r = dict(r, uri=r["uri"].replace(str(d), "<dir>").replace("%2F", "/"))   # servers encode file URIs differently
+        out.append((label, r))
+    out.append(("shutdown", s.request("shutdown", {})))
+    s.notify("exit", {})
+    s.close()
+    return out
+
+
+print("== lsp: one scripted editor session (diagnostics, hover, definition)")
+ref_t = lsp_transcript(["node", str(ROOT / "decl-typescript/src/lsp.ts")])
+nat_t = {n: lsp_transcript(cmd) for n, cmd in LSP_SERVERS.items()}
+for i, (label, ref_v) in enumerate(ref_t):
+    verdicts, detail = {}, {}
+    for n in names:
+        nat_v = nat_t[n][i][1] if i < len(nat_t[n]) else None
+        verdicts[n] = canonical(ref_v) == canonical(nat_v)
+        detail[n] = f"ref={canonical(ref_v)[:160]} | {n}={canonical(nat_v)[:160]}"
+    row(f"lsp: {label}", verdicts, detail)
 
 print(f"\n{same} identical, {diff} different (reference vs {', '.join(names)})")
 sys.exit(1 if diff else 0)

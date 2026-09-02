@@ -1,16 +1,33 @@
-//! `decl check` / `decl evaluate` / `decl validate` (cli.ts). Output is byte-identical to
+//! `decl check` / `decl evaluate` / `decl validate` / `decl fmt` (cli.ts). Output is byte-identical to
 //! the reference implementation's CLI so the three implementations can
 //! be diffed (tests/parity/differential.py).
 use crate::checker::check_module;
-use crate::module::{load_modules, run_pipeline, run_universe, Bind};
+use crate::fmt::format;
+use crate::module::{load_modules, run_pipeline, run_universe, Bind, LoadResult};
+use crate::package::{open_package_universe, verify_lock};
 use crate::parse::parse_source;
 use crate::semantics::{json_str, read_json, Diag};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
 fn usage() -> i32 {
-    eprintln!("usage:\n  decl check <file>... [--json]\n  decl evaluate <file> [--root <name>] [--json]\n  decl validate <dir>\n  decl validate <file> [--input name=doc.json] [--expect-errors E1,E2] [--json]");
+    eprintln!("usage:\n  decl check <file>... [--json]\n  decl evaluate <file> [--root <name>] [--json]\n  decl validate <dir>\n  decl validate <file> [--input name=doc.json] [--expect-errors E1,E2] [--json]\n  decl fmt <file>... [--check]");
     2
+}
+
+/// the module graph of an entry file inside its package universe
+/// (manifest and lock diagnostics first), as the reference CLI opens it
+pub fn open_universe(file: &str) -> LoadResult {
+    let abs = std::path::absolute(file).unwrap_or_else(|_| PathBuf::from(file));
+    let pkg = open_package_universe(&abs);
+    let mut diags: Vec<Diag> = vec![];
+    if let Some(u) = &pkg {
+        diags.extend(u.diags.clone());
+        diags.extend(verify_lock(u));
+    }
+    let r = load_modules(&abs, pkg.as_ref().map(|u| &u.resolver), None);
+    diags.extend(r.diags);
+    LoadResult { modules: r.modules, entry: r.entry, diags }
 }
 
 fn print_diag(file: &str, d: &Diag, json: bool, collected: &mut Vec<String>) {
@@ -30,7 +47,7 @@ fn print_diag(file: &str, d: &Diag, json: bool, collected: &mut Vec<String>) {
 
 /// (exit code, canonical JSON text, diagnostics)
 pub fn evaluate(file: &str, root: Option<&str>) -> (i32, Option<String>, Vec<Diag>) {
-    let r = load_modules(Path::new(file));
+    let r = open_universe(file);
     let Some(entry) = r.entry else { return (1, None, r.diags) };
     if !r.diags.is_empty() {
         return (1, None, r.diags);
@@ -77,7 +94,7 @@ pub fn validate_file(file: &str, input: Option<&str>) -> Result<Vec<Diag>, usize
     let mut diags = checks.clone();
     if checks.is_empty() {
         if let Some(spec) = input {
-            let r = load_modules(Path::new(file));
+            let r = open_universe(file);
             if let (Some(entry), Some((name, path))) = (r.entry, spec.split_once('=')) {
                 let text = std::fs::read_to_string(path).unwrap_or_default();
                 let mut binds = vec![];
@@ -99,7 +116,7 @@ pub fn validate_file(file: &str, input: Option<&str>) -> Result<Vec<Diag>, usize
 pub fn check_files(paths: &[String]) -> Vec<(String, Diag)> {
     let mut out = vec![];
     for f in paths {
-        let r = load_modules(Path::new(f));
+        let r = open_universe(f);
         out.extend(r.diags.into_iter().map(|d| (f.clone(), d)));
         for m in &r.modules {
             let path = m.path.display().to_string();
@@ -153,14 +170,14 @@ fn judge_fixture(file: &Path, is_valid: bool) -> (Option<bool>, String) {
     }
 }
 
-fn walk(dir: &Path, out: &mut Vec<PathBuf>) {
+pub fn walk_decl(dir: &Path, out: &mut Vec<PathBuf>) {
     let Ok(rd) = std::fs::read_dir(dir) else { return };
     let mut entries: Vec<_> = rd.flatten().collect();
     entries.sort_by_key(|e| e.file_name());
     for e in entries {
         let p = e.path();
         if p.is_dir() {
-            walk(&p, out);
+            walk_decl(&p, out);
         } else if p.extension().map(|x| x == "decl").unwrap_or(false) {
             out.push(p);
         }
@@ -224,7 +241,7 @@ pub fn main(args: Vec<String>) -> i32 {
             let tp = Path::new(target);
             if tp.is_dir() {
                 let mut files = vec![];
-                walk(tp, &mut files);
+                walk_decl(tp, &mut files);
                 let (mut ok, mut fail) = (0, 0);
                 for f in files {
                     let is_valid = f.to_string_lossy().contains("/valid/");
@@ -271,6 +288,33 @@ pub fn main(args: Vec<String>) -> i32 {
                 }
                 if err_codes.is_empty() { 0 } else { 1 }
             }
+        }
+        "fmt" => {
+            if pos.is_empty() {
+                return usage();
+            }
+            let (mut changed, mut bad) = (0, 0);
+            for f in &pos {
+                let src = std::fs::read_to_string(f).unwrap_or_default();
+                let out = match format(&src) {
+                    Ok(o) => o,
+                    Err(e) => {
+                        eprintln!("{f}: {e}");
+                        bad += 1;
+                        continue;
+                    }
+                };
+                if out != src {
+                    changed += 1;
+                    if flags.contains_key("check") {
+                        eprintln!("would reformat {f}");
+                    } else {
+                        let _ = std::fs::write(f, out);
+                        eprintln!("reformatted {f}");
+                    }
+                }
+            }
+            if bad > 0 || (flags.contains_key("check") && changed > 0) { 1 } else { 0 }
         }
         _ => usage(),
     }
