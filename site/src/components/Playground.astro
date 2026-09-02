@@ -6,8 +6,9 @@
 const base = import.meta.env.BASE_URL;
 ---
 
-<div class="pg not-content" data-base={base}>
-  <div class="pg-bar">
+<div class="pg-frame not-content">
+<div class="pg" data-base={base}>
+  <div class="pg-head pg-bar">
     <label class="pg-sample">
       <span>Example</span>
       <select id="pg-sample" aria-label="Load an example"></select>
@@ -15,19 +16,20 @@ const base = import.meta.env.BASE_URL;
     <button id="pg-run" type="button">Run</button>
     <button id="pg-fmt" type="button">Format</button>
     <button id="pg-share" type="button">Copy link</button>
+  </div>
+  <div class="pg-head pg-tabbar">
+    <div class="pg-tabs" role="tablist" aria-label="Results">
+      <button type="button" role="tab" id="pg-tab-output" data-tab="output" class="active" aria-selected="true" aria-controls="pg-output">Output</button>
+      <button type="button" role="tab" id="pg-tab-diagnostics" data-tab="diagnostics" aria-selected="false" aria-controls="pg-diags">Diagnostics<span id="pg-count" class="pg-count" hidden></span></button>
+    </div>
     <span id="pg-status" class="pg-status" aria-live="polite">loading the runtime…</span>
   </div>
-  <div class="pg-body">
-    <div id="pg-editor" class="pg-editor"></div>
-    <div class="pg-out">
-      <div class="pg-tabs" role="tablist" aria-label="Results">
-        <button type="button" role="tab" id="pg-tab-output" data-tab="output" class="active" aria-selected="true" aria-controls="pg-output">Output</button>
-        <button type="button" role="tab" id="pg-tab-diagnostics" data-tab="diagnostics" aria-selected="false" aria-controls="pg-diags">Diagnostics<span id="pg-count" class="pg-count" hidden></span></button>
-      </div>
-      <pre id="pg-output" class="pg-pane" role="tabpanel" data-pane="output"></pre>
-      <div id="pg-diags" class="pg-pane pg-diags" role="tabpanel" data-pane="diagnostics" hidden></div>
-    </div>
+  <div id="pg-editor" class="pg-editor"></div>
+  <div class="pg-out">
+    <pre id="pg-output" class="pg-pane" role="tabpanel" data-pane="output"></pre>
+    <div id="pg-diags" class="pg-pane pg-diags" role="tabpanel" data-pane="diagnostics" hidden></div>
   </div>
+</div>
 </div>
 
 <script>
@@ -120,11 +122,11 @@ const base = import.meta.env.BASE_URL;
       output.textContent = 'evaluation reported errors — see Diagnostics';
       status.textContent = `${errors} error(s) · ${ms} ms`;
     } else {
-      output.textContent = rep.outputs.length
-        ? rep.outputs.map(o => `// output ${o.name}\n${pretty(o.json)}`).join('\n\n')
-        : '(no outputs declared)';
+      const parts = rep.outputs.map(o => `// output ${o.name}\n${pretty(o.json)}`);
+      if (rep.inputs.length) parts.push(`// input ${rep.inputs.join(', ')}: declared, not bound (the playground evaluates a single module)`);
+      output.textContent = parts.length ? parts.join('\n\n') : '(no outputs declared)';
       const warns = all.filter(d => d.severity !== 'error').length;
-      status.textContent = `ok · ${rep.outputs.length} output(s)${warns ? ` · ${warns} warning(s)` : ''}${rep.inputs.length ? ` · inputs not bound: ${rep.inputs.join(', ')}` : ''} · ${ms} ms`;
+      status.textContent = `ok · ${rep.outputs.length} output${rep.outputs.length === 1 ? '' : 's'}${warns ? ` · ${warns} warning${warns === 1 ? '' : 's'}` : ''} · ${ms} ms`;
     }
     const rows = [
       ...rep.parseErrors.map(e => `<li class="sev-error"><b>error</b> <code>E2001</code> syntax error at line ${e.row + 1}, column ${e.col + 1}</li>`),
@@ -198,25 +200,48 @@ const base = import.meta.env.BASE_URL;
 </script>
 
 <style>
+  /* one 2x2 grid: the header row is shared by the toolbar (over the editor)
+     and the tab strip (over the results), so the two always line up */
+  .pg-frame { margin-top: 1rem; container-type: inline-size; }
   .pg {
-    display: flex;
-    flex-direction: column;
-    gap: 0.5rem;
-    margin-top: 1rem;
-    container-type: inline-size;
+    --pg-head: 2.75rem;
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+    grid-template-rows: auto minmax(0, 1fr);
+    grid-template-areas: "bar tabs" "editor out";
+    height: calc(100vh - 17rem);
+    min-height: 32rem;
     border: 1px solid var(--sl-color-hairline);
     border-radius: 0.5rem;
     overflow: hidden;
     background: var(--sl-color-bg-nav);
   }
-  .pg-bar {
+  /* stack the panes when the playground itself (not the viewport) gets narrow */
+  @container (max-width: 56rem) {
+    .pg {
+      grid-template-columns: 1fr;
+      grid-template-rows: auto minmax(22rem, auto) auto minmax(16rem, auto);
+      grid-template-areas: "bar" "editor" "tabs" "out";
+      height: auto;
+    }
+    .pg-bar, .pg-editor { border-right: 0; }
+    .pg-editor { border-bottom: 1px solid var(--sl-color-hairline); }
+  }
+  .pg-head {
     display: flex;
-    flex-wrap: wrap;
     align-items: center;
-    gap: 0.5rem;
-    padding: 0.5rem 0.75rem;
+    min-height: var(--pg-head);
+    min-width: 0;
     border-bottom: 1px solid var(--sl-color-hairline);
+    background: var(--sl-color-bg-nav);
     font-size: 0.85rem;
+  }
+  .pg-bar {
+    grid-area: bar;
+    flex-wrap: wrap;
+    gap: 0.5rem;
+    padding: 0.35rem 0.75rem;
+    border-right: 1px solid var(--sl-color-hairline);
   }
   .pg-sample { display: flex; align-items: center; gap: 0.4rem; }
   .pg-bar select, .pg-bar button {
@@ -230,23 +255,23 @@ const base = import.meta.env.BASE_URL;
     color: var(--sl-color-text);
     cursor: pointer;
   }
+  .pg-bar select { max-width: 11rem; }
   .pg-bar button:hover { border-color: var(--sl-color-accent); }
-  .pg-status { margin-left: auto; color: var(--sl-color-gray-3); }
-  .pg-body {
-    display: grid;
-    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
-    height: calc(100vh - 19rem);
-    min-height: 30rem;
+  .pg-tabbar { grid-area: tabs; align-items: stretch; }
+  .pg-status {
+    align-self: center;
+    margin-left: auto;
+    padding: 0 0.75rem;
+    min-width: 0;
+    overflow: hidden;
+    white-space: nowrap;
+    text-overflow: ellipsis;
+    color: var(--sl-color-gray-3);
   }
-  /* stack the panes when the playground itself (not the viewport) gets narrow */
-  @container (max-width: 56rem) {
-    .pg-body { grid-template-columns: 1fr; height: auto; }
-    .pg-editor { min-height: 22rem; border-right: 0; border-bottom: 1px solid var(--sl-color-hairline); }
-    .pg-pane { min-height: 16rem; }
-  }
-  .pg-editor { border-right: 1px solid var(--sl-color-hairline); min-height: 0; }
-  /* the results: one tab strip, one visible pane */
+  .pg-editor { grid-area: editor; min-height: 0; border-right: 1px solid var(--sl-color-hairline); }
+  /* the results: one visible pane under the tab strip */
   .pg-out {
+    grid-area: out;
     display: flex;
     flex-direction: column;
     min-width: 0;
@@ -257,15 +282,13 @@ const base = import.meta.env.BASE_URL;
     align-items: stretch;
     flex: none;
     margin: 0;
-    border-bottom: 1px solid var(--sl-color-hairline);
-    background: var(--sl-color-bg-nav);
   }
   .pg-tabs [role="tab"] {
     display: inline-flex;
     align-items: center;
     gap: 0.45em;
     margin: 0;
-    padding: 0.55rem 1rem;
+    padding: 0 1rem;
     border: 0;
     border-bottom: 2px solid transparent;
     background: transparent;
