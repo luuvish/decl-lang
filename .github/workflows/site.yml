@@ -10,10 +10,12 @@ on:
       - 'docs/**'
       - 'examples/**'
       - 'site/**'
-      - 'typescript/**'
+      - 'packages/typescript/**'
+      - 'packages/python/README.md'
+      - 'packages/rust/README.md'
       - 'tree-sitter-decl/**'
-      - 'python/README.md'
-      - 'rust/README.md'
+      - 'package.json'
+      - 'package-lock.json'
       - '.github/workflows/site.yml'
   workflow_dispatch:
 
@@ -34,15 +36,12 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 24
-      - name: Install the reference implementation
-        run: npm ci
-        working-directory: typescript
-      - name: Install the site
-        run: npm ci
-        working-directory: site
-      - name: Build (sync docs, bundle the playground, render)
-        run: npm run build
-        working-directory: site
+          cache: npm
+      - run: npm ci
+      - name: Build the reference implementation (the playground bundle)
+        run: npm run build -w decl-lang
+      - name: Build the site (sync docs, copy the playground, render)
+        run: npm run build -w site
       - uses: actions/upload-pages-artifact@v3
         with:
           path: site/dist

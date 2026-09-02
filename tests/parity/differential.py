@@ -1,7 +1,7 @@
 """Parity across the three implementations.
 
-Decl ships a TypeScript reference implementation (typescript/), a Rust
-runtime (rust/), and a Python runtime (python/). They must be
+Decl ships a TypeScript reference implementation (packages/typescript), a Rust
+runtime (packages/rust), and a Python runtime (packages/python). They must be
 indistinguishable: over every module with outputs in the fixture corpus,
 the documentation examples, and the domain examples, each runtime's
 `evaluate --json` report must carry the same `ok`, byte-identical
@@ -12,10 +12,10 @@ against it, which makes the three pairwise identical.
 
     python tests/parity/differential.py                 # rust and python vs reference
     python tests/parity/differential.py --only rust     # one runtime
-    DECL_PYTHON=python/.venv/bin/python ...             # the interpreter that has `decl` installed
+    DECL_PYTHON=packages/python/.venv/bin/python ...             # the interpreter that has `decl` installed
 
-Prerequisites: `npm ci` in typescript/, `cargo build --release` in
-rust/, and the Python package importable (`make python-env`). A missing
+Prerequisites: `npm ci` at the repository root, `cargo build --release`
+(the Cargo workspace), and the Python package importable (`make python-env`). A missing
 runtime is a failure, not a skip — `make verify` is the gate.
 """
 from __future__ import annotations
@@ -28,8 +28,8 @@ import tempfile
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
-TS_CLI = ROOT / "typescript/src/cli.ts"
-RUST_BIN = ROOT / "rust/target/release/decl"
+TS_CLI = ROOT / "packages/typescript/src/cli.ts"
+RUST_BIN = ROOT / "target/release/decl"
 PYTHON = os.environ.get("DECL_PYTHON") or sys.executable
 
 only = None
@@ -51,7 +51,7 @@ def run(cmd: list[str], cwd: Path | None = None) -> str:
 
 def report(cmd_prefix: list[str], args: list[str]) -> dict:
     """{ok, value, diagnostics} of `evaluate --json`, or a marker when the run produced no report"""
-    out = run(cmd_prefix + args, cwd=ROOT / "python")
+    out = run(cmd_prefix + args, cwd=ROOT)
     try:
         return json.loads(out)
     except json.JSONDecodeError:
@@ -59,7 +59,7 @@ def report(cmd_prefix: list[str], args: list[str]) -> dict:
 
 
 def diagnostics(cmd_prefix: list[str], args: list[str]) -> list:
-    out = run(cmd_prefix + args, cwd=ROOT / "python")
+    out = run(cmd_prefix + args, cwd=ROOT)
     try:
         return json.loads(out)
     except json.JSONDecodeError:
@@ -76,12 +76,12 @@ def canonical(v) -> str:
 
 # ---------------------------------------------------------------- preflight
 missing = []
-if not TS_CLI.exists() or not (ROOT / "typescript/node_modules").exists():
-    missing.append("typescript/node_modules (run `npm ci` in typescript/)")
+if not TS_CLI.exists() or not (ROOT / "node_modules").exists():
+    missing.append("node_modules (run `npm ci` at the repository root)")
 if "rust" in RUNTIMES and not RUST_BIN.exists():
-    missing.append("rust/target/release/decl (run `cargo build --release` in rust/)")
+    missing.append("target/release/decl (run `cargo build --release`)")
 if "python" in RUNTIMES:
-    probe = subprocess.run([PYTHON, "-c", "import decl.runtime"], capture_output=True, text=True, cwd=str(ROOT / "python"))
+    probe = subprocess.run([PYTHON, "-c", "import decl.runtime"], capture_output=True, text=True, cwd=str(ROOT))
     if probe.returncode:
         missing.append(f"python package not importable by {PYTHON} (run `make python-env`): {probe.stderr.strip().splitlines()[-1] if probe.stderr.strip() else ''}")
 if missing:

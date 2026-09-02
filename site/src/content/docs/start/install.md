@@ -26,9 +26,11 @@ All channels produce **byte-identical output**: the native runtimes are held to 
 
 ```bash
 git clone https://github.com/luuvish/decl-lang
-cd decl-lang/impl && npm install && npm test        # the reference implementation
-cd ../rust && cargo build --release                  # the Rust runtime
-cd ../python && pip install -e .                     # the Python package (builds the grammar extension)
+cd decl-lang
+npm install && npm test              # the reference implementation (npm workspaces)
+cargo build --release                # the Rust runtime (Cargo workspace)
+pip install -e packages/python       # the Python package (builds the grammar extension)
+make verify                          # all three, then the parity check
 ```
 
 See the [tooling pages](/decl-lang/tooling/javascript/) for each package's API.

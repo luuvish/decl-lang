@@ -17,10 +17,9 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 24
+          cache: npm
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
-        with:
-          workspaces: rust
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'

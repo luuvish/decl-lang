@@ -1,0 +1,4 @@
+# Cargo workspace: the Rust runtime lives in packages/rust (crate `decl-lang`).
+[workspace]
+resolver = "2"
+members = ["packages/rust"]

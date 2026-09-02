@@ -17,12 +17,12 @@ Actions, once).
   (Expressive Code / Shiki); `src/components/decl-mode.ts` is the
   editor's stream mode.
 - The playground runs the reference implementation in the browser:
-  `typescript/scripts/build-web.mjs` bundles `typescript/src/web.ts` with esbuild
-  into `public/playground/decl.js` next to the two wasm files.
+  `npm run build` in packages/typescript bundles `src/web.ts` with esbuild into `dist/web.js` (`decl-lang/web`); `scripts/playground.mjs` copies it
+  to `public/playground/decl.js` next to the two wasm files.
 
 ```bash
-cd typescript && npm install            # once: the reference implementation's dependencies
-cd ../site && npm install
+npm install                       # once, at the repository root (npm workspaces)
+cd site
 npm run dev                       # sync + bundle + astro dev  (http://localhost:4321/decl-lang/)
 npm run build                     # sync + bundle + astro build -> dist/
 SITE_BASE=/ npm run build         # for a custom domain at the root

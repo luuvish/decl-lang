@@ -5,13 +5,14 @@
   "description": "The Decl language website: Starlight docs synced from ../docs, and the browser playground",
   "scripts": {
     "sync": "node scripts/sync-docs.mjs",
-    "playground": "cd ../typescript && node scripts/build-web.mjs",
+    "playground": "node scripts/playground.mjs",
     "prepare:content": "npm run sync && npm run playground",
     "dev": "npm run prepare:content && astro dev",
     "build": "npm run prepare:content && astro build --force",
     "preview": "astro preview"
   },
   "dependencies": {
+    "decl-lang": "0.2.0",
     "@astrojs/starlight": "^0.41.11",
     "@codemirror/commands": "^6.11.0",
     "@codemirror/language": "^6.12.4",

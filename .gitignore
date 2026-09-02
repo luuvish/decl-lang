@@ -2,21 +2,22 @@
 node_modules/
 dist/
 build/
-typescript/*.tgz
-python/decl/_js/
-python/LICENSE
-python/dist/
-python/build/
-python/.venv/
-*.egg-info/
+target/
 __pycache__/
-typescript/LICENSE
-python/decl/_tree_sitter/src/
-python/decl/_tree_sitter/*.so
-rust/target/
-rust/grammar/
-rust/LICENSE
-# website: generated from docs/ and typescript/ at build time (site/scripts/sync-docs.mjs)
+*.egg-info/
+# packages/typescript: packed tarballs and the LICENSE copied in by the build
+packages/typescript/*.tgz
+packages/typescript/LICENSE
+# packages/python: the mirrored reference bundle, grammar sources, and the extension
+packages/python/decl/_js/
+packages/python/decl/_tree_sitter/src/
+packages/python/decl/_tree_sitter/*.so
+packages/python/LICENSE
+packages/python/.venv/
+# packages/rust: grammar sources and LICENSE copied in by the build
+packages/rust/grammar/
+packages/rust/LICENSE
+# website: generated from docs/ and packages/typescript at build time (site/scripts/sync-docs.mjs)
 site/.astro/
 site/public/playground/
 site/src/content/docs/specification/

@@ -1,0 +1,49 @@
+{
+  "name": "decl-lang",
+  "version": "0.2.0",
+  "description": "Decl — a declarative language for describing, generating, and validating structured data. CLI (check / evaluate / validate / fmt), canonical formatter, and LSP server.",
+  "type": "module",
+  "license": "MIT",
+  "author": "luuvish",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/luuvish/decl-lang.git",
+    "directory": "packages/typescript"
+  },
+  "homepage": "https://github.com/luuvish/decl-lang#readme",
+  "bugs": {
+    "url": "https://github.com/luuvish/decl-lang/issues"
+  },
+  "keywords": ["decl", "declarative", "schema", "validation", "configuration", "json", "language", "formatter", "lsp"],
+  "bin": {
+    "decl": "dist/cli.js",
+    "decl-lsp": "dist/lsp.js"
+  },
+  "main": "dist/index.js",
+  "exports": {
+    ".": "./dist/index.js",
+    "./web": "./dist/web.js",
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "build": "node scripts/build.mjs",
+    "e2e": "node test/e2e.ts",
+    "conformance": "node src/conformance.ts",
+    "test": "node test/subsume.ts && node test/e2e.ts && node src/conformance.ts && node test/modules.ts && node test/packages.ts && node test/fmt.ts && node test/cli.ts && node test/lsp.ts && node test/domainlibs.ts && node test/fabric.ts",
+    "smoke:dist": "node scripts/smoke-dist.mjs",
+    "prepublishOnly": "npm run build && npm test && npm run smoke:dist"
+  },
+  "dependencies": {},
+  "devDependencies": {
+    "esbuild": "^0.25.12",
+    "web-tree-sitter": "^0.25.0"
+  }
+}

@@ -1,0 +1,16 @@
+{
+  "name": "decl-monorepo",
+  "private": true,
+  "description": "Decl — one language, three implementations (packages/), the shared grammar and conformance corpus, and the website",
+  "workspaces": [
+    "packages/typescript",
+    "tree-sitter-decl",
+    "site"
+  ],
+  "scripts": {
+    "build": "npm run build -w decl-lang",
+    "test": "npm test -w decl-lang",
+    "site": "npm run build -w site",
+    "verify": "make verify"
+  }
+}

@@ -8,23 +8,23 @@ and PyPI do not), so the package is `decl-lang` there and the binary is
 
 | Channel | Package | Install | Status |
 |---|---|---|---|
-| npm | `decl-lang` | `npm install -g decl-lang` | prepared (`typescript/`) |
-| PyPI | `decl` (the name is free there) | `pip install decl` / `pip install 'decl[node]'` | prepared (`python/`) |
+| npm | `decl-lang` | `npm install -g decl-lang` | prepared (`packages/typescript/`) |
+| PyPI | `decl` (the name is free there) | `pip install decl` / `pip install 'decl[node]'` | prepared (`packages/python/`) |
 | Homebrew | tap `luuvish/decl`, formula `decl` | `brew install luuvish/decl/decl` | prepared (`homebrew/`) |
-| crates.io | `decl-lang` (bin `decl`) | `cargo install decl-lang` | prepared (`rust/`, native runtime) |
+| crates.io | `decl-lang` (bin `decl`) | `cargo install decl-lang` | prepared (`packages/rust/`, native runtime) |
 
-npm and Homebrew ship **the same bytes**: `typescript/dist/` — the esbuild
+npm and Homebrew ship **the same bytes**: `packages/typescript/dist/` — the esbuild
 bundles of the CLI, LSP server, and library (web-tree-sitter included,
 zero runtime dependencies) plus the two wasm files. PyPI ships those
 bytes too, alongside its native runtime; crates.io is the native Rust
 runtime alone. Every channel's smoke test drives the installed `decl`
 binary the way a user would, and the native runtimes are held
-byte-identical to the reference by `python/scripts/differential.py`
+byte-identical to the reference by `tests/parity/differential.py`
 (`--rust` for the crate).
 
 ## PyPI — `decl`
 
-`python/` is a Python package with a native core: `decl.runtime` is a
+`packages/python/` is a Python package with a native core: `decl.runtime` is a
 pure-Python port of the evaluator (`decl evaluate` / `decl validate`,
 `decl.evaluate` / `decl.validate`), and `decl._tree_sitter` compiles
 the grammar's C sources into a small extension module. The console
@@ -33,16 +33,16 @@ the language server) to the bundled JavaScript under Node.js ≥ 20; the
 API's `decl.check` / `decl.format_source` do the same over the CLI's
 `--json` reports. Node comes from `$DECL_NODE`, the optional
 `nodejs-wheel-binaries` dependency (`pip install 'decl[node]'`), or
-`PATH`. `npm run build` in `typescript/` mirrors `dist/` into
-`python/decl/_js/` and the grammar sources into
-`python/decl/_tree_sitter/src/` (both gitignored, included in the
+`PATH`. `npm run build` in `packages/typescript/` mirrors `dist/` into
+`packages/python/decl/_js/` and the grammar sources into
+`packages/python/decl/_tree_sitter/src/` (both gitignored, included in the
 wheel/sdist as build artifacts).
 
 ```bash
-cd typescript && npm run build                       # refreshes python/decl/_js and the grammar sources
+npm run build -w decl-lang                     # refreshes packages/python/decl/_js and the grammar sources
 cd ../python
 python -m build                                # platform wheel (C extension) + sdist
-make -C .. parity                              # the three implementations byte-identical (tests/parity)
+make -C ../.. parity                              # the three implementations byte-identical (tests/parity)
 python scripts/e2e.py                          # the reference e2e scenarios on the native runtime
 python scripts/smoke.py                        # install the wheel into a venv and drive it
 python -m twine upload dist/*                  # publish (first time: create the PyPI project `decl`)
@@ -53,30 +53,30 @@ The sdist needs a C compiler at install time; publish platform wheels
 
 ## crates.io — `decl-lang`
 
-`rust/` is the native Rust runtime: the grammar is compiled in by
+`packages/rust/` is the native Rust runtime: the grammar is compiled in by
 `build.rs` (from `../tree-sitter-decl/src` inside the repository, or
-from `grammar/` in the published crate — `npm run build` in `typescript/`
+from `grammar/` in the published crate — `npm run build` in `packages/typescript/`
 copies the sources there), and the `decl` binary offers `evaluate` and
 `validate` with the reference CLI's exact output format.
 
 ```bash
-cd typescript && npm run build                       # refreshes rust/grammar and rust/LICENSE
+npm run build -w decl-lang                     # refreshes packages/rust/grammar and packages/rust/LICENSE
 cd ../rust
-cargo build --release
+cargo build --release                          # from the repository root (Cargo workspace)
 ./target/release/decl validate ../tests/validation
-make -C .. parity                              # the three implementations byte-identical (tests/parity)
+make -C ../.. parity                              # the three implementations byte-identical (tests/parity)
 cargo publish --dry-run                        # then: cargo publish (first time: cargo login)
 ```
 
 ## npm — `decl-lang`
 
-The package root is `typescript/`. `npm run build` bundles the CLI, the LSP
+The package root is `packages/typescript/`. `npm run build` bundles the CLI, the LSP
 server, and the library entry with esbuild into `dist/` (ESM, Node 20+)
 and ships the tree-sitter grammar wasm next to them; `web-tree-sitter`
 is the only runtime dependency.
 
 ```bash
-cd typescript
+cd packages/typescript
 npm run build          # dist/cli.js, dist/lsp.js, dist/index.js, dist/tree-sitter-decl.wasm
 npm test               # the ten suites
 npm run smoke:dist     # npm pack -> install into a scratch project -> drive the installed binaries
@@ -109,7 +109,7 @@ gh repo create luuvish/homebrew-decl --public --description "Homebrew tap for th
 git clone git@github.com:luuvish/homebrew-decl.git
 cp -r packaging/homebrew/Formula homebrew-decl/
 # after `npm publish`, pin the tarball checksum:
-shasum -a 256 typescript/decl-lang-0.2.0.tgz        # or: brew fetch --build-from-source ./Formula/decl.rb
+shasum -a 256 packages/typescript/decl-lang-0.2.0.tgz        # or: brew fetch --build-from-source ./Formula/decl.rb
 # edit sha256 in Formula/decl.rb, then
 cd homebrew-decl && brew install --build-from-source ./Formula/decl.rb && brew test decl
 git add Formula && git commit -m "decl 0.2.0" && git push
@@ -130,11 +130,11 @@ in core as of 2026-09-02).
 
 ## Release checklist
 
-1. Bump `version` in `typescript/package.json`, `python/pyproject.toml` and
-   `python/decl/__init__.py`, and `rust/Cargo.toml` (spec version + patch).
+1. Bump `version` in `packages/typescript/package.json`, `packages/python/pyproject.toml` and
+   `packages/python/decl/__init__.py`, and `packages/rust/Cargo.toml` (spec version + patch).
 2. `make verify` — every implementation's tests and the parity harness
    (`tests/parity/differential.py`): every line `same`.
-3. `cd typescript && npm run smoke:dist`; `cd python && python scripts/smoke.py`.
+3. `cd packages/typescript && npm run smoke:dist`; `cd packages/python && python scripts/smoke.py`.
 4. `npm publish` (first time: `npm login`; the name `decl-lang` is
    unclaimed as of 2026-09-02); `python -m twine upload dist/*`;
    `cargo publish`.
