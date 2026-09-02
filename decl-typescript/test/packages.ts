@@ -4,7 +4,7 @@
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { readFileSync, writeFileSync, appendFileSync, unlinkSync, existsSync } from 'node:fs';
-import { initParser } from '../src/parse.ts';
+import { initParser } from '../src/node.ts';
 import { loadModules, runUniverse } from '../src/module.ts';
 import { checkModule } from '../src/checker.ts';
 import { openPackageUniverse, writeLock, verifyLock, lockText } from '../src/package.ts';

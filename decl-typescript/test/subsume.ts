@@ -1,7 +1,8 @@
 // Unit tests for the subsumption judgment (§3.17) and structural
 // emptiness (§3.19), driven through the real parser + resolver so the
 // tested types are exactly what the checker sees.
-import { initParser, parseSource } from '../src/parse.ts';
+import { parseSource } from '../src/parse.ts';
+import { initParser } from '../src/node.ts';
 import { Env } from '../src/semantics.ts';
 import type { RT } from '../src/semantics.ts';
 import { subsumes, structurallyEmpty } from '../src/subsume.ts';

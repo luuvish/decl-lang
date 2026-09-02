@@ -38,7 +38,7 @@ Sibling repositories used as reference (do not modify from here):
 
 | Directory | Role | Package |
 |---|---|---|
-| `decl-typescript/` | the **reference implementation**: the whole language (parser binding, checker, evaluator, packages, formatter, `decl-lsp`) plus the browser bundle for the website | npm `decl-lang` |
+| `decl-typescript/` | the **reference implementation**: the whole language (parser binding, checker, evaluator, packages, formatter, `decl-lsp`); its platform-neutral core is also what the website's playground runs | npm `decl-lang` |
 | `decl-rust/` | the whole language natively: `decl` (check / evaluate / validate / fmt, packages) and `decl-lsp` | crates.io `decl-lang` |
 | `decl-python/` | the whole language natively: `decl`, `decl-lsp`, and a Python API — no Node.js | PyPI `decl-lang` |
 | `tree-sitter-decl/` | the single grammar all three use | — |
@@ -61,13 +61,15 @@ in the same-named file everywhere:
 | values, environment, type resolution | `semantics.ts` | `semantics.rs` | `semantics.py` |
 | subsumption ⊑ | `subsume.ts` | `subsume.rs` | `subsume.py` |
 | binding, evaluation, validation, serialization | `engine.ts` | `engine.rs` | `engine.py` |
+| single-module pipeline, source-level report (`evaluateSource`) | `pipeline.ts` | `pipeline.rs` | `pipeline.py` |
 | modules and the universe | `module.ts` | `module.rs` | `module.py` |
 | packages: manifest, resolver, lock | `package.ts` | `package.rs` | `package.py` |
 | static checker, expression inference | `checker.ts`, `infer.ts` | `checker.rs`, `infer.rs` | `checker.py`, `infer.py` |
 | canonical formatter | `fmt.ts` | `fmt.rs` | `fmt.py` |
+| corpus judgment | `conformance.ts` | `conformance.rs` | `conformance.py` |
 | language server (stdio) | `lsp.ts` | `lsp.rs` (+ `lsp_main.rs`) | `lsp.py` |
 | command line | `cli.ts` | `cli.rs` (+ `main.rs`) | `cli.py` (+ `__main__.py`) |
-| browser bundle for the website | `web.ts` | — | — |
+| platform: locating the grammar (Rust and Python compile it in; TypeScript loads a wasm, from disk in `node.ts` or from a URL) | `node.ts`, entries `core.ts` (platform-neutral) / `index.ts` (Node) | `lib.rs` | `_tree_sitter/` |
 
 Rules:
 
@@ -93,7 +95,9 @@ package READMEs by `site/scripts/sync-docs.mjs` at build time; the
 synced pages under `site/src/content/docs/` are gitignored. Never edit
 them — edit `docs/`. Hand-written pages are the landing page
 (`index.mdx`), `start/`, and `playground.mdx`. The playground bundles
-`decl-typescript/src/web.ts` for the browser (`dist/web.js`, built by `npm run build`).
+`decl-lang/core` (the reference implementation's platform-neutral entry,
+`dist/core.js` built by `npm run build`) with Vite; the grammar's wasm
+files are static assets under `site/public/playground/`.
 Every ```decl block on the site must evaluate cleanly with the reference
 implementation.
 

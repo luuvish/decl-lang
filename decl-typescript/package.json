@@ -22,7 +22,7 @@
   "main": "dist/index.js",
   "exports": {
     ".": "./dist/index.js",
-    "./web": "./dist/web.js",
+    "./core": "./dist/core.js",
     "./package.json": "./package.json"
   },
   "files": [

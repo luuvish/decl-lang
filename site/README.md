@@ -16,14 +16,15 @@ Actions, once).
 - `grammars/decl.tmLanguage.json` highlights ```decl blocks
   (Expressive Code / Shiki); `src/components/decl-mode.ts` is the
   editor's stream mode.
-- The playground runs the reference implementation in the browser:
-  `npm run build` in decl-typescript bundles `src/web.ts` with esbuild into `dist/web.js` (`decl-lang/web`); `scripts/playground.mjs` copies it
-  to `public/playground/decl.js` next to the two wasm files.
+- The playground imports `decl-lang/core` (the reference implementation's
+  platform-neutral core; Vite bundles it) and loads the grammar's two
+  wasm files, which `scripts/playground.mjs` copies into
+  `public/playground/`.
 
 ```bash
 npm install                       # once, at the repository root (npm workspaces)
 cd site
-npm run dev                       # sync + bundle + astro dev  (http://localhost:4321/decl-lang/)
-npm run build                     # sync + bundle + astro build -> dist/
+npm run dev                       # sync + wasm copy + astro dev  (http://localhost:4321/decl-lang/)
+npm run build                     # sync + wasm copy + astro build -> dist/
 SITE_BASE=/ npm run build         # for a custom domain at the root
 ```

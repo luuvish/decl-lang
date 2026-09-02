@@ -5,7 +5,8 @@ import { readFileSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { initFormatter, format } from '../src/fmt.ts';
-import { initParser, parseSource } from '../src/parse.ts';
+import { parseSource } from '../src/parse.ts';
+import { initParser } from '../src/node.ts';
 import { walkDecl } from '../src/conformance.ts';
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '../..');

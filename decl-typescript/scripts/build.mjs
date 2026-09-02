@@ -1,10 +1,10 @@
 // Build the publishable artifacts: bundle the CLI, the LSP server, and
 // the library entry (web-tree-sitter included) into dist/ as ESM for
-// Node 20+, plus the browser bundle (dist/web.js — `decl-lang/web`, what
-// the website's playground runs) with Node built-ins shimmed; ship both
-// wasm files next to them; carry the repository LICENSE into the package
-// root; and copy the grammar sources into the sibling Python and Rust
-// packages, which compile them natively.
+// Node 20+, plus the platform-neutral core (dist/core.js —
+// `decl-lang/core`, what browsers such as the website's playground
+// import); ship both wasm files next to them; carry the repository
+// LICENSE into the package root; and copy the grammar sources into the
+// sibling Python and Rust packages, which compile them natively.
 import { build } from 'esbuild';
 import { mkdirSync, copyFileSync, existsSync, rmSync, readdirSync } from 'node:fs';
 import { join, dirname, basename, resolve } from 'node:path';
@@ -30,25 +30,19 @@ await build({
   outdir: 'dist',
   logLevel: 'info',
 });
-const shim = resolve('src/web/shims.ts');
+// the core has no Node imports of its own; web-tree-sitter's emscripten
+// glue mentions Node built-ins inside `if (isNode)` branches, which stay
+// external and are never reached in a browser
 await build({
-  entryPoints: ['src/web.ts'],
+  entryPoints: ['src/core.ts'],
   bundle: true,
   platform: 'browser',
   format: 'esm',
   target: 'es2022',
   minify: true,
-  outfile: 'dist/web.js',
+  outfile: 'dist/core.js',
   logLevel: 'info',
-  plugins: [{
-    name: 'node-shims',
-    setup(b) {
-      b.onResolve(
-        { filter: /^(node:)?(fs|fs\/promises|path|url|crypto|module|worker_threads|perf_hooks|os|util|child_process)$/ },
-        () => ({ path: shim }),
-      );
-    },
-  }],
+  external: ['fs', 'fs/promises', 'path', 'url', 'crypto', 'module', 'worker_threads', 'perf_hooks', 'os', 'util', 'child_process'],
 });
 copyFileSync(join(GRAMMAR, 'tree-sitter-decl.wasm'), 'dist/tree-sitter-decl.wasm');
 copyFileSync(runtimeWasm, 'dist/tree-sitter.wasm');
@@ -73,4 +67,4 @@ if (existsSync('../decl-python/decl')) {
     copyFileSync(join(REPO, 'LICENSE'), '../decl-rust/LICENSE');
   }
 }
-console.log('built dist/ (cli.js, lsp.js, index.js, web.js, tree-sitter-decl.wasm, tree-sitter.wasm) + grammar sources synced to decl-python and decl-rust');
+console.log('built dist/ (cli.js, lsp.js, index.js, core.js, tree-sitter-decl.wasm, tree-sitter.wasm) + grammar sources synced to decl-python and decl-rust');

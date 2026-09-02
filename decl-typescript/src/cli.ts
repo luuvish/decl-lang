@@ -7,13 +7,15 @@
 //   decl fmt <files...> [--check]             canonical formatting (in place)
 import { readFileSync, writeFileSync, statSync } from 'node:fs';
 import { resolve as absPath } from 'node:path';
-import { initParser, parseSource } from './parse.ts';
+import { parseSource } from './parse.ts';
+import { initParser } from './node.ts';
 import { readJson } from './semantics.ts';
 import type { Diag } from './semantics.ts';
 import { checkModule } from './checker.ts';
 import { loadModules, runUniverse } from './module.ts';
 import { openPackageUniverse, verifyLock } from './package.ts';
-import { judgeCorpus, judgeFixture, runPipeline } from './conformance.ts';
+import { judgeCorpus, judgeFixture } from './conformance.ts';
+import { runPipeline } from './pipeline.ts';
 import { format, initFormatter } from './fmt.ts';
 
 const args = process.argv.slice(2);
@@ -121,7 +123,7 @@ async function main(): Promise<number> {
           diags = [...diags, ...ed];
           ed.forEach(d => printDiag(target, d));
         } else {
-          const ed = runPipeline(decls);
+          const ed = runPipeline(decls).diags;
           diags = [...diags, ...ed];
           ed.forEach(d => printDiag(target, d));
         }

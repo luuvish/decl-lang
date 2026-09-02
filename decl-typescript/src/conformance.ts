@@ -8,10 +8,10 @@
 import { readFileSync, readdirSync, statSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { initParser, parseSource } from './parse.ts';
-import { Env } from './semantics.ts';
-import { Engine } from './engine.ts';
+import { parseSource } from './parse.ts';
+import { initParser } from './node.ts';
 import { checkModule } from './checker.ts';
+import { runPipeline } from './pipeline.ts';
 
 export function* walkDecl(dir: string): Generator<string> {
   for (const e of readdirSync(dir).sort()) {
@@ -19,23 +19,6 @@ export function* walkDecl(dir: string): Generator<string> {
     if (statSync(p).isDirectory()) yield* walkDecl(p);
     else if (p.endsWith('.decl')) yield p;
   }
-}
-
-export function runPipeline(decls: any[]) {
-  const env = new Env();
-  env.load(decls);
-  const eng = new Engine(env);
-  for (const o of env.outputs) {
-    const sc = { inst: null, locals: new Map<string, any>(), rootName: o.name };
-    try { env.roots.set(o.name, eng.bind(eng.ev(o.expr, sc), env.resolve(o.type), [o.name], null, sc)); }
-    catch { }
-  }
-  for (const v of env.roots.values()) eng.forceAll(v, false);
-  eng.phase = 2;
-  for (let i = 0; i < eng.deferredSlots.length; i++) eng.forceSlotSafe(eng.deferredSlots[i].inst, eng.deferredSlots[i].name);
-  for (const v of env.roots.values()) eng.forceAll(v, true);
-  eng.validateAll('');
-  return env.diagnostics;
 }
 
 export type Verdict = { file: string; ok: boolean; detail: string };
@@ -56,7 +39,7 @@ export function judgeFixture(file: string, isValid: boolean): Verdict {
     // without error-severity diagnostics
     const checks = errors.length === 0 ? checkModule(decls) : [];
     const evalErrs = errors.length === 0 && checks.length === 0
-      ? runPipeline(decls).filter(d => d.severity === 'error') : [];
+      ? runPipeline(decls).diags.filter(d => d.severity === 'error') : [];
     verdict = errors.length === 0 && checks.length === 0 && evalErrs.length === 0;
     detail = errors.length ? `${errors.length} parse errors` : JSON.stringify([...checks, ...evalErrs]);
   } else if (phase === 'parsing') {
@@ -68,7 +51,7 @@ export function judgeFixture(file: string, isValid: boolean): Verdict {
       && (!wantMsg || checks.some(d => d.message.includes(wantMsg)));
     detail = JSON.stringify(checks);
   } else if (phase === 'binding') {
-    const diags = errors.length === 0 ? runPipeline(decls) : [];
+    const diags = errors.length === 0 ? runPipeline(decls).diags : [];
     verdict = diags.some(d => d.code === wantCode)
       && (!wantMsg || diags.some(d => d.message.includes(wantMsg)));
     detail = JSON.stringify(diags);

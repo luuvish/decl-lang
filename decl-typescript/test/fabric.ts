@@ -6,7 +6,8 @@
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { readFileSync } from 'node:fs';
-import { initParser, parseSource } from '../src/parse.ts';
+import { parseSource } from '../src/parse.ts';
+import { initParser } from '../src/node.ts';
 import { Env, readJson } from '../src/semantics.ts';
 import { Engine } from '../src/engine.ts';
 import { checkModule } from '../src/checker.ts';

@@ -5,6 +5,7 @@
 pub mod ast;
 pub mod checker;
 pub mod cli;
+pub mod conformance;
 pub mod engine;
 pub mod fmt;
 pub mod infer;
@@ -12,5 +13,6 @@ pub mod lsp;
 pub mod module;
 pub mod package;
 pub mod parse;
+pub mod pipeline;
 pub mod semantics;
 pub mod subsume;

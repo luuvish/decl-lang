@@ -2,29 +2,23 @@
 // of ast.ts. This is the reference implementation's only parser front
 // end (ROADMAP: tree-sitter is the single canonical parser).
 import { Parser, Language, Node } from 'web-tree-sitter';
-import { readFileSync, existsSync } from 'node:fs';
-import { join, dirname } from 'node:path';
-import { fileURLToPath } from 'node:url';
 import type { Decl, ElseTail, Expr, MemberAst, TemplateParts, TypeAst } from './ast.ts';
 
-// the grammar wasm sits next to the bundled dist/ files in the published
-// package, and under tree-sitter-decl/ in the source tree
-const here = dirname(fileURLToPath(import.meta.url));
-export const WASM = [
-  join(here, 'tree-sitter-decl.wasm'),
-  join(here, '../../tree-sitter-decl/tree-sitter-decl.wasm'),
-].find(p => existsSync(p)) ?? join(here, 'tree-sitter-decl.wasm');
-
+// This module is platform-neutral: it does not know where the grammar
+// wasm lives. Node callers use node.ts (which locates it on disk);
+// browsers pass URLs. Everything else here runs anywhere.
 let language: Language | null = null;
-/** where the two wasm files live — the browser build passes URLs */
-export type ParserOptions = { grammar?: string; runtime?: string };
-export async function initParser(opts: ParserOptions = {}): Promise<void> {
+/** `grammar`: the tree-sitter-decl.wasm path or URL; `runtime`: web-tree-sitter's own tree-sitter.wasm (optional) */
+export type ParserOptions = { grammar: string; runtime?: string };
+export async function initParser(opts: ParserOptions): Promise<void> {
   if (language) return;
-  // web-tree-sitter's runtime (tree-sitter.wasm) is shipped beside the
-  // bundled files; in the source tree it resolves from node_modules
-  const local = opts.runtime ?? join(here, 'tree-sitter.wasm');
-  await Parser.init(opts.runtime || existsSync(local) ? { locateFile: () => local } : undefined);
-  language = await Language.load(opts.grammar ?? WASM);
+  await Parser.init(opts.runtime ? { locateFile: () => opts.runtime! } : undefined);
+  language = await Language.load(opts.grammar);
+}
+/** the loaded grammar (the formatter and the language server parse with it too) */
+export function getLanguage(): Language {
+  if (!language) throw new Error('call initParser() first');
+  return language;
 }
 
 export type ParseResult = { decls: Decl[]; errors: { row: number; col: number }[] };

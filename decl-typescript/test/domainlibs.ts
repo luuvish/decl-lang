@@ -4,7 +4,7 @@
 // development; it is not part of the repository.
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { initParser } from '../src/parse.ts';
+import { initParser } from '../src/node.ts';
 import { loadModules, runUniverse } from '../src/module.ts';
 import { checkModule } from '../src/checker.ts';
 import { isArr, isQ } from '../src/semantics.ts';

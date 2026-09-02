@@ -308,23 +308,3 @@ pub fn run_universe(mods: &[Rc<Module>], entry: &Rc<Module>, binds: Vec<Bind>) -
     (eng, diags)
 }
 
-/// single-module evaluation of a fixture (no import resolution)
-pub fn run_pipeline(decls: &[Decl]) -> (Rc<Env>, Rc<Engine>) {
-    let env = Env::new();
-    env.load(decls);
-    let eng = Engine::new(env.clone());
-    let outs = env.outputs.borrow().clone();
-    for (name, ty_ast, expr) in outs {
-        let sc = Scope::new(&name, None);
-        let bound = (|| -> R<Value> {
-            let v = eng.ev(&expr, &sc)?;
-            let rt = env.resolve(&ty_ast, None).or_else(|e| err(e))?;
-            eng.bind(v, &rt, &[Seg::Name(name.clone())], None, &sc)
-        })();
-        if let Ok(v) = bound {
-            env.set_root(&name, v);
-        }
-    }
-    eng.drive(&env);
-    (env, eng)
-}

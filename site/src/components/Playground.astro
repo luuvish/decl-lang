@@ -1,8 +1,8 @@
 ---
 // The browser playground: a CodeMirror editor on the left, outputs and
-// diagnostics on the right, evaluated by the reference implementation
-// bundled for the browser: public/playground/decl.js is decl-lang's dist/web.js,
-// copied there by site/scripts/playground.mjs.
+// diagnostics on the right, evaluated by the reference implementation's
+// platform-neutral core (`decl-lang/core`, bundled by Vite); the grammar
+// wasm files are static assets under public/playground/.
 const base = import.meta.env.BASE_URL;
 ---
 
@@ -36,13 +36,8 @@ const base = import.meta.env.BASE_URL;
   import { keymap } from '@codemirror/view';
   import { indentWithTab } from '@codemirror/commands';
   import { declLanguage, declHighlight } from './decl-mode';
-
-  type Diag = { severity: string; code?: string; id?: string; path: string; message: string };
-  type Report = {
-    phase: string; ok: boolean; parseErrors: { row: number; col: number }[];
-    checks: Diag[]; diagnostics: Diag[]; outputs: { name: string; json: string }[]; inputs: string[];
-  };
-  type Runtime = { init(base: string): Promise<void>; run(src: string): Report; fmt(src: string): string };
+  import { initParser, evaluateSource, format } from 'decl-lang/core';
+  import type { Report } from 'decl-lang/core';
 
   const samples = import.meta.glob('../samples/**/*.decl', { query: '?raw', import: 'default', eager: true }) as Record<string, string>;
   const root = document.querySelector<HTMLElement>('.pg')!;
@@ -71,7 +66,7 @@ const base = import.meta.env.BASE_URL;
   };
   const initial = fromHash() ?? entries[0]?.src ?? '';
 
-  let runtime: Runtime | null = null;
+  let ready = false;
   let timer: number | undefined;
 
   const view = new EditorView({
@@ -137,10 +132,10 @@ const base = import.meta.env.BASE_URL;
   }
 
   function run() {
-    if (!runtime) return;
+    if (!ready) return;
     const t0 = performance.now();
     try {
-      const rep = runtime.run(source());
+      const rep = evaluateSource(source());
       render(rep, Math.round(performance.now() - t0));
     } catch (e) {
       output.textContent = `internal error: ${(e as Error).message}`;
@@ -164,8 +159,8 @@ const base = import.meta.env.BASE_URL;
   });
   $('pg-run').addEventListener('click', run);
   $('pg-fmt').addEventListener('click', () => {
-    if (!runtime) return;
-    try { setSource(runtime.fmt(source())); status.textContent = 'formatted'; }
+    if (!ready) return;
+    try { setSource(format(source())); status.textContent = 'formatted'; }
     catch (e) { status.textContent = `format: ${(e as Error).message}`; }
   });
   $('pg-share').addEventListener('click', async () => {
@@ -179,9 +174,8 @@ const base = import.meta.env.BASE_URL;
   (async () => {
     try {
       const dir = new URL(`${base.replace(/\/$/, '')}/playground/`, location.origin).href;
-      const mod = (await import(/* @vite-ignore */ `${dir}decl.js`)) as Runtime;
-      await mod.init(dir);
-      runtime = mod;
+      await initParser({ grammar: `${dir}tree-sitter-decl.wasm`, runtime: `${dir}tree-sitter.wasm` });
+      ready = true;
       status.textContent = 'ready';
       run();
     } catch (e) {

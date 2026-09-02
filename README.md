@@ -58,7 +58,7 @@ side is one npm workspace (root `package.json`), Rust a Cargo workspace
 
 | Directory | Language | Package | Scope |
 |---|---|---|---|
-| [`decl-typescript/`](decl-typescript/README.md) | TypeScript — the **reference implementation** | npm `decl-lang` | the whole language: parser binding, static checker, evaluator, validation, packages, formatter, `decl-lsp`; plus the browser bundle for the website |
+| [`decl-typescript/`](decl-typescript/README.md) | TypeScript — the **reference implementation** | npm `decl-lang` | the whole language: parser binding, static checker, evaluator, validation, packages, formatter, `decl-lsp`; `decl-lang/core` runs in browsers too |
 | [`decl-rust/`](decl-rust/README.md) | Rust — native implementation | crates.io `decl-lang` | the whole language, natively: `decl check` / `evaluate` / `validate` / `fmt`, packages, and `decl-lsp` — no Node or wasm |
 | [`decl-python/`](decl-python/README.md) | Python — native implementation + API | PyPI `decl-lang` | the whole language, natively: `decl check` / `evaluate` / `validate` / `fmt`, packages, `decl-lsp`, and a Python API — no Node.js |
 | `tree-sitter-decl/` | C (tree-sitter) | — | the one grammar every implementation compiles or loads |
@@ -79,8 +79,9 @@ example (`check`), evaluation reports (`ok`, canonical JSON,
 diagnostics) over every output-bearing module, documents bound to
 `input` roots, formatter output for every parseable module, package
 resolution and lock diagnostics, and one scripted language-server
-session. CI runs it on every push (`.github/workflows/verify.yml`). Only
-the browser bundle of the website is reference-only.
+session. CI runs it on every push (`.github/workflows/verify.yml`). The
+website's playground runs the reference implementation's platform-neutral
+core (`decl-lang/core`) in the browser.
 
 ## Status
 

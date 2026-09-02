@@ -4,15 +4,11 @@
 // where a construct breaks lines is the author's statement — and the
 // formatter re-derives indentation and token spacing deterministically,
 // which makes it idempotent by construction.
-import { Parser, Language, Node } from 'web-tree-sitter';
-import { WASM } from './parse.ts';
+import { Parser, Node } from 'web-tree-sitter';
+import { getLanguage } from './parse.ts';
 
-let language: Language | null = null;
-async function lang(): Promise<Language> {
-  if (!language) { await Parser.init(); language = await Language.load(WASM); }
-  return language;
-}
-export async function initFormatter(): Promise<void> { await lang(); }
+/** the formatter parses with the grammar initParser loaded; kept for API compatibility */
+export async function initFormatter(): Promise<void> { getLanguage(); }
 
 type Leaf = { text: string; type: string; parent: string; row: number; endRow: number; col: number };
 
@@ -80,9 +76,8 @@ const KEYWORDS = new Set(['type', 'const', 'func', 'output', 'input', 'export', 
 const isKeyword = (t: string) => KEYWORDS.has(t);
 
 export function format(src: string): string {
-  if (!language) throw new Error('call initFormatter() first');
   const parser = new Parser();
-  parser.setLanguage(language);
+  parser.setLanguage(getLanguage());
   const tree = parser.parse(src)!;
   if (tree.rootNode.hasError) throw new Error('cannot format: file has parse errors');
   const leaves: Leaf[] = [];

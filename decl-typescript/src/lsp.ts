@@ -3,10 +3,11 @@
 // then hover, then definition — module-aware through the same loader
 // the CLI uses, with open buffers overriding the disk.
 import { fileURLToPath, pathToFileURL } from 'node:url';
-import { Parser, Language } from 'web-tree-sitter';
+import { Parser } from 'web-tree-sitter';
 import { join, dirname } from 'node:path';
 import { readFileSync } from 'node:fs';
-import { initParser, parseSource, WASM } from './parse.ts';
+import { parseSource, getLanguage } from './parse.ts';
+import { initParser } from './node.ts';
 import { checkModule } from './checker.ts';
 import { loadModules } from './module.ts';
 import { openPackageUniverse } from './package.ts';
@@ -42,19 +43,13 @@ const logErr = (message: string) => notify('window/logMessage', { type: 1, messa
 
 // ---------------- documents & analysis ----------------
 const docs = new Map<string, string>();          // uri -> text
-let tsLang: Language | null = null;
-async function ensureInit() {
-  if (tsLang) return;
-  await initParser();
-  await Parser.init();
-  tsLang = await Language.load(WASM);
-}
+async function ensureInit() { await initParser(); }
 const pathOf = (uri: string) => fileURLToPath(uri);
 const uriOf = (path: string) => pathToFileURL(path).toString();
 
 function parseTree(src: string) {
   const p = new Parser();
-  p.setLanguage(tsLang!);
+  p.setLanguage(getLanguage());
   return p.parse(src)!;
 }
 

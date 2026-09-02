@@ -2,7 +2,7 @@
 //! against the Rust implementation: cross-package imports and the lock
 //! file, the canonical formatter, and the language server over stdio.
 use decl_lang::checker::check_module;
-use decl_lang::cli::walk_decl;
+use decl_lang::conformance::walk_decl;
 use decl_lang::fmt::format;
 use decl_lang::module::{load_modules, run_universe};
 use decl_lang::package::{lock_text, open_package_universe, verify_lock, write_lock};

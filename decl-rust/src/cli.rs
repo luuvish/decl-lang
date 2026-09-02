@@ -2,8 +2,10 @@
 //! the reference implementation's CLI so the three implementations can
 //! be diffed (tests/parity/differential.py).
 use crate::checker::check_module;
+use crate::conformance::judge_corpus;
 use crate::fmt::format;
-use crate::module::{load_modules, run_pipeline, run_universe, Bind, LoadResult};
+use crate::module::{load_modules, run_universe, Bind, LoadResult};
+use crate::pipeline::run_pipeline;
 use crate::package::{open_package_universe, verify_lock};
 use crate::parse::parse_source;
 use crate::semantics::{json_str, read_json, Diag};
@@ -104,8 +106,7 @@ pub fn validate_file(file: &str, input: Option<&str>) -> Result<Vec<Diag>, usize
                 diags.extend(run_universe(&r.modules, &entry, binds).1);
             }
         } else {
-            let (env, _) = run_pipeline(&parsed.decls);
-            diags.extend(env.diagnostics_vec());
+            diags.extend(run_pipeline(&parsed.decls).diags);
         }
     }
     Ok(diags)
@@ -126,63 +127,6 @@ pub fn check_files(paths: &[String]) -> Vec<(String, Diag)> {
     out
 }
 
-/// runtime-level judgment of a corpus fixture: valid fixtures evaluate
-/// clean, parsing-phase fixtures fail to parse, binding-phase fixtures
-/// report their code; checking-phase fixtures need the static checker
-fn judge_fixture(file: &Path, is_valid: bool) -> (Option<bool>, String) {
-    let src = std::fs::read_to_string(file).unwrap_or_default();
-    let meta = |key: &str| -> Option<String> {
-        src.lines().find_map(|l| l.strip_prefix(&format!("// @{key}:")).map(|v| v.trim().to_string()))
-    };
-    let phase = meta("expect-phase");
-    let want = meta("expect-error").unwrap_or_default();
-    let want_msg = meta("expect-message").unwrap_or_default();
-    let parsed = parse_source(&src);
-    let json_of = |ds: &[Diag]| format!("[{}]", ds.iter().map(|d| d.to_json(None)).collect::<Vec<_>>().join(","));
-    let hit = |ds: &[Diag]| ds.iter().any(|d| d.code.as_deref() == Some(want.as_str())) && (want_msg.is_empty() || ds.iter().any(|d| d.message.contains(&want_msg)));
-    if is_valid {
-        // a valid fixture must parse, check clean, AND evaluate its outputs
-        // without error-severity diagnostics
-        if !parsed.errors.is_empty() {
-            return (Some(false), format!("{} parse errors", parsed.errors.len()));
-        }
-        let checks = check_module(&parsed.decls, None);
-        let eval_errs: Vec<Diag> = if checks.is_empty() {
-            let (env, _) = run_pipeline(&parsed.decls);
-            env.diagnostics_vec().into_iter().filter(|d| d.severity == "error").collect()
-        } else {
-            vec![]
-        };
-        let all: Vec<Diag> = checks.into_iter().chain(eval_errs).collect();
-        return (Some(all.is_empty()), json_of(&all));
-    }
-    match phase.as_deref() {
-        Some("parsing") => (Some(!parsed.errors.is_empty()), "expected parse errors, got none".into()),
-        Some("checking") => {
-            let checks = if parsed.errors.is_empty() { check_module(&parsed.decls, None) } else { vec![] };
-            (Some(hit(&checks)), json_of(&checks))
-        }
-        Some("binding") => {
-            let diags = if parsed.errors.is_empty() { run_pipeline(&parsed.decls).0.diagnostics_vec() } else { vec![] };
-            (Some(hit(&diags)), json_of(&diags))
-        }
-        other => (Some(false), format!("unknown phase {other:?}")),
-    }
-}
-
-pub fn walk_decl(dir: &Path, out: &mut Vec<PathBuf>) {
-    let Ok(rd) = std::fs::read_dir(dir) else { return };
-    let mut entries: Vec<_> = rd.flatten().collect();
-    entries.sort_by_key(|e| e.file_name());
-    for e in entries {
-        let p = e.path();
-        if p.is_dir() {
-            walk_decl(&p, out);
-        } else if p.extension().map(|x| x == "decl").unwrap_or(false) {
-            out.push(p);
-        }
-    }
-}
 
 /// the command line: returns the process exit code
 pub fn main(args: Vec<String>) -> i32 {
@@ -240,17 +184,14 @@ pub fn main(args: Vec<String>) -> i32 {
             let Some(target) = pos.first() else { return usage() };
             let tp = Path::new(target);
             if tp.is_dir() {
-                let mut files = vec![];
-                walk_decl(tp, &mut files);
+                let abs = std::path::absolute(tp).unwrap_or_else(|_| tp.to_path_buf());
                 let (mut ok, mut fail) = (0, 0);
-                for f in files {
-                    let is_valid = f.to_string_lossy().contains("/valid/");
-                    match judge_fixture(&f, is_valid) {
-                        (Some(true), _) => ok += 1,
-                        (_, detail) => {
-                            fail += 1;
-                            eprintln!("FAIL {} {detail}", f.display());
-                        }
+                for v in judge_corpus(&abs) {
+                    if v.ok {
+                        ok += 1;
+                    } else {
+                        fail += 1;
+                        eprintln!("FAIL {} {}", v.file.display(), v.detail);
                     }
                 }
                 eprintln!("{ok} ok, {fail} failed");

@@ -25,6 +25,16 @@ decl-lsp                                 # stdio language server for editors
 import { initParser, parseSource, checkModule, loadModules, runUniverse } from 'decl-lang';
 ```
 
+The platform-neutral core is a separate entry for browsers and other
+non-Node hosts — pass the grammar wasm's URL instead of letting Node
+locate it on disk:
+
+```js
+import { initParser, evaluateSource, format } from 'decl-lang/core';
+await initParser({ grammar: '/assets/tree-sitter-decl.wasm', runtime: '/assets/tree-sitter.wasm' });
+const report = evaluateSource('output x: int = 1\n');   // { ok, outputs: [{ name, json }], diagnostics, ... }
+```
+
 `check` / `validate` take `--json` for a machine-readable diagnostics
 array; `evaluate --json` yields `{ ok, value, diagnostics }`.
 Specification, guide, and sources: https://github.com/luuvish/decl-lang

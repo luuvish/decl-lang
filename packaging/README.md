@@ -91,7 +91,7 @@ decl fmt --check src/*.decl
 decl-lsp                # stdio language server for editors
 ```
 
-and the library (`import { initParser, parseSource, checkModule, loadModules, runUniverse } from 'decl-lang'`).
+and the library (`import { initParser, parseSource, checkModule, loadModules, runUniverse } from 'decl-lang'`; browsers import the platform-neutral `decl-lang/core` and pass the grammar wasm's URL to `initParser({ grammar })`).
 
 ## Homebrew — tap `luuvish/tap`
 

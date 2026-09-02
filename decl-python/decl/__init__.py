@@ -18,7 +18,7 @@ from typing import Any, Iterable, Sequence, TypedDict
 
 __all__ = [
     "Diagnostic", "DeclError",
-    "check", "evaluate", "validate", "format_source", "format_file",
+    "check", "evaluate", "evaluate_source", "validate", "format_source", "format_file",
 ]
 __version__ = "0.2.0"
 
@@ -56,6 +56,13 @@ def evaluate(path: str | os.PathLike[str], root: str | None = None) -> Any:
     if code != 0 or text is None:
         raise DeclError("evaluation failed", [dict(file=str(path), **d) for d in diags])
     return json.loads(text)
+
+
+def evaluate_source(text: str) -> dict:
+    """Parse, check, and evaluate one module given as source text; returns
+    the report dict (phase, ok, parse_errors, checks, diagnostics, outputs, inputs)."""
+    from .runtime.pipeline import evaluate_source as run
+    return run(text)
 
 
 def validate(
