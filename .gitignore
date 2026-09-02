@@ -2,3 +2,12 @@
 node_modules/
 dist/
 build/
+impl/*.tgz
+python/decl/_js/
+python/LICENSE
+python/dist/
+python/build/
+python/.venv/
+*.egg-info/
+__pycache__/
+impl/LICENSE

@@ -26,22 +26,49 @@ Design goals:
   configuration, …) are expressed at the library level with types, derived
   properties, functions, and constraints, never as language keywords.
 
+## Install
+
+The `decl` command (CLI, formatter, and the `decl-lsp` language server)
+ships through several channels — all the same reference implementation
+(Node.js ≥ 20; the tree-sitter grammar runs as wasm):
+
+```bash
+npm install -g decl-lang          # npm
+pip install decl                  # PyPI (or: pip install 'decl[node]' to get Node through pip)
+brew install luuvish/decl/decl    # Homebrew tap
+```
+
+```bash
+decl check schema.decl                     # parse + static checks (module-aware)
+decl evaluate site.decl --root site        # evaluate outputs -> JSON
+decl validate cfg.decl --input deployed=doc.json --expect-errors E4001
+decl fmt --check src/*.decl                # canonical formatting
+```
+
+Python users also get an API (`decl.evaluate`, `decl.check`,
+`decl.validate`, `decl.format_source`); JavaScript users import the
+library entry of `decl-lang`. See [packaging/README.md](packaging/README.md)
+for the channels and release procedure.
+
 ## Status
 
-**Specification v0.1 — frozen (2026-08-31).** Phase 0 is complete: the
-full 13-chapter normative spec, its design charter (P1–P7, D1–D30), an
-example-driven guide, three generality benchmark cases, and the
-throwaway evaluator spike that gated the freeze by executing all of it
-end to end (`spike/`, 31/31 checks green). Post-freeze changes follow
-the revision process recorded in
-[docs/REVISIONS.md](docs/REVISIONS.md).
-
-Next: **Phase 1 — grammar & parser** (tree-sitter, written against
-chapter 11). See [ROADMAP.md](ROADMAP.md) for the phase plan and exit
-criteria.
+**Specification v0.2 (2026-09-01)** — v0.1 was frozen on 2026-08-31 and
+revised through the v0.2 cycle (D31–D33, D29 amended;
+[docs/REVISIONS.md](docs/REVISIONS.md)). All roadmap phases are
+complete: the tree-sitter grammar, the TypeScript reference
+implementation with its full static checker, modules and packages with
+a reproducible lock, the complete standard library, the `decl` CLI /
+formatter / LSP, and real-world validation on three domain examples
+(`examples/`). Ten test suites (`impl/`, `npm test`) and the fixture
+corpus (`tests/validation`) are the conformance baseline.
 
 ## Documents
 
 - [ROADMAP.md](ROADMAP.md) — development roadmap; owns the plan and progress
-- `docs/` — language documentation (design docs, specification, guide);
-  created as Phase 0 proceeds
+- [docs/](docs/README.md) — language documentation: design charter,
+  the normative specification (13 chapters), the guide, and the
+  benchmark cases
+- [impl/](impl/README.md) — the reference implementation, CLI, formatter,
+  and LSP server
+- [examples/](examples/) — domain examples used for real-world validation
+- [packaging/](packaging/README.md) — distribution channels and releases

@@ -30,8 +30,15 @@ for (let i = 0; i < args.length; i++) {
   } else positional.push(args[i]);
 }
 
-const printDiag = (file: string, d: Diag) =>
+// --json: collect diagnostics as objects and emit one JSON array on
+// stdout at exit (the §12 machine-readable report), instead of lines
+const jsonMode = !!flags.get('json');
+const collected: (Diag & { file: string })[] = [];
+let evalOut: string | null = null;   // evaluate's canonical JSON, captured in --json mode
+const printDiag = (file: string, d: Diag) => {
+  if (jsonMode) { collected.push({ file, ...d }); return; }
   console.error(`${file}: ${d.severity}${d.code ? ` [${d.code}]` : ''}${d.id ? ` ${d.id}` : ''}${d.path ? ` at ${d.path}` : ''}: ${d.message}`);
+};
 
 function openUniverse(file: string) {
   const abs = absPath(file);
@@ -78,9 +85,10 @@ async function main(): Promise<number> {
         if (v === undefined) { console.error(`no output named ${n}`); process.exitCode = 1; return null; }
         return `${JSON.stringify(n)}:${eng.serialize(v, n)}`;
       }).filter(Boolean);
-      console.log(names.length === 1 && typeof rootFlag === 'string'
+      const text = names.length === 1 && typeof rootFlag === 'string'
         ? eng.serialize(entry.env.roots.get(names[0]), names[0])
-        : `{${pieces.join(',')}}`);
+        : `{${pieces.join(',')}}`;
+      if (jsonMode) evalOut = text; else console.log(text);
       return 0;
     }
     case 'validate': {
@@ -161,8 +169,14 @@ function usage(): number {
   decl evaluate <file> [--root <name>]
   decl validate <dir>
   decl validate <file> [--input name=doc.json] [--expect-errors E1,E2]
-  decl fmt <files...> [--check]`);
+  decl fmt <files...> [--check]
+  (check / validate accept --json: diagnostics as a JSON array on stdout)`);
   return 2;
 }
 
 process.exitCode = await main();
+if (jsonMode) {
+  console.log(cmd === 'evaluate'
+    ? `{"ok":${process.exitCode === 0},"value":${evalOut ?? 'null'},"diagnostics":${JSON.stringify(collected)}}`
+    : JSON.stringify(collected));
+}

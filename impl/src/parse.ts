@@ -2,18 +2,26 @@
 // of ast.ts. This is the reference implementation's only parser front
 // end (ROADMAP: tree-sitter is the single canonical parser).
 import { Parser, Language, Node } from 'web-tree-sitter';
-import { readFileSync } from 'node:fs';
+import { readFileSync, existsSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import type { Decl, ElseTail, Expr, MemberAst, TemplateParts, TypeAst } from './ast.ts';
 
+// the grammar wasm sits next to the bundled dist/ files in the published
+// package, and under tree-sitter-decl/ in the source tree
 const here = dirname(fileURLToPath(import.meta.url));
-const WASM = join(here, '../../tree-sitter-decl/tree-sitter-decl.wasm');
+export const WASM = [
+  join(here, 'tree-sitter-decl.wasm'),
+  join(here, '../../tree-sitter-decl/tree-sitter-decl.wasm'),
+].find(p => existsSync(p)) ?? join(here, 'tree-sitter-decl.wasm');
 
 let language: Language | null = null;
 export async function initParser(): Promise<void> {
   if (language) return;
-  await Parser.init();
+  // web-tree-sitter's runtime (tree-sitter.wasm) is shipped beside the
+  // bundled files; in the source tree it resolves from node_modules
+  const local = join(here, 'tree-sitter.wasm');
+  await Parser.init(existsSync(local) ? { locateFile: () => local } : undefined);
   language = await Language.load(WASM);
 }
 

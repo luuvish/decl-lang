@@ -1,8 +1,42 @@
-# decl-impl
+# decl-lang
 
-The TypeScript reference implementation (ROADMAP Phase 2). Consumes the
+**Decl** is a declarative language for describing, generating, and
+validating structured data — a JSON superset with a strong static type
+system, constraints with first-class diagnostics, references, physical
+quantities, generics, and modules. Pure, deterministic, terminating.
+
+This package is the reference implementation: the `decl` command-line
+tool, the canonical formatter, the `decl-lsp` language server, and a
+library entry. Node.js ≥ 20, no runtime dependencies (the tree-sitter
+grammar ships as wasm).
+
+```bash
+npm install -g decl-lang
+
+decl check schema.decl                   # parse + static checks (module-aware)
+decl evaluate site.decl --root site      # evaluate outputs -> JSON
+decl validate cfg.decl --input deployed=doc.json --expect-errors E4001
+decl validate tests/validation           # judge a fixture corpus
+decl fmt --check src/*.decl              # canonical formatting
+decl-lsp                                 # stdio language server for editors
+```
+
+```js
+import { initParser, parseSource, checkModule, loadModules, runUniverse } from 'decl-lang';
+```
+
+`check` / `validate` take `--json` for a machine-readable diagnostics
+array; `evaluate --json` yields `{ ok, value, diagnostics }`.
+Specification, guide, and sources: https://github.com/luuvish/decl-lang
+
+---
+
+## Development
+
+The TypeScript reference implementation (ROADMAP Phase 2+). Consumes the
 canonical tree-sitter parser through `web-tree-sitter` and the committed
-`tree-sitter-decl.wasm` — no native build step.
+`tree-sitter-decl.wasm` — no native build step. `npm run build` bundles
+everything into `dist/` for publishing (see `../packaging/README.md`).
 
 ## Pipeline
 

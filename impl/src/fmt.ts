@@ -5,12 +5,8 @@
 // formatter re-derives indentation and token spacing deterministically,
 // which makes it idempotent by construction.
 import { Parser, Language, Node } from 'web-tree-sitter';
-import { readFileSync } from 'node:fs';
-import { join, dirname } from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { WASM } from './parse.ts';
 
-const here = dirname(fileURLToPath(import.meta.url));
-const WASM = join(here, '../../tree-sitter-decl/tree-sitter-decl.wasm');
 let language: Language | null = null;
 async function lang(): Promise<Language> {
   if (!language) { await Parser.init(); language = await Language.load(WASM); }

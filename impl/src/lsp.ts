@@ -6,13 +6,16 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 import { Parser, Language } from 'web-tree-sitter';
 import { join, dirname } from 'node:path';
 import { readFileSync } from 'node:fs';
-import { initParser, parseSource } from './parse.ts';
+import { initParser, parseSource, WASM } from './parse.ts';
 import { checkModule } from './checker.ts';
 import { loadModules } from './module.ts';
 import { openPackageUniverse } from './package.ts';
 
 // ---------------- transport ----------------
+// messages are handled strictly in order (a client may pipe `initialize`
+// and `exit` back to back); the server also exits when its stdin closes
 let buffer = Buffer.alloc(0);
+let queue: Promise<void> = Promise.resolve();
 process.stdin.on('data', chunk => {
   buffer = Buffer.concat([buffer, chunk]);
   for (; ;) {
@@ -25,9 +28,10 @@ process.stdin.on('data', chunk => {
     if (buffer.length < headerEnd + 4 + len) return;
     const body = buffer.subarray(headerEnd + 4, headerEnd + 4 + len).toString();
     buffer = buffer.subarray(headerEnd + 4 + len);
-    try { handle(JSON.parse(body)); } catch (e: any) { logErr(String(e?.stack ?? e)); }
+    queue = queue.then(() => handle(JSON.parse(body))).catch(e => logErr(String(e?.stack ?? e)));
   }
 });
+process.stdin.on('end', () => { queue.then(() => process.exit(0)); });
 function send(msg: any) {
   const body = JSON.stringify(msg);
   process.stdout.write(`Content-Length: ${Buffer.byteLength(body)}\r\n\r\n${body}`);
@@ -43,7 +47,7 @@ async function ensureInit() {
   if (tsLang) return;
   await initParser();
   await Parser.init();
-  tsLang = await Language.load(join(dirname(fileURLToPath(import.meta.url)), '../../tree-sitter-decl/tree-sitter-decl.wasm'));
+  tsLang = await Language.load(WASM);
 }
 const pathOf = (uri: string) => fileURLToPath(uri);
 const uriOf = (path: string) => pathToFileURL(path).toString();
@@ -177,7 +181,7 @@ async function handle(msg: any) {
           hoverProvider: true,
           definitionProvider: true,
         },
-        serverInfo: { name: 'decl-lsp', version: '0.1.0' },
+        serverInfo: { name: 'decl-lsp', version: '0.2.0' },
       });
       break;
     case 'initialized': break;
