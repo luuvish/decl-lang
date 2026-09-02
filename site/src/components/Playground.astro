@@ -20,12 +20,10 @@ const base = import.meta.env.BASE_URL;
   <div class="pg-body">
     <div id="pg-editor" class="pg-editor"></div>
     <div class="pg-out">
-      <div class="pg-tabs" role="tablist">
-        <button type="button" role="tab" data-tab="output" class="active" aria-selected="true">Output</button>
-        <button type="button" role="tab" data-tab="diagnostics" aria-selected="false">Diagnostics <span id="pg-count" class="pg-count"></span></button>
-      </div>
-      <pre id="pg-output" class="pg-pane" data-pane="output"></pre>
-      <div id="pg-diags" class="pg-pane" data-pane="diagnostics" hidden></div>
+      <div class="pg-head">Output</div>
+      <pre id="pg-output" class="pg-pane"></pre>
+      <div class="pg-head">Diagnostics <span id="pg-count" class="pg-count"></span></div>
+      <div id="pg-diags" class="pg-pane pg-diags"></div>
     </div>
   </div>
 </div>
@@ -127,8 +125,7 @@ const base = import.meta.env.BASE_URL;
       ...all.map(d => `<li class="sev-${esc(d.severity)}"><b>${esc(d.severity)}</b> ${d.code ? `<code>${esc(d.code)}</code>` : ''} ${d.id ? `<i>${esc(d.id)}</i>` : ''}${d.path ? ` <span class="path">at ${esc(d.path)}</span>` : ''}: ${esc(d.message)}</li>`),
     ];
     diags.innerHTML = rows.length ? `<ul>${rows.join('')}</ul>` : '<p class="pg-empty">No diagnostics.</p>';
-    // errors bring the diagnostics forward; a clean run brings the output back
-    showTab(errors ? 'diagnostics' : 'output');
+    diags.classList.toggle('has-errors', errors > 0);
   }
 
   function run() {
@@ -142,16 +139,6 @@ const base = import.meta.env.BASE_URL;
       status.textContent = 'internal error';
     }
   }
-
-  function showTab(name: string) {
-    for (const b of root.querySelectorAll<HTMLButtonElement>('.pg-tabs button')) {
-      const on = b.dataset.tab === name;
-      b.classList.toggle('active', on);
-      b.setAttribute('aria-selected', String(on));
-    }
-    for (const p of root.querySelectorAll<HTMLElement>('.pg-pane')) p.hidden = p.dataset.pane !== name;
-  }
-  for (const b of root.querySelectorAll<HTMLButtonElement>('.pg-tabs button')) b.addEventListener('click', () => showTab(b.dataset.tab!));
 
   select.addEventListener('change', () => {
     const e = entries.find(x => x.name === select.value);
@@ -227,25 +214,29 @@ const base = import.meta.env.BASE_URL;
   @container (max-width: 56rem) {
     .pg-body { grid-template-columns: 1fr; height: auto; }
     .pg-editor { min-height: 22rem; border-right: 0; border-bottom: 1px solid var(--sl-color-hairline); }
-    .pg-pane { min-height: 16rem; }
+    .pg-out { grid-template-rows: auto minmax(12rem, auto) auto minmax(6rem, auto); }
   }
   .pg-editor { border-right: 1px solid var(--sl-color-hairline); min-height: 0; }
-  .pg-out { display: flex; flex-direction: column; min-width: 0; }
-  .pg-tabs { display: flex; border-bottom: 1px solid var(--sl-color-hairline); }
-  .pg-tabs button {
-    font: inherit;
-    font-size: 0.85rem;
-    padding: 0.4rem 0.9rem;
-    border: 0;
-    border-bottom: 2px solid transparent;
-    background: transparent;
-    color: var(--sl-color-gray-2);
-    cursor: pointer;
+  /* the results: output on top, diagnostics below — both always visible */
+  .pg-out {
+    display: grid;
+    grid-template-rows: auto minmax(0, 3fr) auto minmax(6rem, 2fr);
+    min-width: 0;
+    min-height: 0;
   }
-  .pg-tabs button.active { color: var(--sl-color-text); border-bottom-color: var(--sl-color-accent); }
-  .pg-count { display: inline-block; min-width: 1.2em; padding: 0 0.3em; border-radius: 1em; background: var(--sl-color-gray-5); font-size: 0.75em; }
+  .pg-head {
+    padding: 0.4rem 0.75rem;
+    border-bottom: 1px solid var(--sl-color-hairline);
+    font-size: 0.8rem;
+    font-weight: 600;
+    letter-spacing: 0.02em;
+    text-transform: uppercase;
+    color: var(--sl-color-gray-2);
+    background: var(--sl-color-bg-nav);
+  }
+  .pg-head + .pg-pane + .pg-head { border-top: 1px solid var(--sl-color-hairline); }
+  .pg-count { display: inline-block; min-width: 1.2em; padding: 0 0.3em; border-radius: 1em; background: var(--sl-color-gray-5); font-size: 0.75em; vertical-align: middle; }
   .pg-pane {
-    flex: 1;
     margin: 0;
     padding: 0.75rem;
     overflow: auto;
@@ -253,8 +244,8 @@ const base = import.meta.env.BASE_URL;
     white-space: pre;
     background: var(--sl-color-bg);
   }
-  .pg-pane[hidden] { display: none; }
-  #pg-diags { white-space: normal; }
+  .pg-diags { white-space: normal; }
+  .pg-diags.has-errors { background: color-mix(in srgb, var(--sl-color-red, #dc2626) 6%, var(--sl-color-bg)); }
   #pg-diags ul { list-style: none; padding: 0; margin: 0; }
   #pg-diags li { padding: 0.35rem 0.5rem; border-left: 3px solid var(--sl-color-gray-4); margin-bottom: 0.35rem; font-family: var(--__sl-font-mono, ui-monospace, monospace); font-size: 0.8rem; }
   #pg-diags li.sev-error { border-left-color: var(--sl-color-red, #dc2626); }
