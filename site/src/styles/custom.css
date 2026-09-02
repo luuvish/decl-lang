@@ -21,7 +21,7 @@
   margin-top: 0 !important;
 }
 
-/* the playground page uses the full content width */
-[data-has-playground] .sl-container {
+/* the playground page uses the full width of the main pane */
+.sl-container:has(.pg) {
   max-width: 100%;
 }

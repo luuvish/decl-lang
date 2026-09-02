@@ -190,6 +190,7 @@ const base = import.meta.env.BASE_URL;
     flex-direction: column;
     gap: 0.5rem;
     margin-top: 1rem;
+    container-type: inline-size;
     border: 1px solid var(--sl-color-hairline);
     border-radius: 0.5rem;
     overflow: hidden;
@@ -219,11 +220,14 @@ const base = import.meta.env.BASE_URL;
   .pg-body {
     display: grid;
     grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
-    min-height: 32rem;
+    height: calc(100vh - 19rem);
+    min-height: 30rem;
   }
-  @media (max-width: 72rem) {
-    .pg-body { grid-template-columns: 1fr; }
-    .pg-editor { min-height: 20rem; }
+  /* stack the panes when the playground itself (not the viewport) gets narrow */
+  @container (max-width: 56rem) {
+    .pg-body { grid-template-columns: 1fr; height: auto; }
+    .pg-editor { min-height: 22rem; border-right: 0; border-bottom: 1px solid var(--sl-color-hairline); }
+    .pg-pane { min-height: 16rem; }
   }
   .pg-editor { border-right: 1px solid var(--sl-color-hairline); min-height: 0; }
   .pg-out { display: flex; flex-direction: column; min-width: 0; }
