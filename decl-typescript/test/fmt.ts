@@ -8,7 +8,7 @@ import { initFormatter, format } from '../src/fmt.ts';
 import { initParser, parseSource } from '../src/parse.ts';
 import { walkDecl } from '../src/conformance.ts';
 
-const root = join(dirname(fileURLToPath(import.meta.url)), '../../..');
+const root = join(dirname(fileURLToPath(import.meta.url)), '../..');
 let pass = 0, fail = 0;
 const check = (name: string, cond: boolean, detail = '') => {
   if (cond) { pass++; console.log(`  ok   ${name}`); }

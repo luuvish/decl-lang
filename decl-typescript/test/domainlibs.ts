@@ -9,7 +9,7 @@ import { loadModules, runUniverse } from '../src/module.ts';
 import { checkModule } from '../src/checker.ts';
 import { isArr, isQ } from '../src/semantics.ts';
 
-const root = join(dirname(fileURLToPath(import.meta.url)), '../../..');
+const root = join(dirname(fileURLToPath(import.meta.url)), '../..');
 let pass = 0, fail = 0;
 const check = (name: string, cond: boolean, detail = '') => {
   if (cond) { pass++; console.log(`  ok   ${name}`); }

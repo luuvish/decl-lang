@@ -1,6 +1,6 @@
 // Put decl-lang's browser bundle (dist/web.js + the two wasm files) under
 // public/playground/ for the playground page. In the workspace,
-// `decl-lang` is packages/typescript; build it first if needed.
+// `decl-lang` is decl-typescript; build it first if needed.
 import { existsSync, mkdirSync, copyFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { createRequire } from 'node:module';

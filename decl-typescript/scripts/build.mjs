@@ -11,7 +11,7 @@ import { join, dirname, basename, resolve } from 'node:path';
 import { createRequire } from 'node:module';
 
 const require = createRequire(import.meta.url);
-const REPO = resolve('../..');
+const REPO = resolve('..');
 const GRAMMAR = join(REPO, 'tree-sitter-decl');
 
 // web-tree-sitter's runtime wasm sits beside its entry (hoisted or not)
@@ -54,27 +54,27 @@ copyFileSync(join(GRAMMAR, 'tree-sitter-decl.wasm'), 'dist/tree-sitter-decl.wasm
 copyFileSync(runtimeWasm, 'dist/tree-sitter.wasm');
 if (existsSync(join(REPO, 'LICENSE'))) copyFileSync(join(REPO, 'LICENSE'), 'LICENSE');
 
-// the sibling packages (packages/python, packages/rust)
-const py = '../python/decl/_js';
-if (existsSync('../python/decl')) {
+// the sibling packages (decl-python, decl-rust)
+const py = '../decl-python/decl/_js';
+if (existsSync('../decl-python/decl')) {
   rmSync(py, { recursive: true, force: true });
   mkdirSync(py, { recursive: true });
   for (const f of readdirSync('dist')) copyFileSync(join('dist', f), join(py, f));
-  copyFileSync(join(REPO, 'LICENSE'), '../python/LICENSE');
+  copyFileSync(join(REPO, 'LICENSE'), '../decl-python/LICENSE');
   // the grammar C sources for the native Python parser extension
-  const gsrc = join(GRAMMAR, 'src'), gdst = '../python/decl/_tree_sitter/src';
+  const gsrc = join(GRAMMAR, 'src'), gdst = '../decl-python/decl/_tree_sitter/src';
   rmSync(gdst, { recursive: true, force: true });
   mkdirSync(join(gdst, 'tree_sitter'), { recursive: true });
   for (const f of ['parser.c', 'scanner.c']) copyFileSync(join(gsrc, f), join(gdst, f));
   for (const f of readdirSync(join(gsrc, 'tree_sitter'))) copyFileSync(join(gsrc, 'tree_sitter', f), join(gdst, 'tree_sitter', f));
   // ... and for the Rust crate (cargo publish needs them inside the package)
-  const rdst = '../rust/grammar';
-  if (existsSync('../rust')) {
+  const rdst = '../decl-rust/grammar';
+  if (existsSync('../decl-rust')) {
     rmSync(rdst, { recursive: true, force: true });
     mkdirSync(join(rdst, 'tree_sitter'), { recursive: true });
     for (const f of ['parser.c', 'scanner.c']) copyFileSync(join(gsrc, f), join(rdst, f));
     for (const f of readdirSync(join(gsrc, 'tree_sitter'))) copyFileSync(join(gsrc, 'tree_sitter', f), join(rdst, 'tree_sitter', f));
-    copyFileSync(join(REPO, 'LICENSE'), '../rust/LICENSE');
+    copyFileSync(join(REPO, 'LICENSE'), '../decl-rust/LICENSE');
   }
 }
-console.log('built dist/ (cli.js, lsp.js, index.js, web.js, tree-sitter-decl.wasm, tree-sitter.wasm)' + (existsSync(py) ? ' + mirrored to packages/python/decl/_js' : ''));
+console.log('built dist/ (cli.js, lsp.js, index.js, web.js, tree-sitter-decl.wasm, tree-sitter.wasm)' + (existsSync(py) ? ' + mirrored to decl-python/decl/_js' : ''));

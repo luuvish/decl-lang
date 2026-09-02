@@ -6,13 +6,13 @@
 #   make parity        only the cross-implementation differential
 #   make test-<lang>   one implementation (typescript | rust | python)
 #
-# Layout: packages/typescript (npm workspace member `decl-lang`),
-# packages/rust (Cargo workspace member), packages/python (pip).
+# Layout: decl-typescript (npm workspace member `decl-lang`),
+# decl-rust (Cargo workspace member), decl-python (pip).
 # Requirements: Node.js >= 20, a Rust toolchain, Python >= 3.10 with a C
 # compiler (the grammar is compiled as an extension module).
 SHELL := /bin/bash
 PY ?= python3
-VENV := packages/python/.venv
+VENV := decl-python/.venv
 VPY := $(abspath $(VENV)/bin/python)
 
 .PHONY: verify parity build-typescript test-typescript build-rust test-rust python-env test-python site clean
@@ -42,11 +42,11 @@ test-rust: build-rust
 python-env: build-typescript
 	test -x $(VENV)/bin/python || $(PY) -m venv $(VENV)
 	$(VPY) -m pip install -q --upgrade pip setuptools
-	$(VPY) -m pip install -q -e ./packages/python
-	cd packages/python && $(VPY) setup.py -q build_ext --inplace
+	$(VPY) -m pip install -q -e ./decl-python
+	cd decl-python && $(VPY) setup.py -q build_ext --inplace
 
 test-python: python-env
-	cd packages/python && $(VPY) scripts/e2e.py
+	cd decl-python && $(VPY) scripts/e2e.py
 	$(VPY) -m decl.runtime validate tests/validation
 
 # ---- parity: reference vs both native runtimes, byte for byte ----
@@ -58,4 +58,4 @@ site: build-typescript
 	npm run build -w site
 
 clean:
-	rm -rf packages/typescript/dist target packages/python/build packages/python/decl/*.egg-info packages/python/decl/_tree_sitter/*.so site/dist
+	rm -rf decl-typescript/dist target decl-python/build decl-python/decl/*.egg-info decl-python/decl/_tree_sitter/*.so site/dist

@@ -5,19 +5,19 @@ build/
 target/
 __pycache__/
 *.egg-info/
-# packages/typescript: packed tarballs and the LICENSE copied in by the build
-packages/typescript/*.tgz
-packages/typescript/LICENSE
-# packages/python: the mirrored reference bundle, grammar sources, and the extension
-packages/python/decl/_js/
-packages/python/decl/_tree_sitter/src/
-packages/python/decl/_tree_sitter/*.so
-packages/python/LICENSE
-packages/python/.venv/
-# packages/rust: grammar sources and LICENSE copied in by the build
-packages/rust/grammar/
-packages/rust/LICENSE
-# website: generated from docs/ and packages/typescript at build time (site/scripts/sync-docs.mjs)
+# decl-typescript: packed tarballs and the LICENSE copied in by the build
+decl-typescript/*.tgz
+decl-typescript/LICENSE
+# decl-python: the mirrored reference bundle, grammar sources, and the extension
+decl-python/decl/_js/
+decl-python/decl/_tree_sitter/src/
+decl-python/decl/_tree_sitter/*.so
+decl-python/LICENSE
+decl-python/.venv/
+# decl-rust: grammar sources and LICENSE copied in by the build
+decl-rust/grammar/
+decl-rust/LICENSE
+# website: generated from docs/ and decl-typescript at build time (site/scripts/sync-docs.mjs)
 site/.astro/
 site/public/playground/
 site/src/content/docs/specification/

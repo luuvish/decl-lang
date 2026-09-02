@@ -10,7 +10,7 @@ import { Env, isArr, readJson } from '../src/semantics.ts';
 import { Engine } from '../src/engine.ts';
 import { checkModule } from '../src/checker.ts';
 
-const root = join(dirname(fileURLToPath(import.meta.url)), '../../..');
+const root = join(dirname(fileURLToPath(import.meta.url)), '../..');
 let pass = 0, fail = 0;
 const check = (name: string, cond: boolean, detail = '') => {
   if (cond) { pass++; console.log(`  ok   ${name}`); }

@@ -17,7 +17,7 @@ Actions, once).
   (Expressive Code / Shiki); `src/components/decl-mode.ts` is the
   editor's stream mode.
 - The playground runs the reference implementation in the browser:
-  `npm run build` in packages/typescript bundles `src/web.ts` with esbuild into `dist/web.js` (`decl-lang/web`); `scripts/playground.mjs` copies it
+  `npm run build` in decl-typescript bundles `src/web.ts` with esbuild into `dist/web.js` (`decl-lang/web`); `scripts/playground.mjs` copies it
   to `public/playground/decl.js` next to the two wasm files.
 
 ```bash

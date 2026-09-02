@@ -1,5 +1,5 @@
 """Value model, environment, and type resolution — a faithful port of the
-reference implementation's semantics.ts (packages/typescript/src). Types and ASTs are
+reference implementation's semantics.ts (decl-typescript/src). Types and ASTs are
 plain dicts shaped exactly like the TypeScript objects; values use
 Python natives for scalars (int / float / str / bool / None) plus the
 small classes below."""

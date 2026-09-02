@@ -12,7 +12,7 @@ import type { Decl, ElseTail, Expr, MemberAst, TemplateParts, TypeAst } from './
 const here = dirname(fileURLToPath(import.meta.url));
 export const WASM = [
   join(here, 'tree-sitter-decl.wasm'),
-  join(here, '../../../tree-sitter-decl/tree-sitter-decl.wasm'),
+  join(here, '../../tree-sitter-decl/tree-sitter-decl.wasm'),
 ].find(p => existsSync(p)) ?? join(here, 'tree-sitter-decl.wasm');
 
 let language: Language | null = null;

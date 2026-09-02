@@ -29,7 +29,7 @@ git clone https://github.com/luuvish/decl-lang
 cd decl-lang
 npm install && npm test              # the reference implementation (npm workspaces)
 cargo build --release                # the Rust runtime (Cargo workspace)
-pip install -e packages/python       # the Python package (builds the grammar extension)
+pip install -e decl-python       # the Python package (builds the grammar extension)
 make verify                          # all three, then the parity check
 ```
 

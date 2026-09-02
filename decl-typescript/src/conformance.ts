@@ -87,7 +87,7 @@ export function judgeCorpus(dir: string): Verdict[] {
 
 // ---------------- runner ----------------
 if (process.argv[1] && /conformance\.(ts|js)$/.test(process.argv[1])) {
-  const root = join(dirname(fileURLToPath(import.meta.url)), '../../..');
+  const root = join(dirname(fileURLToPath(import.meta.url)), '../..');
   await initParser();
   let ok = 0, fail = 0;
   for (const v of judgeCorpus(join(root, 'tests/validation'))) {

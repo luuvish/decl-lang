@@ -7,14 +7,14 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 import { mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 
-const root = join(dirname(fileURLToPath(import.meta.url)), '../../..');
+const root = join(dirname(fileURLToPath(import.meta.url)), '../..');
 let pass = 0, fail = 0;
 const check = (name: string, cond: boolean, detail = '') => {
   if (cond) { pass++; console.log(`  ok   ${name}`); }
   else { fail++; console.log(`  FAIL ${name} ${detail}`); }
 };
 
-const server = spawn('node', [join(root, 'packages/typescript/src/lsp.ts')], { stdio: ['pipe', 'pipe', 'inherit'] });
+const server = spawn('node', [join(root, 'decl-typescript/src/lsp.ts')], { stdio: ['pipe', 'pipe', 'inherit'] });
 let buf = Buffer.alloc(0);
 const pendingReplies = new Map<number, (r: any) => void>();
 const notifications: any[] = [];

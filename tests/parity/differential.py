@@ -1,7 +1,7 @@
 """Parity across the three implementations.
 
-Decl ships a TypeScript reference implementation (packages/typescript), a Rust
-runtime (packages/rust), and a Python runtime (packages/python). They must be
+Decl ships a TypeScript reference implementation (decl-typescript), a Rust
+runtime (decl-rust), and a Python runtime (decl-python). They must be
 indistinguishable: over every module with outputs in the fixture corpus,
 the documentation examples, and the domain examples, each runtime's
 `evaluate --json` report must carry the same `ok`, byte-identical
@@ -12,7 +12,7 @@ against it, which makes the three pairwise identical.
 
     python tests/parity/differential.py                 # rust and python vs reference
     python tests/parity/differential.py --only rust     # one runtime
-    DECL_PYTHON=packages/python/.venv/bin/python ...             # the interpreter that has `decl` installed
+    DECL_PYTHON=decl-python/.venv/bin/python ...             # the interpreter that has `decl` installed
 
 Prerequisites: `npm ci` at the repository root, `cargo build --release`
 (the Cargo workspace), and the Python package importable (`make python-env`). A missing
@@ -28,7 +28,7 @@ import tempfile
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
-TS_CLI = ROOT / "packages/typescript/src/cli.ts"
+TS_CLI = ROOT / "decl-typescript/src/cli.ts"
 RUST_BIN = ROOT / "target/release/decl"
 PYTHON = os.environ.get("DECL_PYTHON") or sys.executable
 

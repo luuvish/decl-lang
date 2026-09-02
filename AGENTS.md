@@ -38,22 +38,23 @@ Sibling repositories used as reference (do not modify from here):
 
 | Directory | Role | Package |
 |---|---|---|
-| `packages/typescript/` | the **reference implementation**: parser binding, static checker, evaluator, formatter, `decl-lsp`, packages, browser bundle | npm `decl-lang` |
-| `packages/rust/` | native runtime (evaluate / validate) | crates.io `decl-lang` |
-| `packages/python/` | native runtime (evaluate / validate) + Python API; `check`/`fmt`/`lsp` delegate to the bundled reference | PyPI `decl` |
+| `decl-typescript/` | the **reference implementation**: parser binding, static checker, evaluator, formatter, `decl-lsp`, packages, browser bundle | npm `decl-lang` |
+| `decl-rust/` | native runtime (evaluate / validate) | crates.io `decl-lang` |
+| `decl-python/` | native runtime (evaluate / validate) + Python API; `check`/`fmt`/`lsp` delegate to the bundled reference | PyPI `decl` |
 | `tree-sitter-decl/` | the single grammar all three use | — |
 | `tests/` | shared corpus (`validation/`, `modules/`, `packages/`) and the parity harness (`parity/`) | — |
 
-The three sit under `packages/` — the Node side (`packages/typescript`,
+The three sit side by side at the top level, named like the grammar
+(`tree-sitter-decl/`) — the Node side (`decl-typescript`,
 `tree-sitter-decl`, `site`) is one npm workspace rooted at the top-level
 `package.json` (single lockfile, `npm ci` once at the root), and
-`packages/rust` is a member of the Cargo workspace rooted at the
+`decl-rust` is a member of the Cargo workspace rooted at the
 top-level `Cargo.toml` (`cargo build` at the root, binary in `target/`).
 `packaging/` is different: distribution channels and the Homebrew tap,
 not source. The three mirror one module layout; a language rule lives
 in the same-named file everywhere:
 
-| Concept | `packages/typescript/src` | `packages/rust/src` | `packages/python/decl/runtime` |
+| Concept | `decl-typescript/src` | `decl-rust/src` | `decl-python/decl/runtime` |
 |---|---|---|---|
 | AST | `ast.ts` | `ast.rs` | dict-shaped, built by `parse.py` |
 | CST → AST | `parse.ts` | `parse.rs` | `parse.py` |
@@ -86,7 +87,7 @@ package READMEs by `site/scripts/sync-docs.mjs` at build time; the
 synced pages under `site/src/content/docs/` are gitignored. Never edit
 them — edit `docs/`. Hand-written pages are the landing page
 (`index.mdx`), `start/`, and `playground.mdx`. The playground bundles
-`packages/typescript/src/web.ts` for the browser (`dist/web.js`, built by `npm run build`).
+`decl-typescript/src/web.ts` for the browser (`dist/web.js`, built by `npm run build`).
 Every ```decl block on the site must evaluate cleanly with the reference
 implementation.
 

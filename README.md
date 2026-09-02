@@ -51,16 +51,16 @@ for the channels and release procedure.
 
 ## Implementations
 
-Decl is implemented three times, under `packages/`, and the three must be
+Decl is implemented three times — `decl-typescript/`, `decl-rust/`, `decl-python/` — and the three must be
 indistinguishable: **one behavior, three implementations**. The Node
 side is one npm workspace (root `package.json`), Rust a Cargo workspace
 (root `Cargo.toml`); `packaging/` holds distribution channels, not source.
 
 | Directory | Language | Package | Scope |
 |---|---|---|---|
-| [`packages/typescript/`](packages/typescript/README.md) | TypeScript — the **reference implementation** | npm `decl-lang` | everything: parser binding, static checker, evaluator, validation, formatter, `decl-lsp`, packages, the browser bundle |
-| [`packages/rust/`](packages/rust/README.md) | Rust — native runtime | crates.io `decl-lang` | the evaluation half: parse → resolve → bind/evaluate/validate → serialize, modules (`decl evaluate` / `decl validate`) |
-| [`packages/python/`](packages/python/README.md) | Python — native runtime + package | PyPI `decl` | the evaluation half natively, plus a Python API; `check` / `fmt` / `decl-lsp` through the bundled reference |
+| [`decl-typescript/`](decl-typescript/README.md) | TypeScript — the **reference implementation** | npm `decl-lang` | everything: parser binding, static checker, evaluator, validation, formatter, `decl-lsp`, packages, the browser bundle |
+| [`decl-rust/`](decl-rust/README.md) | Rust — native runtime | crates.io `decl-lang` | the evaluation half: parse → resolve → bind/evaluate/validate → serialize, modules (`decl evaluate` / `decl validate`) |
+| [`decl-python/`](decl-python/README.md) | Python — native runtime + package | PyPI `decl` | the evaluation half natively, plus a Python API; `check` / `fmt` / `decl-lsp` through the bundled reference |
 | `tree-sitter-decl/` | C (tree-sitter) | — | the one grammar every implementation compiles or loads |
 | `tests/` | — | — | the shared conformance corpus (`validation/`, `modules/`, `packages/`) and the parity harness (`parity/`) |
 
@@ -90,7 +90,7 @@ complete: the tree-sitter grammar, the TypeScript reference
 implementation with its full static checker, modules and packages with
 a reproducible lock, the complete standard library, the `decl` CLI /
 formatter / LSP, and real-world validation on three domain examples
-(`examples/`). Ten test suites (`packages/typescript/`, `npm test`) and the fixture
+(`examples/`). Ten test suites (`decl-typescript/`, `npm test`) and the fixture
 corpus (`tests/validation`) are the conformance baseline.
 
 ## Documents
@@ -102,8 +102,8 @@ corpus (`tests/validation`) are the conformance baseline.
 - [docs/](docs/README.md) — language documentation: design charter,
   the normative specification (13 chapters), the guide, and the
   benchmark cases
-- [packages/typescript/](packages/typescript/README.md) — the reference implementation, CLI,
-  formatter, and LSP server; [packages/rust/](packages/rust/README.md) and
-  [packages/python/](packages/python/README.md) — the native runtimes
+- [decl-typescript/](decl-typescript/README.md) — the reference implementation, CLI,
+  formatter, and LSP server; [decl-rust/](decl-rust/README.md) and
+  [decl-python/](decl-python/README.md) — the native runtimes
 - [examples/](examples/) — domain examples used for real-world validation
 - [packaging/](packaging/README.md) — distribution channels and releases

@@ -8,7 +8,7 @@
   "repository": {
     "type": "git",
     "url": "git+https://github.com/luuvish/decl-lang.git",
-    "directory": "packages/typescript"
+    "directory": "decl-typescript"
   },
   "homepage": "https://github.com/luuvish/decl-lang#readme",
   "bugs": {
