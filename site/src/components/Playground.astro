@@ -6,7 +6,7 @@
 const base = import.meta.env.BASE_URL;
 ---
 
-<div class="pg" data-base={base}>
+<div class="pg not-content" data-base={base}>
   <div class="pg-bar">
     <label class="pg-sample">
       <span>Example</span>
@@ -78,7 +78,8 @@ const base = import.meta.env.BASE_URL;
         declHighlight,
         EditorView.theme({
           '&': { height: '100%', fontSize: '0.9rem', backgroundColor: 'var(--sl-color-bg)', color: 'var(--sl-color-text)' },
-          '.cm-scroller': { fontFamily: 'var(--__sl-font-mono, ui-monospace, monospace)' },
+          '.cm-scroller': { fontFamily: 'var(--__sl-font-mono, ui-monospace, monospace)', lineHeight: '1.5' },
+          '.cm-line, .cm-gutterElement': { marginTop: '0' },
           '.cm-gutters': { backgroundColor: 'var(--sl-color-bg-nav)', color: 'var(--sl-color-gray-3)', borderRight: '1px solid var(--sl-color-hairline)' },
           '.cm-activeLine, .cm-activeLineGutter': { backgroundColor: 'var(--sl-color-gray-6)' },
           '&.cm-focused': { outline: 'none' },
@@ -195,6 +196,8 @@ const base = import.meta.env.BASE_URL;
   .pg-sample { display: flex; align-items: center; gap: 0.4rem; }
   .pg-bar select, .pg-bar button {
     font: inherit;
+    margin: 0;
+    line-height: 1.4;
     padding: 0.25rem 0.6rem;
     border: 1px solid var(--sl-color-hairline);
     border-radius: 0.3rem;
