@@ -3,7 +3,7 @@
 import {
   ABSENT, DeferSig, Env, EvalErr, Taint,
   cmpPath, isArr, isClo, isMap, isQ, isRange, isRec, isRef, parsePath, pathStr, valueEq,
-  keyOfVec, vecCombine, vecOfKey, patternError, compilePattern,
+  keyOfVec, vecCombine, vecOfKey, patternError, compilePattern, mapKey, segText, dotSpellable,
 } from './semantics.ts';
 import type { Diag, RecInst, RT, Seg, Slot } from './semantics.ts';
 import type { Expr, TemplateParts } from './ast.ts';
@@ -97,7 +97,7 @@ export class Engine {
           // instance is a collection element (not a direct member)
           if (!inst || !inst.parent || inst.path.length < inst.parent.path.length + 2)
             throw new EvalErr('$key: the instance is not a collection element', 'E4090');
-          const k = inst.path[inst.path.length - 1];
+          const k = segText(inst.path[inst.path.length - 1]);
           return typeof k === 'number' ? BigInt(k) : k;
         }
         if (e.name === '$path') {
@@ -407,19 +407,44 @@ export class Engine {
   deref(v: any): any {
     if (isRef(v)) {
       const target = this.resolveSegs(v.segs);
-      if (target === undefined) throw new EvalErr(`dangling reference ${pathStr(v.segs)}`);
+      if (target === undefined) throw new EvalErr(`dangling reference ${pathStr(v.segs)}`, 'E6002');
       return target;
     }
     return v;
   }
+  // the value at a place; undefined when there is none (an absent optional
+  // member counts as none — §7.5). Lenient about segment kinds: engine-built
+  // paths are canonical by construction
   resolveSegs(segs: Seg[]): any {
     let cur: any = this.env.roots.get(segs[0] as string);
     for (let i = 1; i < segs.length && cur !== undefined; i++) {
-      const s = segs[i];
-      if (isRec(cur)) cur = this.forceSlot(cur, s as string);
+      const s = segText(segs[i]);
+      if (isRec(cur)) cur = cur.slots.has(s as string) ? this.forceSlot(cur, s as string) : undefined;
       else if (isArr(cur)) cur = cur.items[s as number];
       else if (isMap(cur)) cur = cur.entries.get(s);
       else cur = undefined;
+      if (cur === ABSENT) cur = undefined;
+      if (isRef(cur)) cur = this.deref(cur);
+    }
+    return cur;
+  }
+  // a path from a document must be canonical (§7.2, §7.5): a map key
+  // bracketed, a record member dotted when the dot can spell it and
+  // bracketed otherwise, an array index numeric — any other spelling does
+  // not resolve
+  resolveCanonical(segs: Seg[]): any {
+    let cur: any = this.env.roots.get(segs[0] as string);
+    for (let i = 1; i < segs.length && cur !== undefined; i++) {
+      const s = segs[i];
+      if (isRec(cur)) {
+        if (typeof s === 'number') return undefined;
+        const name = segText(s) as string;
+        if ((typeof s === 'object') === dotSpellable(name)) return undefined;
+        cur = cur.slots.has(name) ? this.forceSlot(cur, name) : undefined;
+      } else if (isArr(cur)) cur = typeof s === 'number' ? cur.items[s] : undefined;
+      else if (isMap(cur)) cur = typeof s === 'object' ? cur.entries.get(s.key) : undefined;
+      else cur = undefined;
+      if (cur === ABSENT) cur = undefined;
       if (isRef(cur)) cur = this.deref(cur);
     }
     return cur;
@@ -618,6 +643,11 @@ export class Engine {
       if (rt.t === 'ref') {
         const place = this.evalPlace(raw.__expr, sc2);
         if (!place) throw new EvalErr('not a place in ref position');
+        // reference integrity (§7.5): the place must hold a value
+        if (this.resolveSegs(place) === undefined) {
+          this.env.report({ severity: 'error', message: `dangling reference ${pathStr(place)}`, path: pathStr(path), code: 'E6002' });
+          throw new Taint();
+        }
         return { __ref: true, segs: place };
       }
       return this.bind(this.ev(raw.__expr, sc2), rt, path, parent, sc);
@@ -671,7 +701,7 @@ export class Engine {
         if (isRef(raw)) return raw;
         if (typeof raw === 'string') {
           const segs = parsePath(raw, sc.rootName);
-          const target = this.resolveSegs(segs);
+          const target = this.resolveCanonical(segs);
           if (target === undefined) return fail(`dangling reference ${raw}`, 'E6002');
           return { __ref: true, segs };
         }
@@ -706,7 +736,7 @@ export class Engine {
         if (!es) return fail('expected map');
         for (const [k, v] of es) {
           try { this.bind(k, rt.key, path, parent, sc); } catch (e) { if (e instanceof Taint) continue; throw e; }
-          try { m.entries.set(k, this.bind(v, rt.val, [...path, k], parent, sc)); }
+          try { m.entries.set(k, this.bind(v, rt.val, [...path, mapKey(k)], parent, sc)); }
           catch (e) { if (!(e instanceof Taint)) throw e; }
         }
         return m;
@@ -785,17 +815,29 @@ export class Engine {
     // only the taken branch is navigated
     if (e.e === 'if') return this.truthy(this.ev(e.c, sc)) ? this.evNav(e.t, sc) : this.evNav(e.f, sc);
     if (e.e === 'paren') return this.evNav(e.x, sc);
+    // a step past a missing place (an absent optional member, a key or
+    // index that is not there) is still a place: the chain keeps naming
+    // the location, and reference integrity (§7.5) judges it when the
+    // reference is bound. `?.` is an ordinary step here — a navigation in
+    // a ref position denotes the place regardless of maybe-absent steps
     if (e.e === 'member') {
-      const x = this.deref(this.evNav(e.x, sc));
+      const x0 = this.evNav(e.x, sc);
+      if (x0 && x0.__segs) return { __segs: [...x0.__segs, e.name] };
+      const x = this.deref(x0);
       const v = this.access(x, e.name);
-      if (v === ABSENT && isRec(x)) return { __segs: [...x.path, e.name] };  // place through absent: integrity checks later
+      if (v === ABSENT && isRec(x)) return { __segs: [...x.path, e.name] };
       return v;
     }
     if (e.e === 'index') {
-      const x = this.deref(this.evNav(e.x, sc));
+      const x0 = this.evNav(e.x, sc);
       const i = this.ev(e.i, sc);
+      // past a missing place a string index can only be a map key (bracket
+      // access to a dot-spellable member is a compile error, §4.3)
+      const seg = typeof i === 'bigint' ? Number(i) : mapKey(i);
+      if (x0 && x0.__segs) return { __segs: [...x0.__segs, seg] };
+      const x = this.deref(x0);
       if (isArr(x)) return x.items[Number(i)] ?? { __segs: [...x.path, Number(i)] };
-      if (isMap(x)) return x.entries.get(i) ?? { __segs: [...x.path, i] };
+      if (isMap(x)) return x.entries.get(i) ?? { __segs: [...x.path, mapKey(i)] };
       if (isRec(x)) { const v = this.access(x, i); return v === ABSENT ? { __segs: [...x.path, i] } : v; }
     }
     return this.ev(e, sc);
@@ -833,9 +875,15 @@ export class Engine {
         const slot: Slot = {
           kind: 'der', state: 'unforced', deferred: mentionsReferrersLocal(m.expr),
           compute: () => {
-            let v = this.ev(m.expr, isc);
-            if (m.type) v = this.bind(v, m.type, [...path, m.name], inst, isc);
-            else if (v && (v.__pre || v.__jobj)) v = this.materialize(v, [...path, m.name], inst, isc);
+            let v: any;
+            // a member declared `ref<T>` holds a navigation (§7.4): the
+            // expression names a place, and is bound as one
+            if (m.type?.t === 'ref') v = this.bind({ __expr: m.expr, scope: isc }, m.type, [...path, m.name], inst, isc);
+            else {
+              v = this.ev(m.expr, isc);
+              if (m.type) v = this.bind(v, m.type, [...path, m.name], inst, isc);
+              else if (v && (v.__pre || v.__jobj)) v = this.materialize(v, [...path, m.name], inst, isc);
+            }
             if (has) {
               this.noReg++;
               let restated: any;
@@ -859,6 +907,7 @@ export class Engine {
         inst.slots.set(m.name, {
           kind: 'dflt', state: 'unforced', deferred: mentionsReferrersLocal(m.dflt),
           compute: () => {
+            if (m.type?.t === 'ref' && !m.conj) return this.bind({ __expr: m.dflt, scope: isc }, m.type, [...path, m.name], inst, isc);
             const v = this.ev(m.dflt, isc);
             let out: any;
             for (const ty of types) out = this.bind(v, ty, [...path, m.name], inst, isc);
@@ -892,7 +941,7 @@ export class Engine {
     }
     if (v && v.__pre === 'obj') {
       const m: any = { __map: true, entries: new Map(), path };
-      for (const [k, pv] of v.entries) m.entries.set(k, this.materialize(pv.__expr ? this.ev(pv.__expr, pv.scope) : pv, [...path, k], parent, sc));
+      for (const [k, pv] of v.entries) m.entries.set(k, this.materialize(pv.__expr ? this.ev(pv.__expr, pv.scope) : pv, [...path, mapKey(k)], parent, sc));
       return m;
     }
     return v;

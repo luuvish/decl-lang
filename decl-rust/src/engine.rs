@@ -82,9 +82,9 @@ fn path_key_cmp(a: &[Seg], b: &[Seg]) -> Ordering {
     for (x, y) in a.iter().zip(b) {
         let o = match (x, y) {
             (Seg::Idx(i), Seg::Idx(j)) => i.cmp(j),
-            (Seg::Idx(_), Seg::Name(_)) => Less,
-            (Seg::Name(_), Seg::Idx(_)) => Greater,
-            (Seg::Name(m), Seg::Name(n)) => m.cmp(n),
+            (Seg::Idx(_), _) => Less,
+            (_, Seg::Idx(_)) => Greater,
+            _ => seg_text(x).cmp(&seg_text(y)),
         };
         if o != Equal {
             return o;
@@ -231,7 +231,7 @@ impl Engine {
                         }
                         Ok(match b.path.last() {
                             Some(Seg::Idx(k)) => Value::Int(BigInt::from(*k)),
-                            Some(Seg::Name(k)) => Value::Str(k.clone()),
+                            Some(Seg::Name(k)) | Some(Seg::Key(k)) => Value::Str(k.clone()),
                             None => Value::Absent,
                         })
                     }
@@ -762,13 +762,16 @@ impl Engine {
         if let Value::Ref(p) = &v {
             let target = self.resolve_segs(p)?;
             if target.is_undef() {
-                return err(format!("dangling reference {}", path_str(p, None)));
+                return err_code(format!("dangling reference {}", path_str(p, None)), "E6002");
             }
             return Ok(target);
         }
         Ok(v)
     }
 
+    // the value at a place; Undef when there is none (an absent optional
+    // member counts as none — §7.5). Lenient about segment kinds: engine-built
+    // paths are canonical by construction
     pub fn resolve_segs(&self, segs: &[Seg]) -> R<Value> {
         let mut cur = match segs.first() {
             Some(Seg::Name(n)) => self.env.root(n).unwrap_or(Value::Undef),
@@ -779,12 +782,49 @@ impl Engine {
                 break;
             }
             cur = match (&cur, s) {
-                (Value::Rec(r), Seg::Name(n)) => self.force_slot(r, n)?,
-                (Value::Rec(_), Seg::Idx(i)) => return err(format!("no member {i}")),
+                (Value::Rec(r), Seg::Name(n) | Seg::Key(n)) => {
+                    if r.borrow().slot(n).is_some() { self.force_slot(r, n)? } else { Value::Undef }
+                }
                 (Value::Arr(a), Seg::Idx(i)) => a.borrow().items.get(*i).cloned().unwrap_or(Value::Undef),
-                (Value::Map(m), Seg::Name(n)) => m.borrow().get(n).cloned().unwrap_or(Value::Undef),
+                (Value::Map(m), Seg::Name(n) | Seg::Key(n)) => m.borrow().get(n).cloned().unwrap_or(Value::Undef),
                 _ => Value::Undef,
             };
+            if cur.is_absent() {
+                cur = Value::Undef;
+            }
+            if let Value::Ref(_) = cur {
+                cur = self.deref(cur)?;
+            }
+        }
+        Ok(cur)
+    }
+    // a path from a document must be canonical (§7.2, §7.5): a map key
+    // bracketed, a record member dotted when the dot can spell it and
+    // bracketed otherwise, an array index numeric — any other spelling does
+    // not resolve
+    pub fn resolve_canonical(&self, segs: &[Seg]) -> R<Value> {
+        let mut cur = match segs.first() {
+            Some(Seg::Name(n)) => self.env.root(n).unwrap_or(Value::Undef),
+            _ => Value::Undef,
+        };
+        for s in segs.iter().skip(1) {
+            if cur.is_undef() {
+                break;
+            }
+            cur = match (&cur, s) {
+                (Value::Rec(r), Seg::Name(n)) if dot_spellable(n) => {
+                    if r.borrow().slot(n).is_some() { self.force_slot(r, n)? } else { Value::Undef }
+                }
+                (Value::Rec(r), Seg::Key(n)) if !dot_spellable(n) => {
+                    if r.borrow().slot(n).is_some() { self.force_slot(r, n)? } else { Value::Undef }
+                }
+                (Value::Arr(a), Seg::Idx(i)) => a.borrow().items.get(*i).cloned().unwrap_or(Value::Undef),
+                (Value::Map(m), Seg::Key(n)) => m.borrow().get(n).cloned().unwrap_or(Value::Undef),
+                _ => Value::Undef,
+            };
+            if cur.is_absent() {
+                cur = Value::Undef;
+            }
             if let Value::Ref(_) = cur {
                 cur = self.deref(cur)?;
             }
@@ -1164,7 +1204,14 @@ impl Engine {
             let sc2 = pv.scope.with_inst(inst);
             if let RTk::Ref(_) = rt.k {
                 return match self.eval_place(&pv.expr, &sc2)? {
-                    Some(p) => Ok(Value::Ref(Rc::new(p))),
+                    Some(p) => {
+                        // reference integrity (§7.5): the place must hold a value
+                        if self.resolve_segs(&p)?.is_undef() {
+                            self.env.report(Diag::error(format!("dangling reference {}", path_str(&p, None)), path_str(path, None), Some("E6002")));
+                            return Err(Fail::Taint);
+                        }
+                        Ok(Value::Ref(Rc::new(p)))
+                    }
                     None => err("not a place in ref position"),
                 };
             }
@@ -1252,7 +1299,7 @@ impl Engine {
                 Value::Ref(_) => Ok(raw),
                 Value::Str(s) => {
                     let segs = parse_path(s, &sc.root_name)?;
-                    if self.resolve_segs(&segs)?.is_undef() {
+                    if self.resolve_canonical(&segs)?.is_undef() {
                         return Err(fail(format!("dangling reference {s}"), Some("E6002")));
                     }
                     Ok(Value::Ref(Rc::new(segs)))
@@ -1314,7 +1361,7 @@ impl Engine {
                         Err(e) => return Err(e),
                     }
                     let mut p = path.to_vec();
-                    p.push(Seg::Name(k.clone()));
+                    p.push(Seg::Key(k.clone()));
                     match self.bind(v, val, &p, parent, sc) {
                         Ok(bv) => m.borrow_mut().set(k, bv),
                         Err(Fail::Taint) => {}
@@ -1454,8 +1501,19 @@ impl Engine {
                 }
             }
             Expr::Paren(x) => self.ev_nav(x, sc),
+            // a step past a missing place (an absent optional member, a key or
+            // index that is not there) is still a place: the chain keeps naming
+            // the location, and reference integrity (§7.5) judges it when the
+            // reference is bound. `?.` is an ordinary step here — a navigation in
+            // a ref position denotes the place regardless of maybe-absent steps
             Expr::Member { x, name, .. } => {
-                let x = self.deref(self.ev_nav(x, sc)?)?;
+                let x0 = self.ev_nav(x, sc)?;
+                if let Value::Segs(p) = &x0 {
+                    let mut p = (**p).clone();
+                    p.push(Seg::Name(name.clone()));
+                    return Ok(Value::Segs(Rc::new(p)));
+                }
+                let x = self.deref(x0)?;
                 let v = self.access(&x, name)?;
                 if v.is_absent() {
                     if let Value::Rec(r) = &x {
@@ -1467,8 +1525,19 @@ impl Engine {
                 Ok(v)
             }
             Expr::Index { x, i } => {
-                let x = self.deref(self.ev_nav(x, sc)?)?;
+                let x0 = self.ev_nav(x, sc)?;
                 let i = self.ev(i, sc)?;
+                if let Value::Segs(p) = &x0 {
+                    let mut p = (**p).clone();
+                    // past a missing place a string index can only be a map key (bracket
+                    // access to a dot-spellable member is a compile error, §4.3)
+                    match &i {
+                        Value::Str(k) => p.push(Seg::Key(k.clone())),
+                        _ => p.push(Seg::Idx(to_index(&i)?.max(0) as usize)),
+                    }
+                    return Ok(Value::Segs(Rc::new(p)));
+                }
+                let x = self.deref(x0)?;
                 match &x {
                     Value::Arr(a) => {
                         let n = to_index(&i)?;
@@ -1488,7 +1557,7 @@ impl Engine {
                             Some(v) => Ok(v.clone()),
                             None => {
                                 let mut p = b.path.clone();
-                                p.push(Seg::Name(k.clone()));
+                                p.push(Seg::Key(k.clone()));
                                 Ok(Value::Segs(Rc::new(p)))
                             }
                         }
@@ -1593,7 +1662,7 @@ impl Engine {
             if members.iter().any(|m| m.name == *k) {
                 continue;
             }
-            if rec.open {
+            if rec.open.get() {
                 inst.borrow_mut().set_extra(k, v.clone());
             } else {
                 let nm = rt.name.borrow().as_ref().map(|n| format!(" {n}")).unwrap_or_default();
@@ -1626,6 +1695,10 @@ impl Engine {
             Compute::Default { expr, types, name, root_name, menv } => {
                 let isc = scope_for(root_name, menv);
                 let mp = member_path(name);
+                if types.len() == 1 && matches!(types[0].k, RTk::Ref(_)) {
+                    let pv = Value::PreVal(Rc::new(PreValV { expr: expr.clone(), scope: isc.clone() }));
+                    return self.bind(pv, &types[0], &mp, Some(inst), &isc);
+                }
                 let v = self.ev(expr, &isc)?;
                 let mut out = Value::Null;
                 for t in types {
@@ -1636,9 +1709,19 @@ impl Engine {
             Compute::Derived { expr, ty: t, supplied, name, root_name, menv } => {
                 let isc = scope_for(root_name, menv);
                 let mp = member_path(name);
-                let mut v = self.ev(expr, &isc)?;
+                // a member declared `ref<T>` holds a navigation (§7.4): the
+                // expression names a place, and is bound as one
+                let mut v = match t {
+                    Some(t) if matches!(t.k, RTk::Ref(_)) => {
+                        let pv = Value::PreVal(Rc::new(PreValV { expr: expr.clone(), scope: isc.clone() }));
+                        self.bind(pv, t, &mp, Some(inst), &isc)?
+                    }
+                    _ => self.ev(expr, &isc)?,
+                };
                 if let Some(t) = t {
-                    v = self.bind(v, t, &mp, Some(inst), &isc)?;
+                    if !matches!(t.k, RTk::Ref(_)) {
+                        v = self.bind(v, t, &mp, Some(inst), &isc)?;
+                    }
                 } else if matches!(v, Value::PreObj(_) | Value::PreArr(_) | Value::JObj(_)) {
                     v = self.materialize(v, &mp)?;
                 }
@@ -1682,7 +1765,7 @@ impl Engine {
                         other => other.clone(),
                     };
                     let mut p = path.to_vec();
-                    p.push(Seg::Name(k.clone()));
+                    p.push(Seg::Key(k.clone()));
                     let mv = self.materialize(x, &p)?;
                     m.borrow_mut().set(k.clone(), mv);
                 }

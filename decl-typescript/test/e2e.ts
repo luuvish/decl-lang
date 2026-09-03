@@ -88,7 +88,7 @@ console.log('== case 1: interconnect ==');
   check('arbiter max', get(eng, ['xbar', 'nodes', 'dom0', 'nodes', 'arb0', 'ports', 'mi', 'width']) === 64n);
 
   const ser = eng.serialize(env.roots.get('xbar'), 'xbar');
-  check('relative ref paths', ser.includes('"$.nodes.dom0.ports.si0"'));
+  check('relative ref paths', ser.includes('"$.nodes[\\"dom0\\"].ports[\\"si0\\"]"'));
 
   // round-trip under a different root name
   const src = readFileSync(join(root, 'docs/examples/01_interconnect.decl'), 'utf8');

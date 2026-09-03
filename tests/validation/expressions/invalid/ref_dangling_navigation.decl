@@ -1,0 +1,20 @@
+// @expect-phase: binding
+// @expect-error: E6002
+// parses; a navigation in a ref position that passes a missing key is a
+// dangling reference at the reference's path (§7.5), not an evaluation error
+type Port = { mode: "si" | "mi" }
+type Host = { ports?: { [string]: Port }, nodes?: { [string]: { ports?: { [string]: Port }, ... } }, ... }
+type Edge = {
+    $parent: ref<Host>
+    to: string
+    const target: ref<Port> = $parent.nodes[to].ports["si"]
+}
+type Node = {
+    ports?: { [string]: Port }
+    nodes?: { [string]: Node }
+    edges?: { [string]: Edge }
+}
+output n: Node = {
+    nodes: { a: { ports: { si: { mode: "si" } } } }
+    edges: { e1: { to: "zz" } }
+}

@@ -1,0 +1,16 @@
+// Canonical paths (§7.2): a map key is always bracketed, even when it is
+// identifier-shaped; a record member is dotted when the dot can spell it
+// and bracketed otherwise; an array index is numeric. `$path` and
+// `std.ref.path` spell exactly this form.
+type Port = { mode: "si" | "mi", const where = $path }
+type Node = {
+    ports: { [string]: Port }
+    "my-key": Port = { mode: "mi" }
+    const first: ref<Port> = ports["si0"]
+
+    assert key_bracketed: std.ref.path(first) == `${$path}.ports["si0"]`
+    assert own_path: (ports["si0"]?.where ?? "") == `${$path}.ports["si0"]`
+    assert odd_key: (ports["s-1"]?.where ?? "") == `${$path}.ports["s-1"]`
+    assert odd_member: $this["my-key"].where == `${$path}["my-key"]`
+}
+output n: Node = { ports: { si0: { mode: "si" }, "s-1": { mode: "mi" } } }

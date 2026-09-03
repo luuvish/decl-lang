@@ -1,0 +1,13 @@
+// @expect-phase: checking
+// @expect-error: E4090
+// parses; the root's own type gives $parent and $key no meaning (§7.3):
+// the evaluation root has no owner and sits under no key — a recursive
+// family gives its root a type of its own instead
+type Node = {
+    $parent: ref<{ path: string, ... }>
+    $key: string
+    const name = $key
+    const path = `${$parent.path}.${name}`
+    kids: { [string]: Node } = { }
+}
+output tree: Node = { }

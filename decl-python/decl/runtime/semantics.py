@@ -131,6 +131,34 @@ class Segs:
         self.segs = segs
 
 
+class Key:
+    """A map key inside a canonical path (§7.2) — kept apart from a record
+    member because the canonical text differs: a map key is always
+    bracketed, a member is dotted when the dot can spell it."""
+    __slots__ = ("k",)
+
+    def __init__(self, k: str):
+        self.k = k
+
+    def __eq__(self, other):
+        return isinstance(other, Key) and other.k == self.k
+
+    def __hash__(self):
+        return hash(("key", self.k))
+
+    def __repr__(self):
+        return f"Key({self.k!r})"
+
+
+def seg_text(s):
+    return s.k if isinstance(s, Key) else s
+
+
+def dot_spellable(name) -> bool:
+    """§3.11, §4.3: identifier-shaped and not a literal keyword."""
+    return isinstance(name, str) and _ID_RE.match(name) is not None and name not in ("true", "false", "null")
+
+
 class ArrV:
     __slots__ = ("items", "path")
 
@@ -526,47 +554,84 @@ class Env:
             base = self.instantiate(ast, decl)
         elif n in self.type_memo:
             base = self.type_memo[n]
+        elif decl["ast"]["k"] == "record":
+            base = {"t": "rec", "name": n, "members": [], "asserts": [], "open": decl["ast"]["open"], "tail": decl.get("tail")}
+            self.type_memo[n] = base
+            # a member that fails to resolve must not leave a half-filled
+            # record memoized (later lookups would miss its later members)
+            try:
+                self.fill_record(base, decl["ast"]["members"])
+            except BaseException:
+                self.type_memo.pop(n, None)
+                raise
+        elif decl["ast"]["k"] == "named" and decl["ast"].get("ext"):
+            # an extension declaration (§3.14) is memoized before its parent
+            # resolves: in a recursive family — `type Base = { kids: { [string]:
+            # Kid } }`, `type Kid = Base { … }` — the parent's body names this
+            # type, and every reference must share the one final record rather
+            # than a snapshot of the parent's members taken mid-fill
+            base = {"t": "rec", "name": n, "members": [], "asserts": [], "tail": decl.get("tail"), "filling": True}
+            self.type_memo[n] = base
+            try:
+                parent = self.resolve({**decl["ast"], "ext": None})
+                self.extend_into(base, parent, self.resolve(decl["ast"]["ext"]))
+            except BaseException:
+                self.type_memo.pop(n, None)
+                raise
         else:
-            if decl["ast"]["k"] == "record":
-                base = {"t": "rec", "name": n, "members": [], "asserts": [], "open": decl["ast"]["open"], "tail": decl.get("tail")}
-                self.type_memo[n] = base
-                # a member that fails to resolve must not leave a half-filled
-                # record memoized (later lookups would miss its later members)
-                try:
-                    self.fill_record(base, decl["ast"]["members"])
-                except BaseException:
-                    self.type_memo.pop(n, None)
-                    raise
-            else:
-                base = self.resolve(decl["ast"], n)
-                if base["t"] in ("rec", "union"):
-                    base["name"] = n
-                if base.get("tail") is None:
-                    base["tail"] = decl.get("tail")
-                self.type_memo[n] = base
+            base = self.resolve(decl["ast"], n)
+            if base["t"] in ("rec", "union"):
+                base["name"] = n
+            if base.get("tail") is None:
+                base["tail"] = decl.get("tail")
+            self.type_memo[n] = base
         if ast.get("ext"):
-            ext = self.resolve(ast["ext"])
-            # an extension may narrow a context declaration (§7.3): its
-            # declaration replaces the inherited one for that variable
-            ctx_decls = list(base.get("ctx_decls") or [])
-            for cd in ext.get("ctx_decls") or []:
-                idx = next((i for i, x in enumerate(ctx_decls) if x["variable"] == cd["variable"]), -1)
-                if idx >= 0:
-                    ctx_decls[idx] = cd
-                else:
-                    ctx_decls.append(cd)
-            merged = {"t": "rec", "name": base.get("name"), "open": base.get("open"), "tail": base.get("tail"),
-                      "ctx_decls": ctx_decls if ctx_decls else None,
-                      "members": [dict(m) for m in base["members"]], "asserts": list(base["asserts"])}
-            for om in ext["members"]:
-                idx = next((i for i, m in enumerate(merged["members"]) if m["name"] == om["name"]), -1)
-                if idx >= 0:
-                    merged["members"][idx] = om
-                else:
-                    merged["members"].append(om)
-            merged["asserts"].extend(ext["asserts"])
+            # an inline extension in a type position: anonymous, never memoized
+            merged = {"t": "rec", "name": base.get("name"), "members": [], "asserts": [], "filling": True}
+            self.extend_into(merged, base, self.resolve(ast["ext"]))
             return merged
         return base
+
+    # §3.14: fill `target` as `base` extended by the override body `ext` —
+    # base members copied, overrides replacing or adding, asserts appended,
+    # and a context declaration narrowed by the extension replacing the
+    # inherited one (§7.3). A base still being filled (the recursive-family
+    # case above) defers the merge until it completes; `target` stays marked
+    # filling meanwhile, so an extension of an extension waits in turn.
+    def extend_into(self, target: dict, base: dict, ext: dict) -> None:
+        if base["t"] != "rec":
+            target.update(base)
+            target["filling"] = False
+            return
+        if base.get("filling"):
+            base.setdefault("pending_exts", []).append((target, ext))
+            return
+        target["open"] = base.get("open")
+        target["tail"] = base.get("tail") if base.get("tail") is not None else target.get("tail")
+        ctx_decls = list(base.get("ctx_decls") or [])
+        for cd in ext.get("ctx_decls") or []:
+            idx = next((i for i, x in enumerate(ctx_decls) if x["variable"] == cd["variable"]), -1)
+            if idx >= 0:
+                ctx_decls[idx] = cd
+            else:
+                ctx_decls.append(cd)
+        target["ctx_decls"] = ctx_decls if ctx_decls else None
+        target["members"] = [dict(m) for m in base["members"]]
+        for om in ext["members"]:
+            idx = next((i for i, m in enumerate(target["members"]) if m["name"] == om["name"]), -1)
+            if idx >= 0:
+                target["members"][idx] = om
+            else:
+                target["members"].append(om)
+        target["asserts"] = list(base["asserts"]) + list(ext["asserts"])
+        self.complete_record(target)
+
+    # a record's members are final: extensions that waited on it merge now
+    def complete_record(self, rt: dict) -> None:
+        rt["filling"] = False
+        pending = rt.pop("pending_exts", None) or []
+        for target, ext in pending:
+            self.extend_into(target, rt, ext)
 
     # §3.6: `${T}` inside a pattern splices another type — a string-shaped
     # T (pattern, string literal, union of those) as its regular language,
@@ -740,6 +805,7 @@ class Env:
         return m
 
     def fill_record(self, rt: dict, members: list) -> None:
+        rt["filling"] = True
         for m in members:
             k = m["m"]
             if k == "value":
@@ -758,6 +824,7 @@ class Env:
                                       "origin": rt.get("name"), "menv": self})
             elif k == "context":
                 rt.setdefault("ctx_decls", []).append({"variable": m["variable"], "type": self.resolve(m["type"]), "menv": self})
+        self.complete_record(rt)
 
     def merge_isect(self, arms: list, name: Optional[str]) -> dict:
         recs = [a for a in arms if a["t"] == "rec"]
@@ -933,10 +1000,12 @@ def path_str(segs: list, rel_root: Optional[str] = None) -> str:
     out = ""
     for i, s in enumerate(segs):
         if i == 0:
-            out += "$" if (rel_root is not None and s == rel_root) else str(s)
+            out += "$" if (rel_root is not None and s == rel_root) else str(seg_text(s))
         elif is_int(s):
             out += f"[{s}]"
-        elif _ID_RE.match(s):
+        elif isinstance(s, Key):
+            out += f"[{json.dumps(s.k, ensure_ascii=False)}]"
+        elif dot_spellable(s):
             out += f".{s}"
         else:
             out += f"[{json.dumps(s, ensure_ascii=False)}]"
@@ -944,6 +1013,9 @@ def path_str(segs: list, rel_root: Optional[str] = None) -> str:
 
 
 def parse_path(s: str, root_name: str) -> list:
+    """A path string from a document: `.name` is a member, `["…"]` a
+    bracketed segment (a map key, or a member the dot cannot spell — the
+    canonical walk, §7.5, decides which is legal where), `[n]` an index."""
     segs: list = []
     i = 0
     if s[:1] == "$":
@@ -965,7 +1037,7 @@ def parse_path(s: str, root_name: str) -> list:
         elif s[i] == "[":
             j = s.index("]", i)
             inner = s[i + 1:j]
-            segs.append(json.loads(inner) if inner.startswith('"') else int(inner))
+            segs.append(Key(json.loads(inner)) if inner.startswith('"') else int(inner))
             i = j + 1
         else:
             raise EvalErr(f"bad path {s}")
@@ -973,7 +1045,10 @@ def parse_path(s: str, root_name: str) -> list:
 
 
 def cmp_path(a: list, b: list) -> int:
+    """Canonical path order (§7.2): segment-wise, indices numerically,
+    names and keys lexicographically, a prefix first."""
     for x, y in zip(a, b):
+        x, y = seg_text(x), seg_text(y)
         if is_int(x) and is_int(y):
             if x != y:
                 return x - y

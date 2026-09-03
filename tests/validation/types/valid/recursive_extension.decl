@@ -1,0 +1,26 @@
+// A recursive family through an extension (§3.1, §3.14): the parent's
+// body names the child, and the child extends the parent. Every
+// reference to `Kid` — including the one inside `Base.kids`, resolved
+// while `Base` itself is still being filled — is the one complete type,
+// so a grandchild's own `kids` binds like any other.
+type Base = {
+    name: string
+    kids?: { [string]: Kid }
+}
+type Kid = Base { const label = `kid:${name}` }
+type Top = Base { const label = "top" }
+
+output tree: Top = {
+    name: "t"
+    kids: {
+        a: { name: "a", kids: { b: { name: "b" } } }
+    }
+}
+
+type Check = {
+    t: Top
+    assert labels: t.label == "top"
+    assert child: "kids" in t && "a" in t.kids && t.kids["a"].label == "kid:a"
+    assert grandchild: "kids" in t && "a" in t.kids && "kids" in t.kids["a"]
+}
+output check: Check = { t: tree }

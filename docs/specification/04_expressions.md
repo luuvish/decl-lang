@@ -92,9 +92,10 @@ identifier-shaped name — resolved statically against `e`'s type
 (§3.11). `e[k]` reads: an array element (`k: int`; out of bounds is an
 evaluation error, §4.14), a map entry (`k: string`; maybe-absent,
 §4.10), or a record member whose name the dot cannot spell — not
-identifier-shaped, or a reserved keyword (`r["my-key"]`, `r["type"]`)
-— then `k` must be a string literal, and the access is as static as
-`.`. One name, one form: bracket access to a dot-spellable record
+identifier-shaped, or one of the literal keywords `true`/`false`/`null`
+(`r["my-key"]`, `r["null"]`; reserved keywords such as `type` are
+ordinary dotted names, D33) — then `k` must be a string literal, and
+the access is as static as `.`. One name, one form: bracket access to a dot-spellable record
 member (`r["port"]`) is a compile error. Records read with `.`, maps
 always with `[…]`; the quoted form exists only for names the dot
 cannot write. Access on a **union-typed** operand is legal when every

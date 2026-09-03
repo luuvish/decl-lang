@@ -5,7 +5,16 @@ import { subsumes } from './subsume.ts';
 
 // ---------------- values ----------------
 export const ABSENT = Symbol('absent');
-export type Seg = string | number;
+// a path segment (§7.2): a record member by name, an array index, or a
+// map key — kept apart from a member because the canonical text differs:
+// a map key is always bracketed, a member is dotted when the dot can
+// spell it
+export type Seg = string | number | { key: string };
+export const mapKey = (k: string): Seg => ({ key: k });
+export const segText = (s: Seg): string | number => typeof s === 'object' ? s.key : s;
+// dot-spellable (§3.11, §4.3): identifier-shaped and not a literal keyword
+export const dotSpellable = (name: string): boolean =>
+  /^[_A-Za-z][_A-Za-z0-9]*$/.test(name) && !['true', 'false', 'null'].includes(name);
 export type Value = any; // bigint | number | string | boolean | null | QuantityV | RefV | RecInst | ArrV | MapV | RangeV | ClosureV
 
 export const isQ = (v: any) => v && v.__q === true;
@@ -321,43 +330,73 @@ export class Env {
         let base: RT;
         if (decl.params?.length) base = this.instantiate(ast, decl);
         else if (this.typeMemo.has(ast.name)) base = this.typeMemo.get(ast.name);
-        else {
-          if (decl.ast.k === 'record') {
-            base = { t: 'rec', name: ast.name, members: [], asserts: [], open: decl.ast.open, tail: decl.tail };
-            this.typeMemo.set(ast.name, base);
-            // a member that fails to resolve must not leave a half-filled
-            // record memoized (later lookups would miss its later members)
-            try { this.fillRecord(base, decl.ast.members); }
-            catch (e) { this.typeMemo.delete(ast.name); throw e; }
-          } else {
-            base = this.resolve(decl.ast, ast.name);
-            if (base.t === 'rec' || base.t === 'union') base.name = ast.name;
-            base.tail = base.tail ?? decl.tail;
-            this.typeMemo.set(ast.name, base);
-          }
+        else if (decl.ast.k === 'record') {
+          base = { t: 'rec', name: ast.name, members: [], asserts: [], open: decl.ast.open, tail: decl.tail };
+          this.typeMemo.set(ast.name, base);
+          // a member that fails to resolve must not leave a half-filled
+          // record memoized (later lookups would miss its later members)
+          try { this.fillRecord(base, decl.ast.members); }
+          catch (e) { this.typeMemo.delete(ast.name); throw e; }
+        } else if (decl.ast.k === 'named' && decl.ast.ext) {
+          // an extension declaration (§3.14) is memoized before its parent
+          // resolves: in a recursive family — `type Base = { kids: { [string]:
+          // Kid } }`, `type Kid = Base { … }` — the parent's body names this
+          // type, and every reference must share the one final record rather
+          // than a snapshot of the parent's members taken mid-fill
+          base = { t: 'rec', name: ast.name, members: [], asserts: [], tail: decl.tail, filling: true };
+          this.typeMemo.set(ast.name, base);
+          try {
+            const parent = this.resolve({ ...decl.ast, ext: undefined });
+            this.extendInto(base, parent, this.resolve(decl.ast.ext));
+          } catch (e) { this.typeMemo.delete(ast.name); throw e; }
+        } else {
+          base = this.resolve(decl.ast, ast.name);
+          if (base.t === 'rec' || base.t === 'union') base.name = ast.name;
+          base.tail = base.tail ?? decl.tail;
+          this.typeMemo.set(ast.name, base);
         }
         if (ast.ext) {
-          const ext = this.resolve(ast.ext) as any;      // anonymous record of overrides
-          // an extension may narrow a context declaration (§7.3): its
-          // declaration replaces the inherited one for that variable
-          const ctxDecls = [...(base.ctxDecls ?? [])];
-          for (const cd of ext.ctxDecls ?? []) {
-            const i = ctxDecls.findIndex((x: any) => x.variable === cd.variable);
-            if (i >= 0) ctxDecls[i] = cd; else ctxDecls.push(cd);
-          }
-          const merged: any = { t: 'rec', name: base.name, open: base.open, tail: base.tail,
-            ctxDecls: ctxDecls.length ? ctxDecls : undefined,
-            members: base.members.map((m: any) => ({ ...m })), asserts: [...base.asserts] };
-          for (const om of ext.members) {
-            const i = merged.members.findIndex((m: any) => m.name === om.name);
-            if (i >= 0) merged.members[i] = om; else merged.members.push(om);
-          }
-          merged.asserts.push(...ext.asserts);
+          // an inline extension in a type position: anonymous, never memoized
+          const merged: any = { t: 'rec', name: base.name, members: [], asserts: [], filling: true };
+          this.extendInto(merged, base, this.resolve(ast.ext));
           return merged;
         }
         return base;
       }
     }
+  }
+  // §3.14: fill `target` as `base` extended by the override body `ext` —
+  // base members copied, overrides replacing or adding, asserts appended,
+  // and a context declaration narrowed by the extension replacing the
+  // inherited one (§7.3). A base still being filled (the recursive-family
+  // case above) defers the merge until it completes; `target` stays marked
+  // filling meanwhile, so an extension of an extension waits in turn.
+  extendInto(target: any, base: RT, ext: RT) {
+    const b: any = base, e: any = ext;
+    if (b.t !== 'rec') { Object.assign(target, b, { filling: false }); return; }
+    if (b.filling) { (b.pendingExts ??= []).push({ target, ext }); return; }
+    target.open = b.open;
+    target.tail = b.tail ?? target.tail;
+    const ctxDecls = [...(b.ctxDecls ?? [])];
+    for (const cd of e.ctxDecls ?? []) {
+      const i = ctxDecls.findIndex((x: any) => x.variable === cd.variable);
+      if (i >= 0) ctxDecls[i] = cd; else ctxDecls.push(cd);
+    }
+    target.ctxDecls = ctxDecls.length ? ctxDecls : undefined;
+    target.members = b.members.map((m: any) => ({ ...m }));
+    for (const om of e.members) {
+      const i = target.members.findIndex((m: any) => m.name === om.name);
+      if (i >= 0) target.members[i] = om; else target.members.push(om);
+    }
+    target.asserts = [...b.asserts, ...e.asserts];
+    this.completeRecord(target);
+  }
+  // a record's members are final: extensions that waited on it merge now
+  completeRecord(rt: any) {
+    rt.filling = false;
+    const pending = rt.pendingExts ?? [];
+    rt.pendingExts = undefined;
+    for (const p of pending) this.extendInto(p.target, rt, p.ext);
   }
   // §3.6: `${T}` inside a pattern splices another type — a string-shaped
   // T (pattern, string literal, union of those) as its regular language,
@@ -507,6 +546,7 @@ export class Env {
   fillRecord(rt: any, members: MemberAst[]) {
     // member expressions and asserts evaluate in their declaring
     // module's scope (§8.3) — carry it on each entry
+    rt.filling = true;
     for (const m of members) {
       if (m.m === 'value')
         rt.members.push({ kind: m.dflt ? 'dflt' : m.opt ? 'opt' : 'req', name: m.name, type: this.resolve(m.type), dflt: m.dflt, menv: this });
@@ -519,6 +559,7 @@ export class Env {
       else if (m.m === 'context')
         (rt.ctxDecls ??= []).push({ variable: m.variable, type: this.resolve(m.type), menv: this });
     }
+    this.completeRecord(rt);
   }
   mergeIsect(arms: RT[], name?: string): RT {
     const recs = arms.filter(a => a.t === 'rec');
@@ -652,17 +693,20 @@ export function substExpr(e: Expr, values: Map<string, any>): Expr {
   return out;
 }
 
-const idRe = /^[_A-Za-z][_A-Za-z0-9]*$/;
 export function pathStr(segs: Seg[], relRoot?: string): string {
   let out = '';
   segs.forEach((s, i) => {
-    if (i === 0) { out += relRoot !== undefined && s === relRoot ? '$' : String(s); return; }
+    if (i === 0) { out += relRoot !== undefined && s === relRoot ? '$' : String(segText(s)); return; }
     if (typeof s === 'number') out += `[${s}]`;
-    else if (idRe.test(s)) out += `.${s}`;
+    else if (typeof s === 'object') out += `[${JSON.stringify(s.key)}]`;
+    else if (dotSpellable(s)) out += `.${s}`;
     else out += `[${JSON.stringify(s)}]`;
   });
   return out;
 }
+// a path string from a document: `.name` is a member, `["…"]` a bracketed
+// segment (a map key, or a member the dot cannot spell — the canonical
+// walk, §7.5, decides which is legal where), `[n]` an index
 export function parsePath(s: string, rootName: string): Seg[] {
   const segs: Seg[] = [];
   let i = 0;
@@ -676,15 +720,17 @@ export function parsePath(s: string, rootName: string): Seg[] {
     } else if (s[i] === '[') {
       const j = s.indexOf(']', i);
       const inner = s.slice(i + 1, j);
-      segs.push(inner.startsWith('"') ? JSON.parse(inner) : Number(inner));
+      segs.push(inner.startsWith('"') ? mapKey(JSON.parse(inner)) : Number(inner));
       i = j + 1;
     } else throw new EvalErr(`bad path ${s}`);
   }
   return segs;
 }
+// canonical path order (§7.2): segment-wise, indices numerically, names
+// and keys lexicographically, a prefix first
 export function cmpPath(a: Seg[], b: Seg[]): number {
   for (let i = 0; i < Math.min(a.length, b.length); i++) {
-    const x = a[i], y = b[i];
+    const x = segText(a[i]), y = segText(b[i]);
     if (typeof x === 'number' && typeof y === 'number') { if (x !== y) return x - y; }
     else if (String(x) !== String(y)) return String(x) < String(y) ? -1 : 1;
   }

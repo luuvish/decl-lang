@@ -12,7 +12,7 @@ from .semantics import (
     ABSENT, ArrV, Closure, DeferSig, Env, EvalErr, JObj, MapV, NatFn, NsRef, Pattern,
     PreArr, PreObj, PreVal, Quantity, RangeV, RecInst, Ref, Scope, Segs, Slot, StdRef, Taint,
     cmp_path, compile_pattern, is_bool, is_float, is_int, is_str, js_num_str, json_str, key_of_vec,
-    mentions_referrers, parse_path, path_str, pattern_error, value_eq, vec_combine, vec_of_key,
+    mentions_referrers, parse_path, path_str, pattern_error, value_eq, vec_combine, vec_of_key, Key, seg_text, dot_spellable,
 )
 
 
@@ -111,7 +111,7 @@ class Engine:
                 # instance is a collection element (not a direct member)
                 if inst is None or inst.parent is None or len(inst.path) < len(inst.parent.path) + 2:
                     raise EvalErr("$key: the instance is not a collection element", "E4090")
-                return inst.path[-1]
+                return seg_text(inst.path[-1])
             if n == "$path":
                 if inst is None:
                     raise EvalErr("$path outside a record instance", "E4090")
@@ -484,22 +484,56 @@ class Engine:
         if isinstance(v, Ref):
             target = self.resolve_segs(v.segs)
             if target is _UNDEF:
-                raise EvalErr(f"dangling reference {path_str(v.segs)}")
+                raise EvalErr(f"dangling reference {path_str(v.segs)}", "E6002")
             return target
         return v
 
+    # the value at a place; _UNDEF when there is none (an absent optional
+    # member counts as none — §7.5). Lenient about segment kinds: engine-built
+    # paths are canonical by construction
     def resolve_segs(self, segs: list) -> Any:
         cur = self.env.roots.get(segs[0], _UNDEF)
-        for s in segs[1:]:
+        for s0 in segs[1:]:
             if cur is _UNDEF:
                 break
+            s = seg_text(s0)
             if isinstance(cur, RecInst):
-                cur = self.force_slot(cur, s)
+                cur = self.force_slot(cur, s) if s in cur.slots else _UNDEF
             elif isinstance(cur, ArrV):
                 cur = cur.items[s] if is_int(s) and 0 <= s < len(cur.items) else _UNDEF
             elif isinstance(cur, MapV):
                 cur = cur.entries.get(s, _UNDEF)
             else:
+                cur = _UNDEF
+            if cur is ABSENT:
+                cur = _UNDEF
+            if isinstance(cur, Ref):
+                cur = self.deref(cur)
+        return cur
+
+    # a path from a document must be canonical (§7.2, §7.5): a map key
+    # bracketed, a record member dotted when the dot can spell it and
+    # bracketed otherwise, an array index numeric — any other spelling does
+    # not resolve
+    def resolve_canonical(self, segs: list) -> Any:
+        cur = self.env.roots.get(segs[0], _UNDEF)
+        for s in segs[1:]:
+            if cur is _UNDEF:
+                break
+            if isinstance(cur, RecInst):
+                if is_int(s):
+                    return _UNDEF
+                name = seg_text(s)
+                if isinstance(s, Key) == dot_spellable(name):
+                    return _UNDEF
+                cur = self.force_slot(cur, name) if name in cur.slots else _UNDEF
+            elif isinstance(cur, ArrV):
+                cur = cur.items[s] if is_int(s) and 0 <= s < len(cur.items) else _UNDEF
+            elif isinstance(cur, MapV):
+                cur = cur.entries.get(s.k, _UNDEF) if isinstance(s, Key) else _UNDEF
+            else:
+                cur = _UNDEF
+            if cur is ABSENT:
                 cur = _UNDEF
             if isinstance(cur, Ref):
                 cur = self.deref(cur)
@@ -752,6 +786,11 @@ class Engine:
                 place = self.eval_place(raw.expr, sc2)
                 if place is None:
                     raise EvalErr("not a place in ref position")
+                # reference integrity (§7.5): the place must hold a value
+                if self.resolve_segs(place) is _UNDEF:
+                    self.env.report({"severity": "error", "message": f"dangling reference {path_str(place)}",
+                                     "path": path_str(path), "code": "E6002"})
+                    raise Taint()
                 return Ref(place)
             return self.bind(self.ev(raw.expr, sc2), rt, path, parent, sc)
 
@@ -818,7 +857,7 @@ class Engine:
                 return raw
             if is_str(raw):
                 segs = parse_path(raw, sc.root_name)
-                if self.resolve_segs(segs) is _UNDEF:
+                if self.resolve_canonical(segs) is _UNDEF:
                     fail(f"dangling reference {raw}", "E6002")
                 return Ref(segs)
             if isinstance(raw, (RecInst, ArrV, MapV)):
@@ -864,7 +903,7 @@ class Engine:
                 except Taint:
                     continue
                 try:
-                    m.entries[k_] = self.bind(v, rt["val"], path + [k_], parent, sc)
+                    m.entries[k_] = self.bind(v, rt["val"], path + [Key(k_)], parent, sc)
                 except Taint:
                     pass
             return m
@@ -958,20 +997,33 @@ class Engine:
             return self.ev_nav(e["t"], sc) if self.truthy(self.ev(e["c"], sc)) else self.ev_nav(e["f"], sc)
         if e["e"] == "paren":
             return self.ev_nav(e["x"], sc)
+        # a step past a missing place (an absent optional member, a key or
+        # index that is not there) is still a place: the chain keeps naming
+        # the location, and reference integrity (§7.5) judges it when the
+        # reference is bound. `?.` is an ordinary step here — a navigation in
+        # a ref position denotes the place regardless of maybe-absent steps
         if e["e"] == "member":
-            x = self.deref(self.ev_nav(e["x"], sc))
+            x0 = self.ev_nav(e["x"], sc)
+            if isinstance(x0, Segs):
+                return Segs(x0.segs + [e["name"]])
+            x = self.deref(x0)
             v = self.access(x, e["name"])
             if v is ABSENT and isinstance(x, RecInst):
                 return Segs(x.path + [e["name"]])
             return v
         if e["e"] == "index":
-            x = self.deref(self.ev_nav(e["x"], sc))
+            x0 = self.ev_nav(e["x"], sc)
             i = self.ev(e["i"], sc)
+            if isinstance(x0, Segs):
+                # past a missing place a string index can only be a map key (bracket
+                # access to a dot-spellable member is a compile error, §4.3)
+                return Segs(x0.segs + [int(i) if is_int(i) else Key(i)])
+            x = self.deref(x0)
             if isinstance(x, ArrV):
                 n = int(i)
                 return x.items[n] if 0 <= n < len(x.items) else Segs(x.path + [n])
             if isinstance(x, MapV):
-                return x.entries[i] if i in x.entries else Segs(x.path + [i])
+                return x.entries[i] if i in x.entries else Segs(x.path + [Key(i)])
             if isinstance(x, RecInst):
                 v = self.access(x, i)
                 return Segs(x.path + [i]) if v is ABSENT else v
@@ -1037,6 +1089,8 @@ class Engine:
 
     def _mk_default(self, m, types, inst, path, isc):
         def compute():
+            if m.get("type") is not None and m["type"]["t"] == "ref" and not m.get("conj"):
+                return self.bind(PreVal(m["dflt"], isc), m["type"], path + [m["name"]], inst, isc)
             v = self.ev(m["dflt"], isc)
             out = None
             for ty in types:
@@ -1046,11 +1100,16 @@ class Engine:
 
     def _mk_derived(self, m, inst, path, isc, has, supplied_v):
         def compute():
-            v = self.ev(m["expr"], isc)
-            if m.get("type") is not None:
-                v = self.bind(v, m["type"], path + [m["name"]], inst, isc)
-            elif isinstance(v, (PreObj, PreArr, JObj)):
-                v = self.materialize(v, path + [m["name"]], inst, isc)
+            # a member declared `ref<T>` holds a navigation (§7.4): the
+            # expression names a place, and is bound as one
+            if m.get("type") is not None and m["type"]["t"] == "ref":
+                v = self.bind(PreVal(m["expr"], isc), m["type"], path + [m["name"]], inst, isc)
+            else:
+                v = self.ev(m["expr"], isc)
+                if m.get("type") is not None:
+                    v = self.bind(v, m["type"], path + [m["name"]], inst, isc)
+                elif isinstance(v, (PreObj, PreArr, JObj)):
+                    v = self.materialize(v, path + [m["name"]], inst, isc)
             if has:
                 self.no_reg += 1
                 try:
@@ -1077,7 +1136,7 @@ class Engine:
             m = MapV({}, path)
             for k_, pv in v.entries:
                 m.entries[k_] = self.materialize(self.ev(pv.expr, pv.scope) if isinstance(pv, PreVal) else pv,
-                                                 path + [k_], parent, sc)
+                                                 path + [Key(k_)], parent, sc)
             return m
         return v
 

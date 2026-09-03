@@ -730,6 +730,26 @@ pub fn check_module(decls: &[Decl], linked: Option<Rc<Env>>) -> Vec<Diag> {
     // D30/E4090 for $root: every record type owned (transitively) by an
     // evaluation root must have its declared $root bound met by the root's
     // own type — checked once per root declaration
+    // §7.3: the root's own type gives $parent and $key no meaning — the root
+    // has no owner and sits under no key — so a declaration of either on it
+    // (directly, or on a union arm) is an error at the root
+    fn check_root_type(rep: &dyn Fn(&str, String), root_name: &str, root_rt: &RT) {
+        let arms: Vec<RT> = match &root_rt.k {
+            RTk::Union(arms) => arms.clone(),
+            _ => vec![root_rt.clone()],
+        };
+        for t in &arms {
+            let RTk::Rec(r) = &t.k else { continue };
+            let who = t.name.borrow().clone().unwrap_or_else(|| "its type".into());
+            for (var, _) in r.ctx_decls.borrow().iter() {
+                if var == "$parent" {
+                    rep("E4090", format!("root {root_name} gives $parent no meaning: {who} is the evaluation root's own type (§7.3)"));
+                } else if var == "$key" {
+                    rep("E4090", format!("root {root_name} gives $key no meaning: {who} is the evaluation root's own type, not a collection element (§7.3)"));
+                }
+            }
+        }
+    }
     fn walk_root_bounds(env: &Rc<Env>, rep: &dyn Fn(&str, String), root_name: &str, root_rt: &RT, t: &RT, seen: &mut HashSet<usize>) {
         let id = Rc::as_ptr(t) as usize;
         if !seen.insert(id) {
@@ -765,6 +785,7 @@ pub fn check_module(decls: &[Decl], linked: Option<Rc<Env>>) -> Vec<Diag> {
             _ => continue,
         };
         if let Some(rt) = try_resolve(&env, Some(ty_ast)) {
+            check_root_type(&rep, name, &rt);
             walk_root_bounds(&env, &rep, name, &rt, &rt, &mut HashSet::new());
         }
     }

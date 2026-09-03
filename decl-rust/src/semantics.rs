@@ -12,10 +12,25 @@ use std::rc::Rc;
 // ---------------- paths ----------------
 #[derive(Clone, Debug, PartialEq)]
 pub enum Seg {
+    /// a record member by name: dotted when the dot can spell it (§7.2)
     Name(String),
     Idx(usize),
+    /// a map key: always bracketed (§7.2)
+    Key(String),
 }
 pub type SegPath = Vec<Seg>;
+pub fn seg_text(s: &Seg) -> String {
+    match s {
+        Seg::Name(n) | Seg::Key(n) => n.clone(),
+        Seg::Idx(i) => i.to_string(),
+    }
+}
+/// dot-spellable (§3.11, §4.3): identifier-shaped and not a literal keyword
+pub fn dot_spellable(name: &str) -> bool {
+    let mut cs = name.chars();
+    let head = matches!(cs.next(), Some(c) if c == '_' || c.is_ascii_alphabetic());
+    head && cs.all(|c| c == '_' || c.is_ascii_alphanumeric()) && !matches!(name, "true" | "false" | "null")
+}
 
 // ---------------- values ----------------
 #[derive(Clone)]
@@ -312,14 +327,24 @@ pub enum RTk {
 }
 
 pub struct RecType {
-    pub open: bool,
+    pub open: Cell<bool>,
     pub members: RefCell<Vec<Member>>,
     pub asserts: RefCell<Vec<AssertItem>>,
     /// `context $parent: ref<T>` declarations (D30), checked at embedding sites
     pub ctx_decls: RefCell<Vec<(String, RT)>>,
+    /// still being filled; extensions of it wait in `pending` (§3.14)
+    pub filling: Cell<bool>,
+    pub pending: RefCell<Vec<(RT, RT)>>,
 }
 pub fn rec_type(open: bool) -> RecType {
-    RecType { open, members: RefCell::new(vec![]), asserts: RefCell::new(vec![]), ctx_decls: RefCell::new(vec![]) }
+    RecType {
+        open: Cell::new(open),
+        members: RefCell::new(vec![]),
+        asserts: RefCell::new(vec![]),
+        ctx_decls: RefCell::new(vec![]),
+        filling: Cell::new(false),
+        pending: RefCell::new(vec![]),
+    }
 }
 
 #[derive(Clone)]
@@ -870,7 +895,7 @@ impl Env {
                 } else if let Some(b) = memo {
                     b
                 } else {
-                    let b = match &decl.ast {
+                    match &decl.ast {
                         TypeAst::Record { members, open } => {
                             let rt = ty(RTk::Rec(rec_type(*open)));
                             *rt.name.borrow_mut() = Some(n.clone());
@@ -879,6 +904,31 @@ impl Env {
                             // a member that fails to resolve must not leave a half-filled
                             // record memoized (later lookups would miss its later members)
                             if let Err(e) = self.fill_record(&rt, members) {
+                                self.type_memo.borrow_mut().remove(n);
+                                return Err(e);
+                            }
+                            rt
+                        }
+                        TypeAst::Named { name: pn, args: pa, preds: pp, ext: Some(body) } => {
+                            // an extension declaration (§3.14) is memoized before its parent
+                            // resolves: in a recursive family — `type Base = { kids: { [string]:
+                            // Kid } }`, `type Kid = Base { … }` — the parent's body names this
+                            // type, and every reference must share the one final record rather
+                            // than a snapshot of the parent's members taken mid-fill
+                            let rt = ty(RTk::Rec(rec_type(false)));
+                            if let RTk::Rec(r) = &rt.k {
+                                r.filling.set(true);
+                            }
+                            *rt.name.borrow_mut() = Some(n.clone());
+                            *rt.tail.borrow_mut() = decl.tail.clone();
+                            self.type_memo.borrow_mut().insert(n.clone(), rt.clone());
+                            let parent_ast = TypeAst::Named { name: pn.clone(), args: pa.clone(), preds: pp.clone(), ext: None };
+                            let filled = self.resolve(&parent_ast, None).and_then(|parent| {
+                                let extr = self.resolve(body, None)?;
+                                self.extend_into(&rt, &parent, &extr);
+                                Ok(())
+                            });
+                            if let Err(e) = filled {
                                 self.type_memo.borrow_mut().remove(n);
                                 return Err(e);
                             }
@@ -895,20 +945,48 @@ impl Env {
                             self.type_memo.borrow_mut().insert(n.clone(), rt.clone());
                             rt
                         }
-                    };
-                    b
+                    }
                 };
                 if let Some(ext) = ext {
+                    // an inline extension in a type position: anonymous, never memoized
                     let extr = self.resolve(ext, None)?;
-                    return Ok(self.extend(&base, &extr));
+                    if !is_rec(&base) {
+                        return Ok(base);
+                    }
+                    let merged = ty(RTk::Rec(rec_type(false)));
+                    if let RTk::Rec(r) = &merged.k {
+                        r.filling.set(true);
+                    }
+                    *merged.name.borrow_mut() = base.name.borrow().clone();
+                    self.extend_into(&merged, &base, &extr);
+                    return Ok(merged);
                 }
                 base
             }
         })
     }
 
-    fn extend(&self, base: &RT, extr: &RT) -> RT {
-        let (RTk::Rec(br), RTk::Rec(er)) = (&base.k, &extr.k) else { return base.clone() };
+    // §3.14: fill `target` as `base` extended by the override body `ext` —
+    // base members copied, overrides replacing or adding, asserts appended,
+    // and a context declaration narrowed by the extension replacing the
+    // inherited one (§7.3). A base still being filled (the recursive-family
+    // case above) defers the merge until it completes; `target` stays marked
+    // filling meanwhile, so an extension of an extension waits in turn.
+    fn extend_into(&self, target: &RT, base: &RT, extr: &RT) {
+        let (RTk::Rec(tr), RTk::Rec(br), RTk::Rec(er)) = (&target.k, &base.k, &extr.k) else {
+            if let RTk::Rec(tr) = &target.k {
+                tr.filling.set(false);
+            }
+            return;
+        };
+        if br.filling.get() {
+            br.pending.borrow_mut().push((target.clone(), extr.clone()));
+            return;
+        }
+        tr.open.set(br.open.get());
+        if let Some(t) = base.tail.borrow().clone() {
+            *target.tail.borrow_mut() = Some(t);
+        }
         let mut members: Vec<Member> = br.members.borrow().clone();
         for om in er.members.borrow().iter() {
             if let Some(i) = members.iter().position(|m| m.name == om.name) {
@@ -919,8 +997,6 @@ impl Env {
         }
         let mut asserts = br.asserts.borrow().clone();
         asserts.extend(er.asserts.borrow().iter().cloned());
-        // an extension may narrow a context declaration (§7.3): its
-        // declaration replaces the inherited one for that variable
         let mut ctx_decls: Vec<(String, RT)> = br.ctx_decls.borrow().clone();
         for cd in er.ctx_decls.borrow().iter() {
             if let Some(i) = ctx_decls.iter().position(|(v, _)| *v == cd.0) {
@@ -929,10 +1005,20 @@ impl Env {
                 ctx_decls.push(cd.clone());
             }
         }
-        let rt = ty(RTk::Rec(RecType { open: br.open, members: RefCell::new(members), asserts: RefCell::new(asserts), ctx_decls: RefCell::new(ctx_decls) }));
-        *rt.name.borrow_mut() = base.name.borrow().clone();
-        *rt.tail.borrow_mut() = base.tail.borrow().clone();
-        rt
+        *tr.members.borrow_mut() = members;
+        *tr.asserts.borrow_mut() = asserts;
+        *tr.ctx_decls.borrow_mut() = ctx_decls;
+        self.complete_record(target);
+    }
+
+    // a record's members are final: extensions that waited on it merge now
+    fn complete_record(&self, rt: &RT) {
+        let RTk::Rec(r) = &rt.k else { return };
+        r.filling.set(false);
+        let pending: Vec<(RT, RT)> = std::mem::take(&mut *r.pending.borrow_mut());
+        for (target, extr) in pending {
+            self.extend_into(&target, rt, &extr);
+        }
     }
 
     // §3.6: `${T}` inside a pattern splices another type — a string-shaped
@@ -1121,6 +1207,7 @@ impl Env {
     fn fill_record(self: &Rc<Env>, rt: &RT, members: &[MemberAst]) -> Result<(), String> {
         let RTk::Rec(r) = &rt.k else { return Ok(()) };
         let origin = rt.name.borrow().clone();
+        r.filling.set(true);
         for m in members {
             match m {
                 MemberAst::Value { name, opt, ty: t, dflt } => r.members.borrow_mut().push(Member {
@@ -1150,6 +1237,7 @@ impl Env {
                 MemberAst::Context { variable, ty: t } => r.ctx_decls.borrow_mut().push((variable.clone(), self.resolve(t, None)?)),
             }
         }
+        self.complete_record(rt);
         Ok(())
     }
 
@@ -1159,7 +1247,7 @@ impl Env {
         let mut open = true;
         for a in arms {
             let RTk::Rec(r) = &a.k else { continue };
-            open = open && r.open;
+            open = open && r.open.get();
             for m in r.members.borrow().iter() {
                 if let Some(i) = members.iter().position(|x| x.name == m.name) {
                     let prev = members[i].clone();
@@ -1174,7 +1262,10 @@ impl Env {
             }
             asserts.extend(r.asserts.borrow().iter().map(|x| AssertItem { origin: x.origin.clone().or_else(|| a.name.borrow().clone()), ..x.clone() }));
         }
-        let rt = ty(RTk::Rec(RecType { open, members: RefCell::new(members), asserts: RefCell::new(asserts), ctx_decls: RefCell::new(vec![]) }));
+        let rec = rec_type(open);
+        *rec.members.borrow_mut() = members;
+        *rec.asserts.borrow_mut() = asserts;
+        let rt = ty(RTk::Rec(rec));
         *rt.name.borrow_mut() = name.map(|s| s.to_string());
         rt
     }
@@ -1444,20 +1535,20 @@ pub fn compile_pattern(src: &str) -> Result<Regex, String> {
 }
 
 pub fn path_str(segs: &[Seg], rel_root: Option<&str>) -> String {
-    let id_re = Regex::new(r"^[_A-Za-z][_A-Za-z0-9]*$").unwrap();
     let mut out = String::new();
     for (i, s) in segs.iter().enumerate() {
         match s {
-            Seg::Name(n) if i == 0 => {
+            _ if i == 0 => {
+                let n = seg_text(s);
                 if rel_root == Some(n.as_str()) {
                     out.push('$');
                 } else {
-                    out.push_str(n);
+                    out.push_str(&n);
                 }
             }
-            Seg::Idx(k) if i == 0 => out.push_str(&k.to_string()),
             Seg::Idx(k) => out.push_str(&format!("[{k}]")),
-            Seg::Name(n) if id_re.is_match(n) => {
+            Seg::Key(n) => out.push_str(&format!("[{}]", json_str(n))),
+            Seg::Name(n) if dot_spellable(n) => {
                 out.push('.');
                 out.push_str(n);
             }
@@ -1467,6 +1558,9 @@ pub fn path_str(segs: &[Seg], rel_root: Option<&str>) -> String {
     out
 }
 
+/// A path string from a document: `.name` is a member, `["…"]` a bracketed
+/// segment (a map key, or a member the dot cannot spell — the canonical walk,
+/// §7.5, decides which is legal where), `[n]` an index.
 pub fn parse_path(s: &str, root_name: &str) -> R<SegPath> {
     let id_re = Regex::new(r"^[_A-Za-z][_A-Za-z0-9]*").unwrap();
     let mut segs = vec![];
@@ -1488,7 +1582,7 @@ pub fn parse_path(s: &str, root_name: &str) -> R<SegPath> {
             let j = rest.find(']').ok_or(()).or_else(|_| err(format!("bad path {s}")))?;
             let inner = &rest[1..j];
             if inner.starts_with('"') {
-                segs.push(Seg::Name(crate::parse::json_unquote(inner).unwrap_or_default()));
+                segs.push(Seg::Key(crate::parse::json_unquote(inner).unwrap_or_default()));
             } else {
                 segs.push(Seg::Idx(inner.parse().unwrap_or(0)));
             }
@@ -1500,6 +1594,8 @@ pub fn parse_path(s: &str, root_name: &str) -> R<SegPath> {
     Ok(segs)
 }
 
+/// Canonical path order (§7.2): segment-wise, indices numerically, names and
+/// keys lexicographically, a prefix first.
 pub fn cmp_path(a: &[Seg], b: &[Seg]) -> std::cmp::Ordering {
     for (x, y) in a.iter().zip(b) {
         match (x, y) {
@@ -1509,8 +1605,8 @@ pub fn cmp_path(a: &[Seg], b: &[Seg]) -> std::cmp::Ordering {
                 }
             }
             _ => {
-                let xs = seg_str(x);
-                let ys = seg_str(y);
+                let xs = seg_text(x);
+                let ys = seg_text(y);
                 if xs != ys {
                     return xs.cmp(&ys);
                 }
@@ -1518,12 +1614,6 @@ pub fn cmp_path(a: &[Seg], b: &[Seg]) -> std::cmp::Ordering {
         }
     }
     a.len().cmp(&b.len())
-}
-fn seg_str(s: &Seg) -> String {
-    match s {
-        Seg::Name(n) => n.clone(),
-        Seg::Idx(i) => i.to_string(),
-    }
 }
 
 pub fn value_eq(a: &Value, b: &Value) -> bool {

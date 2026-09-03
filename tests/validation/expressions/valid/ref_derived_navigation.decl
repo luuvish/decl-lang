@@ -1,0 +1,31 @@
+// A derived member declared `ref<T>` holds a navigation (§7.4): the
+// expression names a place, read through optional collections without
+// `?.` — in a ref position the chain denotes the location, and whether
+// it holds a value is reference integrity (§7.5), not absence discipline.
+type Port = { mode: "si" | "mi" }
+type Host = { ports?: { [string]: Port }, nodes?: { [string]: { ports?: { [string]: Port }, ... } }, ... }
+type Edge = {
+    $parent: ref<Host>
+    to: string
+    const target: ref<Port> =
+        if std.string.contains(to, ".")
+        then $parent.nodes[std.string.split(to, ".")[0]].ports[std.string.split(to, ".")[1]]
+        else $parent.ports[to]
+}
+type Node = {
+    ports?: { [string]: Port }
+    nodes?: { [string]: Node }
+    edges?: { [string]: Edge }
+}
+output n: Node = {
+    ports: { si0: { mode: "si" } }
+    nodes: { a: { ports: { si: { mode: "si" } } } }
+    edges: { e1: { to: "a.si" }, e2: { to: "si0" } }
+}
+type Check = {
+    net: Node
+    assert deep: ("edges" in net && "e1" in net.edges && net.edges["e1"].target.mode == "si")
+    assert own: ("edges" in net && "e2" in net.edges && "ports" in net && "si0" in net.ports
+        && net.edges["e2"].target == net.ports["si0"])
+}
+output check: Check = { net: n }

@@ -372,10 +372,26 @@ export function checkModule(decls: Decl[], linked?: Env): Diag[] {
     };
     walk(rootRt);
   };
+  // §7.3: the root's own type gives $parent and $key no meaning — the root
+  // has no owner and sits under no key — so a declaration of either on it
+  // (directly, or on a union arm) is an error at the root
+  const checkRootType = (rootName: string, rootRt: RT) => {
+    const arms = rootRt.t === 'union' ? rootRt.arms : [rootRt];
+    for (const t of arms) {
+      if (t.t !== 'rec') continue;
+      const who = t.name ?? 'its type';
+      for (const cd of (t.ctxDecls ?? []) as any[]) {
+        if (cd.variable === '$parent')
+          report('E4090', `root ${rootName} gives $parent no meaning: ${who} is the evaluation root's own type (§7.3)`);
+        else if (cd.variable === '$key')
+          report('E4090', `root ${rootName} gives $key no meaning: ${who} is the evaluation root's own type, not a collection element (§7.3)`);
+      }
+    }
+  };
   for (const d of decls) {
     if (d.d !== 'output' && d.d !== 'input') continue;
     const rt = tryResolve(env, d.type);
-    if (rt) checkRootBounds(d.name, rt);
+    if (rt) { checkRootType(d.name, rt); checkRootBounds(d.name, rt); }
   }
   for (const d of decls) {
     if (d.d === 'const') checkExpr(cx0, d.expr, d.type ? resolveOrReport(d.type, `const ${d.name}`) : null);

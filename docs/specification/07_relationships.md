@@ -32,7 +32,8 @@ segment  = "." identifier          // record member (identifier-shaped name)
 - `demo.services[2].port`, `registry["svc-a"].endpoint`
 - **Canonical form** mirrors the access rules of the expression surface
   (§4.3): a record member is `.name` when its name is dot-spellable
-  (identifier-shaped, not a keyword) and `["…"]` otherwise; a **map key
+  (identifier-shaped and not a literal keyword `true`/`false`/`null` —
+  §3.11) and `["…"]` otherwise; a **map key
   is always** `["…"]`, even when identifier-shaped; array indices are
   `[int]`; no spaces. So `.` in a path always means a declared record member, and
   no location has two canonical spellings. Serialization and

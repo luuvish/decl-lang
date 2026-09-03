@@ -546,7 +546,7 @@ pub fn infer(cx: &Ctx, e: &Rc<Expr>) -> Ty {
                 let members = rec.members.borrow();
                 for (k, _) in entries {
                     match find_member(&members, k) {
-                        None if !rec.open => cx.report("E4080", format!("`with` updates unknown member {k}")),
+                        None if !rec.open.get() => cx.report("E4080", format!("`with` updates unknown member {k}")),
                         Some(m) if m.kind == MKind::Der => cx.report("E4080", format!("`with` updates derived member {k}")),
                         _ => {}
                     }
@@ -666,7 +666,7 @@ fn infer_bin(cx: &Ctx, e: &Rc<Expr>) -> Ty {
                 let members = rec.members.borrow();
                 match find_member(&members, key) {
                     Some(m) if m.kind != MKind::Opt => cx.report("E4054", format!("`in` on member {key}, which is not optional")),
-                    None if !rec.open => cx.report("E4054", format!("`in` on undeclared member {key} of a closed record")),
+                    None if !rec.open.get() => cx.report("E4054", format!("`in` on undeclared member {key} of a closed record")),
                     _ => {}
                 }
             }
@@ -905,7 +905,7 @@ fn member_core(cx: &Ctx, b: Ty, e: &Rc<Expr>) -> Ty {
         RTk::Rec(rec) => {
             let members = rec.members.borrow();
             let Some(m) = find_member(&members, name) else {
-                if !rec.open {
+                if !rec.open.get() {
                     cx.report("E4003", format!("member {name} is not declared on {}", brt.name.borrow().clone().unwrap_or_else(|| "this record".into())));
                 }
                 return mk_abs(unk());
@@ -1182,7 +1182,7 @@ pub fn check_expr(cx: &Ctx, e: &Rc<Expr>, expected: Option<&RT>) -> Ty {
             }
             for (k, v) in entries {
                 let Some(m) = find_member(&members, k) else {
-                    if !rec.open {
+                    if !rec.open.get() {
                         cx.report("E4003", format!("member {k} is not declared on {}", expected.name.borrow().clone().unwrap_or_else(|| "the record".into())));
                     }
                     require_val(&cx_r, v, infer(&cx_r, v), "as a construction member");

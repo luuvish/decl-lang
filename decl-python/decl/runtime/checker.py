@@ -492,11 +492,27 @@ def check_module(decls: list, linked: Optional[Env] = None) -> list:
                 walk(t.get("base"))
         walk(root_rt)
 
+    # §7.3: the root's own type gives $parent and $key no meaning — the root
+    # has no owner and sits under no key — so a declaration of either on it
+    # (directly, or on a union arm) is an error at the root
+    def check_root_type(root_name: str, root_rt: dict) -> None:
+        arms = root_rt["arms"] if root_rt["t"] == "union" else [root_rt]
+        for t in arms:
+            if t["t"] != "rec":
+                continue
+            who = t.get("name") or "its type"
+            for cd in t.get("ctx_decls") or []:
+                if cd["variable"] == "$parent":
+                    report("E4090", f"root {root_name} gives $parent no meaning: {who} is the evaluation root's own type (§7.3)")
+                elif cd["variable"] == "$key":
+                    report("E4090", f"root {root_name} gives $key no meaning: {who} is the evaluation root's own type, not a collection element (§7.3)")
+
     for d in decls:
         if d["d"] not in ("output", "input"):
             continue
         rt = try_resolve(env, d["type"])
         if rt:
+            check_root_type(d["name"], rt)
             check_root_bounds(d["name"], rt)
     for d in decls:
         k = d["d"]
