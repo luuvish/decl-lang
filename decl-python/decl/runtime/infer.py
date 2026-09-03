@@ -841,7 +841,16 @@ def _place_ty(cx: Ctx, e: dict) -> dict:
     if k == "paren":
         return _place_ty(cx, e["x"])
     if k == "member":
-        return _member_core(cx, _place_ty(cx, e["x"]), e)
+        base = _place_ty(cx, e["x"])
+        # a hidden member's value is not part of any document: no reference
+        # can target it (§7.5, D34)
+        rt = base.get("rt")
+        rec = rt["target"] if rt is not None and rt["t"] == "ref" else rt
+        if rec is not None and rec["t"] == "rec":
+            hm = next((m for m in rec["members"] if m["name"] == e["name"]), None)
+            if hm is not None and hm.get("hidden"):
+                cx.report("E4093", f"`ref` position navigates hidden member {e['name']} — not part of the value (§7.5)")
+        return _member_core(cx, base, e)
     if k == "index":
         return _index_core(cx, _place_ty(cx, e["x"]), e)
     if k == "if":

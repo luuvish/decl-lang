@@ -12,7 +12,7 @@
     "preview": "astro preview"
   },
   "dependencies": {
-    "decl-lang": "0.2.0",
+    "decl-lang": "0.3.0",
     "@astrojs/starlight": "^0.41.11",
     "@codemirror/commands": "^6.11.0",
     "@codemirror/language": "^6.12.4",

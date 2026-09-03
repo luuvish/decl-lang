@@ -158,7 +158,7 @@ type ServiceName = /[a-z][a-z0-9-]*/ else bad_name
 ```decl
 type Router = {
     ports: int
-    const half = ports / 2          // ports invalid → half invalid, silently
+    half = ports / 2          // ports invalid → half invalid, silently
     assert even: ports % 2 == 0     // skipped when ports is invalid
 }
 ```

@@ -300,7 +300,7 @@ def next_diagnostics(uri: str) -> dict:
 
 tmpd = tempfile.mkdtemp(prefix="decl-lsp-")
 lib_path = os.path.join(tmpd, "lib.decl")
-open(lib_path, "w").write("export type Service = { name: string, port: 1..65535 = 8080 }\nexport const MAX = 16\n")
+open(lib_path, "w").write("export type Service = { name: string, port?: 1..65535 = 8080 }\nexport const MAX = 16\n")
 main_path = os.path.join(tmpd, "main.decl")
 main_uri = Path(main_path).as_uri()
 open(main_path, "w").write("")

@@ -10,15 +10,15 @@ export type Packet = {
     size_bytes: PacketSize
     priority: 0..7
 
-    const label = `pkt-${id}-p${priority}`
+    label = `pkt-${id}-p${priority}`
 }
 
 export type TestCase = {
     name: /[a-z][a-z0-9_]*/
     packets: Packet[1..1024]
 
-    const packet_count = std.array.count(packets)
-    const total_bytes = std.array.sum([p.size_bytes for p in packets])
+    packet_count = std.array.count(packets)
+    total_bytes = std.array.sum([p.size_bytes for p in packets])
 
     assert ids_unique: std.array.all_distinct([p.id for p in packets])
 }

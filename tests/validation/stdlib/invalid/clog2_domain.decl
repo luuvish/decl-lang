@@ -1,5 +1,5 @@
 // @expect-phase: binding
 // @expect-error: E5008
 // evaluates; clog2's domain is n >= 1 (§13.3)
-type T = { const k = std.math.clog2(0) }
+type T = { k = std.math.clog2(0) }
 output t: T = { }

@@ -227,11 +227,14 @@ def check_module(decls: list, linked: Optional[Env] = None) -> list:
             bm = next((x for x in base["members"] if x["name"] == om["name"]), None)
             if bm is None:
                 continue   # addition
-            o_kind = "der" if om["m"] == "derived" else "dflt" if om.get("dflt") else "opt" if om.get("opt") else "req"
+            o_kind = (("hidden" if om.get("hidden") else "der") if om["m"] == "derived"
+                      else "dflt" if om.get("dflt") else "opt" if om.get("opt") else "req")
+            b_kind = "hidden" if bm["kind"] == "der" and bm.get("hidden") else bm["kind"]
+            # §5.9: overriding narrows; a hidden member stays hidden, a visible one visible
             allowed = {"req": ["req", "dflt", "der"], "opt": ["req", "opt", "dflt", "der"],
-                       "dflt": ["req", "dflt", "der"], "der": ["der"]}
-            if o_kind not in allowed.get(bm["kind"], []):
-                report("E4032", f"illegal member-kind transition for {om['name']}: {bm['kind']} -> {o_kind} ({decl_name or t['name']})")
+                       "dflt": ["req", "dflt", "der"], "der": ["der"], "hidden": ["hidden"]}
+            if o_kind not in allowed.get(b_kind, []):
+                report("E4032", f"illegal member-kind transition for {om['name']}: {b_kind} -> {o_kind} ({decl_name or t['name']})")
                 continue
             o_type = try_resolve(env, om["type"]) if om.get("type") else None
             if o_type and bm.get("type") and not subsumes(env, o_type, bm["type"]):

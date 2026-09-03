@@ -94,6 +94,8 @@ def subsumes(env, a: dict, b: dict, assume: dict | None = None) -> bool:
         s = assume.setdefault(id(a), set())
         s.add(id(b))
         for m in b["members"]:
+            if m.get("hidden"):
+                continue   # not part of the value: ⊑ never compares it (D34)
             sm = next((x for x in a["members"] if x["name"] == m["name"]), None)
             m_types = m.get("conj") or ([m["type"]] if m.get("type") else [])
             s_types = (sm.get("conj") or ([sm["type"]] if sm.get("type") else [])) if sm else []

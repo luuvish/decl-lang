@@ -1108,7 +1108,23 @@ fn infer_match(cx: &Ctx, e: &Rc<Expr>, expected: Option<&RT>) -> Ty {
 fn place_ty(cx: &Ctx, e: &Rc<Expr>) -> Ty {
     match &**e {
         Expr::Paren(x) => place_ty(cx, x),
-        Expr::Member { x, .. } => member_core(cx, place_ty(cx, x), e),
+        Expr::Member { x, name, .. } => {
+            let base = place_ty(cx, x);
+            // a hidden member's value is not part of any document: no reference
+            // can target it (§7.5, D34)
+            let rec = base.rt.as_ref().map(|t| match &t.k {
+                RTk::Ref(target) => target.clone(),
+                _ => t.clone(),
+            });
+            if let Some(rec) = rec {
+                if let RTk::Rec(r) = &rec.k {
+                    if r.members.borrow().iter().any(|m| m.name == *name && m.hidden) {
+                        cx.report("E4093", format!("`ref` position navigates hidden member {name} — not part of the value (§7.5)"));
+                    }
+                }
+            }
+            member_core(cx, base, e)
+        }
         Expr::Index { x, .. } => index_core(cx, place_ty(cx, x), e),
         Expr::If { c, t, f } => {
             // a conditional between places is a place: each branch is read in

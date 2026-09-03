@@ -137,26 +137,28 @@ input env: EnvProfile = { profile: "dev" }
 - An `input` cannot appear in constant positions (§4.13) — types and
   sizes never depend on external data.
 
-## 5.7 Schema members: the four value kinds
+## 5.7 Schema members: the four value kinds, and hidden members
 
-Inside a record type, value members take exactly four forms (D4) — no
-modifier keywords:
+Inside a record type, a value member's kind is read off two marks (D4) —
+no modifier keywords: `?` says input may supply the member, `= e` says
+the schema computes it.
 
 | Form | Meaning | Set by input? | In evaluated value? |
 |---|---|---|---|
 | `x: T` | required | must | always |
 | `x?: T` | optional | may | only if set |
-| `x: T = e` | defaulted | may (overrides `e`) | always |
-| `const x [: T] = e` | derived | restate-only (D4) | always |
+| `x?: T = e` | defaulted | may (overrides `e`) | always |
+| `x: T = e`, `x = e` | derived | restate-only (D4) | always |
+| `x$: T = e`, `x$ = e` | **hidden** (D34) | must not (E4006) | never |
 
 ```decl
 type Service = {
     name: ServiceName                  // required
     description?: string               // optional
-    port: Port = 8080                  // defaulted
-    replicas: int = 1
+    port?: Port = 8080                  // defaulted
+    replicas?: int = 1
 
-    const endpoint = `${name}:${port}` // derived
+    endpoint = `${name}:${port}` // derived
 
     assert scaled: replicas in 1..16   // constraint member — 06
         else warn `replicas ${replicas} outside recommended range`
@@ -168,12 +170,23 @@ type Service = {
 - **Defaulted** — when unsupplied, `e` is evaluated to fill it. A
   supplied value simply overrides; the default expression is then never
   evaluated (so an erroring default cannot hurt a document that
-  overrides it).
+  overrides it). A settable member (`?`) always declares its type — the
+  type is the input's contract.
 - **Derived** — always computed from `e`; input may only *restate* the
   computed value (equal value accepted, differing value is an error —
   D4). With an annotation, `e` must be `⊑ T`; otherwise the member's
   type is inferred. Derived members are included in serialized output
-  by default (D29).
+  by default (D29). A value written in the schema *is* the value: to let
+  input change it, write `?`.
+- **Hidden** — a derived member whose name ends in `$` (`feeders$`). It
+  is computed and read like any derived member — by sibling expressions,
+  by other instances' navigations (`edge.source$.width`), by
+  `$referrers(T, "m$")` — but it is **not part of the value**: never
+  emitted (§10.3), never compared (§4.5, §3.17), never copied by `with`,
+  spread, or `std.object.merge`, never a reference target (§7.5). A
+  document or literal that supplies it is in error (E4006, §10.2) — a
+  hidden name cannot even be written bare in a literal. Only derived
+  members can be hidden (D34).
 - Default and derived expressions may reference **sibling members** by
   name, and the enclosing context through `$this`/`$parent`/`$root`
   ([07. Relationships](07_relationships.md)). The references form the
@@ -227,8 +240,9 @@ table (§3.17):
 |---|---|
 | `x: T` (required) | required, defaulted, or derived, with type `⊑ T` |
 | `x?: T` (optional) | any kind with type `⊑ T` (required strengthens; defaulted supplies) |
-| `x: T = e` (defaulted) | required (drops the default — stricter), defaulted (may change the default expression), or derived, with type `⊑ T` |
-| `const x = e` (derived) | derived only, with type `⊑`; the expression may differ (types are compared, expressions are not — §3.17) |
+| `x?: T = e` (defaulted) | required (drops the default — stricter), defaulted (may change the default expression), or derived, with type `⊑ T` |
+| `x = e` (derived) | derived only, with type `⊑`; the expression may differ (types are compared, expressions are not — §3.17) |
+| `x$ = e` (hidden) | hidden only — a hidden member stays hidden (its name is its own; `x` and `x$` are different members) |
 
 Everything else — widening a type, required → optional, derived →
 non-derived — is a compile error. Constraint members are inherited

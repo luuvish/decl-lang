@@ -3,5 +3,5 @@
 // parses; $parent context declarations must be ref<...> (D30)
 type Bad = {
     $parent: int
-    const w = $parent + 1
+    w = $parent + 1
 }

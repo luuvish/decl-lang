@@ -7,7 +7,7 @@ type Host = { ports?: { [string]: Port }, nodes?: { [string]: { ports?: { [strin
 type Edge = {
     $parent: ref<Host>
     to: string
-    const target: ref<Port> =
+    target: ref<Port> =
         if std.string.contains(to, ".")
         then $parent.nodes[std.string.split(to, ".")[0]].ports[std.string.split(to, ".")[1]]
         else $parent.ports[to]

@@ -5,8 +5,8 @@
 export type LogLevel = "debug" | "info" | "warn" | "error"
 
 export type TlsConfig = {
-    enabled: bool = false
-    min_version: "1.2" | "1.3" = "1.3"
+    enabled?: bool = false
+    min_version?: "1.2" | "1.3" = "1.3"
     cert_path?: string
 
     when enabled {
@@ -16,18 +16,18 @@ export type TlsConfig = {
 }
 
 export type ServerConfig = {
-    host: string = "0.0.0.0"
-    port: 1..65535 = 8080
-    workers: 1..256 = 4
-    log_level: LogLevel = "info"
-    request_timeout: quantity<Time> = 30s
-    tls: TlsConfig = {}
-    rate_limits: { [/[a-z][a-z0-9_]*/]: int } = {}
+    host?: string = "0.0.0.0"
+    port?: 1..65535 = 8080
+    workers?: 1..256 = 4
+    log_level?: LogLevel = "info"
+    request_timeout?: quantity<Time> = 30s
+    tls?: TlsConfig = {}
+    rate_limits?: { [/[a-z][a-z0-9_]*/]: int } = {}
 
     // forward compatibility: unknown flags pass through opaquely
     ...
 
-    const insecure = !tls.enabled
+    insecure = !tls.enabled
     assert sane_workers: workers <= 64
         else warn `worker count ${workers} is unusually high`
 }

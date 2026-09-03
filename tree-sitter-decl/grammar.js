@@ -196,9 +196,14 @@ module.exports = grammar({
     open_marker: _ => '...',
     map_type: $ => seq('{', '[', field('key', $._type), ']', ':', field('value', $._type), '}'),
 
+    // member kinds by syntax alone (D4, v0.3): `?` says input may supply the
+    // member, `= e` says the schema computes it — required `x: T`, optional
+    // `x?: T`, defaulted `x?: T = e`, derived `x: T = e` / `x = e`; a hidden
+    // member `x$ = e` (D34) is computed but never part of the value
     _member: $ => choice(
       $.value_member,
       $.derived_member,
+      $.hidden_member,
       $.context_declaration,
       $.assert_member,
       $.when_member,
@@ -209,7 +214,11 @@ module.exports = grammar({
       optional(seq(optional($._newline), '=', field('default', $._expression))),
     ),
     derived_member: $ => seq(
-      'const', field('name', $._member_name),
+      field('name', $._member_name),
+      '=', field('value', $._expression),
+    ),
+    hidden_member: $ => seq(
+      field('name', $.hidden_name),
       optional(seq(':', field('type', $._type))),
       '=', field('value', $._expression),
     ),
@@ -317,9 +326,9 @@ module.exports = grammar({
       $.member_access, $.safe_access, $.index_access, $.call, $._primary,
     ),
     member_access: $ => prec.left(16, seq(
-      $._postfix, token.immediate('.'), $._member_name,
+      $._postfix, token.immediate('.'), choice($._member_name, $.hidden_name),
     )),
-    safe_access: $ => prec.left(16, seq($._postfix, '?.', $._member_name)),
+    safe_access: $ => prec.left(16, seq($._postfix, '?.', choice($._member_name, $.hidden_name))),
     index_access: $ => prec.left(16, seq(
       $._postfix, token.immediate('['), $._expression, ']',
     )),
@@ -331,6 +340,7 @@ module.exports = grammar({
       $.int, $.float, $.unit_literal, $.string, $.template_string,
       'true', 'false', 'null',
       $.identifier,
+      $.hidden_name,
       $.context_variable,
       $.referrers_expression,
       $.object,
@@ -382,6 +392,8 @@ module.exports = grammar({
 
     // ---------------- tokens ----------------
     identifier: _ => /[_A-Za-z][_A-Za-z0-9]*/,
+    // a hidden member's name (D34): an identifier with `$` attached
+    hidden_name: _ => /[_A-Za-z][_A-Za-z0-9]*\$/,
     int: _ => token(choice(
       prec(2, /0[xX][0-9a-fA-F][0-9a-fA-F_]*/),
       prec(2, /0[oO][0-7][0-7_]*/),

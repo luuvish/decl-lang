@@ -5,12 +5,12 @@ type Link = {
     $parent: ref<{ ports: { [string]: Port }, spare: Port, ... }>
     own: bool
     key: string
-    const target: ref<Port> = if own then $parent.ports[key] else $parent.spare
+    target: ref<Port> = if own then $parent.ports[key] else $parent.spare
 }
 type Node = {
-    ports: { [string]: Port } = { }
-    spare: Port = { name: "spare" }
-    links: Link[] = []
+    ports?: { [string]: Port } = { }
+    spare?: Port = { name: "spare" }
+    links?: Link[] = []
 }
 output n: Node = {
     ports: { a: { name: "a" } }

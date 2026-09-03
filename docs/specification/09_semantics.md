@@ -43,7 +43,7 @@ unique across the universe (§8.8).
 
 ## 9.3 The member dependency graph
 
-- For each record instance, its members' default, derived, and
+- For each record instance, its members' default, derived, hidden, and
   constraint expressions reference siblings, context values, and other
   roots' values. These references, instantiated **per instance**, form
   the dependency graph.
@@ -75,7 +75,8 @@ unique across the universe (§8.8).
 - What creates demand: emission of an exported output; validation
   (every constraint member of every instance in the universe is
   checked, and checking demands the values its condition reads);
-  serialization (demands every value member, including derived ones);
+  serialization (demands every value member, including derived ones —
+  never a hidden one, which only its readers demand);
   a partial-evaluation request (§9.8); the fallback of an `input`
   demanded while unbound (§5.6).
 - An unbound `input` that nothing demands raises no diagnostic; the

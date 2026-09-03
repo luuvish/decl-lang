@@ -26,11 +26,11 @@ type Div4 = int(divisible_by(4))
 type Ip = "tcp" | "udp"
 type Node = { id: string, next?: ref<Node> }
 type NodeAlias = { id: string, next?: ref<Node> }
-type Base = { name: string, width: int = 8, tag?: string, ... }
+type Base = { name: string, width?: int = 8, tag?: string, ... }
 type Sub = { name: "x", width: 8, tag: string, extra: bool, ... }
 type OptDrop = { name: string, ... }
-type NoReq = { width: int = 8, ... }
-type ReqAsOpt = { name?: string, width: int = 8, tag?: string, ... }
+type NoReq = { width?: int = 8, ... }
+type ReqAsOpt = { name?: string, width?: int = 8, tag?: string, ... }
 type Tree = { v: int, kids: Tree[] = [] }
 type TreeAlias = { v: int, kids: TreeAlias[] = [] }
 type Ints = int[]

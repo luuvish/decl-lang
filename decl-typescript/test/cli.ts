@@ -32,7 +32,7 @@ console.log('== decl evaluate ==');
 {
   const dir = mkdtempSync(join(tmpdir(), 'decl-cli-'));
   const f = join(dir, 'demo.decl');
-  writeFileSync(f, 'type T = { a: int, const b = a * 2 }\nexport output demo: T = { a: 21 }\n');
+  writeFileSync(f, 'type T = { a: int, b = a * 2 }\nexport output demo: T = { a: 21 }\n');
   const r = run('evaluate', f, '--root', 'demo');
   check('evaluate prints canonical JSON', r.code === 0 && r.out.trim() === '{"a":21,"b":42}', JSON.stringify(r));
   const all = run('evaluate', join(root, 'tests/modules/basic/main.decl'));

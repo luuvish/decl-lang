@@ -186,6 +186,8 @@ pub enum Compute {
 
 pub struct Slot {
     pub kind: MKind,
+    /// `x$ = e`: computed, never part of the value (D34)
+    pub hidden: bool,
     pub state: SlotState,
     pub value: Value,
     pub compute: Option<Compute>,
@@ -351,6 +353,8 @@ pub fn rec_type(open: bool) -> RecType {
 pub struct Member {
     pub kind: MKind,
     pub name: String,
+    /// a hidden member (D34): computed, never part of the value
+    pub hidden: bool,
     pub ty: Option<RT>,
     pub conj: Option<Vec<RT>>,
     pub dflt: Option<Rc<Expr>>,
@@ -1213,15 +1217,17 @@ impl Env {
                 MemberAst::Value { name, opt, ty: t, dflt } => r.members.borrow_mut().push(Member {
                     kind: if dflt.is_some() { MKind::Dflt } else if *opt { MKind::Opt } else { MKind::Req },
                     name: name.clone(),
+                    hidden: false,
                     ty: Some(self.resolve(t, None)?),
                     conj: None,
                     dflt: dflt.clone(),
                     expr: None,
                     menv: Some(self.clone()),
                 }),
-                MemberAst::Derived { name, ty: t, expr } => r.members.borrow_mut().push(Member {
+                MemberAst::Derived { name, ty: t, expr, hidden } => r.members.borrow_mut().push(Member {
                     kind: MKind::Der,
                     name: name.clone(),
+                    hidden: *hidden,
                     ty: match t { Some(t) => Some(self.resolve(t, None)?), None => None },
                     conj: None,
                     dflt: None,
@@ -1334,7 +1340,7 @@ fn subst_member(m: &MemberAst, types: &HashMap<String, TypeAst>, values: &HashMa
     let t = |a: &TypeAst| subst_type(a, types, values);
     match m {
         MemberAst::Value { name, opt, ty, dflt } => MemberAst::Value { name: name.clone(), opt: *opt, ty: t(ty), dflt: dflt.as_ref().map(|d| subst_expr(d, values)) },
-        MemberAst::Derived { name, ty, expr } => MemberAst::Derived { name: name.clone(), ty: ty.as_ref().map(t), expr: subst_expr(expr, values) },
+        MemberAst::Derived { name, ty, expr, hidden } => MemberAst::Derived { name: name.clone(), ty: ty.as_ref().map(t), expr: subst_expr(expr, values), hidden: *hidden },
         MemberAst::Context { variable, ty } => MemberAst::Context { variable: variable.clone(), ty: t(ty) },
         MemberAst::Assert { name, cond, tail } => MemberAst::Assert { name: name.clone(), cond: subst_expr(cond, values), tail: tail.clone() },
         MemberAst::When { cond, body } => MemberAst::When { cond: subst_expr(cond, values), body: body.iter().map(|b| subst_member(b, types, values)).collect() },
@@ -1644,6 +1650,9 @@ pub fn value_eq(a: &Value, b: &Value) -> bool {
             }
             let (x, y) = (x.borrow(), y.borrow());
             for (n, s) in &x.slots {
+                if s.hidden {
+                    continue; // a hidden member is not part of the value (D34)
+                }
                 let v1 = if s.state == SlotState::Absent { Value::Absent } else { s.value.clone() };
                 let v2 = match y.slot(n) {
                     Some(s2) if s2.state != SlotState::Absent => s2.value.clone(),

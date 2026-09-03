@@ -35,7 +35,8 @@ literal-construction check of §3.18 followed by the ordinary pipeline:
    Required members must be present; optional members may be absent;
    a supplied defaulted member overrides its default; a supplied
    **derived** member is a restatement — accepted iff equal to the
-   computed value (D4). Against a **closed** record, undeclared
+   computed value (D4); a supplied **hidden** member is an error
+   (E4006 — it is never part of a value, §5.7). Against a **closed** record, undeclared
    members are rejected; against an **open** one they pass through as
    opaque fields (§3.11). Entry order is preserved as document order
    (D23).
@@ -73,7 +74,8 @@ Serializing an evaluated value (an exported `output`, or a bound
 
 - **Absent** members are not emitted; **`null`** is emitted (D5).
 - **Derived** members are included by default; a tool option may
-  exclude them (D29). Defaulted members are emitted with their
+  exclude them (D29). **Hidden** members (§5.7) are never emitted.
+  Defaulted members are emitted with their
   effective value — filled or overridden — indistinguishably.
 - **Member order**: the value's entry order — declaration order for
   values built in-language, document order for input-bound values —

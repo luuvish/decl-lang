@@ -50,9 +50,9 @@ an operation fails.
 ```decl
 type Service = {
     name: /[a-z][a-z0-9-]*/
-    port: 1024..65535 = 8080
-    replicas: 1..64 = 1
-    const endpoint = `${name}:${port}`
+    port?: 1024..65535 = 8080
+    replicas?: 1..64 = 1
+    endpoint = `${name}:${port}`
     assert grpc_ports: name != "grpc" || port >= 9000
         else warn `grpc convention is 9000+`
 }

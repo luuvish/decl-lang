@@ -79,6 +79,7 @@ export function subsumes(env: Env, a: RT, b: RT, assume: Assume = new Map()): bo
       if (!set) { set = new Set(); assume.set(a, set); }
       set.add(b);
       for (const m of b.members) {
+        if (m.hidden) continue;               // not part of the value: ⊑ never compares it (D34)
         const s = a.members.find((x: any) => x.name === m.name);
         const mTypes: RT[] = m.conj ?? (m.type ? [m.type] : []);
         const sTypes: RT[] = s ? (s.conj ?? (s.type ? [s.type] : [])) : [];

@@ -1,0 +1,10 @@
+// @expect-phase: binding
+// @expect-error: E4006
+// parses; a hidden member is never part of the value, so a literal (or a
+// document) that supplies it is in error — there is nothing to restate (D34).
+// A hidden name cannot even be written bare in a literal; a document's key can.
+type T = {
+    a: int
+    twice$ = a * 2
+}
+output t: T = { a: 1, "twice$": 2 }

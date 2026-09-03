@@ -16,7 +16,7 @@ export type TypeAst =
 
 export type MemberAst =
   | { m: 'value'; name: string; opt: boolean; type: TypeAst; dflt?: Expr }
-  | { m: 'derived'; name: string; type?: TypeAst; expr: Expr }
+  | { m: 'derived'; name: string; type?: TypeAst; expr: Expr; hidden?: boolean }   // hidden: `x$ = e` (D34)
   | { m: 'context'; variable: string; type: TypeAst }
   | { m: 'assert'; name: string; cond: Expr; tail?: ElseTail }
   | { m: 'when'; cond: Expr; body: MemberAst[] };

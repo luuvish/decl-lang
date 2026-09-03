@@ -1,6 +1,6 @@
 [package]
 name = "decl-lang"
-version = "0.2.0"
+version = "0.3.0"
 edition = "2021"
 description = "Decl — a declarative language for describing, generating, and validating structured data: the `decl` CLI (check / evaluate / validate / fmt) and the `decl-lsp` language server, implemented natively in Rust"
 license = "MIT"

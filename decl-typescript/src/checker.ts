@@ -150,15 +150,18 @@ export function checkModule(decls: Decl[], linked?: Env): Diag[] {
       if (om.m === 'assert' || om.m === 'when' || om.m === 'context') continue;
       const bm = base.members.find((x: any) => x.name === (om as any).name);
       if (!bm) continue;   // addition
-      const oKind = om.m === 'derived' ? 'der' : (om as any).dflt ? 'dflt' : (om as any).opt ? 'opt' : 'req';
+      const oKind = om.m === 'derived' ? (om.hidden ? 'hidden' : 'der') : (om as any).dflt ? 'dflt' : (om as any).opt ? 'opt' : 'req';
+      const bKind = bm.kind === 'der' && bm.hidden ? 'hidden' : bm.kind;
+      // §5.9: overriding narrows; a hidden member stays hidden, a visible one visible
       const allowed: Record<string, string[]> = {
         req: ['req', 'dflt', 'der'],
         opt: ['req', 'opt', 'dflt', 'der'],
         dflt: ['req', 'dflt', 'der'],
         der: ['der'],
+        hidden: ['hidden'],
       };
-      if (!allowed[bm.kind]?.includes(oKind)) {
-        report('E4032', `illegal member-kind transition for ${(om as any).name}: ${bm.kind} -> ${oKind} (${declName ?? t.name})`);
+      if (!allowed[bKind]?.includes(oKind)) {
+        report('E4032', `illegal member-kind transition for ${(om as any).name}: ${bKind} -> ${oKind} (${declName ?? t.name})`);
         continue;
       }
       const oType = (om as any).type ? env.tryResolve((om as any).type) : undefined;

@@ -27,6 +27,7 @@ export const isClo = (v: any) => v && v.__clo === true;
 
 export type Slot = {
   kind: 'req' | 'opt' | 'dflt' | 'der';
+  hidden?: boolean;            // `x$ = e`: computed, never part of the value (D34)
   state: 'unforced' | 'forcing' | 'ok' | 'invalid' | 'absent';
   value?: Value;
   deferred: boolean;           // expression mentions $referrers
@@ -551,7 +552,7 @@ export class Env {
       if (m.m === 'value')
         rt.members.push({ kind: m.dflt ? 'dflt' : m.opt ? 'opt' : 'req', name: m.name, type: this.resolve(m.type), dflt: m.dflt, menv: this });
       else if (m.m === 'derived')
-        rt.members.push({ kind: 'der', name: m.name, type: m.type ? this.resolve(m.type) : undefined, expr: m.expr, menv: this });
+        rt.members.push({ kind: 'der', name: m.name, type: m.type ? this.resolve(m.type) : undefined, expr: m.expr, menv: this, hidden: m.hidden || undefined });
       else if (m.m === 'assert')
         rt.asserts.push({ kind: 'assert', name: m.name, cond: m.cond, tail: m.tail, origin: rt.name, menv: this });
       else if (m.m === 'when')
@@ -756,6 +757,7 @@ export function valueEq(a: any, b: any): boolean {
   }
   if (isRec(a) && isRec(b)) {
     for (const [n, s] of a.slots) {
+      if (s.hidden) continue;                 // a hidden member is not part of the value (D34)
       const s2 = b.slots.get(n);
       const v1 = s.state === 'absent' ? ABSENT : s.value;
       const v2 = !s2 || s2.state === 'absent' ? ABSENT : s2.value;

@@ -42,23 +42,25 @@ export type Port = 1..65535
 export type Service = {
     name: ServiceName                     // required
     protocol: Protocol
-    port: Port = 8080                     // defaulted
-    replicas: int = 1
-    timeout: quantity<Time> = 250ms       // a physical quantity (SI catalog, std)
+    port?: Port = 8080                     // defaulted
+    replicas?: int = 1
+    timeout?: quantity<Time> = 250ms       // a physical quantity (SI catalog, std)
     description?: string                  // optional — absent is not null
 
-    const endpoint = `${name}:${port}`    // derived: computed, input can't set it
+    endpoint = `${name}:${port}`    // derived: computed, input can't set it
 
-    const inbound = $referrers(Link, "target")   // who links to me?
+    inbound = $referrers(Link, "target")   // who links to me?
 
     assert scaled: replicas in 1..16
         else warn `replicas ${replicas} is outside the recommended range`
 }
 ```
 
-Four member kinds, distinguished by syntax alone
-([05. Declarations](../specification/05_declarations.md)): required,
-optional (`?`), defaulted (`= expr`), derived (`const`). The `assert`
+Four member kinds, read off two marks
+([05. Declarations](../specification/05_declarations.md)): `?` says
+input may supply the member, `= expr` says the schema computes it —
+required (neither), optional (`?`), defaulted (both), derived (`= expr`
+alone). The `assert`
 is a member too — of the constraint kind: it produces diagnostics, not
 data, and this one is a **warning**: a failing value is kept, annotated
 ([06. Constraints](../specification/06_constraints.md)).
@@ -78,7 +80,7 @@ export diagnostic protocol_mismatch(src: string, dst: string) {
 export type Link = {
     source: ref<Service>                  // reference, not a copy
     target: ref<Service>
-    weight: int = 1
+    weight?: int = 1
 
     assert no_self_link: source.name != target.name
     assert protocols: source.protocol == target.protocol
@@ -89,7 +91,7 @@ export type Topology = {
     services: Service[1..64]
     links: Link[]
 
-    const service_count = std.array.count(services)
+    service_count = std.array.count(services)
 
     assert unique_names:
         std.array.all_distinct([s.name for s in services])

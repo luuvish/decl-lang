@@ -38,12 +38,19 @@ pub fn u16len(s: &str) -> usize {
 fn is_atom(kind: &str) -> bool {
     ATOMS.contains(&kind)
 }
+// name-like: `[A-Za-z_$][A-Za-z0-9_]*\$?` — a hidden member's name `x$` is name-like too (D34)
 fn keywordy(t: &str) -> bool {
     let mut cs = t.chars();
-    match cs.next() {
-        Some(c) if c.is_ascii_alphabetic() || c == '_' || c == '$' => cs.all(|c| c.is_ascii_alphanumeric() || c == '_'),
-        _ => false,
+    let Some(c0) = cs.next() else { return false };
+    if !(c0.is_ascii_alphabetic() || c0 == '_' || c0 == '$') {
+        return false;
     }
+    let rest: Vec<char> = cs.collect();
+    let body: &[char] = match rest.split_last() {
+        Some(('$', b)) => b,
+        _ => &rest[..],
+    };
+    body.iter().all(|c| c.is_ascii_alphanumeric() || *c == '_')
 }
 fn is_keyword(t: &str) -> bool {
     KEYWORDS.contains(&t) || KEYWORDS_EXTRA.contains(&t)

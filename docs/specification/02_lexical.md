@@ -94,6 +94,18 @@ $this  $parent  $root  $key  $path  $referrers
 Any other `$`-token (`$value`, `$std`, …) is a lexical error. Semantics
 are defined in [07. Relationships](07_relationships.md).
 
+A `$` immediately **after** an identifier, with no space, is part of a
+**hidden-member name** (`feeders$`, `target_port$` — §5.7, D34):
+
+```
+hidden-name = identifier "$"
+```
+
+A hidden name is one token: `feeders $` is two tokens and an error. The
+two placements never collide — `$key` is a context variable, `key$` a
+hidden member — and a `$` never appears anywhere else outside a
+template hole (`${…}`, §2.6) or a pattern interpolation (§3.6).
+
 ## 2.6 Number literals
 
 Decimal integers and floats follow JSON exactly, with two extensions

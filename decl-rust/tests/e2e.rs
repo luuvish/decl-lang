@@ -136,7 +136,7 @@ fn cli_evaluate_binds_inputs_and_roots_them() {
     let dir = std::env::temp_dir().join(format!("decl-cli-{}", std::process::id()));
     std::fs::create_dir_all(&dir).unwrap();
     let decl = dir.join("main.decl");
-    std::fs::write(&decl, "type Cfg = { host: string, port: int = 80 }\ninput base: Cfg\noutput copy: Cfg = base\n").unwrap();
+    std::fs::write(&decl, "type Cfg = { host: string, port?: int = 80 }\ninput base: Cfg\noutput copy: Cfg = base\n").unwrap();
     let doc = dir.join("base.json");
     std::fs::write(&doc, "{\"host\": \"example\"}\n").unwrap();
     let decl_s = decl.to_str().unwrap().to_string();
@@ -219,7 +219,7 @@ fn lsp_diagnostics_hover_definition() {
     let dir = std::env::temp_dir().join(format!("decl-lsp-{}", std::process::id()));
     std::fs::create_dir_all(&dir).unwrap();
     let lib_path = dir.join("lib.decl");
-    std::fs::write(&lib_path, "export type Service = { name: string, port: 1..65535 = 8080 }\nexport const MAX = 16\n").unwrap();
+    std::fs::write(&lib_path, "export type Service = { name: string, port?: 1..65535 = 8080 }\nexport const MAX = 16\n").unwrap();
     let main_path = dir.join("main.decl");
     std::fs::write(&main_path, "").unwrap();
     let main_uri = decl_lang::lsp::uri_of(&main_path);

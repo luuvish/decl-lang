@@ -672,7 +672,15 @@ function inferMatch(cx: ICtx, e: Expr & { e: 'match' }, expected: RT | null): Ty
 function placeTy(cx: ICtx, e: Expr): Ty {
   switch (e.e) {
     case 'paren': return placeTy(cx, e.x);
-    case 'member': return memberCore(cx, placeTy(cx, e.x), e);
+    case 'member': {
+      const base = placeTy(cx, e.x);
+      // a hidden member's value is not part of any document: no reference
+      // can target it (§7.5, D34)
+      const rec = base.rt?.t === 'ref' ? base.rt.target : base.rt;
+      if (rec?.t === 'rec' && rec.members.find((m: any) => m.name === e.name)?.hidden)
+        cx.report('E4093', `\`ref\` position navigates hidden member ${e.name} — not part of the value (§7.5)`);
+      return memberCore(cx, base, e);
+    }
     case 'index': return indexCore(cx, placeTy(cx, e.x), e);
     case 'if': {
       // a conditional between places is a place: each branch is read in

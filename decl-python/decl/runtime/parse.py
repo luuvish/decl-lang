@@ -295,19 +295,26 @@ def _parse_int(text: str) -> int:
 # ---------------- members ----------------
 def lower_member(n: Node) -> Optional[dict]:
     t = n.type
+    # member kinds by syntax (D4, v0.3): `?` — input may supply it; `= e` —
+    # the schema computes it. Both: defaulted; `= e` alone: derived
     if t == "value_member":
         name_n = _req(n, "name")
-        return {"m": "value",
-                "name": json.loads(_text(name_n)) if name_n.type == "string" else _text(name_n),
-                "opt": _field(n, "optional") is not None,
-                "type": lower_type(_req(n, "type")),
-                "dflt": lower_expr(_req(n, "default")) if _field(n, "default") else None}
+        name = json.loads(_text(name_n)) if name_n.type == "string" else _text(name_n)
+        opt = _field(n, "optional") is not None
+        dflt = lower_expr(_req(n, "default")) if _field(n, "default") else None
+        if dflt is not None and not opt:
+            return {"m": "derived", "name": name, "type": lower_type(_req(n, "type")), "expr": dflt}
+        return {"m": "value", "name": name, "opt": opt, "type": lower_type(_req(n, "type")), "dflt": dflt}
     if t == "derived_member":
         name_n = _req(n, "name")
         return {"m": "derived",
                 "name": json.loads(_text(name_n)) if name_n.type == "string" else _text(name_n),
-                "type": lower_type(_req(n, "type")) if _field(n, "type") else None,
                 "expr": lower_expr(_req(n, "value"))}
+    # `x$ [: T] = e` — computed for the schema's own use, never part of the value (D34)
+    if t == "hidden_member":
+        return {"m": "derived", "name": _text(_req(n, "name")),
+                "type": lower_type(_req(n, "type")) if _field(n, "type") else None,
+                "expr": lower_expr(_req(n, "value")), "hidden": True}
     if t == "context_declaration":
         return {"m": "context", "variable": _text(_req(n, "variable")), "type": lower_type(_req(n, "type"))}
     if t == "assert_member":
@@ -348,7 +355,7 @@ def lower_expr(n: Node) -> dict:
         return {"e": "lit", "v": json.loads(_text(n).replace("\n", "\\n"))}
     if t == "template_string":
         return {"e": "template", "parts": lower_template_parts(n)}
-    if t == "identifier":
+    if t in ("identifier", "hidden_name"):
         return {"e": "name", "name": _text(n)}
     if t == "context_variable":
         return {"e": "ctx", "name": _text(n)}

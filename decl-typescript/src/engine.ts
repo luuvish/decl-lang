@@ -872,8 +872,15 @@ export class Engine {
         return v;
       };
       if (m.kind === 'der') {
+        // a hidden member (D34) is never part of the value: a document or
+        // literal that supplies it is in error — there is nothing to restate
+        if (has && m.hidden) {
+          this.env.report({ severity: 'error', message: `hidden member ${m.name} supplied`, path: pathStr([...path, m.name]), code: 'E4006' });
+          inst.slots.set(m.name, { kind: 'der', hidden: true, state: 'invalid', deferred: false });
+          continue;
+        }
         const slot: Slot = {
-          kind: 'der', state: 'unforced', deferred: mentionsReferrersLocal(m.expr),
+          kind: 'der', hidden: m.hidden || undefined, state: 'unforced', deferred: mentionsReferrersLocal(m.expr),
           compute: () => {
             let v: any;
             // a member declared `ref<T>` holds a navigation (§7.4): the
@@ -1081,7 +1088,7 @@ export class Engine {
         for (const m of x.rt.members) {
           if (done.has(m.name) && m.kind !== 'der') continue;
           const s = x.slots.get(m.name);
-          if (!s || s.state === 'invalid' || s.state === 'absent' || s.state === 'unforced') continue;
+          if (!s || s.hidden || s.state === 'invalid' || s.state === 'absent' || s.state === 'unforced') continue;
           const g = go(s.value); if (g !== undefined) parts.push(`${JSON.stringify(m.name)}:${g}`);
         }
         return `{${parts.join(',')}}`;

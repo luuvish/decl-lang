@@ -66,21 +66,23 @@ because the same requirements produce them, not because they were inherited.
   layer, and lets each surface use notation natural to it without collision
   (see D11/D12 vs D16).
 
-### D3. `const` is the single binding form for computed values
+### D3. `const` is the module-level constant *(amended, v0.3)*
 
-- Module level: `const max_width = 256` — named constant.
-- Schema member level: `const x = expr` — derived member (D4).
-- Both are the same concept — "name = computed value" — differing only in
-  scope; each scope is delimited by its enclosing construct. `const` binds
-  values only; types use `type`, functions use `func`.
+- Module level: `const max_width = 256` — named constant, the one place
+  the keyword appears.
+- Schema member level *(v0.3)*: a computed member is written by its shape,
+  `x = expr` / `x: T = expr` (D4) — no keyword; the schema's computations
+  and the module's constants are different things (a member has a place
+  under a root, a constant has none — D22), and the syntax now says so.
+  Before v0.3 the member form was `const x = expr`.
 - The keyword is `const`, not `let`: in the mainstream (TypeScript/
   JavaScript) reading, `let` announces a *mutable* binding — the opposite
   connotation of a language where every binding is immutable. `const` says
   exactly what holds.
-- **There is no expression-level binding form in v0.1.** Named
-  intermediates come from decomposition: another `const` member in a
-  schema, a module `const`, or a helper `func`; comprehensions already
-  bind their own iteration names. Every candidate syntax carried a real
+- **There is no expression-level binding form.** Named intermediates come
+  from decomposition: a hidden member `x$ = e` in a schema (D34), a module
+  `const`, or a helper `func`; comprehensions already bind their own
+  iteration names. Every candidate syntax carried a real
   cost — `let x = e in body` collides with the membership operator `in`
   (D16) and reads as a foreign idiom; a braced body would give `{` a
   second meaning on the value surface (P3/P6); arrow terminators collide
@@ -89,19 +91,28 @@ because the same requirements produce them, not because they were inherited.
   (`const (x = e) body`) is the designated re-entry candidate, admitted
   with evidence (OQ7).
 
-### D4. Member kinds are distinguished by syntax, not modifiers
+### D4. Member kinds are distinguished by syntax, not modifiers *(amended, v0.3)*
 
-| Form | Meaning |
-|---|---|
-| `x: T` | Required — must be present in input |
-| `x?: T` | Optional — may be absent |
-| `x: T = expr` | Defaulted — filled by evaluating `expr` when omitted |
-| `const x = expr` | Derived — always computed; input cannot set it |
+Two marks decide a value member's kind: `?` says **input may supply it**,
+`= expr` says **the schema computes it**. Their four combinations are the
+four kinds:
 
-- No `@required`/`@optional`-style modifiers. The derived kind is not a
-  dedicated keyword but `const` (D3): a binding is not an input slot, so
-  "input cannot set it" follows from what `const` already means.
-- `const` members may carry a type (`const x: T = expr`) or infer it.
+| | no `= expr` | `= expr` |
+|---|---|---|
+| no `?` | `x: T` — **required**: input must supply it | `x: T = expr`, `x = expr` — **derived**: the schema computes it; input may only restate it |
+| `?` | `x?: T` — **optional**: input may supply it, else absent | `x?: T = expr` — **defaulted**: the schema computes it unless input supplies it |
+
+- No `@required`/`@optional`-style modifiers and no keyword: a member's
+  kind is read off its declaration. A derived member's type may be
+  written or inferred (`x = expr`); settable members (`?`) always declare
+  their type — the type is the input's contract.
+- **Safe by default**: a value written in the schema *is* the value.
+  Letting input change it is a decision, and `?` is where it is written.
+  This is the reverse of the "`= expr` is a default" convention of Pkl,
+  KCL, and Nickel — chosen so that a generated document cannot silently
+  disagree with the schema that generated it (the restatement rule
+  below). Before v0.3, `x: T = expr` was the defaulted form and the
+  derived form was `const x = expr`.
 - Default and derived expressions may reference sibling properties (the
   dependency graph, D23). Input data cannot **set** a derived member — but
   it may **restate** one: a bound document supplying a derived member is
@@ -109,6 +120,8 @@ because the same requirements produce them, not because they were inherited.
   otherwise. Without the restatement rule, D29's round-trip (derived
   members included in output by default) would reject its own output on
   re-binding.
+- A fifth form, the **hidden** member `x$ = expr`, is computed but is not
+  part of the value at all — D34.
 - `@` annotations (`@deprecated`, `@doc("...")`) are metadata only; no
   annotation affects semantics (P5 — semantics live in one place).
 
@@ -400,23 +413,27 @@ because the same requirements produce them, not because they were inherited.
 
 ## D. Schemas and constraints
 
-### D19. Schema members are flat, in two natures
+### D19. Schema members are flat, in three natures *(amended, v0.3)*
 
-- Properties (D4), derived `const` members, `assert` members (D20), and
+- Properties (D4), hidden members (D34), `assert` members (D20), and
   `when` groups appear side by side — no `properties {}` /
   `constraints {}` / `diagnostics {}` blocks.
 - Members divide by **which component of P4's result they feed**:
-  - **Value members** — `x: T`, `x?: T`, `x: T = e`, `const x = e` —
-    become key/value pairs of the evaluated value; they serialize (D29)
-    and (except derived) may be set by input.
+  - **Value members** — `x: T`, `x?: T`, `x?: T = e`, `x = e` — become
+    key/value pairs of the evaluated value; they serialize (D29) and
+    (except derived) may be set by input.
+  - **Hidden members** — `x$ = e` (D34) — feed neither component: they
+    are computed for the schema's own use, read by expressions and by
+    `$referrers`, and never appear in the value or in a document.
   - **Constraint members** — `assert` and `when` groups — feed the
     diagnostics list only; they are not data, never appear in output,
     and cannot be set by input. An `assert` is not a property: it is a
     named cross-member predicate the type imposes on its values — the
     cross-field sibling of the single-value predicate types `T(p)` (D8),
     carrying a stable diagnostic id (D20).
-  - The two natures also merge differently: value members compose by
-    narrowing, constraint members by union (D12, D21).
+  - The natures also merge differently: value members compose by
+    narrowing, constraint members by union (D12, D21); a hidden member
+    is overridden only by a hidden member.
 - **One name space**: within a schema, value-member and constraint-member
   names live in a single name space and cannot collide — a property
   `symmetric` and an `assert symmetric` in the same type is an error
@@ -743,6 +760,37 @@ diagnostic width_mismatch(src: int, dst: int) {
 - Literal keywords `true` / `false` / `null` are **not** member names
   (they stay literals everywhere).
 
+### D34. Hidden members: `x$ = expr` is computed but not part of the value *(revision, 2026-09-04)*
+
+- A schema often needs a computed value that is **not data**: the edges
+  feeding a port, the endpoint a link name resolves to, an intermediate a
+  constraint reads. Every peer language marks such members (Pkl
+  `hidden`, jsonnet `::`, Nickel `not_exported`, CUE `_`); before v0.3
+  Decl could only make them derived members, which serialize (D29), so
+  schema plumbing leaked into every document.
+- **Form**: `x$ = expr` or `x$: T = expr` — a derived member whose name
+  ends in `$`. The mark is part of the name: it is declared, read, and
+  queried as `x$` (`fed_width(feeders$)`, `edge.source$.width`,
+  `$referrers(Edge, "target$")`), and it is never spelled bare in a
+  literal. `$` keeps one meaning across the language — *not part of the
+  document*: a leading `$` names what the surroundings give an instance
+  (`$parent`, `$key`), a trailing `$` what the schema keeps for itself.
+- **Semantics**: computed lazily like any derived member, readable by
+  sibling expressions, by other instances' navigations, and by
+  `$referrers` (a hidden `ref` member still carries its reference — the
+  reverse query's premise, D26). It is **not part of the value**: never
+  emitted, never compared by `==` or `⊑`, never copied by `with`, spread,
+  or `std.object.merge`, and never a reference target (§7.5). A document
+  or literal that supplies it is in error (E4006) — there is nothing to
+  restate.
+- **Only derived members can be hidden.** A settable hidden member would
+  be read from input and never written back — the round trip (D29) would
+  lose it, and derived members computed from it would fail their own
+  restatement. So `x$?: T` and `x$: T` do not exist.
+- Rejected marks: a `hidden` keyword (D4 keeps kinds keyword-free), a
+  leading `_` (`_id`, `_links` are ordinary keys in real documents — P3),
+  and a leading `$` (the context-variable name space, D30).
+
 ---
 
 ## H. Interchange
@@ -750,8 +798,9 @@ diagnostic width_mismatch(src: int, dst: int) {
 ### D29. Serialization policy and total round-trip
 
 - Absent properties are not emitted; `null` is emitted (D5).
-- Derived (`const`) members are **included** by default (tool option to
-  exclude).
+- Derived members are **included** by default (tool option to exclude);
+  hidden members (D34) are **never** emitted — they are not part of the
+  value.
 - Floats print in shortest round-trip form (the ECMAScript
   `Number::toString` algorithm), with `.0` appended when that form is
   lexically an integer — numbers bind by lexical form, so integral
@@ -786,7 +835,9 @@ the right column.
 | Absent | Use instead |
 |---|---|
 | `properties {}` / `constraints {}` / `diagnostics {}` blocks | flat members + `assert` + `diagnostic` (D19, D20) |
-| `let` keyword | `const` (D3) |
+| `let` keyword | a module `const`, a hidden member `x$ = e`, or a `func` (D3, D34) |
+| `const` inside a record body | `x = e` / `x: T = e` — a member's kind is its shape (D4, v0.3) |
+| `hidden` / `private` member keyword, `_x` naming convention | `x$ = e` (D34) |
 | expression-level bindings (`let … in`, parenthesized heads, binding blocks) | decompose into `const` members, module `const`s, helper `func`s (D3) |
 | `->` (lambda arrow, return-type arrow) | `(x) => e` lambdas, `func f(...): T` returns (D16, D17) |
 | ternary `c ? a : b` | `if c then a else b` (D16) |
@@ -828,12 +879,12 @@ type Port = 1..65535
 type Service = {
     name: ServiceName
     protocol: Protocol
-    port: Port = 8080
-    replicas: int = 1
-    timeout: quantity<Time> = 500ms
+    port?: Port = 8080
+    replicas?: int = 1
+    timeout?: quantity<Time> = 500ms
     description?: string
 
-    const endpoint = `${name}:${port}`
+    endpoint = `${name}:${port}`
 
     assert scaled: replicas in 1..16
         else warn `replicas ${replicas} is outside the recommended range`
@@ -858,7 +909,7 @@ diagnostic protocol_mismatch(src: string, dst: string) {
 type Link = {
     source: ref<Service>
     target: ref<Service>
-    weight: int = 1
+    weight?: int = 1
 
     assert no_self_link: source.name != target.name
     assert protocols: source.protocol == target.protocol
@@ -869,7 +920,7 @@ type Topology = {
     services: Service[1..64]
     links: Link[]
 
-    const service_count = std.array.count(services)
+    service_count = std.array.count(services)
 
     assert unique_names:
         std.array.all_distinct([s.name for s in services])

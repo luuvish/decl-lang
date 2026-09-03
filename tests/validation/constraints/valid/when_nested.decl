@@ -1,6 +1,6 @@
 type Cfg = {
-    enabled: bool = false
-    level: int = 1
+    enabled?: bool = false
+    level?: int = 1
     when enabled {
         assert has_level: level >= 1
         when level > 3 {

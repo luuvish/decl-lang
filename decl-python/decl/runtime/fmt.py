@@ -25,7 +25,7 @@ class Leaf:
 
 # atoms: leaves kept verbatim, including their internal whitespace
 ATOMS = {"string", "template_string", "pattern", "unit_literal", "doc_comment", "line_comment", "block_comment"}
-KEYWORDY = re.compile(r"^[A-Za-z_$][A-Za-z0-9_]*$")
+KEYWORDY = re.compile(r"^[A-Za-z_$][A-Za-z0-9_]*\$?$")   # a hidden member's name `x$` is name-like too (D34)
 BIN_OPS = {"=", "==", "!=", "<=", ">=", "+", "*", "/", "%", "&&", "||", "??",
            "|>", "=>", "<<", ">>", "in", "matches", "with", "then", "else", "for", "if", "as", "from"}
 CONT_STARTERS = {"else", "=", "for", "if", "&&", "||", "|>", "??", ".", "?.",

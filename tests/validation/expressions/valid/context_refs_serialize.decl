@@ -3,9 +3,9 @@
 type Child = {
     $parent: ref<{ name: string, ... }>
     label: string
-    const owner = $parent
-    const me = $this
-    const owner_name = $parent.name
+    owner = $parent
+    me = $this
+    owner_name = $parent.name
 }
-type Parent = { name: string, kids: Child[] = [] }
+type Parent = { name: string, kids?: Child[] = [] }
 output p: Parent = { name: "p", kids: [{ label: "k" }] }

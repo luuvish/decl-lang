@@ -152,6 +152,7 @@ A diagnostic serializes as:
 | E4003 | undeclared member on a closed record |
 | E4004 | duplicate member in one construction |
 | E4005 | derived member restated with a differing value (D4) |
+| E4006 | hidden member supplied by a document or a literal (§5.7, D34) |
 | E4010 | mixed-kind range endpoints |
 | E4011 | empty range (`lo > hi`) or empty array-size set |
 | E4012 | structurally uninhabited type (intersection clash, hopeless recursion, empty required member) |
@@ -184,7 +185,7 @@ A diagnostic serializes as:
 | E4094 | context variable used without a context declaration, or a duplicate/invalid context declaration (§7.3) |
 | E4091 | `$referrers`: first argument not a record type, or no compatible `ref` position |
 | E4092 | `$referrers`: second argument not a string literal naming such a member |
-| E4093 | `ref` position navigating a module `const` or other non-root value (§7.5) |
+| E4093 | `ref` position navigating a module `const`, a hidden member, or other non-root value (§7.5) |
 | E4100 | `match` arms overlap |
 | E4101 | `match` not exhaustive |
 | E4102 | `match` catch-all is dead |

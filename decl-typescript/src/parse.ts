@@ -264,20 +264,27 @@ function parseInt_(text: string): bigint {
 // ---------------- members ----------------
 function lowerMember(n: Node): MemberAst | null {
   switch (n.type) {
+    // member kinds by syntax (D4, v0.3): `?` — input may supply it; `= e` —
+    // the schema computes it. Both: defaulted; `= e` alone: derived
     case 'value_member': {
       const nameN = req(n, 'name');
-      return { m: 'value',
-        name: nameN.type === 'string' ? JSON.parse(nameN.text) : nameN.text,
-        opt: !!field(n, 'optional'),
-        type: lowerType(req(n, 'type')),
-        dflt: field(n, 'default') ? lowerExpr(req(n, 'default')) : undefined };
+      const name = nameN.type === 'string' ? JSON.parse(nameN.text) : nameN.text;
+      const opt = !!field(n, 'optional');
+      const dflt = field(n, 'default') ? lowerExpr(req(n, 'default')) : undefined;
+      if (dflt && !opt) return { m: 'derived', name, type: lowerType(req(n, 'type')), expr: dflt };
+      return { m: 'value', name, opt, type: lowerType(req(n, 'type')), dflt };
     }
     case 'derived_member': {
       const nameN = req(n, 'name');
       return { m: 'derived',
         name: nameN.type === 'string' ? JSON.parse(nameN.text) : nameN.text,
-        type: field(n, 'type') ? lowerType(req(n, 'type')) : undefined,
         expr: lowerExpr(req(n, 'value')) };
+    }
+    // `x$ [: T] = e` — computed for the schema's own use, never part of the value (D34)
+    case 'hidden_member': {
+      return { m: 'derived', name: req(n, 'name').text,
+        type: field(n, 'type') ? lowerType(req(n, 'type')) : undefined,
+        expr: lowerExpr(req(n, 'value')), hidden: true };
     }
     case 'context_declaration':
       return { m: 'context', variable: req(n, 'variable').text, type: lowerType(req(n, 'type')) };
@@ -315,7 +322,7 @@ function lowerExpr(n: Node): Expr {
     }
     case 'string': return { e: 'lit', v: JSON.parse(n.text.replace(/\n/g, '\\n')) };
     case 'template_string': return { e: 'template', parts: lowerTemplateParts(n) };
-    case 'identifier': return { e: 'name', name: n.text };
+    case 'identifier': case 'hidden_name': return { e: 'name', name: n.text };
     case 'context_variable': return { e: 'ctx', name: n.text };
     case 'referrers_expression':
       return { e: 'referrers', type: req(n, 'type').text, member: JSON.parse(req(n, 'member').text) };

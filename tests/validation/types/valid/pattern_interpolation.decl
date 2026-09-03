@@ -5,7 +5,7 @@ type Lane = /si${0..7}/
 type Wide = /m${"in" | "out"}/
 type EdgeName = /${Ident}->${Ident}/
 type Wiring = {
-    edges: { [EdgeName]: { name: EdgeName } } = { }
+    edges?: { [EdgeName]: { name: EdgeName } } = { }
     lane: Lane
     wide: Wide
 }

@@ -215,7 +215,7 @@ console.log('== generic instantiation (§3.15) ==');
 {
   const src = `
 type Vec<T, N: int> = T[N]
-type Bounded<T, N: 1..1024> = { items: T[0..N], const count = std.array.count(items) }
+type Bounded<T, N: 1..1024> = { items: T[0..N], count = std.array.count(items) }
 output q: Vec<int, 3> = [1, 2, 3]
 output b: Bounded<string, 4> = { items: ["a", "b"] }
 `;
@@ -251,8 +251,8 @@ unit mps: Speed
 type Trip = {
     dist: quantity<Length>
     dur: quantity<Time>
-    const speed: quantity<Speed> = dist / dur
-    const ratio = dist / 1km
+    speed: quantity<Speed> = dist / dur
+    ratio = dist / 1km
 }
 output trip: Trip = { dist: 3km, dur: 500ms }
 `;

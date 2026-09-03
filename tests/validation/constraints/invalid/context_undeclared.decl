@@ -3,5 +3,5 @@
 // parses; using $parent without a context declaration violates D30
 type Node = {
     width: int
-    const total = $parent.width + width
+    total = $parent.width + width
 }

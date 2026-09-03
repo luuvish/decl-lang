@@ -107,8 +107,8 @@ The bias and conflict rules D16 promised, exhaustively:
   D5).
 - Open-record pass-through fields merge by the same per-key rule;
   opacity is preserved (§3.11).
-- Derived members are not merged — they are recomputed on the result
-  (they were never inputs, D4).
+- Derived and hidden members are not merged — they are recomputed on
+  the result (they were never inputs, D4).
 - `merge` is associative but **not commutative** — it is the ordered
   layering operation (`base` then `patch`), the deep counterpart of
   shallow `with` (§4.12); order-independent composition of

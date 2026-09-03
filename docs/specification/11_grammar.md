@@ -136,12 +136,14 @@ func-type       = "(" (type ("," type)*)? ")" "=>" type
 ## 11.5 Schema members
 
 ```
-member          = DOC* annotation* ( value-member | const-member
+member          = DOC* annotation* ( value-member | derived-member
+                                   | hidden-member
                                    | assert-member | when-member
                                    | ctx-member )
 ctx-member      = CTXVAR ":" type                    — §7.3 context declaration (D30)
-value-member    = member-name "?"? ":" type ("=" expr)?
-const-member    = "const" member-name (":" type)? "=" expr
+value-member    = member-name "?"? ":" type ("=" expr)?   — kind by `?` and `=`, §5.7 (D4)
+derived-member  = member-name "=" expr               — derived, type inferred
+hidden-member   = HIDDEN-NAME (":" type)? "=" expr   — §5.7 hidden member (D34)
 assert-member   = "assert" IDENT ":" expr else-clause?
 when-member     = "when" expr "{" (guarded (sep guarded)* sep?)? "}"
 guarded         = assert-member | when-member

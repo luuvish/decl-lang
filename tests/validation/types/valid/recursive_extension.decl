@@ -7,8 +7,8 @@ type Base = {
     name: string
     kids?: { [string]: Kid }
 }
-type Kid = Base { const label = `kid:${name}` }
-type Top = Base { const label = "top" }
+type Kid = Base { label = `kid:${name}` }
+type Top = Base { label = "top" }
 
 output tree: Top = {
     name: "t"

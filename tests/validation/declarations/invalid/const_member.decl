@@ -1,0 +1,9 @@
+// @expect-phase: parsing
+// @expect-error: E2001
+// `const` is the module-level constant form only (D3); a derived member is
+// written `x = e` / `x: T = e` (D4, v0.3)
+type T = {
+    a: int
+    const twice = a * 2
+}
+output t: T = { a: 1 }

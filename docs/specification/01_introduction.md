@@ -39,9 +39,10 @@ values: primitives, literals, ranges (`1..65535`), patterns
 (`/[a-z]+/`), predicate refinements (`int(is_aligned)`), records, arrays,
 maps, unions (`A | B`), intersections (`A & B`), generics, and quantities
 (`quantity<Time>`). Record types are schemas: their members divide into
-**value members** (`x: T`, `x?: T`, `x: T = e`, `const x = e`), which
-become the evaluated value, and **constraint members** (`assert`, `when`),
-which produce diagnostics only.
+**value members** (`x: T`, `x?: T`, `x?: T = e`, `x = e`), which become
+the evaluated value, **hidden members** (`x$ = e`), which are computed
+for the schema's own use and never enter the value, and **constraint
+members** (`assert`, `when`), which produce diagnostics only.
 
 **Evaluation roots.** Nothing evaluates until a root asks for it:
 
@@ -52,7 +53,9 @@ which produce diagnostics only.
   document to it; the bound value runs the *identical* pipeline.
 
 `const x = e` at module level is a pure constant — not a root, not
-schema-validated, and not a legal reference target.
+schema-validated, and not a legal reference target. `const` is the
+module-level form only; inside a record, a computed member is written
+by its shape, `x = e`.
 
 **References.** Property values are owned compositions forming a tree.
 `ref<T>` declares a non-owning reference into the trees under evaluation
@@ -79,10 +82,10 @@ type Port = 1..65535
 
 type Service = {
     name: /[a-z][a-z0-9-]*/
-    port: Port = 8080
-    replicas: int = 1
+    port?: Port = 8080
+    replicas?: int = 1
 
-    const endpoint = `${name}:${port}`
+    endpoint = `${name}:${port}`
 
     assert scaled: replicas in 1..16
         else warn `replicas ${replicas} is outside the recommended range`

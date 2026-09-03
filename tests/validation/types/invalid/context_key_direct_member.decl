@@ -4,7 +4,7 @@
 // a direct member is not a collection element: $key means nothing there (§7.3)
 type Port = {
     $key: string
-    const name = $key
+    name = $key
 }
 type Node = { p: Port }
 output n: Node = { p: { } }

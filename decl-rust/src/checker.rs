@@ -303,18 +303,21 @@ pub fn check_module(decls: &[Decl], linked: Option<Rc<Env>>) -> Vec<Diag> {
         for om in ext_members {
             let (oname, o_kind, o_type): (&str, &str, Option<&TypeAst>) = match om {
                 MemberAst::Assert { .. } | MemberAst::When { .. } | MemberAst::Context { .. } => continue,
-                MemberAst::Derived { name, ty, .. } => (name, "der", ty.as_ref()),
+                MemberAst::Derived { name, ty, hidden, .. } => (name, if *hidden { "hidden" } else { "der" }, ty.as_ref()),
                 MemberAst::Value { name, opt, ty, dflt } => (name, if dflt.is_some() { "dflt" } else if *opt { "opt" } else { "req" }, Some(ty)),
             };
             let Some(bm) = bmembers.iter().find(|x| x.name == oname) else { continue }; // addition
-            let allowed: &[&str] = match bm.kind {
-                MKind::Req => &["req", "dflt", "der"],
-                MKind::Opt => &["req", "opt", "dflt", "der"],
-                MKind::Dflt => &["req", "dflt", "der"],
-                MKind::Der => &["der"],
+            let b_kind = if bm.kind == MKind::Der && bm.hidden { "hidden" } else { kind_name(bm.kind) };
+            // §5.9: overriding narrows; a hidden member stays hidden, a visible one visible
+            let allowed: &[&str] = match b_kind {
+                "req" => &["req", "dflt", "der"],
+                "opt" => &["req", "opt", "dflt", "der"],
+                "dflt" => &["req", "dflt", "der"],
+                "der" => &["der"],
+                _ => &["hidden"],
             };
             if !allowed.contains(&o_kind) {
-                rep("E4032", format!("illegal member-kind transition for {oname}: {} -> {o_kind} ({})", kind_name(bm.kind), decl_name.unwrap_or(name)));
+                rep("E4032", format!("illegal member-kind transition for {oname}: {b_kind} -> {o_kind} ({})", decl_name.unwrap_or(name)));
                 continue;
             }
             let ot = try_resolve(&env, o_type);

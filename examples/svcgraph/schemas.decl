@@ -6,16 +6,16 @@ export type Name = /[a-z][a-z0-9_-]*/
 export type Protocol = "http" | "grpc" | "tcp"
 
 export type Resources = {
-    cpu_millis: 100..64000 = 500
-    memory: quantity<DataSize> = 256MiB
+    cpu_millis?: 100..64000 = 500
+    memory?: quantity<DataSize> = 256MiB
     assert memory_floor: memory >= 16MiB
         else error `memory below the 16MiB scheduling floor`
 }
 
 export type HealthCheck = {
-    path: /\/[a-z0-9\/_-]*/ = "/healthz"
-    interval: quantity<Time> = 10s
-    timeout: quantity<Time> = 2s
+    path?: /\/[a-z0-9\/_-]*/ = "/healthz"
+    interval?: quantity<Time> = 10s
+    timeout?: quantity<Time> = 2s
     assert timely: timeout < interval
         else error `health timeout must be shorter than its interval`
 }
@@ -24,14 +24,14 @@ export type Service = {
     name: Name
     protocol: Protocol
     port: 1024..65535
-    replicas: 1..64 = 1
-    public: bool = false
-    resources: Resources = { }
-    health: HealthCheck = { }
+    replicas?: 1..64 = 1
+    public?: bool = false
+    resources?: Resources = { }
+    health?: HealthCheck = { }
 
-    const endpoint = `${name}:${port}`
-    const inbound = $referrers(Link, "target")
-    const inbound_count = std.array.count(inbound)
+    endpoint = `${name}:${port}`
+    inbound = $referrers(Link, "target")
+    inbound_count = std.array.count(inbound)
 
     assert grpc_ports: protocol != "grpc" || port >= 9000
         else warn `grpc service ${name} outside the 9000+ convention`
@@ -40,15 +40,15 @@ export type Service = {
 export type Link = {
     source: ref<Service>
     target: ref<Service>
-    weight: 1..100 = 1
+    weight?: 1..100 = 1
 }
 
 export type Topology = {
     services: Service[1..128]
-    links: Link[] = []
+    links?: Link[] = []
 
-    const service_count = std.array.count(services)
-    const total_replicas = std.array.fold(services, 0, (a, s) => a + s.replicas)
+    service_count = std.array.count(services)
+    total_replicas = std.array.fold(services, 0, (a, s) => a + s.replicas)
 
     assert unique_names: std.array.all_distinct([s.name for s in services])
         else error `service names must be unique`

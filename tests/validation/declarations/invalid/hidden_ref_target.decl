@@ -1,0 +1,11 @@
+// @expect-phase: checking
+// @expect-error: E4093
+// parses; a hidden member's value is not part of any document, so no
+// reference can target it (§7.5, D34)
+type Inner = { v: int }
+type T = {
+    a: int
+    box$ = { v: a }
+    r: ref<Inner> = $this.box$
+}
+output t: T = { a: 1 }

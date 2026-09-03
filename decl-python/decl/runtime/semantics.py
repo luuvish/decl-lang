@@ -174,11 +174,12 @@ class MapV:
 
 
 class Slot:
-    __slots__ = ("kind", "state", "value", "deferred", "compute")
+    __slots__ = ("kind", "state", "value", "deferred", "compute", "hidden")
 
-    def __init__(self, kind: str, state: str, deferred: bool = False, compute=None):
+    def __init__(self, kind: str, state: str, deferred: bool = False, compute=None, hidden: bool = False):
         self.kind, self.state, self.deferred, self.compute = kind, state, deferred, compute
         self.value = None
+        self.hidden = hidden   # `x$ = e`: computed, never part of the value (D34)
 
 
 class RecInst:
@@ -815,7 +816,8 @@ class Env:
             elif k == "derived":
                 rt["members"].append({"kind": "der", "name": m["name"],
                                       "type": self.resolve(m["type"]) if m.get("type") else None,
-                                      "expr": m["expr"], "menv": self})
+                                      "expr": m["expr"], "menv": self,
+                                      "hidden": True if m.get("hidden") else None})
             elif k == "assert":
                 rt["asserts"].append({"kind": "assert", "name": m["name"], "cond": m["cond"],
                                       "tail": m.get("tail"), "origin": rt.get("name"), "menv": self})
@@ -1083,6 +1085,8 @@ def value_eq(a: Any, b: Any) -> bool:
         return all(k in b.entries and value_eq(v, b.entries[k]) for k, v in a.entries.items())
     if isinstance(a, RecInst) and isinstance(b, RecInst):
         for n, s in a.slots.items():
+            if s.hidden:
+                continue   # a hidden member is not part of the value (D34)
             s2 = b.slots.get(n)
             v1 = ABSENT if s.state == "absent" else s.value
             v2 = ABSENT if (s2 is None or s2.state == "absent") else s2.value

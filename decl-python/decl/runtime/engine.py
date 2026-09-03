@@ -1052,8 +1052,16 @@ class Engine:
             types = m.get("conj") or [m["type"]]
             isc = isc0.with_menv(m["menv"]) if m.get("menv") is not None else isc0
             if m["kind"] == "der":
+                # a hidden member (D34) is never part of the value: a document or
+                # literal that supplies it is in error — there is nothing to restate
+                if has and m.get("hidden"):
+                    self.env.report({"severity": "error", "message": f"hidden member {name} supplied",
+                                     "path": path_str(path + [name]), "code": "E4006"})
+                    inst.slots[name] = Slot("der", "invalid", False, hidden=True)
+                    continue
                 inst.slots[name] = Slot("der", "unforced", mentions_referrers(m["expr"]),
-                                        self._mk_derived(m, inst, path, isc, has, supplied.get(name)))
+                                        self._mk_derived(m, inst, path, isc, has, supplied.get(name)),
+                                        hidden=bool(m.get("hidden")))
                 if inst.slots[name].deferred:
                     self.deferred_slots.append((inst, name))
                 continue
@@ -1314,7 +1322,7 @@ class Engine:
                     if m["name"] in done and m["kind"] != "der":
                         continue
                     s = x.slots.get(m["name"])
-                    if s is None or s.state in ("invalid", "absent", "unforced"):
+                    if s is None or s.hidden or s.state in ("invalid", "absent", "unforced"):
                         continue
                     g = go(s.value)
                     if g is not None:

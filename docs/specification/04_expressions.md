@@ -37,7 +37,9 @@ diagnostic message templates, and constant positions (§4.13).
   job**; use `with` (§4.12).
 - Array spread `...e` splices an array-valued expression in place.
   Object spread `...e` copies the entries of an object-valued
-  expression; collisions with other entries or spreads are errors.
+  expression — its value members; a hidden member (§5.7) is not an
+  entry and is never copied; collisions with other entries or spreads
+  are errors.
 - A construction member whose expression is maybe-absent is a compile
   error (§4.10) — there is no implicit member dropping. Discharge the
   absence (`??`, an `in` guard) or build conditionally.
@@ -140,7 +142,8 @@ member types — reading a common member never requires discrimination
   dimension. Anything else is a type error.
 - Equality `== !=` is **structural**: primitives by value, quantities by
   dimension-checked magnitude (converted to the base unit), arrays
-  element-wise, objects entry-wise (order-insensitive for equality),
+  element-wise, objects entry-wise (order-insensitive for equality;
+  hidden members are not entries and never take part — §5.7),
   references by target path — and when either operand is
   reference-typed, both operands are read as **places** (`$this` and
   navigation chains denote their locations) and compared by canonical
@@ -368,7 +371,7 @@ const eu_service = base with { region: "eu", replicas: 3 }
 
 - `base with { … }` produces a **new** object: `base`'s value-member
   entries, with the listed members replaced or (for optional members)
-  supplied. **Derived members are not copied** — they are recomputed
+  supplied. **Derived and hidden members are not copied** — they are recomputed
   by whatever pipeline consumes the result; copying them would trip
   D4's restatement rule the moment an update changed one of their
   dependencies (the §0.6 spike hit exactly this with a copied

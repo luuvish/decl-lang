@@ -213,9 +213,9 @@ T[0..<16]    // 0 to 15 elements
 ```decl
 type Router = {
     name: string
-    buffer_size: int = 128
+    buffer_size?: int = 128
     description?: string
-    const label = `router:${name}`
+    label = `router:${name}`
 
     assert named: name != ""
     ...
@@ -232,8 +232,9 @@ type Router = {
   are not member names. Quoting a name that could be written bare is
   an error (one form per name); access forms are §4.3.
 - Members divide into **value members** — required `x: T`, optional
-  `x?: T`, defaulted `x: T = e`, derived `const x = e` — and
-  **constraint members** — `assert`, `when` (D19). A record body may
+  `x?: T`, defaulted `x?: T = e`, derived `x = e` / `x: T = e` — **hidden
+  members** — `x$ = e`, computed but not part of the value (§5.7, D34) —
+  and **constraint members** — `assert`, `when` (D19). A record body may
   also carry **context declarations** (`$parent: ref<P>`, §7.3/D30), which
   are not members at all: they state what the type's surroundings must
   offer, and live in the `$` name space. Constraint members
@@ -331,7 +332,7 @@ Derived member rules ("satisfies both" spelled out for records):
   both; a defaulted member meeting a required one is required with both
   constraints; two defaulted members with different default expressions
   are an error (which default would apply is ambiguous); two derived
-  members with the same name are an error.
+  (or two hidden) members with the same name are an error.
 - Constraint members are unioned; their ids keep their origin type
   ([06. Constraints](06_constraints.md)).
 - The result is **closed iff either side is closed** — the intersection
@@ -479,16 +480,19 @@ a union — each arm of `T` subsumes into some arm. `A | B ⊑ T` iff
 
 **Maps.** `{ [K₁]: V₁ } ⊑ { [K₂]: V₂ }` iff `K₁ ⊑ K₂` and `V₁ ⊑ V₂`.
 
-**Records** — over the four member kinds (V3), comparing declared
-members only (closedness excluded — D10). `R′ ⊑ R` iff for every member
-`m` of `R`:
+**Records** — over the four value-member kinds (V3), comparing declared
+members only (closedness excluded — D10). `R′ ⊑ R` iff for every value
+member `m` of `R`:
 
 | `m` in `R` | requirement on `R′` |
 |---|---|
 | required `m: T` | `R′` declares `m` as required, defaulted, or derived, with type `⊑ T` |
 | optional `m?: T` | `R′` omits `m`, or declares it (any kind) with type `⊑ T` |
-| defaulted `m: T = e` | as for optional — plus, evaluated values of `R′` need not reproduce `R`'s default (the default is `R`'s completion rule, not a value constraint) |
-| derived `const m …` | `R′` declares `m` (any kind) with type `⊑` the declared/inferred type of `R`'s `m` |
+| defaulted `m?: T = e` | as for optional — plus, evaluated values of `R′` need not reproduce `R`'s default (the default is `R`'s completion rule, not a value constraint) |
+| derived `m = e` / `m: T = e` | `R′` declares `m` (any kind) with type `⊑` the declared/inferred type of `R`'s `m` |
+
+A **hidden** member `m$` of `R` (§5.7, D34) is not part of the value and
+imposes nothing on `R′`.
 
 and additionally `R′` has no member that `R` declares with an
 incompatible kind (a derived member of `R` met by a derived member of
@@ -549,7 +553,7 @@ One judgment serves every checking site (D13):
 *Example / counterexample:*
 
 ```decl
-type Service = { name: string, port: 1..65535 = 8080, const tag = `s:${name}` }
+type Service = { name: string, port?: 1..65535 = 8080, tag = `s:${name}` }
 
 output ok: Service  = { name: "a" }                    // port completed, tag derived
 output bad: Service = { name: "a", tag: "s:b" }        // error: derived restated unequal

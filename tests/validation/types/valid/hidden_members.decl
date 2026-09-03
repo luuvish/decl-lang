@@ -1,0 +1,37 @@
+// Hidden members (D34): `x$ = e` is computed for the schema's own use —
+// sibling expressions, other instances' navigations, and `$referrers`
+// read it — but it is never part of the value: not emitted, not
+// compared, not copied by `with`.
+type Port = {
+    $parent: ref<{ path: string, ... }>
+    $key: string
+    name = $key
+    path = `${$parent.path}.${name}`
+    feeders$ = $referrers(Edge, "target$")
+    width?: int = if std.array.count(feeders$) > 0 then feeders$[0].source$.width else 32
+}
+type Edge = {
+    $parent: ref<{ ports: { [string]: Port }, ... }>
+    from: string
+    to: string
+    source$: ref<Port> = $parent.ports[from]
+    target$: ref<Port> = $parent.ports[to]
+    assert same_width: source$.width == target$.width
+}
+type Node = {
+    name: string
+    path = name
+    ports: { [string]: Port }
+    edges?: { [string]: Edge }
+}
+output n: Node = {
+    name: "n"
+    ports: { a: { width: 64 }, b: { } }
+    edges: { ab: { from: "a", to: "b" } }
+}
+type Check = {
+    net: Node
+    assert propagated: "b" in net.ports && net.ports["b"].width == 64
+    assert readable: "edges" in net && "ab" in net.edges && net.edges["ab"].source$.name == "a"
+}
+output check: Check = { net: n }

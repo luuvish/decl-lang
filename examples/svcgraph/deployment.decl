@@ -6,8 +6,8 @@ export type Deployment = {
     env: EnvName
     topology: Topology
 
-    const public_count = std.array.count(std.array.filter(topology.services, (s) => s.public))
-    const capacity_millis = std.array.fold(topology.services, 0, (a, s) =>
+    public_count = std.array.count(std.array.filter(topology.services, (s) => s.public))
+    capacity_millis = std.array.fold(topology.services, 0, (a, s) =>
         a + s.resources.cpu_millis * s.replicas)
 
     assert prod_is_redundant: (

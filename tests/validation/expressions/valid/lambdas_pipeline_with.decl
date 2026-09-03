@@ -1,5 +1,5 @@
-type Tls = { on: bool = false, ... }
-type Cfg = { workers: int = 4, tls: Tls = {}, ... }
+type Tls = { on?: bool = false, ... }
+type Cfg = { workers?: int = 4, tls?: Tls = {}, ... }
 input services: { public: bool, ... }[]
 const xs = [1, 2, 3]
 input base: Cfg

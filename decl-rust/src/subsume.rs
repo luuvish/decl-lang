@@ -95,6 +95,9 @@ fn sub(env: &Rc<Env>, a: &RT, b: &RT, assume: &mut HashMap<usize, Vec<usize>>) -
             let bm = br.members.borrow().clone();
             let am = ar.members.borrow().clone();
             for m in &bm {
+                if m.hidden {
+                    continue; // not part of the value: ⊑ never compares it (D34)
+                }
                 let sm = am.iter().find(|x| x.name == m.name);
                 let m_types: Vec<RT> = m.conj.clone().unwrap_or_else(|| m.ty.iter().cloned().collect());
                 let s_types: Vec<RT> = sm.map(|s| s.conj.clone().unwrap_or_else(|| s.ty.iter().cloned().collect())).unwrap_or_default();

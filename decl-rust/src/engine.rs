@@ -1633,24 +1633,33 @@ impl Engine {
             let root_name = sc.root_name.clone();
             let has = supplied.get(&name).cloned();
             let mut push_deferred = false;
+            // a hidden member (D34) is never part of the value: a document or
+            // literal that supplies it is in error — there is nothing to restate
+            if m.kind == MKind::Der && m.hidden && has.is_some() {
+                let mut p = path.to_vec();
+                p.push(Seg::Name(name.clone()));
+                self.env.report(Diag::error(format!("hidden member {name} supplied"), path_str(&p, None), Some("E4006")));
+                inst.borrow_mut().slots.push((name.clone(), Slot { kind: MKind::Der, hidden: true, state: SlotState::Invalid, value: Value::Undef, compute: None }));
+                continue;
+            }
             let slot = match (m.kind, has) {
                 (MKind::Der, has) => {
                     let expr = m.expr.clone().unwrap_or_else(|| Rc::new(Expr::Lit(Value::Null)));
                     // $referrers needs the whole universe: schedule for phase 2 up front
                     push_deferred = mentions_referrers(&expr);
-                    Slot { kind: MKind::Der, state: SlotState::Unforced, value: Value::Undef, compute: Some(Compute::Derived { expr, ty: m.ty.clone(), supplied: has, name: name.clone(), root_name, menv }) }
+                    Slot { kind: MKind::Der, hidden: m.hidden, state: SlotState::Unforced, value: Value::Undef, compute: Some(Compute::Derived { expr, ty: m.ty.clone(), supplied: has, name: name.clone(), root_name, menv }) }
                 }
-                (kind, Some(raw_v)) => Slot { kind, state: SlotState::Unforced, value: Value::Undef, compute: Some(Compute::Check { raw: raw_v, types, name: name.clone(), root_name, menv }) },
+                (kind, Some(raw_v)) => Slot { kind, hidden: false, state: SlotState::Unforced, value: Value::Undef, compute: Some(Compute::Check { raw: raw_v, types, name: name.clone(), root_name, menv }) },
                 (MKind::Dflt, None) => {
                     let expr = m.dflt.clone().unwrap_or_else(|| Rc::new(Expr::Lit(Value::Null)));
-                    Slot { kind: MKind::Dflt, state: SlotState::Unforced, value: Value::Undef, compute: Some(Compute::Default { expr, types, name: name.clone(), root_name, menv }) }
+                    Slot { kind: MKind::Dflt, hidden: false, state: SlotState::Unforced, value: Value::Undef, compute: Some(Compute::Default { expr, types, name: name.clone(), root_name, menv }) }
                 }
-                (MKind::Opt, None) => Slot { kind: MKind::Opt, state: SlotState::Absent, value: Value::Undef, compute: None },
+                (MKind::Opt, None) => Slot { kind: MKind::Opt, hidden: false, state: SlotState::Absent, value: Value::Undef, compute: None },
                 (MKind::Req, None) => {
                     let mut p = path.to_vec();
                     p.push(Seg::Name(name.clone()));
                     self.env.report(Diag::error(format!("required member {name} missing"), path_str(&p, None), Some("E4002")));
-                    Slot { kind: MKind::Req, state: SlotState::Invalid, value: Value::Undef, compute: None }
+                    Slot { kind: MKind::Req, hidden: false, state: SlotState::Invalid, value: Value::Undef, compute: None }
                 }
             };
             inst.borrow_mut().slots.push((name.clone(), slot));
@@ -2120,7 +2129,7 @@ impl Engine {
                         continue;
                     }
                     let Some(s) = b.slot(&m.name) else { continue };
-                    if matches!(s.state, SlotState::Invalid | SlotState::Absent | SlotState::Unforced) {
+                    if s.hidden || matches!(s.state, SlotState::Invalid | SlotState::Absent | SlotState::Unforced) {
                         continue;
                     }
                     if let Some(g) = self.go(&s.value, root) {

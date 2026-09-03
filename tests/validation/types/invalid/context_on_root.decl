@@ -6,8 +6,8 @@
 type Node = {
     $parent: ref<{ path: string, ... }>
     $key: string
-    const name = $key
-    const path = `${$parent.path}.${name}`
-    kids: { [string]: Node } = { }
+    name = $key
+    path = `${$parent.path}.${name}`
+    kids?: { [string]: Node } = { }
 }
 output tree: Node = { }

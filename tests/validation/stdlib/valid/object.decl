@@ -1,9 +1,9 @@
-type Inner = { x: int = 1, y?: int, ... }
-type Cfg = { name: string, inner: Inner = { }, tag?: string, limit: int = 10, ... }
+type Inner = { x?: int = 1, y?: int, ... }
+type Cfg = { name: string, inner?: Inner = { }, tag?: string, limit?: int = 10, ... }
 type Check = {
-    const base: Cfg = { name: "base", inner: { x: 5, y: 2 }, tag: "b" }
-    const patch: Cfg = { name: "patch", inner: { x: 7 } }
-    const merged: Cfg = std.object.merge(base, patch)
+    base: Cfg = { name: "base", inner: { x: 5, y: 2 }, tag: "b" }
+    patch: Cfg = { name: "patch", inner: { x: 7 } }
+    merged: Cfg = std.object.merge(base, patch)
     assert patch_wins: merged.name == "patch"
     assert records_recurse: merged.inner.x == 7
     assert one_side_kept: (merged.inner.y ?? 0) == 2 && (merged.tag ?? "") == "b"

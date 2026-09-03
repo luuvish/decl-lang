@@ -4,7 +4,7 @@
 // the evaluation root's own type must satisfy every owned type's $root bound (§7.3)
 type Leaf = {
     $root: ref<{ width: int, ... }>
-    const w = $root.width
+    w = $root.width
 }
 type Top = { leaf: Leaf }
 output t: Top = { leaf: { } }

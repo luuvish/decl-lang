@@ -13,7 +13,7 @@ export type Width = 1 | 2 | 4 | 8 | 16 | 32 | 64 | 128
 export type ExtPort = {
     kind: "ext"
     mode: PortMode
-    width: Width = 1
+    width?: Width = 1
 }
 
 // Internal port: width propagates from whatever edge feeds it —
@@ -23,8 +23,8 @@ export type IntPort = {
     kind: "int"
     mode: PortMode
 
-    const feeders = $referrers(Edge, "target")
-    const width: Width =
+    feeders = $referrers(Edge, "target")
+    width: Width =
         if std.array.count(feeders) == 1 then feeders[0].source.width else 1
 }
 
@@ -73,20 +73,20 @@ export type EdgeHost = {
 
 export type Master = {
     kind: "node.mst"
-    enable_rob: bool = false
-    ports: { si: IntPort { mode: "si" }, mi: IntPort { mode: "mi" } }
+    enable_rob?: bool = false
+    ports?: { si: IntPort { mode: "si" }, mi: IntPort { mode: "mi" } }
         = { si: { kind: "int", mode: "si" }, mi: { kind: "int", mode: "mi" } }
 
-    const wired: Edge[] = [{ source: ports.si, target: ports.mi }]
+    wired: Edge[] = [{ source: ports.si, target: ports.mi }]
 }
 
 export type Slave = {
     kind: "node.slv"
-    enable_rob: bool = false
-    ports: { si: IntPort { mode: "si" }, mi: IntPort { mode: "mi" } }
+    enable_rob?: bool = false
+    ports?: { si: IntPort { mode: "si" }, mi: IntPort { mode: "mi" } }
         = { si: { kind: "int", mode: "si" }, mi: { kind: "int", mode: "mi" } }
 
-    const wired: Edge[] = [{ source: ports.si, target: ports.mi }]
+    wired: Edge[] = [{ source: ports.si, target: ports.mi }]
 }
 
 export type Decoder = {
@@ -96,12 +96,12 @@ export type Decoder = {
         outs: { [/mi[0-9]+/]: IntPort }
     }
 
-    const fan_out = std.array.count(std.map.keys(ports.outs))
+    fan_out = std.array.count(std.map.keys(ports.outs))
     assert min_fan_out: fan_out >= 2
     assert out_modes:
         std.array.all(std.map.values(ports.outs), (p) => p.mode == "mi")
 
-    const wired: Edge[] = [
+    wired: Edge[] = [
         { source: ports.si, target: ports.outs[k] }
         for k in std.map.keys(ports.outs)
     ]
@@ -116,18 +116,18 @@ export type Arbiter = {
         // edges feed mi, so the base rule would fall back to 1)
         mi: IntPort {
             mode: "mi"
-            const width: Width = std.array.fold(
+            width: Width = std.array.fold(
                 [p.width for p in std.map.values($parent.ins)],
                 1, (a, w) => std.math.max(a, w))
         }
     }
 
-    const fan_in = std.array.count(std.map.keys(ports.ins))
+    fan_in = std.array.count(std.map.keys(ports.ins))
     assert min_fan_in: fan_in >= 2
     assert in_modes:
         std.array.all(std.map.values(ports.ins), (p) => p.mode == "si")
 
-    const wired: Edge[] = [
+    wired: Edge[] = [
         { source: ports.ins[k], target: ports.mi }
         for k in std.map.keys(ports.ins)
     ]
@@ -137,7 +137,7 @@ export type Arbiter = {
 
 export type Domain = EdgeHost & {
     kind: "node.dom"
-    enable_int: bool = false
+    enable_int?: bool = false
     ports: { [/[sm]i[0-9]+/]: IntPort }     // narrowed: fed by outer edges
     nodes: { [Ident]: Master | Decoder | Arbiter | Slave }
     ...
@@ -152,8 +152,8 @@ export type AddressRange = {
 export type Interconnect = EdgeHost & {
     kind: "node.oic"
     address_maps: AddressRange[1..8][]
-    enable_pmu: bool = false
-    enable_cmu: bool = false
+    enable_pmu?: bool = false
+    enable_cmu?: bool = false
     ports: { [/[sm]i[0-9]+/]: ExtPort }     // true boundary: widths supplied
     nodes: { [Ident]: Domain }
     ...

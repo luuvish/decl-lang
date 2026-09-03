@@ -21,7 +21,8 @@ pub enum TypeAst {
 #[derive(Debug, Clone)]
 pub enum MemberAst {
     Value { name: String, opt: bool, ty: TypeAst, dflt: Option<Rc<Expr>> },
-    Derived { name: String, ty: Option<TypeAst>, expr: Rc<Expr> },
+    /// `hidden`: `x$ = e` — computed for the schema's own use, never part of the value (D34)
+    Derived { name: String, ty: Option<TypeAst>, expr: Rc<Expr>, hidden: bool },
     Context { variable: String, ty: TypeAst },
     Assert { name: String, cond: Rc<Expr>, tail: Option<Tail> },
     When { cond: Rc<Expr>, body: Vec<MemberAst> },

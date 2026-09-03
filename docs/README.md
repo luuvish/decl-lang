@@ -1,12 +1,11 @@
 # Decl Documentation
 
-**Status: v0.2 (2026-09-01)** — v0.1 frozen 2026-08-31, then revised
-through the v0.2 cycle: the candidates collected while implementing
-Phases 2–5 ([design/03_v02_revision_candidates.md](design/03_v02_revision_candidates.md))
-were adjudicated as revisions v0.1.4–v0.1.8 (D31–D33, D29 amended, and
-clarifications — see [REVISIONS.md](REVISIONS.md)). The normative
-specification below is the single source of truth for every
-implementation phase.
+**Status: v0.3 (2026-09-04)** — v0.1 frozen 2026-08-31, revised through
+the v0.2 cycle (D31–D33, D29 amended, clarifications), then v0.3: member
+kinds read off `?` and `= e` with no `const` in record bodies (D4
+amended), and hidden members `x$ = e` (D34) — see
+[REVISIONS.md](REVISIONS.md). The normative specification below is the
+single source of truth for every implementation phase.
 
 **Post-freeze changes are revisions**: a change touches the design
 charter (a new or amended decision), every affected chapter, and
@@ -32,7 +31,7 @@ charter and chapters remains a defect to fix on sight (§1.4).
 | [02. Lexical Structure](specification/02_lexical.md) | Source text, comments, identifiers, keywords, literals, separators, operators |
 | [03. Type System](specification/03_types.md) | All type forms, dimensions/units, subsumption (⊑), assignability, uninhabited types |
 | [04. Expressions](specification/04_expressions.md) | Operator precedence, arithmetic and numeric safety, `match`, comprehensions, absence, pipeline, `with` |
-| [05. Declarations and Schemas](specification/05_declarations.md) | `const`/`func`/`type`/`output`/`input`, the four member kinds, constraint-member placement, inheritance, annotations |
+| [05. Declarations and Schemas](specification/05_declarations.md) | `const`/`func`/`type`/`output`/`input`, the four member kinds and hidden members, constraint-member placement, inheritance, annotations |
 | [06. Constraints and Diagnostics](specification/06_constraints.md) | `assert`/`when`, `diagnostic` templates, type-level `else`, severities, invalidation and root-cause reporting, paths and ordering |
 | [07. Relationships](specification/07_relationships.md) | Composition vs reference, canonical paths and their order, context variables, reference construction and integrity, `$referrers` |
 | [08. Modules and Packages](specification/08_modules.md) | Exports/imports/re-export, provenance rules, `decl.toml`, the lock file, multi-module evaluation |

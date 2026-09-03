@@ -356,23 +356,34 @@ impl<'a> Lower<'a> {
     // ---------------- members ----------------
     fn member(&self, n: Node) -> LR<Option<MemberAst>> {
         Ok(Some(match n.kind() {
+            // member kinds by syntax (D4, v0.3): `?` — input may supply it; `= e` —
+            // the schema computes it. Both: defaulted; `= e` alone: derived
             "value_member" => {
                 let name_n = self.req(n, "name")?;
-                MemberAst::Value {
-                    name: if name_n.kind() == "string" { self.json_string(name_n)? } else { self.text(name_n) },
-                    opt: self.field(n, "optional").is_some(),
-                    ty: self.ty(self.req(n, "type")?)?,
-                    dflt: match self.field(n, "default") { Some(d) => Some(self.expr(d)?), None => None },
+                let name = if name_n.kind() == "string" { self.json_string(name_n)? } else { self.text(name_n) };
+                let opt = self.field(n, "optional").is_some();
+                let dflt = match self.field(n, "default") { Some(d) => Some(self.expr(d)?), None => None };
+                match dflt {
+                    Some(expr) if !opt => MemberAst::Derived { name, ty: Some(self.ty(self.req(n, "type")?)?), expr, hidden: false },
+                    dflt => MemberAst::Value { name, opt, ty: self.ty(self.req(n, "type")?)?, dflt },
                 }
             }
             "derived_member" => {
                 let name_n = self.req(n, "name")?;
                 MemberAst::Derived {
                     name: if name_n.kind() == "string" { self.json_string(name_n)? } else { self.text(name_n) },
-                    ty: match self.field(n, "type") { Some(t) => Some(self.ty(t)?), None => None },
+                    ty: None,
                     expr: self.expr(self.req(n, "value")?)?,
+                    hidden: false,
                 }
             }
+            // `x$ [: T] = e` — computed for the schema's own use, never part of the value (D34)
+            "hidden_member" => MemberAst::Derived {
+                name: self.text(self.req(n, "name")?),
+                ty: match self.field(n, "type") { Some(t) => Some(self.ty(t)?), None => None },
+                expr: self.expr(self.req(n, "value")?)?,
+                hidden: true,
+            },
             "context_declaration" => MemberAst::Context { variable: self.text(self.req(n, "variable")?), ty: self.ty(self.req(n, "type")?)? },
             "assert_member" => MemberAst::Assert { name: self.text(self.req(n, "name")?), cond: self.expr(self.req(n, "condition")?)?, tail: self.maybe_tail(n)? },
             "when_member" => {
@@ -410,7 +421,7 @@ impl<'a> Lower<'a> {
             }
             "string" => Expr::Lit(Value::Str(self.json_string(n)?)),
             "template_string" => Expr::Template(self.template_parts(n)?),
-            "identifier" => Expr::Name(self.text(n)),
+            "identifier" | "hidden_name" => Expr::Name(self.text(n)),
             "context_variable" => Expr::Ctx(self.text(n)),
             "referrers_expression" => Expr::Referrers { ty: self.text(self.req(n, "type")?), member: self.json_string(self.req(n, "member")?)? },
             "paren_expression" => Expr::Paren(self.expr(self.first_operand(n)?)?),

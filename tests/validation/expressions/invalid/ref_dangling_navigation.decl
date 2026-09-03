@@ -7,7 +7,7 @@ type Host = { ports?: { [string]: Port }, nodes?: { [string]: { ports?: { [strin
 type Edge = {
     $parent: ref<Host>
     to: string
-    const target: ref<Port> = $parent.nodes[to].ports["si"]
+    target: ref<Port> = $parent.nodes[to].ports["si"]
 }
 type Node = {
     ports?: { [string]: Port }

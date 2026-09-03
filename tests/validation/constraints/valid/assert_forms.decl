@@ -1,4 +1,4 @@
-type Service = { name: string, width: int = 8, ... }
+type Service = { name: string, width?: int = 8, ... }
 diagnostic width_mismatch(src: int, dst: int) {
     severity = error
     message = `width ${src} != ${dst}`
@@ -6,7 +6,7 @@ diagnostic width_mismatch(src: int, dst: int) {
 type Link = {
     source: ref<Service>
     target: ref<Service>
-    weight: int = 5
+    weight?: int = 5
     assert no_self: source.name != target.name
     assert widths: source.width == target.width
         else width_mismatch(source.width, target.width)

@@ -1,5 +1,5 @@
 // @expect-phase: binding
 // @expect-error: E5008
 // evaluates; int.of requires no fractional part (§13.4)
-type T = { const k = std.int.of(2.5) }
+type T = { k = std.int.of(2.5) }
 output t: T = { }

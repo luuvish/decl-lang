@@ -1,4 +1,4 @@
-type Service = { name: string, protocol: "http" | "grpc", replicas: 1..64 = 1, ... }
+type Service = { name: string, protocol: "http" | "grpc", replicas?: 1..64 = 1, ... }
 type Hardened = { protocol: "grpc", ... }
 type Regional = { replicas: 2..16, ... }
 type Prod = Service & Hardened & Regional

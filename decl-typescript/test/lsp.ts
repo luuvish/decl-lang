@@ -58,7 +58,7 @@ const nextDiagnostics = (uri: string): Promise<any> => new Promise(res => {
 
 const dir = mkdtempSync(join(tmpdir(), 'decl-lsp-'));
 const libPath = join(dir, 'lib.decl');
-writeFileSync(libPath, 'export type Service = { name: string, port: 1..65535 = 8080 }\nexport const MAX = 16\n');
+writeFileSync(libPath, 'export type Service = { name: string, port?: 1..65535 = 8080 }\nexport const MAX = 16\n');
 const mainPath = join(dir, 'main.decl');
 const mainUri = pathToFileURL(mainPath).toString();
 writeFileSync(mainPath, '');

@@ -26,7 +26,7 @@ function collect(n: Node, out: Leaf[]) {
   for (const c of n.children) if (c) collect(c, out);
 }
 
-const KEYWORDY = /^[A-Za-z_$][A-Za-z0-9_]*$/;
+const KEYWORDY = /^[A-Za-z_$][A-Za-z0-9_]*\$?$/;   // a hidden member's name `x$` is name-like too (D34)
 const BIN_OPS = new Set(['=', '==', '!=', '<=', '>=', '+', '*', '/', '%', '&&', '||', '??',
   '|>', '=>', '<<', '>>', 'in', 'matches', 'with', 'then', 'else', 'for', 'if', 'as', 'from']);
 const CONT_STARTERS = new Set(['else', '=', 'for', 'if', '&&', '||', '|>', '??', '.', '?.',

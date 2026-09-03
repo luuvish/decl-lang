@@ -51,9 +51,9 @@ export type Node = {
     kind: NodeKind
     name: Ident
     params?: { ... }
-    ports: map<Ident, Port> = { }
-    nodes: map<Ident, Node> = { }
-    edges: map<Ident, Edge> = { }
+    ports?: map<Ident, Port> = { }
+    nodes?: map<Ident, Node> = { }
+    edges?: map<Ident, Edge> = { }
 
     assert port_keys_match:
         std.array.all(std.map.entries(ports), (en) => en.value.name == en.key)
@@ -72,7 +72,7 @@ export type Node = {
 }
 
 export type SiteParams = {
-    subnets: Subnet[] = []
+    subnets?: Subnet[] = []
     uplink?: "" | Ident
     oversubscription?: 1..64
     ...

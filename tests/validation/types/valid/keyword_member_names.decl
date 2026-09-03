@@ -1,7 +1,7 @@
 type Payload = {
     type: string
     unit?: int
-    const label = `${type}`
+    label = `${type}`
 }
 input p: Payload
 const t = p.type

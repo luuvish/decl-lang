@@ -101,7 +101,7 @@ value.
   type Port = {
       $parent: ref<{ data_width: DataWidth, ... }>  // what my owner must offer
       name: PortName
-      width: int = $parent.data_width               // $parent has exactly the written type
+      width?: int = $parent.data_width               // $parent has exactly the written type
   }
 
   type Router = {
@@ -117,8 +117,8 @@ value.
   ```decl
   type NamedPort = {
       $key: /[sm]i[0-9]+/          // I live in a map keyed by port names
-      const name = $key            // the entry knows its own key
-      width: Width = 1
+      name = $key            // the entry knows its own key
+      width?: Width = 1
   }
 
   type Node = {
@@ -202,8 +202,8 @@ output net: Network = {
   in a **`T`-typed position denotes the target's value**:
 
   ```decl
-  const neighbors: Service[] = [l.source for l in inbound]
-  const first: Service = inbound[0].source
+  neighbors: Service[] = [l.source for l in inbound]
+  first: Service = inbound[0].source
   ```
 
   The expected type decides, in both directions; without an expected
@@ -219,8 +219,9 @@ output net: Network = {
 
 - **Legal targets** are values owned by evaluation roots — `output`
   and `input` values and their sub-values (D22). A module `const` is
-  not a legal target; a navigation of one in a `ref` position is a
-  compile error (E4093). Embedding a `const`-built record into a root
+  not a legal target, and neither is a hidden member's value (§5.7 —
+  it is in no document, so no path could name it); a navigation of
+  either in a `ref` position is a compile error (E4093). Embedding a `const`-built record into a root
   does **not** re-root the references it carries (D32) — a record
   meant for several roots comes from a **constructor `func`** whose
   literal each root binds in place. Cross-root references (a value in one output
@@ -266,8 +267,8 @@ type Link = {
 type Service = {
     name: ServiceName
 
-    const inbound  = $referrers(Link, "target")   // Links pointing at me via target
-    const outbound = $referrers(Link, "source")   // …and via source
+    inbound  = $referrers(Link, "target")   // Links pointing at me via target
+    outbound = $referrers(Link, "source")   // …and via source
 
     assert not_isolated: std.array.count(inbound) > 0
         else warn `service ${name} has no inbound links`
@@ -292,13 +293,14 @@ type Service = {
   type Hub = { spokes: ref<Service>[] }
 
   type Service = {
-      const hubs = $referrers(Hub, "spokes")   // Hubs listing me among spokes
+      hubs = $referrers(Hub, "spokes")   // Hubs listing me among spokes
   }
   ```
 
 - **Static checks** — both fall out of `T`'s declaration alone: `T`
   must be a record type, and `"m"` a string **literal** naming a
-  member of `T` whose type contains at least one `ref` position
+  member of `T` — a hidden one included (`"target$"`) — whose type
+  contains at least one `ref` position
   compatible with the enclosing type; anything else is a compile
   error (a typo in the edge name cannot silently return an empty
   answer). The same property lets implementations maintain a reverse

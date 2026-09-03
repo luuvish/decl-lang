@@ -3,6 +3,6 @@
 // parses; the embedding site must satisfy the declared $parent bound
 type Child = {
     $parent: ref<{ width: int, ... }>
-    const w = $parent.width
+    w = $parent.width
 }
 type Bad = { kid: Child }
