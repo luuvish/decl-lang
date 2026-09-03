@@ -14,8 +14,9 @@ grammar ships as wasm).
 npm install -g decl-lang
 
 decl check schema.decl                   # parse + static checks (module-aware)
-decl evaluate site.decl --root site      # evaluate outputs -> JSON
-decl evaluate cfg.decl --input deployed=doc.json --root deployed   # bind a document, emit its completed value
+decl evaluate site.decl                  # the exported outputs -> JSON on stdout
+decl evaluate site.decl --output site=site.json --output report   # one document to a file, one to stdout
+decl evaluate cfg.decl --input deployed=doc.json --output deployed   # bind a document, emit its completed value
 decl validate cfg.decl --input deployed=doc.json --expect-errors E4001
 decl validate tests/validation           # judge a fixture corpus
 decl fmt --check src/*.decl              # canonical formatting
@@ -76,11 +77,36 @@ node test/fabric.ts       # synthetic fabric documents against examples/fabric
 npm test                  # all of the above
 ```
 
+## Library
+
+```ts
+import { evaluate, check, validate, formatSource, DeclError } from 'decl-lang';
+
+const docs = await evaluate('site.decl');                         // { site: {...} } — the exported outputs, by name
+const { site } = await evaluate('site.decl', { outputs: ['site'] });
+const done = await evaluate('cfg.decl', { inputs: { deployed: 'doc.json' }, outputs: ['deployed'] });
+const problems = await check('schema.decl');                      // [] when clean
+const report = await validate('cfg.decl', { inputs: { deployed: { host: 'h' } } });   // a document may be a value
+const text = await formatSource('const x=1+2\n');                 // 'const x = 1 + 2\n'
+```
+
+The functions are the `decl` command line in its own vocabulary:
+`inputs` binds documents by input name (a JSON file path, or the value
+itself), `outputs` names the roots to return — outputs, or inputs bound
+here or demanded through their fallback — and defaults to the entry
+module's exported outputs; a failure throws `DeclError`, whose
+`diagnostics` carry the report. The PyPI package (`decl.evaluate`, …)
+and the Rust crate (`decl_lang::evaluate`, …) offer the same functions
+with the same semantics. The building blocks they are made of — parser,
+checker, `Env`/`Engine`, modules, packages, `evaluateSource` for a
+source text — are exported too (`decl-lang/core` is the browser-safe
+subset).
+
 ## CLI
 
 ```bash
 node src/cli.ts check <files...>                      # parse + static checks (module-aware)
-node src/cli.ts evaluate <file> [--input n=doc.json]... [--root <name>]   # bind documents, evaluate -> JSON
+node src/cli.ts evaluate <file> [--input n=doc.json]... [--output n[=file]]...   # bind documents, evaluate -> JSON
 node src/cli.ts validate <dir>                        # judge a fixture corpus (@expect-*)
 node src/cli.ts validate <file> --input n=doc.json --expect-errors E4001
 node src/cli.ts fmt <files...> [--check]              # canonical formatting, idempotent

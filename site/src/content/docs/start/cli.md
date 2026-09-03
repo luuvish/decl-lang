@@ -8,9 +8,9 @@ sidebar:
 ```bash
 decl check schema.decl                       # parse + static checks, module-aware (exit 1 on errors)
 decl evaluate site.decl                      # evaluate every output -> {"name": value, ...}
-decl evaluate site.decl --root site          # one output -> its canonical JSON
+decl evaluate site.decl --output site        # one output -> its canonical JSON on stdout
 decl evaluate site.decl --json               # {"ok", "value", "diagnostics"} report
-decl evaluate cfg.decl --input deployed=doc.json --root deployed   # bind a document, emit its completed value
+decl evaluate cfg.decl --input deployed=doc.json --output deployed=out.json   # bind a document, write its completed value
 decl validate cfg.decl --input deployed=doc.json     # bind a document to an input root (diagnostics only)
 decl validate cfg.decl --input deployed=doc.json --expect-errors E4001
 decl validate tests/validation               # judge a fixture corpus (valid/ and invalid/)

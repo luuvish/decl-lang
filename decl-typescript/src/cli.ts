@@ -1,8 +1,8 @@
 #!/usr/bin/env node
 // The `decl` CLI (ROADMAP Phase 4):
 //   decl check <files...>                     parse + static checks (module-aware)
-//   decl evaluate <file> [--input n=doc.json]... [--root <name>]
-//                                             bind documents, evaluate -> JSON on stdout
+//   decl evaluate <file> [--input n=doc.json]... [--output n[=file]]...
+//                                             bind documents, evaluate -> JSON (stdout, or files)
 //   decl validate <dir>                       judge a fixture corpus (@expect-* metadata)
 //   decl validate <file> [--input n=doc.json]... [--expect-errors E1,E2]
 //   decl fmt <files...> [--check]             canonical formatting (in place)
@@ -23,13 +23,16 @@ const args = process.argv.slice(2);
 const cmd = args.shift();
 
 const flags = new Map<string, string | boolean>();
-const inputFlags: string[] = [];   // --input name=doc.json, repeatable
+const inputFlags: string[] = [];    // --input name=doc.json, repeatable
+const outputFlags: string[] = [];   // --output name[=file], repeatable
 const positional: string[] = [];
 for (let i = 0; i < args.length; i++) {
   if (args[i].startsWith('--')) {
     const name = args[i].slice(2);
-    if (i + 1 < args.length && !args[i + 1].startsWith('--') && ['root', 'input', 'expect-errors'].includes(name)) {
-      if (name === 'input') inputFlags.push(args[++i]); else flags.set(name, args[++i]);
+    if (i + 1 < args.length && !args[i + 1].startsWith('--') && ['output', 'input', 'expect-errors'].includes(name)) {
+      if (name === 'input') inputFlags.push(args[++i]);
+      else if (name === 'output') outputFlags.push(args[++i]);
+      else flags.set(name, args[++i]);
     } else flags.set(name, true);
   } else positional.push(args[i]);
 }
@@ -110,6 +113,19 @@ async function main(): Promise<number> {
     case 'evaluate': {
       const f = positional[0];
       if (!f) return usage();
+      // what to emit, and where (§5.5): each `--output name[=file]` names a
+      // root — an output, or an input bound by --input or demanded through
+      // its fallback — and the file its document goes to (stdout without
+      // one); with no --output, the entry module's exported outputs, as one
+      // object keyed by name, on stdout
+      const targets: { name: string; file?: string }[] = [];
+      for (const spec of outputFlags) {
+        const eq = spec.indexOf('=');
+        const name = eq < 0 ? spec : spec.slice(0, eq), file = eq < 0 ? undefined : spec.slice(eq + 1);
+        if (!name || file === '') { console.error(`--output expects name or name=file, got ${spec}`); return 2; }
+        targets.push({ name, file });
+      }
+      if (targets.filter(t => t.file === undefined).length > 1) { console.error('--output: at most one document can go to stdout'); return 2; }
       const { modules, entry, diags } = openUniverse(f);
       if (diags.length || !entry) { diags.forEach(d => printDiag(f, d)); return 1; }
       let bad = 0;
@@ -122,22 +138,24 @@ async function main(): Promise<number> {
       const errs = ed.filter(d => d.severity === 'error');
       ed.forEach(d => printDiag(f, d));
       if (errs.length) return 1;
-      // every output, or the one root --root names (an output, or an input
-      // bound by --input / demanded through its fallback)
-      const rootFlag = flags.get('root');
-      const names = typeof rootFlag === 'string' ? [rootFlag]
-        : modules.flatMap(m => m.env.outputs.map(o => o.name));
+      const names = targets.length ? targets.map(t => t.name)
+        : entry.env.outputs.filter((o: any) => o.exported).map((o: any) => o.name);
       let missing = 0;
-      const pieces = names.map(n => {
-        const v = entry.env.roots.get(n);
-        if (v === undefined) { console.error(`no root named ${n}`); missing++; return null; }
-        return `${JSON.stringify(n)}:${eng.serialize(v, n)}`;
-      }).filter(Boolean);
+      for (const n of names) if (!entry.env.roots.has(n)) { console.error(`no root named ${n}`); missing++; }
       if (missing) return 1;
-      const text = names.length === 1 && typeof rootFlag === 'string'
-        ? eng.serialize(entry.env.roots.get(names[0]), names[0])
-        : `{${pieces.join(',')}}`;
-      if (jsonMode) evalOut = text; else console.log(text);
+      const doc = (n: string) => eng.serialize(entry.env.roots.get(n), n);
+      let text: string | null = null;
+      if (targets.length === 0) {
+        if (names.length === 0) console.error(`${f}: exports no output; --output <name> selects a root`);
+        text = `{${names.map(n => `${JSON.stringify(n)}:${doc(n)}`).join(',')}}`;
+      } else {
+        for (const t of targets) {
+          if (t.file === undefined) { text = doc(t.name); continue; }
+          try { writeFileSync(t.file, doc(t.name) + '\n'); }
+          catch { console.error(`cannot write ${t.file}`); return 1; }
+        }
+      }
+      if (jsonMode) evalOut = text; else if (text !== null) console.log(text);
       return 0;
     }
     case 'validate': {
@@ -213,7 +231,7 @@ async function main(): Promise<number> {
 function usage(): number {
   console.error(`usage:
   decl check <files...>
-  decl evaluate <file> [--input name=doc.json]... [--root <name>]
+  decl evaluate <file> [--input name=doc.json]... [--output name[=file]]...
   decl validate <dir>
   decl validate <file> [--input name=doc.json]... [--expect-errors E1,E2]
   decl fmt <files...> [--check]

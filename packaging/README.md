@@ -85,7 +85,7 @@ Consumers get:
 ```bash
 npm install -g decl-lang
 decl check schema.decl
-decl evaluate site.decl --root site
+decl evaluate site.decl --output site
 decl validate tests/validation
 decl fmt --check src/*.decl
 decl-lsp                # stdio language server for editors

@@ -1,6 +1,7 @@
 //! `decl check` / `decl evaluate` / `decl validate` / `decl fmt` (cli.ts). Output is byte-identical to
 //! the reference implementation's CLI so the three implementations can
 //! be diffed (tests/parity/differential.py).
+use crate::ast::DeclBody;
 use crate::checker::check_module;
 use crate::conformance::judge_corpus;
 use crate::fmt::format;
@@ -14,7 +15,7 @@ use std::path::{Path, PathBuf};
 use std::rc::Rc;
 
 fn usage() -> i32 {
-    eprintln!("usage:\n  decl check <file>... [--json]\n  decl evaluate <file> [--input name=doc.json]... [--root <name>] [--json]\n  decl validate <dir>\n  decl validate <file> [--input name=doc.json]... [--expect-errors E1,E2] [--json]\n  decl fmt <file>... [--check]");
+    eprintln!("usage:\n  decl check <file>... [--json]\n  decl evaluate <file> [--input name=doc.json]... [--output name[=file]]... [--json]\n  decl validate <dir>\n  decl validate <file> [--input name=doc.json]... [--expect-errors E1,E2] [--json]\n  decl fmt <file>... [--check]");
     2
 }
 
@@ -84,55 +85,89 @@ pub fn input_binds(modules: &[Rc<Module>], specs: &[String]) -> Result<Vec<Bind>
     Ok(binds)
 }
 
-/// (exit code, canonical JSON text, diagnostics): bind the `--input`
-/// documents, evaluate, and emit every output — or the one root `--root`
-/// names (an output, or an input bound by --input / demanded through
-/// its fallback)
-/// `decl evaluate`: (exit code, the serialized value, diagnostics tagged
-/// with the file each is reported against)
-pub fn evaluate(file: &str, root: Option<&str>, inputs: &[String]) -> (i32, Option<String>, Vec<(String, Diag)>) {
+/// `decl evaluate`: (exit code, the document for stdout, diagnostics tagged
+/// with the file each is reported against, bare stderr lines to print
+/// after them). What to emit, and where (§5.5): each `--output name[=file]`
+/// names a root — an output, or an input bound by --input or demanded
+/// through its fallback — and the file its document goes to (stdout
+/// without one); with no --output, the entry module's exported outputs, as
+/// one object keyed by name, on stdout
+pub fn evaluate(file: &str, outputs: &[String], inputs: &[String]) -> (i32, Option<String>, Vec<(String, Diag)>, Vec<String>) {
     let tag = |ds: Vec<Diag>| -> Vec<(String, Diag)> { ds.into_iter().map(|d| (file.to_string(), d)).collect() };
+    let mut targets: Vec<(String, Option<String>)> = vec![];
+    for spec in outputs {
+        let (name, dest) = match spec.split_once('=') {
+            Some((n, f)) => (n.to_string(), Some(f.to_string())),
+            None => (spec.clone(), None),
+        };
+        if name.is_empty() || dest.as_deref() == Some("") {
+            eprintln!("--output expects name or name=file, got {spec}");
+            return (2, None, vec![], vec![]);
+        }
+        targets.push((name, dest));
+    }
+    if targets.iter().filter(|(_, f)| f.is_none()).count() > 1 {
+        eprintln!("--output: at most one document can go to stdout");
+        return (2, None, vec![], vec![]);
+    }
     let r = open_universe(file);
-    let Some(entry) = r.entry else { return (1, None, tag(r.diags)) };
+    let Some(entry) = r.entry else { return (1, None, tag(r.diags), vec![]) };
     if !r.diags.is_empty() {
-        return (1, None, tag(r.diags));
+        return (1, None, tag(r.diags), vec![]);
     }
     let checks: Vec<(String, Diag)> = r.modules.iter().flat_map(|m| {
         let path = file_tag(file, Some(entry.path.as_path()), &m.path);
         check_module(&m.decls, Some(m.env.clone())).into_iter().map(move |d| (path.clone(), d)).collect::<Vec<_>>()
     }).collect();
     if !checks.is_empty() {
-        return (1, None, checks);
+        return (1, None, checks, vec![]);
     }
     let binds = match input_binds(&r.modules, inputs) {
         Ok(b) => b,
-        Err((code, diag)) => return (code, None, diag.into_iter().map(|d| (file.to_string(), d)).collect()),
+        Err((code, diag)) => return (code, None, diag.into_iter().map(|d| (file.to_string(), d)).collect(), vec![]),
     };
     let (eng, diags) = run_universe(&r.modules, &entry, binds);
     if diags.iter().any(|d| d.severity == "error") {
-        return (1, None, tag(diags));
+        return (1, None, tag(diags), vec![]);
     }
-    let names: Vec<String> = match root {
-        Some(n) => vec![n.to_string()],
-        None => r.modules.iter().flat_map(|m| m.env.outputs.borrow().iter().map(|(n, _, _)| n.clone()).collect::<Vec<_>>()).collect(),
+    let names: Vec<String> = if targets.is_empty() {
+        entry.decls.iter().filter(|d| d.exported).filter_map(|d| match &d.body {
+            DeclBody::Output { name, .. } => Some(name.clone()),
+            _ => None,
+        }).collect()
+    } else {
+        targets.iter().map(|(n, _)| n.clone()).collect()
     };
-    let mut pieces = vec![];
-    let mut missing = 0;
+    let mut notes = vec![];
     for n in &names {
-        let Some(v) = entry.env.root(n) else {
-            eprintln!("no root named {n}");
-            missing += 1;
-            continue;
-        };
-        pieces.push(format!("{}:{}", json_str(n), eng.serialize(&v, n)));
+        if entry.env.root(n).is_none() {
+            notes.push(format!("no root named {n}"));
+        }
     }
-    if missing > 0 {
-        return (1, None, tag(diags));
+    if !notes.is_empty() {
+        return (1, None, tag(diags), notes);
     }
-    if let (Some(n), 1) = (root, names.len()) {
-        return (0, Some(eng.serialize(&entry.env.root(n).unwrap(), n)), tag(diags));
+    let doc = |n: &str| eng.serialize(&entry.env.root(n).unwrap(), n);
+    let mut text = None;
+    if targets.is_empty() {
+        if names.is_empty() {
+            notes.push(format!("{file}: exports no output; --output <name> selects a root"));
+        }
+        text = Some(format!("{{{}}}", names.iter().map(|n| format!("{}:{}", json_str(n), doc(n))).collect::<Vec<_>>().join(",")));
+    } else {
+        for (n, dest) in &targets {
+            match dest {
+                None => text = Some(doc(n)),
+                Some(path) => {
+                    if std::fs::write(path, doc(n) + "\n").is_err() {
+                        notes.push(format!("cannot write {path}"));
+                        return (1, None, tag(diags), notes);
+                    }
+                }
+            }
+        }
     }
-    (0, Some(format!("{{{}}}", pieces.join(","))), tag(diags))
+    (0, text, tag(diags), notes)
 }
 
 /// static checks, then evaluation (binding the `--input` documents);
@@ -180,7 +215,7 @@ pub fn check_files(paths: &[String]) -> Vec<(String, Diag)> {
 
 /// the file a diagnostic is reported against: the entry module by the path
 /// given on the command line, any other module by its absolute path
-fn file_tag(given: &str, entry: Option<&Path>, module: &Path) -> String {
+pub fn file_tag(given: &str, entry: Option<&Path>, module: &Path) -> String {
     if entry == Some(module) { given.to_string() } else { module.display().to_string() }
 }
 
@@ -190,14 +225,17 @@ pub fn main(args: Vec<String>) -> i32 {
     let Some(cmd) = args.first().cloned() else { return usage() };
     let mut flags: HashMap<String, String> = HashMap::new();
     let mut input_flags: Vec<String> = vec![]; // --input name=doc.json, repeatable
+    let mut output_flags: Vec<String> = vec![]; // --output name[=file], repeatable
     let mut pos: Vec<String> = vec![];
     let mut i = 1;
     while i < args.len() {
         let a = &args[i];
         if let Some(name) = a.strip_prefix("--") {
-            if ["root", "input", "expect-errors"].contains(&name) && i + 1 < args.len() && !args[i + 1].starts_with("--") {
+            if ["output", "input", "expect-errors"].contains(&name) && i + 1 < args.len() && !args[i + 1].starts_with("--") {
                 if name == "input" {
                     input_flags.push(args[i + 1].clone());
+                } else if name == "output" {
+                    output_flags.push(args[i + 1].clone());
                 } else {
                     flags.insert(name.to_string(), args[i + 1].clone());
                 }
@@ -231,9 +269,15 @@ pub fn main(args: Vec<String>) -> i32 {
         }
         "evaluate" => {
             let Some(f) = pos.first() else { return usage() };
-            let (code, text, diags) = evaluate(f, flags.get("root").map(|s| s.as_str()), &input_flags);
+            let (code, text, diags, notes) = evaluate(f, &output_flags, &input_flags);
+            if code == 2 {
+                return 2; // a usage error: already printed, no report
+            }
             for (file, d) in &diags {
                 print_diag(file, d, json, &mut collected);
+            }
+            for n in &notes {
+                eprintln!("{n}");
             }
             if json {
                 println!("{{\"ok\":{},\"value\":{},\"diagnostics\":[{}]}}", code == 0, text.clone().unwrap_or_else(|| "null".into()), collected.join(","));

@@ -26,6 +26,7 @@ runtime is a failure, not a skip — `make verify` is the gate.
 from __future__ import annotations
 
 import json
+import re
 import os
 import subprocess
 import sys
@@ -139,11 +140,35 @@ for d in ("tests/validation", "docs/examples", "examples"):
         if "output " in p.read_text(encoding="utf-8") and "/invalid/" not in str(p):
             files.append(p)
 
-print(f"== evaluate: {len(files)} modules (exit, stdout, stderr — with and without --json)")
+print(f"== evaluate: {len(files)} modules (exit, stdout, stderr — with and without --json; then each output by --output)")
 for p in files:
     rel = str(p.relative_to(ROOT))
     cli_row(f"{rel} (--json)", ["evaluate", rel, "--json"])
     cli_row(rel, ["evaluate", rel])
+    # every output the module declares, exported or not, as the one document on stdout
+    for name in re.findall(r"^(?:export\s+)?output\s+([A-Za-z_][A-Za-z0-9_]*)", p.read_text(encoding="utf-8"), re.M):
+        cli_row(f"{rel} (--output {name})", ["evaluate", rel, "--output", name])
+
+
+def file_row(label: str, args_of, out_of) -> None:
+    """one `--output name=file` command line: outcome and the written bytes identical"""
+    ref_file = out_of("ref")
+    ref = outcome(REF, args_of(ref_file)) + (ref_file.read_text(encoding="utf-8") if ref_file.exists() else None,)
+    verdicts, detail = {}, {}
+    for n, prefix in RUNTIMES.items():
+        f = out_of(n)
+        nat = outcome(prefix, args_of(f)) + (f.read_text(encoding="utf-8") if f.exists() else None,)
+        verdicts[n] = ref == nat
+        if ref != nat:
+            what = "exit code" if ref[0] != nat[0] else "stdout" if ref[1] != nat[1] else "stderr" if ref[2] != nat[2] else "written file"
+            detail[n] = f"{what} differs — ref {describe(ref[:3])} | {n} {describe(nat[:3])}"
+    row(label, verdicts, detail)
+
+
+ic0 = ROOT / "docs/examples/02_config.decl"
+file_row("evaluate --output name=file (two roots to two files, one to stdout)",
+         lambda f: ["evaluate", str(ic0.relative_to(ROOT)), "--output", f"prod={f}", "--output", f"dev={f}.dev", "--output", "base"],
+         lambda n: tmp / f"cfg-{n}.json")
 
 # ---------------------------------------------------------------- documents bound to input roots
 cases: list[tuple[str, Path, str, Path]] = []
@@ -152,7 +177,7 @@ bad = tmp / "deployed.json"
 bad.write_text('{"host":"x","port":70000,"workers":100,"tls":{"enabled":true}}', encoding="utf-8")
 cases.append(("config: invalid deployment", cfg, "deployed", bad))
 ic = ROOT / "docs/examples/01_interconnect.decl"
-ser = outcome(REF, ["evaluate", str(ic.relative_to(ROOT)), "--root", "xbar"])[1].strip()
+ser = outcome(REF, ["evaluate", str(ic.relative_to(ROOT)), "--output", "xbar"])[1].strip()
 good = tmp / "xbar.json"
 good.write_text(ser, encoding="utf-8")
 cases.append(("interconnect: round trip", ic, "doc", good))
@@ -174,9 +199,13 @@ for label, decl, name, doc in cases:
     rel = str(decl.relative_to(ROOT))
     cli_row(f"{label} (validate --json)", ["validate", rel, "--input", f"{name}={doc}", "--json"])
     cli_row(f"{label} (validate)", ["validate", rel, "--input", f"{name}={doc}"])
-    cli_row(f"{label} (evaluate --root {name} --json)", ["evaluate", rel, "--input", f"{name}={doc}", "--root", name, "--json"])
-    cli_row(f"{label} (evaluate --root {name})", ["evaluate", rel, "--input", f"{name}={doc}", "--root", name])
-cli_row("evaluate: --root names nothing", ["evaluate", str(cfg.relative_to(ROOT)), "--root", "nope", "--json"])
+    cli_row(f"{label} (evaluate --output {name} --json)", ["evaluate", rel, "--input", f"{name}={doc}", "--output", name, "--json"])
+    cli_row(f"{label} (evaluate --output {name})", ["evaluate", rel, "--input", f"{name}={doc}", "--output", name])
+cli_row("evaluate: --output names nothing", ["evaluate", str(cfg.relative_to(ROOT)), "--output", "nope", "--json"])
+cli_row("evaluate: --output without a name", ["evaluate", str(cfg.relative_to(ROOT)), "--output", "=x.json"])
+cli_row("evaluate: two --output to stdout", ["evaluate", str(cfg.relative_to(ROOT)), "--output", "prod", "--output", "dev"])
+cli_row("evaluate: a module exporting no output", ["evaluate", "tests/validation/declarations/valid/output_from_input_fallback.decl"])
+cli_row("evaluate: --output of an unwritable file", ["evaluate", str(cfg.relative_to(ROOT)), "--output", f"prod={tmp}/no/such/dir/x.json"])
 cli_row("evaluate: --input without name=", ["evaluate", str(cfg.relative_to(ROOT)), "--input", "nope"])
 cli_row("evaluate: --input of an unknown input", ["evaluate", str(cfg.relative_to(ROOT)), "--input", f"nope={bad}"])
 

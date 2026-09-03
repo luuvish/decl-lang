@@ -142,19 +142,23 @@ fn cli_evaluate_binds_inputs_and_roots_them() {
     let decl_s = decl.to_str().unwrap().to_string();
     let bind = format!("base={}", doc.display());
     let run = |args: &[&str]| Command::new(env!("CARGO_BIN_EXE_decl")).args(args).output().unwrap();
-    // --input binds the document; --root may name the bound input
-    let out = run(&["evaluate", &decl_s, "--input", &bind, "--root", "base"]);
-    assert!(out.status.success(), "evaluate --input --root <input> succeeds: {}", String::from_utf8_lossy(&out.stderr));
+    // --input binds the document; --output may name the bound input
+    let out = run(&["evaluate", &decl_s, "--input", &bind, "--output", "base"]);
+    assert!(out.status.success(), "evaluate --input --output <input> succeeds: {}", String::from_utf8_lossy(&out.stderr));
     assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), "{\"host\":\"example\",\"port\":80}");
     // an output reading the bound input completes from the document
+    let out = run(&["evaluate", &decl_s, "--input", &bind, "--output", "copy"]);
+    assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), "{\"host\":\"example\",\"port\":80}");
+    // a module that exports no output emits an empty object and says so
     let out = run(&["evaluate", &decl_s, "--input", &bind]);
-    assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), "{\"copy\":{\"host\":\"example\",\"port\":80}}");
+    assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), "{}");
+    assert!(String::from_utf8_lossy(&out.stderr).contains("exports no output; --output <name> selects a root"));
     // nothing bound: the fallback-less input demanded by an output is E5006 at the output
     let out = run(&["evaluate", &decl_s]);
     assert!(!out.status.success());
     assert!(String::from_utf8_lossy(&out.stderr).contains("error [E5006] at copy: input base is not bound"), "{}", String::from_utf8_lossy(&out.stderr));
     // a root that does not exist
-    let out = run(&["evaluate", &decl_s, "--input", &bind, "--root", "nope"]);
+    let out = run(&["evaluate", &decl_s, "--input", &bind, "--output", "nope"]);
     assert!(!out.status.success() && String::from_utf8_lossy(&out.stderr).contains("no root named nope"));
     let _ = std::fs::remove_dir_all(&dir);
 }
@@ -250,5 +254,45 @@ fn lsp_diagnostics_hover_definition() {
     drop(c.stdin);
     let status = c.child.wait().unwrap();
     assert!(status.success());
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+// ---------------- the high-level API (src/api.rs) ----------------
+#[test]
+fn api_matches_the_command_line() {
+    use decl_lang::{check, evaluate, format_source, validate, DeclError, Document, EvaluateOptions};
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap().to_path_buf();
+    let cfg = root.join("docs/examples/02_config.decl");
+    let cfg_s = cfg.to_str().unwrap();
+    let all = evaluate(cfg_s, &EvaluateOptions::default()).unwrap();
+    assert_eq!(all.keys().cloned().collect::<Vec<_>>(), vec!["base", "dev", "prod"]);
+    let one = evaluate(cfg_s, &EvaluateOptions { outputs: vec!["prod".into()], ..Default::default() }).unwrap();
+    assert!(one["prod"].contains("\"host\":\"api.internal\""), "{}", one["prod"]);
+    let fb = root.join("tests/validation/declarations/valid/output_from_input_fallback.decl");
+    let fb_s = fb.to_str().unwrap();
+    assert!(evaluate(fb_s, &EvaluateOptions::default()).unwrap().is_empty(), "a module exporting nothing yields {{}}");
+    let by_value = evaluate(fb_s, &EvaluateOptions { inputs: vec![("base".into(), Document::Json("{\"host\": \"v\"}".into()))], outputs: vec!["copy".into()] }).unwrap();
+    assert_eq!(by_value["copy"], "{\"host\":\"v\",\"port\":80}");
+    let dir = std::env::temp_dir().join(format!("decl-api-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let doc = dir.join("base.json");
+    std::fs::write(&doc, "{\"host\": \"h\", \"port\": 8}").unwrap();
+    let by_file = evaluate(fb_s, &EvaluateOptions { inputs: vec![("base".into(), Document::File(doc.clone()))], outputs: vec!["base".into(), "copy".into()] }).unwrap();
+    assert_eq!(by_file["base"], "{\"host\":\"h\",\"port\":8}");
+    assert_eq!(by_file["copy"], "{\"host\":\"h\",\"port\":8}");
+    let e: DeclError = evaluate(fb_s, &EvaluateOptions { outputs: vec!["nope".into()], ..Default::default() }).unwrap_err();
+    assert_eq!(e.message, "no root named nope");
+    let e = evaluate(fb_s, &EvaluateOptions { inputs: vec![("base".into(), Document::File(dir.join("missing.json")))], ..Default::default() }).unwrap_err();
+    assert_eq!(e.diagnostics[0].code.as_deref(), Some("E6004"));
+    let bad = "{\"host\":\"x\",\"port\":70000,\"workers\":100,\"tls\":{\"enabled\":true}}";
+    let e = evaluate(cfg_s, &EvaluateOptions { inputs: vec![("deployed".into(), Document::Json(bad.into()))], outputs: vec!["deployed".into()] }).unwrap_err();
+    assert!(e.diagnostics.iter().any(|d| d.severity == "error") && e.message == e.diagnostics[0].message, "{e:?}");
+    let v = validate(cfg_s, &[("deployed".into(), Document::Json(bad.into()))]).unwrap();
+    assert!(v.iter().any(|d| d.severity == "error"));
+    assert!(check(&[root.join("tests/validation/types/valid/predicates.decl").to_str().unwrap()]).is_empty());
+    let bad_check = check(&[root.join("tests/validation/types/invalid/empty_range.decl").to_str().unwrap()]);
+    assert_eq!(bad_check[0].code.as_deref(), Some("E4011"));
+    assert_eq!(format_source("const x=1+2\n").unwrap(), "const x = 1 + 2\n");
+    assert!(format_source("type T = {").is_err());
     let _ = std::fs::remove_dir_all(&dir);
 }

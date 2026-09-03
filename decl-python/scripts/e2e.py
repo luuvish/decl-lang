@@ -229,7 +229,7 @@ check(f"fmt(fmt(x)) == fmt(x) on {idem + idem_fail} parseable files", idem_fail 
 check("formatting preserves the AST on all files", token_fail == 0, f"{token_fail} failures")
 print(f"  ({skipped} unparseable fixtures skipped by design)")
 
-print("== command line: evaluate --input binds a document, --root names any root ==")
+print("== command line: evaluate --input binds a document, --output names any root ==")
 cli_tmp = tempfile.mkdtemp(prefix="decl-cli-")
 fixture = str(ROOT / "tests/validation/declarations/valid/output_from_input_fallback.decl")
 doc_path = os.path.join(cli_tmp, "base.json")
@@ -242,14 +242,16 @@ def run_cli(*args: str) -> tuple:
     return r.returncode, r.stdout.strip(), r.stderr.strip()
 
 
-code, out, err = run_cli(fixture, "--input", f"base={doc_path}", "--root", "base")
+code, out, err = run_cli(fixture, "--input", f"base={doc_path}", "--output", "base")
 check("bound input emitted as the named root", code == 0 and out == '{"host":"h","port":8}', f"{code} {out} {err}")
-code, out, err = run_cli(fixture, "--input", f"base={doc_path}", "--root", "copy")
+code, out, err = run_cli(fixture, "--input", f"base={doc_path}", "--output", "copy")
 check("output reads the bound document", code == 0 and out == '{"host":"h","port":8}', f"{code} {out} {err}")
-code, out, err = run_cli(fixture, "--root", "base")
+code, out, err = run_cli(fixture, "--output", "base")
 check("fallback-demanded input is a root", code == 0 and out == '{"host":"example","port":80}', f"{code} {out} {err}")
-code, out, err = run_cli(fixture, "--root", "nope")
-check("--root naming no root exits 1", code == 1 and err == "no root named nope", f"{code} {out} {err}")
+code, out, err = run_cli(fixture, "--output", "nope")
+check("--output naming no root exits 1", code == 1 and err == "no root named nope", f"{code} {out} {err}")
+code, out, err = run_cli(fixture)
+check("a module exporting no output says so", code == 0 and out == "{}" and err.endswith("exports no output; --output <name> selects a root"), f"{code} {out} {err}")
 code, out, err = run_cli(fixture, "--input", "nope=x.json")
 check("--input naming no input is a usage error", code == 2 and err == "no input named nope", f"{code} {out} {err}")
 
@@ -330,5 +332,39 @@ notify_server("exit", {})
 server.stdin.close()
 server.wait(timeout=10)
 
+
+print("== python API: evaluate binds inputs and returns outputs by name ==")
+sys.path.insert(0, str(ROOT / "decl-python"))
+import decl as api  # noqa: E402
+
+cfg = str(ROOT / "docs/examples/02_config.decl")
+allv = api.evaluate(cfg)
+check("default: the exported outputs by name", list(allv) == ["base", "prod", "dev"], str(list(allv)))
+check("outputs selects roots", list(api.evaluate(cfg, outputs=["prod"])) == ["prod"])
+check("a module exporting nothing yields {}", api.evaluate(fixture) == {})
+byfile = api.evaluate(fixture, inputs={"base": doc_path}, outputs=["base", "copy"])
+check("an input bound from a file is a root", byfile == {"base": {"host": "h", "port": 8}, "copy": {"host": "h", "port": 8}}, str(byfile))
+byvalue = api.evaluate(fixture, inputs=[("base", {"host": "v"})], outputs=["copy"])
+check("an input bound from a value completes", byvalue == {"copy": {"host": "v", "port": 80}}, str(byvalue))
+try:
+    api.evaluate(fixture, outputs=["nope"]); check("an unknown root is a DeclError", False)
+except api.DeclError as e:
+    check("an unknown root is a DeclError", str(e) == "no root named nope", str(e))
+try:
+    api.evaluate(fixture, inputs={"base": os.path.join(cli_tmp, "missing.json")}); check("an unreadable document is E6004", False)
+except api.DeclError as e:
+    check("an unreadable document is E6004", e.diagnostics and e.diagnostics[0]["code"] == "E6004", str(e.diagnostics))
+bad_doc = {"host": "x", "port": 70000, "workers": 100, "tls": {"enabled": True}}
+try:
+    api.evaluate(cfg, inputs={"deployed": bad_doc}, outputs=["deployed"]); check("error diagnostics come back on the DeclError", False)
+except api.DeclError as e:
+    check("error diagnostics come back on the DeclError", any(d["severity"] == "error" for d in e.diagnostics) and str(e) == e.diagnostics[0]["message"], str(e))
+v = api.validate(cfg, inputs={"deployed": bad_doc})
+check("validate: diagnostics of a bound document", any(d["severity"] == "error" for d in v), str(v[:2]))
+check("check: clean file -> []", api.check(str(ROOT / "tests/validation/types/valid/predicates.decl")) == [])
+bad = api.check(str(ROOT / "tests/validation/types/invalid/empty_range.decl"))
+check("check: static error with file first", bad and bad[0]["code"] == "E4011" and list(bad[0])[0] == "file", str(bad))
+check("format_source", api.format_source("const x=1+2\n") == "const x = 1 + 2\n")
+check("__version__", api.__version__ == "0.3.0")
 print(f"\nTOTAL {passed} ok, {failed} failed")
 sys.exit(1 if failed else 0)

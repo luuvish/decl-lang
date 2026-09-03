@@ -190,7 +190,7 @@ export input external: Topology
 
 ```bash
 decl validate topology.decl --input external=prod.json                  # diagnostics only
-decl evaluate topology.decl --input external=prod.json --root external  # the completed document
+decl evaluate topology.decl --input external=prod.json --output external  # the completed document
 ```
 
 `prod.json` — written by another team, never seen Decl:

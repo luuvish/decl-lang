@@ -37,7 +37,7 @@
     "build": "node scripts/build.mjs",
     "e2e": "node test/e2e.ts",
     "conformance": "node src/conformance.ts",
-    "test": "node test/subsume.ts && node test/e2e.ts && node src/conformance.ts && node test/modules.ts && node test/packages.ts && node test/fmt.ts && node test/cli.ts && node test/lsp.ts && node test/domainlibs.ts && node test/fabric.ts",
+    "test": "node test/subsume.ts && node test/e2e.ts && node src/conformance.ts && node test/modules.ts && node test/packages.ts && node test/fmt.ts && node test/cli.ts && node test/api.ts && node test/lsp.ts && node test/domainlibs.ts && node test/fabric.ts",
     "smoke:dist": "node scripts/smoke-dist.mjs",
     "prepublishOnly": "npm run build && npm test && npm run smoke:dist"
   },

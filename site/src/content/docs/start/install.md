@@ -19,7 +19,7 @@ All channels produce **byte-identical output**: the three implementations are he
 ## Which one?
 
 - **Node.js already around**: npm or Homebrew — the reference implementation itself.
-- **Python projects**: PyPI — the same toolchain plus `decl.evaluate("site.decl", root="site")` returning plain dicts and lists.
+- **Python projects**: PyPI — the same toolchain plus `decl.evaluate("site.decl")` returning the exported outputs as plain dicts and lists.
 - **A single static binary for CI, editors, or deployment**: crates.io.
 
 ## From source

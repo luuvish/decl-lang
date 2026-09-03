@@ -39,8 +39,9 @@ brew install luuvish/tap/decl-lang    # Homebrew tap
 
 ```bash
 decl check schema.decl                     # parse + static checks (module-aware)
-decl evaluate site.decl --root site        # evaluate outputs -> JSON
-decl evaluate cfg.decl --input deployed=doc.json --root deployed   # bind a document, emit its completed value
+decl evaluate site.decl                    # the exported outputs -> JSON on stdout
+decl evaluate site.decl --output site=site.json --output report   # one document to a file, one to stdout
+decl evaluate cfg.decl --input deployed=doc.json --output deployed   # bind a document, emit its completed value
 decl validate cfg.decl --input deployed=doc.json --expect-errors E4001
 decl fmt --check src/*.decl                # canonical formatting
 ```
@@ -86,8 +87,9 @@ core (`decl-lang/core`) in the browser.
 
 ## Status
 
-**Specification v0.2 (2026-09-01)** — v0.1 was frozen on 2026-08-31 and
-revised through the v0.2 cycle (D31–D33, D29 amended;
+**Specification v0.3 (2026-09-04)** — v0.1 was frozen on 2026-08-31,
+revised through the v0.2 cycle (D31–D33, D29 amended), then v0.3: member
+kinds by shape and hidden members `x$ = e` (D4 amended, D34;
 [docs/REVISIONS.md](docs/REVISIONS.md)). All roadmap phases are
 complete: the tree-sitter grammar, the TypeScript reference
 implementation with its full static checker, modules and packages with

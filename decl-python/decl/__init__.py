@@ -2,71 +2,185 @@
 
 Every operation runs the native Python implementation (``decl.runtime``),
 held byte-identical to the reference implementation by
-tests/parity/differential.py.
+tests/parity/differential.py. The functions mirror the ``decl`` command
+line, in its vocabulary: ``evaluate`` binds inputs and returns outputs.
 
     >>> import decl
-    >>> decl.evaluate("site.decl", root="site")        # -> the evaluated value (dict/list/...)
-    >>> decl.evaluate("cfg.decl", root="deployed", inputs=[("deployed", "doc.json")])
-    >>> decl.check("schema.decl")                        # -> [] when clean, else diagnostics
-    >>> decl.validate("cfg.decl", input=("deployed", "doc.json"))
-    >>> decl.format_source("const x=1+2\\n")             # -> 'const x = 1 + 2\\n'
+    >>> decl.evaluate("site.decl")                                    # {"site": {...}} — the exported outputs
+    >>> decl.evaluate("cfg.decl", inputs={"deployed": "doc.json"}, outputs=["deployed"])["deployed"]
+    >>> decl.check("schema.decl")                                     # [] when clean, else diagnostics
+    >>> decl.validate("cfg.decl", inputs={"deployed": {"host": "h"}})  # a document may be a value, not a file
+    >>> decl.format_source("const x=1+2\\n")                          # 'const x = 1 + 2\\n'
 """
 from __future__ import annotations
 
 import json
 import os
-from typing import Any, Iterable, Sequence, TypedDict
+from typing import Any, Iterable, Mapping, Sequence, TypedDict
 
 __all__ = [
     "Diagnostic", "DeclError",
     "check", "evaluate", "evaluate_source", "validate", "format_source", "format_file",
 ]
-__version__ = "0.2.0"
+__version__ = "0.3.0"
 
 
 class Diagnostic(TypedDict, total=False):
+    """One diagnostic, in the report's field order (§12.2)."""
     file: str
-    severity: str
     code: str
     id: str
-    path: str
+    severity: str
     message: str
+    path: str
 
 
 class DeclError(Exception):
-    """Raised when an operation fails; ``diagnostics`` carries the report."""
+    """Raised when an operation fails; ``diagnostics`` carries the report
+    (empty for a usage error such as an unknown input or root)."""
 
     def __init__(self, message: str, diagnostics: Sequence[Diagnostic] = ()):
         super().__init__(message)
         self.diagnostics: list[Diagnostic] = list(diagnostics)
 
 
-def check(*paths: str | os.PathLike[str]) -> list[Diagnostic]:
-    """Parse and statically check entry files (module-aware) on the native
-    runtime. Returns diagnostics; empty means clean."""
-    from .runtime.cli import check_files
-    return [dict(file=d["file"], **{k: v for k, v in d.items() if k != "file"}) for d in check_files([str(p) for p in paths])]
+# a document to bind to an input: the path of a JSON file, or the value itself
+InputDocument = "str | os.PathLike[str] | Any"
+Inputs = "Mapping[str, InputDocument] | Iterable[tuple[str, InputDocument]]"
+
+
+def _tagged(file: str, d: dict) -> Diagnostic:
+    o: dict = {"file": file}
+    if d.get("code"):
+        o["code"] = d["code"]
+    if d.get("id"):
+        o["id"] = d["id"]
+    o["severity"] = d["severity"]
+    o["message"] = d["message"]
+    o["path"] = d.get("path", "")
+    return o  # type: ignore[return-value]
+
+
+def _fail(fallback: str, diagnostics: list) -> None:
+    raise DeclError(diagnostics[0]["message"] if diagnostics else fallback, diagnostics)
+
+
+def _file_tag(given: str, entry, module_path: str) -> str:
+    return given if entry is not None and module_path == entry.path else module_path
+
+
+def _pairs(inputs) -> list:
+    if inputs is None:
+        return []
+    return list(inputs.items()) if isinstance(inputs, Mapping) else list(inputs)
+
+
+def _bind_inputs(modules: list, file: str, inputs) -> list:
+    """The documents to bind, each to the module that declares its input (§10)."""
+    from .runtime.semantics import read_json
+    binds = []
+    for name, doc in _pairs(inputs):
+        module = next((m for m in modules if name in m.env.inputs), None)
+        if module is None:
+            raise DeclError(f"no input named {name}")
+        if isinstance(doc, (str, os.PathLike)):
+            try:
+                with open(doc, encoding="utf-8") as fh:
+                    text = fh.read()
+            except OSError:
+                _fail("", [{"file": file, "code": "E6004", "severity": "error",
+                            "message": f"bound document cannot be read: {doc}", "path": name}])
+            where = str(doc)
+        else:
+            text, where = json.dumps(doc), name
+        try:
+            raw = read_json(text)
+        except Exception:
+            _fail("", [{"file": file, "code": "E6004", "severity": "error",
+                        "message": f"bound document is not well-formed JSON: {where}", "path": name}])
+        binds.append({"module": module, "input": name, "raw": raw})
+    return binds
 
 
 def evaluate(
     path: str | os.PathLike[str],
-    root: str | None = None,
     *,
-    inputs: Iterable[tuple[str, str | os.PathLike[str]]] | None = None,
-) -> Any:
-    """Evaluate a module on the native runtime, first binding the ``inputs``
-    documents given as ``(name, json_path)`` pairs. With ``root`` returns that
-    root's value (an output, or an input bound here or demanded through its
-    fallback); otherwise a dict of every output. Raises DeclError with
-    diagnostics on failure."""
-    from .runtime.cli import CliError, evaluate_file
-    try:
-        code, text, diags = evaluate_file(str(path), root, [f"{name}={file}" for name, file in (inputs or [])])
-    except CliError as e:
-        raise DeclError(str(e), [{"file": str(path), **d} for d in e.diagnostics]) from None
-    if code != 0 or text is None:
-        raise DeclError("evaluation failed", [{"file": str(path), **d} for d in diags])
-    return json.loads(text)
+    inputs: Mapping[str, Any] | Iterable[tuple[str, Any]] | None = None,
+    outputs: Iterable[str] | None = None,
+) -> dict[str, Any]:
+    """Evaluate a module on the native runtime: bind the ``inputs`` documents
+    (by input name; a JSON file path, or the value itself), run the pipeline,
+    and return the requested roots' documents by name — ``outputs`` may name
+    outputs and inputs (bound here, or demanded through their fallback);
+    by default the entry module's exported outputs (§5.5). Raises DeclError
+    with the diagnostics on any error-severity outcome."""
+    from .runtime.checker import check_module
+    from .runtime.cli import open_universe
+    from .runtime.module import run_universe
+    file = str(path)
+    r = open_universe(file)
+    if r["diags"] or r["entry"] is None:
+        _fail(f"{file}: cannot be loaded", [_tagged(file, d) for d in r["diags"]])
+    entry = r["entry"]
+    checks = [_tagged(_file_tag(file, entry, m.path), d) for m in r["modules"] for d in check_module(m.decls, m.env)]
+    if checks:
+        _fail("", checks)
+    u = run_universe(r["modules"], entry, _bind_inputs(r["modules"], file, inputs))
+    report = [_tagged(file, d) for d in u["diags"]]
+    if any(d["severity"] == "error" for d in report):
+        _fail("", report)
+    names = list(outputs) if outputs is not None else [o["name"] for o in entry.env.outputs if o.get("exported")]
+    out: dict[str, Any] = {}
+    for n in names:
+        if n not in entry.env.roots:
+            raise DeclError(f"no root named {n}", report)
+        out[n] = json.loads(u["eng"].serialize(entry.env.roots[n], n))
+    return out
+
+
+def check(*paths: str | os.PathLike[str]) -> list[Diagnostic]:
+    """Parse and statically check entry files (module-aware) on the native
+    runtime. Returns diagnostics; empty means clean."""
+    from .runtime.cli import check_files
+    return [_tagged(d["file"], d) for d in check_files([str(p) for p in paths])]
+
+
+def validate(
+    path: str | os.PathLike[str],
+    *,
+    inputs: Mapping[str, Any] | Iterable[tuple[str, Any]] | None = None,
+    expect_errors: Iterable[str] | None = None,
+) -> list[Diagnostic]:
+    """Validate a file: static checks, then evaluation with the ``inputs``
+    documents bound; returns every diagnostic (all severities). Raises
+    DeclError when the file does not parse. With ``expect_errors`` the set
+    of error codes must match exactly; DeclError carries the mismatch."""
+    from .runtime.checker import check_module
+    from .runtime.cli import open_universe
+    from .runtime.module import run_universe
+    from .runtime.parse import parse_source
+    from .runtime.pipeline import run_pipeline
+    file = str(path)
+    with open(file, encoding="utf-8") as fh:
+        src = fh.read()
+    parsed = parse_source(src)
+    if parsed["errors"]:
+        raise DeclError(f"{file}: {len(parsed['errors'])} parse error(s)")
+    decls = parsed["decls"]
+    diags = [_tagged(file, d) for d in check_module(decls)]
+    if not diags:
+        if _pairs(inputs):
+            r = open_universe(file)
+            u = run_universe(r["modules"], r["entry"], _bind_inputs(r["modules"], file, inputs))
+            diags = [_tagged(file, d) for d in u["diags"]]
+        else:
+            diags = [_tagged(file, d) for d in run_pipeline(decls)["diags"]]
+    if expect_errors is not None:
+        want = sorted(expect_errors)
+        got = sorted(d.get("code") or "" for d in diags if d["severity"] == "error")
+        if set(want) != set(got):
+            raise DeclError(f"expected errors {want}, got {got}", diags)
+    return diags
 
 
 def evaluate_source(text: str) -> dict:
@@ -74,34 +188,6 @@ def evaluate_source(text: str) -> dict:
     the report dict (phase, ok, parse_errors, checks, diagnostics, outputs, inputs)."""
     from .runtime.pipeline import evaluate_source as run
     return run(text)
-
-
-def validate(
-    path: str | os.PathLike[str],
-    *,
-    input: tuple[str, str | os.PathLike[str]] | None = None,
-    inputs: Iterable[tuple[str, str | os.PathLike[str]]] | None = None,
-    expect_errors: Iterable[str] | None = None,
-) -> list[Diagnostic]:
-    """Validate a file on the native runtime, binding the input documents
-    given as ``(name, json_path)`` pairs (one as ``input``, or any number as
-    ``inputs``). Returns diagnostics. With ``expect_errors`` the error-code
-    set must match exactly; DeclError carries the mismatch otherwise."""
-    from .runtime.cli import CliError, validate_file
-    pairs = ([input] if input else []) + list(inputs or [])
-    try:
-        parse_errors, found = validate_file(str(path), [f"{name}={file}" for name, file in pairs])
-    except CliError as e:
-        raise DeclError(str(e)) from None
-    if parse_errors:
-        raise DeclError(f"{path}: {parse_errors} parse error(s)")
-    diags = [dict(file=str(path), **d) for d in found]
-    if expect_errors is not None:
-        want = sorted(expect_errors)
-        got = sorted(d.get("code") or "" for d in diags if d["severity"] == "error")
-        if set(want) != set(got):
-            raise DeclError(f"expected errors {want}, got {got}", diags)
-    return diags
 
 
 def format_file(path: str | os.PathLike[str], *, check: bool = False) -> bool:
@@ -116,7 +202,8 @@ def format_file(path: str | os.PathLike[str], *, check: bool = False) -> bool:
 
 
 def format_source(text: str) -> str:
-    """Return the canonical formatting of a Decl source string."""
+    """Return the canonical formatting of a Decl source string; raises
+    DeclError when it does not parse."""
     from .runtime.fmt import format_source as fmt
     try:
         return fmt(text)
