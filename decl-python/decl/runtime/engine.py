@@ -11,8 +11,8 @@ from typing import Any, Optional
 from .semantics import (
     ABSENT, ArrV, Closure, DeferSig, Env, EvalErr, JObj, MapV, NatFn, NsRef, Pattern,
     PreArr, PreObj, PreVal, Quantity, RangeV, RecInst, Ref, Scope, Segs, Slot, StdRef, Taint,
-    cmp_path, is_bool, is_float, is_int, is_str, js_num_str, json_str, key_of_vec,
-    mentions_referrers, parse_path, path_str, value_eq, vec_combine, vec_of_key,
+    cmp_path, compile_pattern, is_bool, is_float, is_int, is_str, js_num_str, json_str, key_of_vec,
+    mentions_referrers, parse_path, path_str, pattern_error, value_eq, vec_combine, vec_of_key,
 )
 
 
@@ -388,7 +388,10 @@ class Engine:
         if op == "matches":
             if not is_str(l) or not isinstance(r, Pattern):
                 raise EvalErr("matches needs a string and a pattern")
-            return re.fullmatch(f"(?:{r.re})", l) is not None
+            bad = pattern_error(r.re)
+            if bad:
+                raise EvalErr(f"malformed pattern /{r.re}/: {bad}", "E4119")
+            return compile_pattern(r.re).fullmatch(l) is not None
         if op == "==":
             return value_eq(l, r)
         if op == "!=":

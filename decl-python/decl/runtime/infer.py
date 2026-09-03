@@ -9,7 +9,10 @@ from __future__ import annotations
 import re
 from typing import Any, Callable, Optional
 
-from .semantics import is_bool, is_float, is_int, is_str, js_num_str, key_of_vec, vec_combine, vec_of_key
+from .semantics import (
+    compile_pattern, is_bool, is_float, is_int, is_str, js_num_str, key_of_vec, pattern_error,
+    vec_combine, vec_of_key,
+)
 from .subsume import subsumes
 
 
@@ -334,7 +337,11 @@ def infer(cx: Ctx, e: dict) -> dict:
     if k == "lit":
         return TY({"t": "lit", "v": e["v"]})
     if k == "pattern":
-        return TY({"t": "pattern", "src": e["re"], "re": re.compile(f"(?:{e['re']})")})
+        bad = pattern_error(e["re"])
+        if bad:
+            cx.report("E4119", f"malformed pattern /{e['re']}/: {bad}")
+            return UNK
+        return TY({"t": "pattern", "src": e["re"], "re": compile_pattern(e["re"])})
     if k == "unitlit":
         try:
             return TY({"t": "quantity", "dim": cx.env.unit_info(e["unit"])["key"]})

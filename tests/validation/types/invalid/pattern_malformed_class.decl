@@ -1,0 +1,8 @@
+// @expect-phase: checking
+// @expect-error: E4119
+// @expect-message: unterminated character class
+// a pattern body outside the portable core is rejected at its declaration,
+// with one message whatever engine runs the accepted patterns (§3.6)
+type P = /a[/
+type T = { p: P }
+output t: T = { p: "a[" }

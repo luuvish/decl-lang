@@ -463,8 +463,11 @@ class Env:
             return {"t": "range", "lo": lo, "hi": hi, "excl": ast["excl"], "base": "float" if is_f else "int"}
         if k == "pattern":
             src = self.expand_pattern(ast["re"])
+            bad = pattern_error(src)
+            if bad:
+                raise RuntimeError(f"malformed pattern /{ast['re']}/: {bad}")
             try:
-                compiled = re.compile(f"(?:{src})")
+                compiled = compile_pattern(src)
             except re.error as e:
                 raise RuntimeError(f"malformed pattern /{ast['re']}/: {e}")
             return {"t": "pattern", "src": src, "re": compiled}
@@ -800,6 +803,130 @@ def subst_expr(e: Any, values: dict) -> Any:
 
 
 _ID_RE = re.compile(r"^[_A-Za-z][_A-Za-z0-9]*$")
+
+
+# ---------------- patterns: the portable core (§3.6) ----------------
+# A pattern body is validated against the specification's regular-
+# expression core with one fixed set of messages, so every implementation
+# reports the same text whatever engine runs the accepted patterns.
+# Returns the reason a body is outside the core, or None when it is inside.
+PATTERN_PUNCT = "\\/.*+?()[]{}|^$-"
+
+
+def _pattern_escape(cs: list, pos: list) -> int:
+    """the escape at pos[0]: the code point it stands for (-1 for a class
+    escape), or raises ValueError with the reason"""
+    i = pos[0]
+    if i + 1 >= len(cs):
+        raise ValueError("trailing backslash")
+    e = cs[i + 1]
+    pos[0] = i + 2
+    if e in "dwsDWS":
+        return -1
+    if e == "n":
+        return 10
+    if e == "t":
+        return 9
+    if e == "r":
+        return 13
+    if e in PATTERN_PUNCT:
+        return ord(e)
+    if e.isdigit():
+        raise ValueError(f"backreference \\{e} is not supported")
+    raise ValueError(f"unsupported escape \\{e}")
+
+
+def pattern_error(src: str) -> Optional[str]:
+    cs = list(src)
+    n = len(cs)
+    pos = [0]
+    depth = 0
+    can_repeat = False
+    try:
+        while pos[0] < n:
+            c = cs[pos[0]]
+            if c == "\\":
+                _pattern_escape(cs, pos)
+                can_repeat = True
+            elif c == "[":
+                pos[0] += 1
+                if pos[0] < n and cs[pos[0]] == "^":
+                    pos[0] += 1
+                items = 0
+                while True:
+                    if pos[0] >= n:
+                        return "unterminated character class"
+                    if cs[pos[0]] == "]":
+                        pos[0] += 1
+                        break
+                    if cs[pos[0]] == "\\":
+                        lo = _pattern_escape(cs, pos)
+                    else:
+                        lo = ord(cs[pos[0]])
+                        pos[0] += 1
+                    if pos[0] < n and cs[pos[0]] == "-" and pos[0] + 1 < n and cs[pos[0] + 1] != "]":
+                        pos[0] += 1
+                        if cs[pos[0]] == "\\":
+                            hi = _pattern_escape(cs, pos)
+                        else:
+                            hi = ord(cs[pos[0]])
+                            pos[0] += 1
+                        if lo < 0 or hi < 0 or lo > hi:
+                            return "invalid range in character class"
+                    items += 1
+                if items == 0:
+                    return "empty character class"
+                can_repeat = True
+            elif c == "]":
+                return "unbalanced bracket"
+            elif c == "(":
+                pos[0] += 1
+                if pos[0] < n and cs[pos[0]] == "?":
+                    if pos[0] + 1 < n and cs[pos[0] + 1] == ":":
+                        pos[0] += 2
+                    else:
+                        return "unsupported construct (?"
+                depth += 1
+                can_repeat = False
+            elif c == ")":
+                if depth == 0:
+                    return "unbalanced parenthesis"
+                depth -= 1
+                pos[0] += 1
+                can_repeat = True
+            elif c == "|":
+                pos[0] += 1
+                can_repeat = False
+            elif c in "*+?":
+                if not can_repeat:
+                    return "nothing to repeat"
+                pos[0] += 1
+                can_repeat = False
+            elif c == "{":
+                if not can_repeat:
+                    return "nothing to repeat"
+                m = re.match(r"\{([0-9]+)(?:(,)([0-9]*))?\}", src[pos[0]:])
+                if not m:
+                    return "malformed repetition"
+                if m.group(3) and int(m.group(3)) < int(m.group(1)):
+                    return "malformed repetition"
+                pos[0] += len(m.group(0))
+                can_repeat = False
+            elif c == "}":
+                return "malformed repetition"
+            elif c in "^$":
+                pos[0] += 1
+                can_repeat = False
+            else:
+                pos[0] += 1
+                can_repeat = True
+    except ValueError as e:
+        return str(e)
+    return "unbalanced parenthesis" if depth > 0 else None
+
+
+def compile_pattern(src: str):
+    return re.compile(f"(?:{src})")
 
 
 def path_str(segs: list, rel_root: Optional[str] = None) -> str:

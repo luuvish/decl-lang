@@ -114,7 +114,12 @@ type ServiceName = /[a-z][a-z0-9-]*/
   alternation `|`, grouping `(…)`, repetition `* + ? {m} {m,} {m,n}`,
   and the class escapes `\d \w \s` (with uppercase negations). There is
   no backreference, lookaround, or capture semantics — patterns denote
-  regular languages, keeping membership decidable and cheap.
+  regular languages, keeping membership decidable and cheap. A pattern
+  body outside this core is an error at its declaration (E4119), reported
+  with one fixed message per defect *(v0.2.2)*: implementations validate
+  the core themselves rather than delegating to whatever
+  regular-expression engine they run the accepted patterns on, so the
+  diagnostic never depends on the engine.
 - `${T}` **interpolation** splices another type into a pattern. `T` must
   be string-shaped (a pattern, string literal, or union of those) or
   integer-shaped (an int literal, int range, or union of those); an

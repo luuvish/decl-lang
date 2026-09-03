@@ -262,7 +262,7 @@ def check_module(decls: list, linked: Optional[Env] = None) -> list:
         elif re.search(r"pattern interpolation", msg):
             report("E4117", f"{msg} (in {where})")
         elif re.search(r"malformed pattern", msg):
-            report("E1004", f"{msg} (in {where})")
+            report("E4119", f"{msg} (in {where})")
         else:
             report("E4001", f"{msg} (in {where})")   # never drop a resolution failure silently
 

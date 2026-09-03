@@ -7,7 +7,6 @@ use crate::semantics::*;
 use crate::subsume::subsumes;
 use num_bigint::BigInt;
 use num_traits::{FromPrimitive, Signed, ToPrimitive, Zero};
-use regex::Regex;
 use std::cell::{Cell, RefCell};
 use std::cmp::Ordering::{self, Equal, Greater, Less};
 use std::collections::{HashMap, HashSet};
@@ -658,7 +657,10 @@ impl Engine {
             ".." | "..<" => return Ok(Value::Range { lo: Box::new(l), hi: Box::new(r), excl: op == "..<" }),
             "matches" => {
                 let (Value::Str(s), Value::Pat(p)) = (&l, &r) else { return err("matches needs a string and a pattern") };
-                let re = Regex::new(&format!("^(?:{p})$")).or_else(|e| err(e.to_string()))?;
+                if let Some(bad) = pattern_error(p) {
+                    return err_code(format!("malformed pattern /{p}/: {bad}"), "E4119");
+                }
+                let re = compile_pattern(p).or_else(|e| err(e))?;
                 return Ok(Value::Bool(re.is_match(s)));
             }
             "==" => return Ok(Value::Bool(value_eq(&l, &r))),

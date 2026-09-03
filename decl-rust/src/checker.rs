@@ -437,7 +437,7 @@ pub fn check_module(decls: &[Decl], linked: Option<Rc<Env>>) -> Vec<Diag> {
         } else if msg.contains("pattern interpolation") {
             rep("E4117", format!("{msg} (in {where_})"));
         } else if msg.contains("malformed pattern") {
-            rep("E1004", format!("{msg} (in {where_})"));
+            rep("E4119", format!("{msg} (in {where_})"));
         } else {
             rep("E4001", format!("{msg} (in {where_})")); // never drop a resolution failure silently
         }

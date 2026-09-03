@@ -198,6 +198,7 @@ A diagnostic serializes as:
 | E4116 | range value in a data position (§4.6) |
 | E4117 | pattern interpolation `${T}` of a type neither string- nor integer-shaped (§3.6) |
 | E4118 | ambiguous member combination in an intersection: conflicting defaults, or duplicate derived members (§3.13) |
+| E4119 | malformed pattern body: outside the portable regular-expression core (§3.6) — the reason is one of a fixed set (`unterminated character class`, `nothing to repeat`, `unbalanced parenthesis`, `unsupported construct (?`, `unsupported escape \x`, …), identical across implementations |
 
 ### E5xxx — evaluation (§4.14, ch. 9)
 

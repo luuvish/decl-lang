@@ -274,10 +274,9 @@ export class Env {
       }
       case 'pattern': {
         const src = this.expandPattern(ast.re);
-        let re: RegExp;
-        try { re = new RegExp(`^(?:${src})$`); }
-        catch (e: any) { throw new Error(`malformed pattern /${ast.re}/: ${e.message}`); }
-        return { t: 'pattern', src, re };
+        const bad = patternError(src);
+        if (bad) throw new Error(`malformed pattern /${ast.re}/: ${bad}`);
+        return { t: 'pattern', src, re: compilePattern(src) };
       }
       case 'map': return { t: 'map', key: this.resolve(ast.key), val: this.resolve(ast.val) };
       case 'array': {
@@ -535,6 +534,107 @@ export class Env {
     }
     return merged;
   }
+}
+
+// ---------------- patterns: the portable core (§3.6) ----------------
+// A pattern body is validated against the specification's regular-
+// expression core — character literals and escapes, classes, `.`,
+// alternation, grouping, the repetition forms `* + ? {m} {m,} {m,n}`, and
+// the class escapes `\d \w \s` with their negations — with one fixed set of
+// messages, so every implementation reports the same text whatever
+// regular-expression engine it runs the accepted patterns on.
+// Returns the reason a body is outside the core, or null when it is inside.
+const PATTERN_PUNCT = '\\/.*+?()[]{}|^$-';
+export function patternError(src: string): string | null {
+  const n = src.length;
+  let i = 0, depth = 0, canRepeat = false;
+  // one escape: `\` at i; returns the code point it stands for (classes
+  // need it for ranges) or a reason
+  const escape = (): { cp: number } | { err: string } => {
+    if (i + 1 >= n) return { err: 'trailing backslash' };
+    const e = src[i + 1];
+    i += 2;
+    if ('dwsDWS'.includes(e)) return { cp: -1 };
+    if (e === 'n') return { cp: 10 };
+    if (e === 't') return { cp: 9 };
+    if (e === 'r') return { cp: 13 };
+    if (PATTERN_PUNCT.includes(e)) return { cp: e.codePointAt(0)! };
+    if (/[0-9]/.test(e)) return { err: `backreference \\${e} is not supported` };
+    return { err: `unsupported escape \\${e}` };
+  };
+  while (i < n) {
+    const c = src[i];
+    switch (c) {
+      case '\\': {
+        const r = escape();
+        if ('err' in r) return r.err;
+        canRepeat = true;
+        break;
+      }
+      case '[': {
+        i++;
+        if (src[i] === '^') i++;
+        let items = 0;
+        const item = (): { cp: number } | { err: string } => {
+          if (src[i] === '\\') return escape();
+          return { cp: src.codePointAt(i++)! };
+        };
+        for (;;) {
+          if (i >= n) return 'unterminated character class';
+          if (src[i] === ']') { i++; break; }
+          const lo = item();
+          if ('err' in lo) return lo.err;
+          if (src[i] === '-' && i + 1 < n && src[i + 1] !== ']') {
+            i++;
+            const hi = item();
+            if ('err' in hi) return hi.err;
+            if (lo.cp < 0 || hi.cp < 0 || lo.cp > hi.cp) return 'invalid range in character class';
+          }
+          items++;
+        }
+        if (items === 0) return 'empty character class';
+        canRepeat = true;
+        break;
+      }
+      case ']': return 'unbalanced bracket';
+      case '(':
+        i++;
+        if (src[i] === '?') {
+          if (src[i + 1] === ':') i += 2;
+          else return 'unsupported construct (?';
+        }
+        depth++;
+        canRepeat = false;
+        break;
+      case ')':
+        if (depth === 0) return 'unbalanced parenthesis';
+        depth--; i++;
+        canRepeat = true;
+        break;
+      case '|': i++; canRepeat = false; break;
+      case '*': case '+': case '?':
+        if (!canRepeat) return 'nothing to repeat';
+        i++;
+        canRepeat = false;
+        break;
+      case '{': {
+        if (!canRepeat) return 'nothing to repeat';
+        const m = /^\{([0-9]+)(?:(,)([0-9]*))?\}/.exec(src.slice(i));
+        if (!m) return 'malformed repetition';
+        if (m[3] && BigInt(m[3]) < BigInt(m[1])) return 'malformed repetition';
+        i += m[0].length;
+        canRepeat = false;
+        break;
+      }
+      case '}': return 'malformed repetition';
+      case '^': case '$': i++; canRepeat = false; break;
+      default: i++; canRepeat = true;
+    }
+  }
+  return depth > 0 ? 'unbalanced parenthesis' : null;
+}
+export function compilePattern(src: string): RegExp {
+  return new RegExp(`^(?:${src})$`);
 }
 
 // ---------------- helpers ----------------

@@ -8,7 +8,6 @@ use crate::ast::*;
 use crate::semantics::*;
 use crate::subsume::subsumes;
 use num_bigint::BigInt;
-use regex::Regex;
 use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};
 use std::rc::Rc;
@@ -369,9 +368,15 @@ pub fn require_val(cx: &Ctx, e: &Expr, ty: Ty, what: &str) -> Ty {
 pub fn infer(cx: &Ctx, e: &Rc<Expr>) -> Ty {
     match &**e {
         Expr::Lit(v) => tyv(Some(ty(RTk::Lit(v.clone())))),
-        Expr::Pattern(src) => match Regex::new(&format!("^(?:{src})$")) {
-            Ok(re) => tyv(Some(ty(RTk::Pattern { src: src.clone(), re }))),
-            Err(_) => unk(),
+        Expr::Pattern(src) => match pattern_error(src) {
+            Some(bad) => {
+                cx.report("E4119", format!("malformed pattern /{src}/: {bad}"));
+                unk()
+            }
+            None => match compile_pattern(src) {
+                Ok(re) => tyv(Some(ty(RTk::Pattern { src: src.clone(), re }))),
+                Err(_) => unk(),
+            },
         },
         Expr::UnitLit { unit, .. } => match cx.env.unit_info(unit) {
             Ok((key, _)) => tyv(Some(ty(RTk::Quantity(key)))),

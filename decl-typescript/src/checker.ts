@@ -185,7 +185,7 @@ export function checkModule(decls: Decl[], linked?: Env): Diag[] {
     else if (/outside parameter/.test(msg)) report('E4023', `${msg} (in ${where})`);
     else if (/non-constant value argument/.test(msg)) report('E4021', `${msg} (in ${where})`);
     else if (/pattern interpolation/.test(msg)) report('E4117', `${msg} (in ${where})`);
-    else if (/malformed pattern/.test(msg)) report('E1004', `${msg} (in ${where})`);
+    else if (/malformed pattern/.test(msg)) report('E4119', `${msg} (in ${where})`);
     else report('E4001', `${msg} (in ${where})`);   // never drop a resolution failure silently
   };
   const resolveOrReport = (t: TypeAst | undefined, where: string): RT | null => {

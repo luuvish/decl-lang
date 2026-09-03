@@ -1,0 +1,10 @@
+// every construct of the portable regular-expression core (§3.6)
+type Core = /^(?:[a-z_][a-z0-9_-]*|\d{1,3}(\.\d{1,3}){3})(?:\/[\w.-]+)*\s?$/
+type Escapes = /[\[\]\\\/]+\.\*\+\?\(\)\{\}\|\^\$\-\t\n/
+type Bounded = /x{2}y{2,}z{2,4}/
+type T = {
+    core: Core
+    bounded: Bounded
+    const ok = "10.0.0.1/eth0" matches /(?:[a-z_][a-z0-9_-]*|\d{1,3}(\.\d{1,3}){3})(?:\/[\w.-]+)*/
+}
+output t: T = { core: "svc-a/main.v2", bounded: "xxyyyzz" }

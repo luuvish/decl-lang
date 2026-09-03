@@ -3,7 +3,7 @@
 import {
   ABSENT, DeferSig, Env, EvalErr, Taint,
   cmpPath, isArr, isClo, isMap, isQ, isRange, isRec, isRef, parsePath, pathStr, valueEq,
-  keyOfVec, vecCombine, vecOfKey,
+  keyOfVec, vecCombine, vecOfKey, patternError, compilePattern,
 } from './semantics.ts';
 import type { Diag, RecInst, RT, Seg, Slot } from './semantics.ts';
 import type { Expr, TemplateParts } from './ast.ts';
@@ -348,7 +348,9 @@ export class Engine {
     if (op === '..' || op === '..<') return { __range: true, lo: l, hi: r, excl: op === '..<' };
     if (op === 'matches') {
       if (typeof l !== 'string' || !r || !r.__pat) throw new EvalErr('matches needs a string and a pattern');
-      return new RegExp(`^(?:${r.re})$`).test(l);
+      const bad = patternError(r.re);
+      if (bad) throw new EvalErr(`malformed pattern /${r.re}/: ${bad}`, 'E4119');
+      return compilePattern(r.re).test(l);
     }
     if (op === '==') return valueEq(l, r);
     if (op === '!=') return !valueEq(l, r);

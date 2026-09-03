@@ -4,7 +4,7 @@
 // a form whose type cannot be determined yields `unknown` (rt: null) and
 // suppresses downstream judgments rather than guessing.
 import type { Expr, TypeAst } from './ast.ts';
-import { Env, keyOfVec, vecCombine, vecOfKey } from './semantics.ts';
+import { Env, keyOfVec, vecCombine, vecOfKey, patternError, compilePattern } from './semantics.ts';
 import type { RT } from './semantics.ts';
 import { subsumes } from './subsume.ts';
 
@@ -221,7 +221,11 @@ export function requireVal(cx: ICtx, e: Expr, ty: Ty, what: string): Ty {
 export function infer(cx: ICtx, e: Expr): Ty {
   switch (e.e) {
     case 'lit': return { rt: { t: 'lit', v: e.v }, abs: false };
-    case 'pattern': return { rt: { t: 'pattern', src: e.re, re: new RegExp(`^(?:${e.re})$`) }, abs: false };
+    case 'pattern': {
+      const bad = patternError(e.re);
+      if (bad) { cx.report('E4119', `malformed pattern /${e.re}/: ${bad}`); return UNK; }
+      return { rt: { t: 'pattern', src: e.re, re: compilePattern(e.re) }, abs: false };
+    }
     case 'unitlit': {
       try { return { rt: { t: 'quantity', dim: cx.env.unitInfo(e.unit).key }, abs: false }; }
       catch (err: any) { cx.report('E4073', err.message); return UNK; }

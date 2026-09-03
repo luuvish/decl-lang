@@ -1,0 +1,5 @@
+// @expect-phase: checking
+// @expect-error: E4119
+// @expect-message: nothing to repeat
+// the right operand of `matches` is a pattern literal, checked like a type
+const bad = "x" matches /*x/

@@ -1,0 +1,7 @@
+// @expect-phase: checking
+// @expect-error: E4119
+// @expect-message: unsupported construct
+// lookaround is outside the portable core (§3.6): patterns denote regular languages
+type P = /a(?=b)/
+type T = { p: P }
+output t: T = { p: "ab" }

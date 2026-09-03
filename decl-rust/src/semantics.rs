@@ -789,7 +789,10 @@ impl Env {
             }
             TypeAst::Pattern(src) => {
                 let expanded = self.expand_pattern(src)?;
-                let re = Regex::new(&format!("^(?:{expanded})$")).map_err(|e| format!("malformed pattern /{src}/: {e}"))?;
+                if let Some(bad) = pattern_error(&expanded) {
+                    return Err(format!("malformed pattern /{src}/: {bad}"));
+                }
+                let re = compile_pattern(&expanded).map_err(|e| format!("malformed pattern /{src}/: {e}"))?;
                 ty(RTk::Pattern { src: expanded, re })
             }
             TypeAst::Map { key, val } => ty(RTk::Map { key: self.resolve(key, None)?, val: self.resolve(val, None)? }),
@@ -1271,6 +1274,172 @@ pub fn subst_expr(e: &Rc<Expr>, values: &HashMap<String, Value>) -> Rc<Expr> {
 }
 
 // ---------------- helpers ----------------
+// ---------------- patterns: the portable core (§3.6) ----------------
+// A pattern body is validated against the specification's regular-
+// expression core with one fixed set of messages, so every implementation
+// reports the same text whatever engine runs the accepted patterns.
+// Returns the reason a body is outside the core, or None when it is inside.
+const PATTERN_PUNCT: &str = "\\/.*+?()[]{}|^$-";
+fn pattern_escape(cs: &[char], i: &mut usize) -> Result<i64, String> {
+    if *i + 1 >= cs.len() {
+        return Err("trailing backslash".into());
+    }
+    let e = cs[*i + 1];
+    *i += 2;
+    if "dwsDWS".contains(e) {
+        return Ok(-1);
+    }
+    match e {
+        'n' => return Ok(10),
+        't' => return Ok(9),
+        'r' => return Ok(13),
+        _ => {}
+    }
+    if PATTERN_PUNCT.contains(e) {
+        return Ok(e as i64);
+    }
+    if e.is_ascii_digit() {
+        return Err(format!("backreference \\{e} is not supported"));
+    }
+    Err(format!("unsupported escape \\{e}"))
+}
+pub fn pattern_error(src: &str) -> Option<String> {
+    let cs: Vec<char> = src.chars().collect();
+    let n = cs.len();
+    let (mut i, mut depth, mut can_repeat) = (0usize, 0i32, false);
+    while i < n {
+        match cs[i] {
+            '\\' => {
+                if let Err(r) = pattern_escape(&cs, &mut i) {
+                    return Some(r);
+                }
+                can_repeat = true;
+            }
+            '[' => {
+                i += 1;
+                if i < n && cs[i] == '^' {
+                    i += 1;
+                }
+                let mut items = 0;
+                loop {
+                    if i >= n {
+                        return Some("unterminated character class".into());
+                    }
+                    if cs[i] == ']' {
+                        i += 1;
+                        break;
+                    }
+                    let lo = if cs[i] == '\\' {
+                        match pattern_escape(&cs, &mut i) { Ok(v) => v, Err(r) => return Some(r) }
+                    } else {
+                        let v = cs[i] as i64;
+                        i += 1;
+                        v
+                    };
+                    if i < n && cs[i] == '-' && i + 1 < n && cs[i + 1] != ']' {
+                        i += 1;
+                        let hi = if cs[i] == '\\' {
+                            match pattern_escape(&cs, &mut i) { Ok(v) => v, Err(r) => return Some(r) }
+                        } else {
+                            let v = cs[i] as i64;
+                            i += 1;
+                            v
+                        };
+                        if lo < 0 || hi < 0 || lo > hi {
+                            return Some("invalid range in character class".into());
+                        }
+                    }
+                    items += 1;
+                }
+                if items == 0 {
+                    return Some("empty character class".into());
+                }
+                can_repeat = true;
+            }
+            ']' => return Some("unbalanced bracket".into()),
+            '(' => {
+                i += 1;
+                if i < n && cs[i] == '?' {
+                    if i + 1 < n && cs[i + 1] == ':' {
+                        i += 2;
+                    } else {
+                        return Some("unsupported construct (?".into());
+                    }
+                }
+                depth += 1;
+                can_repeat = false;
+            }
+            ')' => {
+                if depth == 0 {
+                    return Some("unbalanced parenthesis".into());
+                }
+                depth -= 1;
+                i += 1;
+                can_repeat = true;
+            }
+            '|' => {
+                i += 1;
+                can_repeat = false;
+            }
+            '*' | '+' | '?' => {
+                if !can_repeat {
+                    return Some("nothing to repeat".into());
+                }
+                i += 1;
+                can_repeat = false;
+            }
+            '{' => {
+                if !can_repeat {
+                    return Some("nothing to repeat".into());
+                }
+                let mut j = i + 1;
+                let start = j;
+                while j < n && cs[j].is_ascii_digit() {
+                    j += 1;
+                }
+                if j == start {
+                    return Some("malformed repetition".into());
+                }
+                let m: String = cs[start..j].iter().collect();
+                let mut hi: Option<String> = None;
+                if j < n && cs[j] == ',' {
+                    j += 1;
+                    let s2 = j;
+                    while j < n && cs[j].is_ascii_digit() {
+                        j += 1;
+                    }
+                    if j > s2 {
+                        hi = Some(cs[s2..j].iter().collect());
+                    }
+                }
+                if j >= n || cs[j] != '}' {
+                    return Some("malformed repetition".into());
+                }
+                if let Some(h) = hi {
+                    if h.parse::<BigInt>().unwrap_or_default() < m.parse::<BigInt>().unwrap_or_default() {
+                        return Some("malformed repetition".into());
+                    }
+                }
+                i = j + 1;
+                can_repeat = false;
+            }
+            '}' => return Some("malformed repetition".into()),
+            '^' | '$' => {
+                i += 1;
+                can_repeat = false;
+            }
+            _ => {
+                i += 1;
+                can_repeat = true;
+            }
+        }
+    }
+    if depth > 0 { Some("unbalanced parenthesis".into()) } else { None }
+}
+pub fn compile_pattern(src: &str) -> Result<Regex, String> {
+    Regex::new(&format!("^(?:{src})$")).map_err(|e| e.to_string())
+}
+
 pub fn path_str(segs: &[Seg], rel_root: Option<&str>) -> String {
     let id_re = Regex::new(r"^[_A-Za-z][_A-Za-z0-9]*$").unwrap();
     let mut out = String::new();
