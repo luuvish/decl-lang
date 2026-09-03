@@ -35,27 +35,53 @@ for (let i = 0; i < args.length; i++) {
 }
 
 // the documents named by --input, each bound to the module that declares
-// its input (§10): `name=doc.json`
-function inputBinds(modules: { env: any }[]): { module?: any; input: string; raw: any }[] {
-  return inputFlags.map(spec => {
+// its input (§10): `name=doc.json`. A usage error (bad spec, unknown input)
+// exits 2 at once; a document that cannot be read or is not well-formed
+// JSON is one E6004 diagnostic against the entry file (null: exit 1)
+function inputBinds(modules: { env: any }[], entryFile: string): { module?: any; input: string; raw: any }[] | null {
+  const binds: { module?: any; input: string; raw: any }[] = [];
+  for (const spec of inputFlags) {
     const eq = spec.indexOf('=');
     if (eq < 0) { console.error(`--input expects name=doc.json, got ${spec}`); process.exit(2); }
     const name = spec.slice(0, eq), file = spec.slice(eq + 1);
     const module = modules.find(m => m.env.inputs.has(name));
     if (!module) { console.error(`no input named ${name}`); process.exit(2); }
-    return { module, input: name, raw: readJson(readFileSync(file, 'utf8')) };
-  });
+    let text: string;
+    try { text = readFileSync(file, 'utf8'); }
+    catch { printDiag(entryFile, { severity: 'error', code: 'E6004', message: `bound document cannot be read: ${file}`, path: name }); return null; }
+    let raw: any;
+    try { raw = readJson(text); }
+    catch { printDiag(entryFile, { severity: 'error', code: 'E6004', message: `bound document is not well-formed JSON: ${file}`, path: name }); return null; }
+    binds.push({ module, input: name, raw });
+  }
+  return binds;
 }
 
 // --json: collect diagnostics as objects and emit one JSON array on
 // stdout at exit (the §12 machine-readable report), instead of lines
 const jsonMode = !!flags.get('json');
-const collected: (Diag & { file: string })[] = [];
+const collected: Record<string, string>[] = [];
 let evalOut: string | null = null;   // evaluate's canonical JSON, captured in --json mode
+// one diagnostic, in the report's field order (§12.2): file, code, id,
+// severity, message, path — absent fields omitted, so every implementation
+// emits the same bytes
+const diagJson = (file: string, d: Diag): Record<string, string> => {
+  const o: Record<string, string> = { file };
+  if (d.code) o.code = d.code;
+  if (d.id) o.id = d.id;
+  o.severity = d.severity;
+  o.message = d.message;
+  o.path = d.path;
+  return o;
+};
 const printDiag = (file: string, d: Diag) => {
-  if (jsonMode) { collected.push({ file, ...d }); return; }
+  if (jsonMode) { collected.push(diagJson(file, d)); return; }
   console.error(`${file}: ${d.severity}${d.code ? ` [${d.code}]` : ''}${d.id ? ` ${d.id}` : ''}${d.path ? ` at ${d.path}` : ''}: ${d.message}`);
 };
+// the file a diagnostic is reported against: the entry module by the path
+// given on the command line, any other module by its absolute path
+const fileTag = (given: string, entryPath: string | undefined, modulePath: string) =>
+  modulePath === entryPath ? given : modulePath;
 
 function openUniverse(file: string) {
   const abs = absPath(file);
@@ -72,10 +98,10 @@ async function main(): Promise<number> {
       if (!positional.length) return usage();
       let bad = 0;
       for (const f of positional) {
-        const { modules, diags } = openUniverse(f);
+        const { modules, entry, diags } = openUniverse(f);
         for (const d of diags) { printDiag(f, d); bad++; }
         for (const m of modules) {
-          for (const d of checkModule(m.decls, m.env)) { printDiag(m.path, d); bad++; }
+          for (const d of checkModule(m.decls, m.env)) { printDiag(fileTag(f, entry?.path, m.path), d); bad++; }
         }
       }
       if (bad === 0) console.error(`ok: ${positional.length} entry file(s) check clean`);
@@ -88,9 +114,11 @@ async function main(): Promise<number> {
       if (diags.length || !entry) { diags.forEach(d => printDiag(f, d)); return 1; }
       let bad = 0;
       for (const m of modules)
-        for (const d of checkModule(m.decls, m.env)) { printDiag(m.path, d); bad++; }
+        for (const d of checkModule(m.decls, m.env)) { printDiag(fileTag(f, entry.path, m.path), d); bad++; }
       if (bad) return 1;
-      const { eng, diags: ed } = runUniverse(modules, entry, inputBinds(modules));
+      const binds = inputBinds(modules, f);
+      if (!binds) return 1;
+      const { eng, diags: ed } = runUniverse(modules, entry, binds);
       const errs = ed.filter(d => d.severity === 'error');
       ed.forEach(d => printDiag(f, d));
       if (errs.length) return 1;
@@ -134,7 +162,9 @@ async function main(): Promise<number> {
       if (!checks.length) {
         if (inputFlags.length) {
           const { modules, entry } = openUniverse(target);
-          const { diags: ed } = runUniverse(modules, entry!, inputBinds(modules));
+          const binds = inputBinds(modules, target);
+          if (!binds) return 1;
+          const { diags: ed } = runUniverse(modules, entry!, binds);
           diags = [...diags, ...ed];
           ed.forEach(d => printDiag(target, d));
         } else {

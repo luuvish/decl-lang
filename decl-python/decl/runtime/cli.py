@@ -17,9 +17,28 @@ from .pipeline import run_pipeline
 from .semantics import read_json
 
 
+def _diag_json(file: str, d: dict) -> dict:
+    """one diagnostic in the report's field order (§12.2): file, code, id,
+    severity, message, path — absent fields omitted, so every implementation
+    emits the same bytes"""
+    o: dict = {"file": file}
+    if d.get("code"):
+        o["code"] = d["code"]
+    if d.get("id"):
+        o["id"] = d["id"]
+    o["severity"] = d["severity"]
+    o["message"] = d["message"]
+    o["path"] = d.get("path", "")
+    return o
+
+
+def _dumps(v) -> str:
+    return json.dumps(v, ensure_ascii=False, separators=(",", ":"), default=str)
+
+
 def _print_diag(file: str, d: dict, collected, json_mode: bool) -> None:
     if json_mode:
-        collected.append({"file": file, **d})
+        collected.append(_diag_json(file, d))
         return
     code = f" [{d['code']}]" if d.get("code") else ""
     id_ = f" {d['id']}" if d.get("id") else ""
@@ -50,7 +69,11 @@ class CliError(Exception):
 
 def input_binds(modules: list, specs: list[str]) -> list:
     """The documents named by --input, each bound to the module that declares
-    its input (§10): `name=doc.json`."""
+    its input (§10): `name=doc.json`. A usage error (bad spec, unknown input)
+    is a CliError with status 2; a document that cannot be read or is not
+    well-formed JSON is a CliError carrying one E6004 diagnostic (status 1)."""
+    def doc_error(name: str, message: str) -> CliError:
+        return CliError("", 1, [{"severity": "error", "code": "E6004", "message": message, "path": name}])
     binds: list = []
     for spec in specs:
         eq = spec.find("=")
@@ -60,8 +83,16 @@ def input_binds(modules: list, specs: list[str]) -> list:
         module = next((m for m in modules if name in m.env.inputs), None)
         if module is None:
             raise CliError(f"no input named {name}", 2)
-        with open(file, encoding="utf-8") as f:
-            binds.append({"module": module, "input": name, "raw": read_json(f.read())})
+        try:
+            with open(file, encoding="utf-8") as f:
+                text = f.read()
+        except OSError:
+            raise doc_error(name, f"bound document cannot be read: {file}")
+        try:
+            raw = read_json(text)
+        except Exception:
+            raise doc_error(name, f"bound document is not well-formed JSON: {file}")
+        binds.append({"module": module, "input": name, "raw": raw})
     return binds
 
 
@@ -72,7 +103,7 @@ def evaluate_file(path: str, root: str | None, input_specs: list[str] | None = N
     if r["diags"] or r["entry"] is None:
         return 1, None, r["diags"]
     entry = r["entry"]
-    checks = [dict(d, file=m.path) for m in r["modules"] for d in check_module(m.decls, m.env)]
+    checks = [dict(d, file=_file_tag(path, entry, m.path)) for m in r["modules"] for d in check_module(m.decls, m.env)]
     if checks:
         return 1, None, checks
     u = run_universe(r["modules"], entry, input_binds(r["modules"], input_specs or []))
@@ -113,6 +144,12 @@ def validate_file(path: str, input_specs: list[str] | None = None):
     return 0, diags
 
 
+def _file_tag(given: str, entry, module_path: str) -> str:
+    """the file a diagnostic is reported against: the entry module by the
+    path given on the command line, any other module by its absolute path"""
+    return given if entry is not None and module_path == entry.path else module_path
+
+
 def check_files(paths: list[str]) -> list:
     """`decl check`: load each entry (following imports), report load
     diagnostics and every module's static findings, tagged with their file."""
@@ -121,7 +158,7 @@ def check_files(paths: list[str]) -> list:
         r = open_universe(f)
         out += [dict(d, file=f) for d in r["diags"]]
         for m in r["modules"]:
-            out += [dict(d, file=m.path) for d in check_module(m.decls, m.env)]
+            out += [dict(d, file=_file_tag(f, r["entry"], m.path)) for d in check_module(m.decls, m.env)]
     return out
 
 
@@ -173,7 +210,7 @@ def main(argv: list[str]) -> int:
         if not diags:
             print(f"ok: {len(pos)} entry file(s) check clean", file=sys.stderr)
         if json_mode:
-            print(json.dumps(collected, ensure_ascii=False, default=str))
+            print(_dumps(collected))
         return 1 if diags else 0
     if cmd == "fmt":
         if not pos:
@@ -207,13 +244,13 @@ def main(argv: list[str]) -> int:
             if e.status == 2:
                 print(e, file=sys.stderr)
                 return 2   # a usage error: no report
-            code, text, diags, note = e.status, None, e.diagnostics, str(e)
+            code, text, diags, note = e.status, None, e.diagnostics, (str(e) or None)
         for d in diags:
-            _print_diag(pos[0], d, collected, json_mode)
+            _print_diag(d.get("file", pos[0]), {k: v for k, v in d.items() if k != "file"}, collected, json_mode)
         if note is not None:
             print(note, file=sys.stderr)
         if json_mode:
-            print(f'{{"ok":{"true" if code == 0 else "false"},"value":{text if text is not None else "null"},"diagnostics":{json.dumps(collected, ensure_ascii=False, default=str)}}}')
+            print(f'{{"ok":{"true" if code == 0 else "false"},"value":{text if text is not None else "null"},"diagnostics":{_dumps(collected)}}}')
         elif text is not None:
             print(text)
         return code
@@ -234,15 +271,17 @@ def main(argv: list[str]) -> int:
         try:
             parse_errors, diags = validate_file(target, input_flags)
         except CliError as e:
-            print(e, file=sys.stderr)
-            return e.status
+            if e.status == 2:
+                print(e, file=sys.stderr)
+                return 2   # a usage error: no report
+            parse_errors, diags = 0, e.diagnostics
         if parse_errors:
             print(f"{target}: {parse_errors} parse error(s)", file=sys.stderr)
             return 1
         for d in diags:
             _print_diag(target, d, collected, json_mode)
         if json_mode:
-            print(json.dumps(collected, ensure_ascii=False, default=str))
+            print(_dumps(collected))
         err_codes = [d.get("code") or "" for d in diags if d["severity"] == "error"]
         expect = flags.get("expect-errors")
         if isinstance(expect, str):

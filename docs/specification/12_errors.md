@@ -220,7 +220,7 @@ A diagnostic serializes as:
 | E6001 | `assert` failed (error severity — user or default diagnostic) |
 | E6002 | dangling reference: path does not resolve, or is non-canonical (§7.5) |
 | E6003 | reference target root not in the evaluation universe |
-| E6004 | bound document is not well-formed JSON (§10.2) |
+| E6004 | bound document is not well-formed JSON, or cannot be read (§10.2) |
 
 ### Warnings and information
 

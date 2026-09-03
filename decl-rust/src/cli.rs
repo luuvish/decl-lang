@@ -51,29 +51,32 @@ fn print_diag(file: &str, d: &Diag, json: bool, collected: &mut Vec<String>) {
 /// the documents named by `--input`, each bound to the module that
 /// declares its input (§10): `name=doc.json`; Err carries the exit code
 /// of a usage error (already printed)
-pub fn input_binds(modules: &[Rc<Module>], specs: &[String]) -> Result<Vec<Bind>, i32> {
+/// the documents named by --input, each bound to the module that declares
+/// its input (§10): `name=doc.json`. A usage error (bad spec, unknown input)
+/// is printed and returned as exit 2; a document that cannot be read or is
+/// not well-formed JSON is returned as one E6004 diagnostic (exit 1)
+pub fn input_binds(modules: &[Rc<Module>], specs: &[String]) -> Result<Vec<Bind>, (i32, Option<Diag>)> {
+    let doc_error = |name: &str, message: String| -> (i32, Option<Diag>) {
+        (1, Some(Diag { severity: "error".into(), id: None, message, path: name.to_string(), code: Some("E6004".into()) }))
+    };
     let mut binds = vec![];
     for spec in specs {
         let Some((name, file)) = spec.split_once('=') else {
             eprintln!("--input expects name=doc.json, got {spec}");
-            return Err(2);
+            return Err((2, None));
         };
         let Some(module) = modules.iter().find(|m| m.env.inputs.borrow().contains_key(name)) else {
             eprintln!("no input named {name}");
-            return Err(2);
+            return Err((2, None));
         };
         let text = match std::fs::read_to_string(file) {
             Ok(t) => t,
-            Err(e) => {
-                eprintln!("{file}: {e}");
-                return Err(1);
-            }
+            Err(_) => return Err(doc_error(name, format!("bound document cannot be read: {file}"))),
         };
         let raw = match read_json(&text) {
             Ok(v) => v,
             Err(_) => {
-                eprintln!("{file}: bad JSON");
-                return Err(1);
+                return Err(doc_error(name, format!("bound document is not well-formed JSON: {file}")));
             }
         };
         binds.push(Bind { module: Some(module.clone()), input: name.to_string(), raw });
@@ -85,26 +88,29 @@ pub fn input_binds(modules: &[Rc<Module>], specs: &[String]) -> Result<Vec<Bind>
 /// documents, evaluate, and emit every output — or the one root `--root`
 /// names (an output, or an input bound by --input / demanded through
 /// its fallback)
-pub fn evaluate(file: &str, root: Option<&str>, inputs: &[String]) -> (i32, Option<String>, Vec<Diag>) {
+/// `decl evaluate`: (exit code, the serialized value, diagnostics tagged
+/// with the file each is reported against)
+pub fn evaluate(file: &str, root: Option<&str>, inputs: &[String]) -> (i32, Option<String>, Vec<(String, Diag)>) {
+    let tag = |ds: Vec<Diag>| -> Vec<(String, Diag)> { ds.into_iter().map(|d| (file.to_string(), d)).collect() };
     let r = open_universe(file);
-    let Some(entry) = r.entry else { return (1, None, r.diags) };
+    let Some(entry) = r.entry else { return (1, None, tag(r.diags)) };
     if !r.diags.is_empty() {
-        return (1, None, r.diags);
+        return (1, None, tag(r.diags));
     }
     let checks: Vec<(String, Diag)> = r.modules.iter().flat_map(|m| {
-        let path = m.path.display().to_string();
+        let path = file_tag(file, Some(entry.path.as_path()), &m.path);
         check_module(&m.decls, Some(m.env.clone())).into_iter().map(move |d| (path.clone(), d)).collect::<Vec<_>>()
     }).collect();
     if !checks.is_empty() {
-        return (1, None, checks.into_iter().map(|(_, d)| d).collect());
+        return (1, None, checks);
     }
     let binds = match input_binds(&r.modules, inputs) {
         Ok(b) => b,
-        Err(code) => return (code, None, vec![]),
+        Err((code, diag)) => return (code, None, diag.into_iter().map(|d| (file.to_string(), d)).collect()),
     };
     let (eng, diags) = run_universe(&r.modules, &entry, binds);
     if diags.iter().any(|d| d.severity == "error") {
-        return (1, None, diags);
+        return (1, None, tag(diags));
     }
     let names: Vec<String> = match root {
         Some(n) => vec![n.to_string()],
@@ -121,12 +127,12 @@ pub fn evaluate(file: &str, root: Option<&str>, inputs: &[String]) -> (i32, Opti
         pieces.push(format!("{}:{}", json_str(n), eng.serialize(&v, n)));
     }
     if missing > 0 {
-        return (1, None, diags);
+        return (1, None, tag(diags));
     }
     if let (Some(n), 1) = (root, names.len()) {
-        return (0, Some(eng.serialize(&entry.env.root(n).unwrap(), n)), diags);
+        return (0, Some(eng.serialize(&entry.env.root(n).unwrap(), n)), tag(diags));
     }
-    (0, Some(format!("{{{}}}", pieces.join(","))), diags)
+    (0, Some(format!("{{{}}}", pieces.join(","))), tag(diags))
 }
 
 /// static checks, then evaluation (binding the `--input` documents);
@@ -143,7 +149,11 @@ pub fn validate_file(file: &str, inputs: &[String]) -> Result<Vec<Diag>, i64> {
         if !inputs.is_empty() {
             let r = open_universe(file);
             if let Some(entry) = r.entry {
-                let binds = input_binds(&r.modules, inputs).map_err(|code| -(code as i64))?;
+                let binds = match input_binds(&r.modules, inputs) {
+                    Ok(b) => b,
+                    Err((_, Some(d))) => return Ok(vec![d]),
+                    Err((code, None)) => return Err(-(code as i64)),
+                };
                 diags.extend(run_universe(&r.modules, &entry, binds).1);
             }
         } else {
@@ -161,11 +171,17 @@ pub fn check_files(paths: &[String]) -> Vec<(String, Diag)> {
         let r = open_universe(f);
         out.extend(r.diags.into_iter().map(|d| (f.clone(), d)));
         for m in &r.modules {
-            let path = m.path.display().to_string();
+            let path = file_tag(f, r.entry.as_ref().map(|e| e.path.as_path()), &m.path);
             out.extend(check_module(&m.decls, Some(m.env.clone())).into_iter().map(|d| (path.clone(), d)));
         }
     }
     out
+}
+
+/// the file a diagnostic is reported against: the entry module by the path
+/// given on the command line, any other module by its absolute path
+fn file_tag(given: &str, entry: Option<&Path>, module: &Path) -> String {
+    if entry == Some(module) { given.to_string() } else { module.display().to_string() }
 }
 
 
@@ -216,8 +232,8 @@ pub fn main(args: Vec<String>) -> i32 {
         "evaluate" => {
             let Some(f) = pos.first() else { return usage() };
             let (code, text, diags) = evaluate(f, flags.get("root").map(|s| s.as_str()), &input_flags);
-            for d in &diags {
-                print_diag(f, d, json, &mut collected);
+            for (file, d) in &diags {
+                print_diag(file, d, json, &mut collected);
             }
             if json {
                 println!("{{\"ok\":{},\"value\":{},\"diagnostics\":[{}]}}", code == 0, text.clone().unwrap_or_else(|| "null".into()), collected.join(","));

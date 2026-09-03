@@ -755,13 +755,16 @@ export function readJson(src: string): any {
     if (src.startsWith('true', i)) { i += 4; return true; }
     if (src.startsWith('false', i)) { i += 5; return false; }
     if (src.startsWith('null', i)) { i += 4; return null; }
-    let m = /^-?(?:0|[1-9][0-9]*)(\.[0-9]+)?([eE][-+]?[0-9]+)?/.exec(src.slice(i))!;
+    let m = /^-?(?:0|[1-9][0-9]*)(\.[0-9]+)?([eE][-+]?[0-9]+)?/.exec(src.slice(i));
+    if (!m) throw new EvalErr(`bad JSON at ${i}`);
     i += m[0].length;
     return m[1] || m[2] ? parseFloat(m[0]) : BigInt(m[0]);
   }
   function str(): string {
+    if (src[i] !== '"') throw new EvalErr(`bad JSON at ${i}`);
     let j = i + 1, s = '';
     while (src[j] !== '"') {
+      if (j >= src.length) throw new EvalErr(`bad JSON at ${j}`);
       if (src[j] === '\\') {
         const e = src[j + 1];
         s += e === 'n' ? '\n' : e === 't' ? '\t' : e === 'u' ? String.fromCharCode(parseInt(src.slice(j + 2, j + 6), 16)) : e;
@@ -771,5 +774,6 @@ export function readJson(src: string): any {
     i = j + 1; return s;
   }
   const v = val(); ws();
+  if (i < src.length) throw new EvalErr('bad JSON: trailing characters');
   return v;
 }

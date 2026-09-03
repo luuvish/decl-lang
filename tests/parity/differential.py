@@ -2,18 +2,18 @@
 
 Decl ships a TypeScript reference implementation (decl-typescript), a Rust
 runtime (decl-rust), and a Python runtime (decl-python). They must be
-indistinguishable: over every module in the fixture corpus (valid and
-invalid), the documentation examples, and the domain examples, each
-implementation's `check --json` must report the same static diagnostics
-(codes and messages); over every module with outputs, `evaluate --json`
-must carry the same `ok`, byte-identical canonical output, and the same
-diagnostics; and binding documents to input roots (`validate --input`)
-must yield the same root-cause diagnostics; `fmt` must produce the same
-bytes for every parseable module; packages (manifests, the resolver, the
-lock) must report the same diagnostics; and the language servers must
-answer one scripted editor session identically. The reference is the
-oracle; both natives are diffed against it, which makes the three
-pairwise identical.
+indistinguishable at the command line: for every module in the fixture
+corpus (valid and invalid), the documentation examples, and the domain
+examples, `check` and `evaluate` — with and without `--json` — must produce
+the same exit code, the same standard output (the diagnostic report, the
+serialized values), and the same standard error, byte for byte; binding
+documents to input roots (`validate --input`, `evaluate --input`) likewise;
+`fmt` must produce the same bytes for every parseable module; packages
+(manifests, the resolver, the lock) the same reports; and the language
+servers must answer one scripted editor session identically. The reference
+is the oracle; both natives are diffed against it, which makes the three
+pairwise identical. The only normalization is of temporary directories the
+harness itself creates.
 
     python tests/parity/differential.py                 # rust and python vs reference
     python tests/parity/differential.py --only rust     # one runtime
@@ -51,37 +51,6 @@ if only in (None, "python"):
 if not RUNTIMES:
     sys.exit(f"unknown runtime {only!r} (rust | python)")
 
-
-def run(cmd: list[str], cwd: Path | None = None) -> str:
-    r = subprocess.run(cmd, capture_output=True, text=True, check=False, cwd=str(cwd) if cwd else None)
-    return r.stdout.strip() or ("" if r.returncode == 0 else f"<<exit {r.returncode}: {r.stderr[-300:].strip()}>>")
-
-
-def report(cmd_prefix: list[str], args: list[str]) -> dict:
-    """{ok, value, diagnostics} of `evaluate --json`, or a marker when the run produced no report"""
-    out = run(cmd_prefix + args, cwd=ROOT)
-    try:
-        return json.loads(out)
-    except json.JSONDecodeError:
-        return {"ok": None, "value": None, "diagnostics": [], "stderr": out[-300:]}
-
-
-def diagnostics(cmd_prefix: list[str], args: list[str]) -> list:
-    out = run(cmd_prefix + args, cwd=ROOT)
-    try:
-        return json.loads(out)
-    except json.JSONDecodeError:
-        return [{"code": "<no report>", "message": out[-300:]}]
-
-
-def codes(diags: list) -> list:
-    return sorted((d.get("code") or "", d.get("id") or "", d.get("path") or "") for d in diags)
-
-
-def canonical(v) -> str:
-    return json.dumps(v, separators=(",", ":"), ensure_ascii=False)
-
-
 # ---------------------------------------------------------------- preflight
 missing = []
 if not TS_CLI.exists() or not (ROOT / "node_modules").exists():
@@ -101,6 +70,27 @@ names = list(RUNTIMES)
 width = max(len(n) for n in names)
 same = diff = 0
 
+# temporary directories this harness creates: the one thing normalized away
+tmp = Path(tempfile.mkdtemp(prefix="decl-parity-"))
+NORMALIZE: list[tuple[str, str]] = [(str(tmp), "<tmp>")]
+
+
+def outcome(cmd: list[str], args: list[str]) -> tuple[int, str, str]:
+    """(exit code, stdout, stderr) of one command line, temp paths normalized"""
+    r = subprocess.run(cmd + args, capture_output=True, text=True, check=False, cwd=str(ROOT))
+    out, err = r.stdout, r.stderr
+    for a, b in NORMALIZE:
+        out, err = out.replace(a, b), err.replace(a, b)
+    return (r.returncode, out, err)
+
+
+def canonical(v) -> str:
+    return json.dumps(v, separators=(",", ":"), ensure_ascii=False)
+
+
+def describe(o: tuple[int, str, str]) -> str:
+    return f"exit {o[0]} out={o[1][-160:]!r} err={o[2][-160:]!r}"
+
 
 def row(label: str, verdicts: dict[str, bool], detail: dict[str, str]) -> None:
     global same, diff
@@ -114,11 +104,20 @@ def row(label: str, verdicts: dict[str, bool], detail: dict[str, str]) -> None:
             print(f"      {n}: {detail[n]}")
 
 
+def cli_row(label: str, args: list[str]) -> None:
+    """one command line, byte-identical outcome required of every runtime"""
+    ref = outcome(REF, args)
+    verdicts, detail = {}, {}
+    for n, prefix in RUNTIMES.items():
+        nat = outcome(prefix, args)
+        verdicts[n] = ref == nat
+        if ref != nat:
+            what = "exit code" if ref[0] != nat[0] else "stdout" if ref[1] != nat[1] else "stderr"
+            detail[n] = f"{what} differs — ref {describe(ref)} | {n} {describe(nat)}"
+    row(label, verdicts, detail)
+
+
 # ---------------------------------------------------------------- check
-def check_key(diags: list) -> list:
-    return sorted((d.get("code") or "", d.get("message") or "") for d in diags)
-
-
 check_files: list[Path] = sorted((ROOT / "tests/validation").rglob("*.decl")) + sorted((ROOT / "docs/examples").glob("*.decl"))
 for d in sorted((ROOT / "examples").iterdir()):
     if d.is_dir():
@@ -127,15 +126,11 @@ for d in sorted((ROOT / "examples").iterdir()):
         if entry:
             check_files.append(entry)
 
-print(f"== check: {len(check_files)} modules, reference vs {', '.join(names)} (codes and messages)")
+print(f"== check: {len(check_files)} modules, reference vs {', '.join(names)} (exit, stdout, stderr — with and without --json)")
 for p in check_files:
-    ref = diagnostics(REF, ["check", str(p), "--json"])
-    verdicts, detail = {}, {}
-    for n, prefix in RUNTIMES.items():
-        nat = diagnostics(prefix, ["check", str(p), "--json"])
-        verdicts[n] = check_key(ref) == check_key(nat)
-        detail[n] = f"ref={check_key(ref)[:3]} | {n}={check_key(nat)[:3]}"
-    row(str(p.relative_to(ROOT)), verdicts, detail)
+    rel = str(p.relative_to(ROOT))
+    cli_row(f"{rel} (--json)", ["check", rel, "--json"])
+    cli_row(rel, ["check", rel])
 
 # ---------------------------------------------------------------- evaluate
 files: list[Path] = []
@@ -144,29 +139,20 @@ for d in ("tests/validation", "docs/examples", "examples"):
         if "output " in p.read_text(encoding="utf-8") and "/invalid/" not in str(p):
             files.append(p)
 
-print(f"== evaluate: {len(files)} modules, reference vs {', '.join(names)}")
+print(f"== evaluate: {len(files)} modules (exit, stdout, stderr — with and without --json)")
 for p in files:
-    ref = report(REF, ["evaluate", str(p), "--json"])
-    verdicts, detail = {}, {}
-    for n, prefix in RUNTIMES.items():
-        nat = report(prefix, ["evaluate", str(p), "--json"])
-        ok = ref.get("ok") == nat.get("ok") and codes(ref.get("diagnostics", [])) == codes(nat.get("diagnostics", []))
-        if ok and ref.get("ok"):
-            ok = canonical(ref["value"]) == canonical(nat["value"])
-        verdicts[n] = ok
-        detail[n] = (f"ref ok={ref.get('ok')} codes={codes(ref.get('diagnostics', []))[:3]} value={canonical(ref.get('value'))[:120]} | "
-                     f"{n} ok={nat.get('ok')} codes={codes(nat.get('diagnostics', []))[:3]} value={canonical(nat.get('value'))[:120]} {nat.get('stderr', '')}")
-    row(str(p.relative_to(ROOT)), verdicts, detail)
+    rel = str(p.relative_to(ROOT))
+    cli_row(f"{rel} (--json)", ["evaluate", rel, "--json"])
+    cli_row(rel, ["evaluate", rel])
 
-# ---------------------------------------------------------------- validate --input
-tmp = Path(tempfile.mkdtemp(prefix="decl-parity-"))
+# ---------------------------------------------------------------- documents bound to input roots
 cases: list[tuple[str, Path, str, Path]] = []
 cfg = ROOT / "docs/examples/02_config.decl"
 bad = tmp / "deployed.json"
 bad.write_text('{"host":"x","port":70000,"workers":100,"tls":{"enabled":true}}', encoding="utf-8")
 cases.append(("config: invalid deployment", cfg, "deployed", bad))
 ic = ROOT / "docs/examples/01_interconnect.decl"
-ser = run(REF + ["evaluate", str(ic), "--root", "xbar"])
+ser = outcome(REF, ["evaluate", str(ic.relative_to(ROOT)), "--root", "xbar"])[1].strip()
 good = tmp / "xbar.json"
 good.write_text(ser, encoding="utf-8")
 cases.append(("interconnect: round trip", ic, "doc", good))
@@ -175,51 +161,41 @@ assert probe in ser, "corruption probe no longer matches the serialized form"
 corrupt = tmp / "xbar_corrupt.json"
 corrupt.write_text(ser.replace(probe, probe.replace("64", "32"), 1), encoding="utf-8")
 cases.append(("interconnect: corrupted width", ic, "doc", corrupt))
+malformed = tmp / "malformed.json"
+malformed.write_text('{"host": ', encoding="utf-8")
+cases.append(("config: malformed document", cfg, "deployed", malformed))
+trailing = tmp / "trailing.json"
+trailing.write_text('{"host": "a"} x', encoding="utf-8")
+cases.append(("config: document with trailing characters", cfg, "deployed", trailing))
+cases.append(("config: unreadable document", cfg, "deployed", tmp / "missing.json"))
 
-print(f"== validate --input: {len(cases)} documents")
+print(f"== validate --input / evaluate --input: {len(cases)} documents (exit, stdout, stderr)")
 for label, decl, name, doc in cases:
-    ref = diagnostics(REF, ["validate", str(decl), "--input", f"{name}={doc}", "--json"])
-    verdicts, detail = {}, {}
-    for n, prefix in RUNTIMES.items():
-        nat = diagnostics(prefix, ["validate", str(decl), "--input", f"{name}={doc}", "--json"])
-        verdicts[n] = codes(ref) == codes(nat)
-        detail[n] = f"ref={codes(ref)} | {n}={codes(nat)}"
-    row(f"{label} ({len(ref)} diagnostic(s))", verdicts, detail)
-
-# ---------------------------------------------------------------- evaluate --input
-# the same documents bound and emitted: the completed value of the bound
-# root (--root names the input) must be byte-identical, and so must the
-# verdict and the diagnostic codes when the document is invalid
-print(f"== evaluate --input: {len(cases)} documents")
-for label, decl, name, doc in cases:
-    args = ["evaluate", str(decl), "--input", f"{name}={doc}", "--root", name, "--json"]
-    ref = report(REF, args)
-    verdicts, detail = {}, {}
-    for n, prefix in RUNTIMES.items():
-        nat = report(prefix, args)
-        ok = ref.get("ok") == nat.get("ok") and codes(ref.get("diagnostics", [])) == codes(nat.get("diagnostics", []))
-        if ok and ref.get("ok"):
-            ok = canonical(ref["value"]) == canonical(nat["value"])
-        verdicts[n] = ok
-        detail[n] = (f"ref ok={ref.get('ok')} codes={codes(ref.get('diagnostics', []))[:3]} | "
-                     f"{n} ok={nat.get('ok')} codes={codes(nat.get('diagnostics', []))[:3]} {nat.get('stderr', '')}")
-    row(f"{label} (evaluate --input)", verdicts, detail)
+    rel = str(decl.relative_to(ROOT))
+    cli_row(f"{label} (validate --json)", ["validate", rel, "--input", f"{name}={doc}", "--json"])
+    cli_row(f"{label} (validate)", ["validate", rel, "--input", f"{name}={doc}"])
+    cli_row(f"{label} (evaluate --root {name} --json)", ["evaluate", rel, "--input", f"{name}={doc}", "--root", name, "--json"])
+    cli_row(f"{label} (evaluate --root {name})", ["evaluate", rel, "--input", f"{name}={doc}", "--root", name])
+cli_row("evaluate: --root names nothing", ["evaluate", str(cfg.relative_to(ROOT)), "--root", "nope", "--json"])
+cli_row("evaluate: --input without name=", ["evaluate", str(cfg.relative_to(ROOT)), "--input", "nope"])
+cli_row("evaluate: --input of an unknown input", ["evaluate", str(cfg.relative_to(ROOT)), "--input", f"nope={bad}"])
 
 # ---------------------------------------------------------------- fmt
 fmt_files: list[Path] = []
 for d in ("tests/validation", "tests/modules", "tests/packages", "docs/examples", "examples"):
     fmt_files += sorted((ROOT / d).rglob("*.decl"))
-fmt_tmp = Path(tempfile.mkdtemp(prefix="decl-parity-fmt-"))
+fmt_tmp = tmp / "fmt"
+fmt_tmp.mkdir()
 
 
 def fmt_with(cmd: list[str], src: str) -> tuple:
     p = fmt_tmp / "x.decl"
     p.write_text(src, encoding="utf-8")
     r = subprocess.run(cmd + ["fmt", str(p)], capture_output=True, text=True, check=False, cwd=str(ROOT))
-    return (r.returncode, p.read_text(encoding="utf-8"))
+    return (r.returncode, p.read_text(encoding="utf-8"), r.stderr.replace(str(tmp), "<tmp>"))
 
 
-print(f"== fmt: {len(fmt_files)} modules, byte-identical output")
+print(f"== fmt: {len(fmt_files)} modules, byte-identical output (and exit, stderr)")
 for p in fmt_files:
     src = p.read_text(encoding="utf-8")
     ref = fmt_with(REF, src)
@@ -227,28 +203,16 @@ for p in fmt_files:
     for n, prefix in RUNTIMES.items():
         nat = fmt_with(prefix, src)
         verdicts[n] = ref == nat
-        detail[n] = f"ref exit {ref[0]} | {n} exit {nat[0]}" + ("" if ref[1] == nat[1] else " (text differs)")
+        detail[n] = f"ref exit {ref[0]} err={ref[2]!r} | {n} exit {nat[0]} err={nat[2]!r}" + ("" if ref[1] == nat[1] else " (text differs)")
     row(str(p.relative_to(ROOT)), verdicts, detail)
 
 # ---------------------------------------------------------------- packages
-print("== packages: manifests, resolver, lock (check + evaluate)")
+print("== packages: manifests, resolver, lock (check + evaluate, exit, stdout, stderr)")
 for entry in sorted((ROOT / "tests/packages").glob("*/main.decl")):
+    rel = str(entry.relative_to(ROOT))
     for cmd_name in ("check", "evaluate"):
-        ref = report(REF, [cmd_name, str(entry), "--json"]) if cmd_name == "evaluate" else diagnostics(REF, [cmd_name, str(entry), "--json"])
-        verdicts, detail = {}, {}
-        for n, prefix in RUNTIMES.items():
-            nat = report(prefix, [cmd_name, str(entry), "--json"]) if cmd_name == "evaluate" else diagnostics(prefix, [cmd_name, str(entry), "--json"])
-            if cmd_name == "evaluate":
-                ok = ref.get("ok") == nat.get("ok") and check_key(ref.get("diagnostics", [])) == check_key(nat.get("diagnostics", []))
-                if ok and ref.get("ok"):
-                    ok = canonical(ref["value"]) == canonical(nat["value"])
-                detail[n] = f"ref={check_key(ref.get('diagnostics', []))[:2]} | {n}={check_key(nat.get('diagnostics', []))[:2]}"
-            else:
-                ok = check_key(ref) == check_key(nat)
-                detail[n] = f"ref={check_key(ref)[:2]} | {n}={check_key(nat)[:2]}"
-            verdicts[n] = ok
-        row(f"{entry.relative_to(ROOT)} ({cmd_name})", verdicts, detail)
-
+        cli_row(f"{rel} ({cmd_name} --json)", [cmd_name, rel, "--json"])
+        cli_row(f"{rel} ({cmd_name})", [cmd_name, rel])
 # ---------------------------------------------------------------- lsp
 import re as _re
 

@@ -1130,6 +1130,8 @@ def read_json(src: str) -> Any:
 
     v = val()
     ws()
+    if i < n:
+        raise EvalErr("bad JSON: trailing characters")
     return v
 
 

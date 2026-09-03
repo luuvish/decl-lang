@@ -263,18 +263,21 @@ impl Diag {
     }
     pub fn to_json(&self, file: Option<&str>) -> String {
         let mut parts = Vec::new();
+        // the report's field order (§12.2): file, code, id, severity,
+        // message, path — absent fields omitted (byte-identical across
+        // implementations)
         if let Some(f) = file {
             parts.push(format!("\"file\":{}", json_str(f)));
         }
-        parts.push(format!("\"severity\":{}", json_str(&self.severity)));
-        if let Some(id) = &self.id {
-            parts.push(format!("\"id\":{}", json_str(id)));
-        }
-        parts.push(format!("\"message\":{}", json_str(&self.message)));
-        parts.push(format!("\"path\":{}", json_str(&self.path)));
         if let Some(c) = &self.code {
             parts.push(format!("\"code\":{}", json_str(c)));
         }
+        if let Some(id) = &self.id {
+            parts.push(format!("\"id\":{}", json_str(id)));
+        }
+        parts.push(format!("\"severity\":{}", json_str(&self.severity)));
+        parts.push(format!("\"message\":{}", json_str(&self.message)));
+        parts.push(format!("\"path\":{}", json_str(&self.path)));
         format!("{{{}}}", parts.join(","))
     }
 }
@@ -1687,6 +1690,10 @@ pub fn read_json(src: &str) -> R<Value> {
         }
     }
     let v = val(src, b, &mut i)?;
+    ws(b, &mut i);
+    if i < b.len() {
+        return err("bad JSON: trailing characters");
+    }
     Ok(v)
 }
 

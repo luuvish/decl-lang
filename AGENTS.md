@@ -79,11 +79,15 @@ Rules:
 - **`make verify` is the gate** and must pass before a commit: each
   implementation's own tests, then `tests/parity/differential.py`,
   which diffs the Rust and Python implementations against the reference
-  byte for byte: `check --json` (codes and messages) over every fixture
-  and example, `evaluate --json` (`ok`, canonical JSON, diagnostics)
-  over every output-bearing module, documents bound to `input` roots,
-  `fmt` output over every parseable module, package resolution and lock
-  diagnostics, and one scripted `decl-lsp` session. CI runs the same gate (`.github/workflows/verify.yml`).
+  byte for byte — exit code, standard output, and standard error of every
+  command line: `check` and `evaluate` (with and without `--json`) over
+  every fixture and example, documents bound to `input` roots
+  (`validate --input`, `evaluate --input`), `fmt` output over every
+  parseable module, package resolution and lock reports, and one scripted
+  `decl-lsp` session. Diagnostic reports therefore have one field order
+  (§12.2: `file, code, id, severity, message, path`) and one file-tag
+  rule (the entry module by the path given, other modules by absolute
+  path) in all three. CI runs the same gate (`.github/workflows/verify.yml`).
 - A parity difference is a defect in whichever side diverges from the
   specification — fix the implementation, never the expectation.
 
