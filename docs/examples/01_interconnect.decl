@@ -1,6 +1,6 @@
 // Benchmark case 1 — hardware interconnect (ROADMAP §0.5)
-// Re-expression of ../decl-lang/tests/validation/customs/oic.decl
-// (a 2x2 crossbar) with no domain keywords. The legacy fixture parsed
+// Re-expression of a real 2x2 crossbar fixture with no domain
+// keywords. The original parsed
 // edges out of strings ("dec0.mi1 -> arb1.si0") and propagated widths
 // through @readonly lambdas; here edges are typed references and
 // propagation is one derived member over $referrers.
@@ -150,7 +150,7 @@ export type AddressRange = {
 }
 
 export type Interconnect = EdgeHost & {
-    kind: "node.oic"
+    kind: "node.ic"
     address_maps: AddressRange[1..8][]
     enable_pmu?: bool = false
     enable_cmu?: bool = false
@@ -166,7 +166,7 @@ export type Interconnect = EdgeHost & {
 // --- The 2x2 crossbar, ported entry for entry ---
 
 export output xbar: Interconnect = {
-    kind: "node.oic"
+    kind: "node.ic"
 
     address_maps: [[
         { base: 0x0000_0000, size: 0x1000_0000, dest: ["mi0"] }

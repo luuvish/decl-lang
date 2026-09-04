@@ -11,18 +11,10 @@ This repository holds the language's **frozen v0.1 specification**
 (docs/, authored from scratch in Phase 0 and gated by the `spike/`
 evaluator) and, phase by phase, its implementation: tree-sitter parser
 (Phase 1), TypeScript reference implementation (Phase 2), modules and
-stdlib (3), CLI/LSP (4), real-world validation (5). The sibling
-repositories below are reference material only.
+stdlib (3), CLI/LSP (4), real-world validation (5).
 
 `ROADMAP.md` owns the phase plan, exit criteria, and progress status; update
 its phase table when a phase advances.
-
-Sibling repositories used as reference (do not modify from here):
-
-- `../decl-lang` - Previous iteration: Decl 2 spec drafts, legacy Decl 1
-  tree-sitter grammar, and 142 validation fixtures
-- `../../research/oic-design-suite` - Real-world NoC spec tooling:
-  editor/LSP contract docs, real design fixtures (JSON)
 
 ## Working Rules
 

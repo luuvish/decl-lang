@@ -105,7 +105,7 @@ console.log('\n== case 2: config schema ==');
 }
 
 // ---------------- case 1: interconnect ----------------
-console.log('\n== case 1: interconnect (oic 2x2 crossbar) ==');
+console.log('\n== case 1: interconnect (2x2 crossbar) ==');
 {
   const { env, eng } = runModule('docs/examples/01_interconnect.decl');
   for (const d of env.diagnostics) console.log('  diag:', d.severity, d.id ?? d.code, d.path, '-', d.message);

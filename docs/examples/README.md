@@ -8,7 +8,7 @@ Phase 1 they seed the test corpus.
 
 | Case | File | Status |
 |---|---|---|
-| 1. Hardware interconnect | [01_interconnect.decl](01_interconnect.decl) | written, desk-checked — ports the real `../decl-lang/tests/validation/customs/oic.decl` (2x2 crossbar) |
+| 1. Hardware interconnect | [01_interconnect.decl](01_interconnect.decl) | written, desk-checked — ports a real 2x2 crossbar fixture |
 | 2. API/config schema | [02_config.decl](02_config.decl) | written, desk-checked |
 | 3. Test fixture generation | [03_fixtures.decl](03_fixtures.decl) | written, desk-checked |
 

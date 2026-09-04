@@ -181,9 +181,8 @@ written with no domain keywords?** Representative cases:
 
 - **Hardware interconnect**: node/port/edge graph, bit-width parameters,
   owner-dependent constraints, value agreement across connection endpoints —
-  expressed with records, references, derived properties, and asserts. The
-  real fixture `../decl-lang/tests/validation/customs/oic.decl` is the
-  concrete target.
+  expressed with records, references, derived properties, and asserts. A
+  real interconnect fixture is the concrete target.
 - **API/config schema**: open records, default filling, per-environment
   override.
 - **Test fixture generation**: comprehension-parameterized instance
@@ -191,8 +190,8 @@ written with no domain keywords?** Representative cases:
 
 Two levels of evidence are required (ROADMAP §0.5–0.6): a desk check of all
 three cases against the spec alone, and an **executable pass** — a
-time-boxed throwaway evaluator running the cases and binding the real OIC
-fixture as input. Reading-level review alone does not discharge this
+time-boxed throwaway evaluator running the cases and binding the real
+interconnect fixture as input. Reading-level review alone does not discharge this
 section; the previous iteration froze three specs on reading alone
 (00_vision §5). If a case needs a language extension, the extension must
 first pass the generality test — otherwise it goes to the standard library

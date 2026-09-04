@@ -5,9 +5,8 @@ implementation → tooling → real-world validation**. Each phase must satisfy
 its **exit criteria** before the next phase begins. Progress is recorded by
 updating the phase table in this document.
 
-This repository is a fresh start. The specification is written from scratch
-here; prior assets live in the reference repositories below and are consulted,
-never migrated wholesale or modified from this repo.
+This repository is a fresh start: the specification is written from scratch
+here, and nothing was migrated from earlier work.
 
 ## Confirmed approach
 
@@ -16,16 +15,6 @@ never migrated wholesale or modified from this repo.
 | Methodology | **Spec-first with an evidence gate** — author the complete specification, then a throwaway minimal-evaluator spike (§0.6) must meet it before v0.1 is frozen; implementation proper begins only after the freeze. Post-freeze spec changes are recorded as revisions. |
 | Parser | **tree-sitter as the single canonical parser**, written against the spec's formal grammar chapter. The reference implementation consumes it through bindings. |
 | Reference implementation | **TypeScript first, Rust later** — type checker, evaluator, and CLI in TypeScript (BigInt aligns with arbitrary-precision integers; `Number::toString` with shortest round-trip float printing). A Rust runtime is considered only after the spec and implementation stabilize. *Done 2026-09-02:* native **Rust** (`decl-rust/`, crate `decl-lang`) and **Python** (`decl-python/decl/runtime`) implementations cover the whole language: parser binding, static checker, evaluator, modules and packages, the canonical formatter, and the `decl-lsp` server (the Python package needs no Node.js). The layout is parallel (`decl-typescript/`, `decl-rust/`, `decl-python/`, same module names) and `make verify` — each implementation's tests, then `tests/parity/differential.py` — keeps the three byte-identical over every output-bearing example and fixture, plus document binding with root-cause diagnostics; CI runs it on every push. The three now cover the whole language (checker, formatter, LSP, and packages ported 2026-09-02) and share one module layout; the reference's platform-neutral core (`decl-lang/core`) is what the website's playground runs. |
-
-## Reference assets
-
-- `../decl-lang` — previous iteration: Decl 2 spec drafts (reference for the
-  rewrite), legacy Decl 1 tree-sitter grammar, and 142 validation fixtures
-  (rewrite sources for Phase 1)
-- `../../research/oic-design-suite` — real-world NoC spec tooling: diagnostics
-  / determinism / reproducibility discipline, editor/LSP contract docs, and
-  real NoC design fixtures (JSON) that become direct validation targets in
-  Phase 5
 
 ## Phase overview
 
@@ -129,8 +118,7 @@ rule and nested block comments in the external scanner; corpus tests
 playground verified.
 
 `tests/validation/`: 40 fresh fixtures with `@expect-*` metadata and the
-parsing-phase runner (`node tests/run_parsing.mjs`). The legacy 142
-fixtures were not ported 1:1 — they test Decl 1 syntax; the corpus is
+parsing-phase runner (`node tests/run_parsing.mjs`). The corpus is
 authored against v0.1 and keeps growing through Phase 2, which also picks
 up the deferred `@expect-phase: checking/binding` fixtures.
 
@@ -187,9 +175,7 @@ tests pass · a fixture exists for every stdlib function.
 - `decl` CLI: `check` (parse + types), `evaluate` (output evaluation → JSON),
   `validate` (input binding validation, `--expect-errors` support), `fmt`
 - Formatter: enforce the canonical form the spec defines
-- Minimal LSP surface, in order: diagnostics → hover → definition. The
-  editor LSP contract docs in the reference suite (diagnostics, completion,
-  definition, …) serve as design references
+- Minimal LSP surface, in order: diagnostics → hover → definition
 
 **Exit criteria**: `decl validate tests/` judges the full fixture corpus ·
 formatter idempotency (`fmt(fmt(x)) == fmt(x)`) · diagnostics displayed in an
@@ -200,8 +186,8 @@ editor.
 ## Phase 5 — Real-world validation & feedback
 
 - **NoC domain library**: describe a NoC element/parameter/constraint system
-  as a Decl library and validate the real design fixtures (JSON) from the
-  reference suite bound directly as `input` — the final test of
+  as a Decl library and validate real design fixtures (JSON), kept outside
+  this repository, bound directly as `input` — the final test of
   "generality without domain keywords"
 - Grow the API/config schema and fixture-generation cases to production level
 - Collect spec defects and extension demands discovered in use; plan the v0.2

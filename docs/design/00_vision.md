@@ -8,8 +8,8 @@ iterations taught us. This is the founding document of the design series;
   shared at <https://claude.ai/share/b9bcc143-8007-48e7-8519-303d7af6e351>
 - **Status**: informative background for the spec rewrite. Not normative.
 - **Note**: all section numbers (§) and decision numbers (D-numbers, E-codes)
-  below refer to the **previous Decl spec iteration** in `../decl-lang`, which
-  this repository deliberately did not migrate. They are cited as evidence of
+  below refer to the **previous Decl spec iteration**, which this
+  repository deliberately did not migrate. They are cited as evidence of
   what the new spec must fix or decide differently.
 
 The conversation spans four rounds: (1) analysis of an article on the future
@@ -270,11 +270,10 @@ the *(value, diagnostics)* universal result type and the type/value surface
 separation.
 
 **Recommended next step — build evidence before choosing**: write a
-time-boxed minimal evaluator for a Decl subset and run it against the real
-fixture `tests/validation/customs/oic.decl` (in `../decl-lang`). Three
-purposes: sweep the defects reading cannot catch; empirically judge the
+time-boxed minimal evaluator for a Decl subset and run it against a real
+interconnect fixture. Three purposes: sweep the defects reading cannot catch; empirically judge the
 generality benchmark; own a real corpus for whatever is built next. The
-stated prediction: the OIC case is unusable without transitive closure — if
+stated prediction: the interconnect case is unusable without transitive closure — if
 true, evidence for kernel-level relations; if false, evidence the fixpoint
 extension is unnecessary. Either way, far cheaper than a fourth spec.
 
@@ -296,7 +295,7 @@ spec's failure mode as the test:
    (position-independence of refinements).
 6. Ordering guarantees for reverse-reference queries over input-bound data.
 7. Transitive/fixpoint queries over reference graphs: in or out, decided
-   with evidence (the OIC fixture), not by default.
+   with evidence (the interconnect fixture), not by default.
 8. Order-independent conjunction of constraint sets: adopt, or record the
    real (semantic, not syntactic) reason for exclusion.
 9. Closedness defined so it cannot contradict subtyping.
