@@ -14,7 +14,7 @@ here, and nothing was migrated from earlier work.
 |---|---|
 | Methodology | **Spec-first with an evidence gate** — author the complete specification, then a throwaway minimal-evaluator spike (§0.6) must meet it before v0.1 is frozen; implementation proper begins only after the freeze. Post-freeze spec changes are recorded as revisions. |
 | Parser | **tree-sitter as the single canonical parser**, written against the spec's formal grammar chapter. The reference implementation consumes it through bindings. |
-| Reference implementation | **TypeScript first, Rust later** — type checker, evaluator, and CLI in TypeScript (BigInt aligns with arbitrary-precision integers; `Number::toString` with shortest round-trip float printing). A Rust runtime is considered only after the spec and implementation stabilize. *Done 2026-09-02:* native **Rust** (`decl-rust/`, crate `decl-lang`) and **Python** (`decl-python/decl/runtime`) implementations cover the whole language: parser binding, static checker, evaluator, modules and packages, the canonical formatter, and the `decl-lsp` server (the Python package needs no Node.js). The layout is parallel (`decl-typescript/`, `decl-rust/`, `decl-python/`, same module names) and `make verify` — each implementation's tests, then `tests/parity/differential.py` — keeps the three byte-identical over every output-bearing example and fixture, plus document binding with root-cause diagnostics; CI runs it on every push. The three now cover the whole language (checker, formatter, LSP, and packages ported 2026-09-02) and share one module layout; the reference's platform-neutral core (`decl-lang/core`) is what the website's playground runs. |
+| Reference implementation | **TypeScript first, Rust later** — type checker, evaluator, and CLI in TypeScript (BigInt aligns with arbitrary-precision integers; `Number::toString` with shortest round-trip float printing). A Rust runtime is considered only after the spec and implementation stabilize. *Done 2026-09-02:* native **Rust** (`decl-rs/`, crate `decl-lang`) and **Python** (`decl-py/decl/runtime`) implementations cover the whole language: parser binding, static checker, evaluator, modules and packages, the canonical formatter, and the `decl-lsp` server (the Python package needs no Node.js). The layout is parallel (`decl-ts/`, `decl-rs/`, `decl-py/`, same module names) and `make verify` — each implementation's tests, then `tests/parity/differential.py` — keeps the three byte-identical over every output-bearing example and fixture, plus document binding with root-cause diagnostics; CI runs it on every push. The three now cover the whole language (checker, formatter, LSP, and packages ported 2026-09-02) and share one module layout; the reference's platform-neutral core (`decl-lang/core`) is what the website's playground runs. |
 
 ## Phase overview
 
@@ -26,6 +26,7 @@ here, and nothing was migrated from earlier work.
 | 3 | Modules & standard library | import/export, manifest + lock, `std.*` | **done — 2026-09-01** (module linking §8, packages + reproducible lock §8.6–8.7, std 1:1 with SI catalog §13) |
 | 4 | CLI & tooling | `decl` CLI, formatter, minimal LSP | **done — 2026-09-01** (check/evaluate/validate/fmt; formatter idempotent + AST-safe over the corpus; stdio LSP with diagnostics/hover/definition) |
 | 5 | Real-world validation & feedback + v0.2 cycle | 3 domain examples, v0.2 revisions adjudicated | **done — 2026-09-01** (three domain examples under `examples/`: service graph, fixture generation, and a synthetic network fabric with scale + corruption probes; the full proprietary fixture corpus — 178 documents incl. the complete real set — additionally validated locally, artifacts kept out of the repo by security policy; v0.2 candidates adjudicated 2026-09-01 → revisions v0.1.4–v0.1.8, **v0.2 declared**) |
+| 6 | REPL, language server & editors | `decl repl`, `decl-lsp` v2/v3, `vscode-decl`, `zed-decl` | **planned — 2026-09-04** |
 
 ---
 
@@ -199,6 +200,38 @@ editor.
 
 **Exit criteria**: successful validation of at least part of the real
 fixture set · documented v0.2 revision list.
+
+---
+
+## Phase 6 — REPL, language server, editor extensions
+
+- Foundations: source ranges on the AST, a session object over the
+  universe with an operation log and dependency tracking, a per-node table
+  of types and resolutions
+- `decl repl` — [docs/tooling/02_repl.md](docs/tooling/02_repl.md)
+- `decl-lsp` — [docs/tooling/03_lsp.md](docs/tooling/03_lsp.md)
+- `vscode-decl`, `zed-decl` — [docs/tooling/04_extension.md](docs/tooling/04_extension.md)
+
+Progress (2026-09-04): source ranges on every AST node and on checker
+diagnostics, the type printer, the settable projection, the checker's
+recorded types and resolutions; the session object and `decl repl` in
+the three implementations — expressions, bindings, edits with detaching,
+undo/redo, the scripted mode — with the session corpus (`tests/repl/`)
+in the parity harness; `decl-lsp` v2 on the session: positioned
+diagnostics (static and evaluation), hover with types, completion,
+definition / type definition / references / highlights, rename, symbols,
+folding, formatting, lenses, and the `decl.*` commands, one scripted
+editor session in the harness; the VS Code and Zed extensions
+scaffolded (`extension/vscode/`, `extension/zed/`, unpublished). Open: dependency
+tracking (the session recomputes fully today), semantic tokens, code
+actions, inlay hints, hierarchies, the extensions' tests, views, and
+releases.
+
+**Exit criteria**: scripted REPL and LSP sessions in the parity harness,
+identical bytes from the three implementations · the reference scratch
+explored end to end in the REPL · both extensions published, the VS Code
+tests green against the three servers · manual smoke in VS Code, Zed,
+Neovim, and Helix.
 
 ---
 

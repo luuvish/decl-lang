@@ -13,7 +13,7 @@ const OUT = resolve(SITE, 'src/content/docs');
 const SAMPLES = resolve(SITE, 'src/samples/synced');
 const BASE = (process.env.SITE_BASE ?? '/decl-lang').replace(/\/$/, '');
 const REPO = 'https://github.com/luuvish/decl-lang';
-const CLI = resolve(ROOT, 'decl-typescript/src/cli.ts');
+const CLI = resolve(ROOT, 'decl-ts/src/cli.ts');
 
 /** repo-relative source path -> site route (no base, no trailing slash) */
 const routes = new Map();
@@ -59,9 +59,11 @@ for (const d of (existsSync(resolve(ROOT, 'examples')) ? readdirSync(resolve(ROO
   const entry = files.includes('main.decl') ? 'main.decl' : files.length === 1 ? files[0] : null;
   add(`examples/${d}`, `examples/${d}`, { domain: true, files, entry, title: domainTitles[d] ?? d, order: 10 });
 }
-add('decl-typescript/README.md', 'tooling/javascript', { title: 'JavaScript / npm' });
-add('decl-python/README.md', 'tooling/python', { title: 'Python / PyPI' });
-add('decl-rust/README.md', 'tooling/rust', { title: 'Rust / crates.io' });
+const toolingTitles = { '01_cli': 'Command line', '02_repl': 'REPL', '03_lsp': 'Language server', '04_extension': 'Editor extensions' };
+for (const f of list('docs/tooling', '.md')) add(`docs/tooling/${f}`, `tooling/${f.slice(0, -3)}`, { title: toolingTitles[f.slice(0, -3)] ?? f.slice(0, -3) });
+add('decl-ts/README.md', 'tooling/javascript', { title: 'JavaScript / npm' });
+add('decl-py/README.md', 'tooling/python', { title: 'Python / PyPI' });
+add('decl-rs/README.md', 'tooling/rust', { title: 'Rust / crates.io' });
 
 // ---------------------------------------------------------------- helpers
 const yaml = s => JSON.stringify(s);

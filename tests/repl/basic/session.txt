@@ -1,0 +1,78 @@
+// expressions are evaluated partially, over the loaded universe
+:roots
+net
+net.services[1].endpoint
+capped + 1
+LIMIT
+cap(100)
+std.array.count(net.services)
+[s.name for s in net.services if s.port > 8080]
+{ a: 1,
+  b: [2,
+      3] }
+1 +
+  2
+:type net.services[0]
+:type net.services[0].endpoint
+:type LIMIT
+:doc Topo
+:doc PublicService
+:doc LIMIT
+:doc cap
+:doc nothing
+// session outputs and declarations
+ports = [s.port for s in net.services]
+ports
+total: int = std.array.sum(ports)
+:evaluate ports total
+type Pair = { a: int, b: int }
+func twice(n: int): int = n * 2
+const K = 7
+twice(K)
+pr: Pair = { a: 1, b: twice(K) }
+pr
+:evaluate pr
+:drop pr
+:session
+:fmt
+:evaluate
+:validate
+:validate net first
+:check
+// history
+:history
+:undo
+:session
+:undo 3
+:history
+:redo 2
+:session
+:drop ports
+:drop nothing
+:history
+// completion and places
+:complete ne
+:complete net.
+:complete net.services[0].
+:complete std.
+:complete std.array.co
+:complete $
+:complete :
+:complete :evaluate
+:complete :trace net.services[0].
+:path net.services[0]
+:path net.services[0].endpoint
+:trace net.services[0].endpoint
+:trace capped
+:trace limit_used
+:trace nothing.here
+// errors change nothing
+:nosuch
+:evaluate nothing
+:bind net=x.json
+:remove net.nothing
+:unbind net
+:undo 99
+:redo
+:help trace
+:quit

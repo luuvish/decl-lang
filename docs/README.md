@@ -47,6 +47,15 @@ charter and chapters remains a defect to fix on sight (§1.4).
 |---|---|
 | [Decl by Example](guide/01_overview_by_example.md) | One scenario end to end — describe → generate → validate — with the evaluated JSON and the diagnostics it produces |
 
+### Tooling (informative)
+
+| Document | Description |
+|---|---|
+| [01. Command line](tooling/01_cli.md) | `decl check` / `evaluate` / `validate` / `fmt`: universes, `--input` / `--output`, diagnostics and the `--json` report, exit codes |
+| [02. REPL](tooling/02_repl.md) | `decl repl`: a session over the evaluation universe — bare expressions as partial evaluation, session outputs, document edits with exact undo/redo, incremental re-evaluation, and the commands that mirror the CLI verbs |
+| [03. Language server](tooling/03_lsp.md) | `decl-lsp`: the server's capabilities, one by one — diagnostics, hover, completion, navigation, hierarchies, rename, code actions, hints, lenses, semantic tokens, workspaces |
+| [04. Editor extensions](tooling/04_extension.md) | `vscode-decl` and `zed-decl`: the editor faces of the server and the REPL — VS Code's language contribution, server management, live output preview, bound inputs, trace view, tasks, Test Explorer, and web extension; Zed's grammar, queries, runnables, and server pointer; other editors |
+
 ### Validation cases (§0.5 desk-check artifacts)
 
 | Document | Description |

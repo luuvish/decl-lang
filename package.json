@@ -1,11 +1,12 @@
 {
   "name": "decl-lang-monorepo",
   "private": true,
-  "description": "Decl — one language, three implementations (decl-typescript, decl-rust, decl-python), the shared grammar and conformance corpus, and the website",
+  "description": "Decl \u2014 one language, three implementations (decl-ts, decl-rs, decl-py), the shared grammar and conformance corpus, and the website",
   "workspaces": [
-    "decl-typescript",
+    "decl-ts",
     "tree-sitter-decl",
-    "site"
+    "site",
+    "extension/vscode"
   ],
   "scripts": {
     "build": "npm run build -w decl-lang",

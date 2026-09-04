@@ -1,0 +1,313 @@
+> // expressions are evaluated partially, over the loaded universe
+> :roots
+output  net              exported     main.decl
+output  first            exported     main.decl
+output  capped           exported     main.decl
+output  vel              exported     main.decl
+output  limit_used       exported     main.decl
+> net
+{
+  "services": [
+    {
+      "name": "a",
+      "port": 8080,
+      "endpoint": "a:8080"
+    },
+    {
+      "name": "b",
+      "port": 9000,
+      "endpoint": "b:9000"
+    }
+  ],
+  "n": 2
+}
+(partial)
+> net.services[1].endpoint
+"b:9000"
+(partial)
+> capped + 1
+17
+(partial)
+> LIMIT
+16
+(partial)
+> cap(100)
+16
+(partial)
+> std.array.count(net.services)
+2
+(partial)
+> [s.name for s in net.services if s.port > 8080]
+[
+  "b"
+]
+(partial)
+> { a: 1,
+.   b: [2,
+.       3] }
+{
+  "a": 1,
+  "b": [
+    2,
+    3
+  ]
+}
+(partial)
+> 1 +
+.   2
+3
+(partial)
+> :type net.services[0]
+Service
+> :type net.services[0].endpoint
+unknown
+> :type LIMIT
+16
+> :doc Topo
+export type Topo = {
+    services: sch.Service[]
+    n = std.array.count(services)
+    assert bounded: n <= sch.MAX
+}
+> :doc PublicService
+export type Service = {
+    name: string
+    port?: 1..65535 = 8080
+    endpoint = `${name}:${port}`
+}
+> :doc LIMIT
+export const MAX = 16
+> :doc cap
+export func cap(n: int): int = std.math.min(n, MAX)
+> :doc nothing
+error: no declaration named nothing
+> // session outputs and declarations
+> ports = [s.port for s in net.services]
+> ports
+[
+  8080,
+  9000
+]
+(partial)
+> total: int = std.array.sum(ports)
+> :evaluate ports total
+ports:
+[
+  8080,
+  9000
+]
+total:
+17080
+> type Pair = { a: int, b: int }
+> func twice(n: int): int = n * 2
+> const K = 7
+> twice(K)
+14
+(partial)
+> pr: Pair = { a: 1, b: twice(K) }
+> pr
+{
+  "a": 1,
+  "b": 14
+}
+(partial)
+> :evaluate pr
+{
+  "a": 1,
+  "b": 14
+}
+> :drop pr
+> :session
+declaration  Pair             type Pair = { a: int, b: int }
+declaration  twice            func twice(n: int): int = n * 2
+declaration  K                const K = 7
+output       ports            ports = [s.port for s in net.services]
+output       total            total: int = std.array.sum(ports)
+> :fmt
+type Pair = { a: int, b: int }
+func twice(n: int): int = n * 2
+const K = 7
+output ports: (1..65535)[] = [s.port for s in net.services]
+output total: int = std.array.sum(ports)
+> :evaluate
+{
+  "net": {
+    "services": [
+      {
+        "name": "a",
+        "port": 8080,
+        "endpoint": "a:8080"
+      },
+      {
+        "name": "b",
+        "port": 9000,
+        "endpoint": "b:9000"
+      }
+    ],
+    "n": 2
+  },
+  "first": {
+    "name": "solo",
+    "port": 8080,
+    "endpoint": "solo:8080"
+  },
+  "capped": 16,
+  "vel": {
+    "value": 3.0,
+    "unit": "mps"
+  },
+  "limit_used": 15
+}
+> :validate
+net: ok
+first: ok
+capped: ok
+vel: ok
+limit_used: ok
+ports: ok
+total: ok
+> :validate net first
+net: ok
+first: ok
+> :check
+ok
+> // history
+> :history
+  0  (start)
+  1  ports = [s.port for s in net.services]
+  2  total: int = std.array.sum(ports)
+  3  type Pair = { a: int, b: int }
+  4  func twice(n: int): int = n * 2
+  5  const K = 7
+  6  pr: Pair = { a: 1, b: twice(K) }
+* 7  :drop pr
+> :undo
+> :session
+declaration  Pair             type Pair = { a: int, b: int }
+declaration  twice            func twice(n: int): int = n * 2
+declaration  K                const K = 7
+output       ports            ports = [s.port for s in net.services]
+output       total            total: int = std.array.sum(ports)
+output       pr               pr: Pair = { a: 1, b: twice(K) }
+> :undo 3
+> :history
+  0  (start)
+  1  ports = [s.port for s in net.services]
+  2  total: int = std.array.sum(ports)
+* 3  type Pair = { a: int, b: int }
+  4  func twice(n: int): int = n * 2
+  5  const K = 7
+  6  pr: Pair = { a: 1, b: twice(K) }
+  7  :drop pr
+> :redo 2
+> :session
+declaration  Pair             type Pair = { a: int, b: int }
+declaration  twice            func twice(n: int): int = n * 2
+declaration  K                const K = 7
+output       ports            ports = [s.port for s in net.services]
+output       total            total: int = std.array.sum(ports)
+> :drop ports
+> :drop nothing
+error: no session declaration named nothing
+> :history
+  0  (start)
+  1  ports = [s.port for s in net.services]
+  2  total: int = std.array.sum(ports)
+  3  type Pair = { a: int, b: int }
+  4  func twice(n: int): int = n * 2
+  5  const K = 7
+* 6  :drop ports
+> // completion and places
+> :complete ne
+net
+> :complete net.
+n  derived
+services  required: Service[]
+> :complete net.services[0].
+endpoint  derived
+name  required: string
+port  defaulted: 1..65535
+> :complete std.
+array
+float
+int
+map
+math
+object
+ref
+string
+> :complete std.array.co
+count
+> :complete $
+$key
+$parent
+$path
+$referrers
+$root
+$this
+> :complete :
+:bind
+:check
+:complete
+:create
+:diff
+:doc
+:drop
+:evaluate
+:fmt
+:help
+:history
+:load
+:path
+:quit
+:redo
+:reload
+:remove
+:reset
+:roots
+:save
+:session
+:set
+:time
+:trace
+:type
+:unbind
+:undo
+:update
+:validate
+:write
+> :complete :evaluate
+:evaluate
+> :complete :trace net.services[0].
+net.services[0].endpoint
+net.services[0].name
+net.services[0].port
+> :path net.services[0]
+net.services[0]
+> :path net.services[0].endpoint
+net.services[0].endpoint
+> :trace net.services[0].endpoint
+net.services[0].endpoint = "a:8080"  (derived: `${name}:${port}`)
+  net.services[0].name = "a"  (supplied)
+  net.services[0].port = 8080  (defaulted)
+> :trace capped
+capped = 16  (root literal)
+> :trace limit_used
+limit_used = 15  (root literal)
+> :trace nothing.here
+error: no root named nothing
+> // errors change nothing
+> :nosuch
+error: unknown command :nosuch
+> :evaluate nothing
+error: no root named nothing
+> :bind net=x.json
+error: cannot read x.json
+> :remove net.nothing
+error: nothing at net.nothing
+> :unbind net
+> :undo 99
+> :redo
+> :help trace
+  :trace path              the derivation of a place, or its root cause
+> :quit

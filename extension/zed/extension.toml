@@ -1,0 +1,18 @@
+# The Zed extension for Decl (docs/tooling/04_extension.md §14–§16):
+# the grammar, the language, and where decl-lsp is.
+id = "decl"
+name = "Decl"
+description = "Decl — a declarative language for describing, generating, and validating structured data: syntax, outline, runnables, and the decl-lsp language server"
+version = "0.3.0"
+schema_version = 1
+authors = ["luuvish <luuvish@gmail.com>"]
+repository = "https://github.com/luuvish/decl-lang"
+
+[grammars.decl]
+repository = "https://github.com/luuvish/decl-lang"
+path = "tree-sitter-decl"
+rev = "main"
+
+[language_servers.decl-lsp]
+name = "decl-lsp"
+languages = ["Decl"]

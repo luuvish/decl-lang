@@ -1,0 +1,3 @@
+type T = { n: int, m: string = n }
+export output good: int = 1 + 1
+export output bad: T = { n: 1 }

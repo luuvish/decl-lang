@@ -1,0 +1,14 @@
+[package]
+name = "zed-decl"
+version = "0.3.0"
+edition = "2021"
+description = "Zed extension for the Decl language: grammar, language configuration, and the decl-lsp pointer"
+license = "MIT"
+publish = false
+
+[lib]
+path = "src/lib.rs"
+crate-type = ["cdylib"]
+
+[dependencies]
+zed_extension_api = "0.6"

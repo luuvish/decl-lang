@@ -1,6 +1,6 @@
 // Put the grammar's wasm files under public/playground/ for the playground
 // page; the page itself imports `decl-lang/core` and Vite bundles it. In
-// the workspace, `decl-lang` is decl-typescript; build it first if needed.
+// the workspace, `decl-lang` is decl-ts; build it first if needed.
 import { existsSync, mkdirSync, copyFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { createRequire } from 'node:module';

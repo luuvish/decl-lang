@@ -1,0 +1,32 @@
+// no entry module: expressions over literals and std, and a scratch module
+:roots
+1 + 2 * 3
+"a" + "b"
+250ms
+[1, 2, 3]
+{ a: 1, b: [true, null] }
+std.string.length("decl")
+std.array.sum([1, 2, 3])
+type Point = { x: int, y: int, norm = x * x + y * y }
+p: Point = { x: 3, y: 4 }
+p
+p.norm
+:type p
+:type p.norm
+:evaluate p
+:validate
+q: Point = { x: 1, y: 2 }
+:evaluate q
+:fmt
+:complete Po
+:complete p.
+:session
+:check
+type Bad = { x: nothing }
+:check
+:drop Bad
+:check
+:set compact
+p
+:set pretty
+p

@@ -44,6 +44,7 @@ decl evaluate site.decl --output site=site.json --output report   # one document
 decl evaluate cfg.decl --input deployed=doc.json --output deployed   # bind a document, emit its completed value
 decl validate cfg.decl --input deployed=doc.json --expect-errors E4001
 decl fmt --check src/*.decl                # canonical formatting
+decl repl site.decl                        # an interactive session over the module (docs/tooling/02_repl.md)
 ```
 
 Python users also get an API (`decl.evaluate`, `decl.check`,
@@ -53,16 +54,16 @@ for the channels and release procedure.
 
 ## Implementations
 
-Decl is implemented three times — `decl-typescript/`, `decl-rust/`, `decl-python/` — and the three must be
+Decl is implemented three times — `decl-ts/`, `decl-rs/`, `decl-py/` — and the three must be
 indistinguishable: **one behavior, three implementations**. The Node
 side is one npm workspace (root `package.json`), Rust a Cargo workspace
 (root `Cargo.toml`); `packaging/` holds distribution channels, not source.
 
 | Directory | Language | Package | Scope |
 |---|---|---|---|
-| [`decl-typescript/`](decl-typescript/README.md) | TypeScript — the **reference implementation** | npm `decl-lang` | the whole language: parser binding, static checker, evaluator, validation, packages, formatter, `decl-lsp`; `decl-lang/core` runs in browsers too |
-| [`decl-rust/`](decl-rust/README.md) | Rust — native implementation | crates.io `decl-lang` | the whole language, natively: `decl check` / `evaluate` / `validate` / `fmt`, packages, and `decl-lsp` — no Node or wasm |
-| [`decl-python/`](decl-python/README.md) | Python — native implementation + API | PyPI `decl-lang` | the whole language, natively: `decl check` / `evaluate` / `validate` / `fmt`, packages, `decl-lsp`, and a Python API — no Node.js |
+| [`decl-ts/`](decl-ts/README.md) | TypeScript — the **reference implementation** | npm `decl-lang` | the whole language: parser binding, static checker, evaluator, validation, packages, formatter, `decl-lsp`; `decl-lang/core` runs in browsers too |
+| [`decl-rs/`](decl-rs/README.md) | Rust — native implementation | crates.io `decl-lang` | the whole language, natively: `decl check` / `evaluate` / `validate` / `fmt`, packages, and `decl-lsp` — no Node or wasm |
+| [`decl-py/`](decl-py/README.md) | Python — native implementation + API | PyPI `decl-lang` | the whole language, natively: `decl check` / `evaluate` / `validate` / `fmt`, packages, `decl-lsp`, and a Python API — no Node.js |
 | `tree-sitter-decl/` | C (tree-sitter) | — | the one grammar every implementation compiles or loads |
 | `tests/` | — | — | the shared conformance corpus (`validation/`, `modules/`, `packages/`) and the parity harness (`parity/`) |
 
@@ -95,7 +96,7 @@ complete: the tree-sitter grammar, the TypeScript reference
 implementation with its full static checker, modules and packages with
 a reproducible lock, the complete standard library, the `decl` CLI /
 formatter / LSP, and real-world validation on three domain examples
-(`examples/`). Ten test suites (`decl-typescript/`, `npm test`) and the fixture
+(`examples/`). Ten test suites (`decl-ts/`, `npm test`) and the fixture
 corpus (`tests/validation`) are the conformance baseline.
 
 ## Documents
@@ -107,8 +108,8 @@ corpus (`tests/validation`) are the conformance baseline.
 - [docs/](docs/README.md) — language documentation: design charter,
   the normative specification (13 chapters), the guide, and the
   benchmark cases
-- [decl-typescript/](decl-typescript/README.md) — the reference implementation, CLI,
-  formatter, and LSP server; [decl-rust/](decl-rust/README.md) and
-  [decl-python/](decl-python/README.md) — the native runtimes
+- [decl-ts/](decl-ts/README.md) — the reference implementation, CLI,
+  formatter, and LSP server; [decl-rs/](decl-rs/README.md) and
+  [decl-py/](decl-py/README.md) — the native runtimes
 - [examples/](examples/) — domain examples used for real-world validation
 - [packaging/](packaging/README.md) — distribution channels and releases

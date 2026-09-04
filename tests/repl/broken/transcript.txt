@@ -1,0 +1,29 @@
+> // a universe with a static error: expressions still evaluate over what loaded
+> :check
+error [E4001]: expression type does not satisfy the expected type
+> good
+2
+(partial)
+> good + 1
+3
+(partial)
+> :evaluate
+error [E4001]: expression type does not satisfy the expected type
+(not evaluated)
+> :evaluate good
+error [E4001]: expression type does not satisfy the expected type
+(not evaluated)
+> :validate good
+error [E4001]: expression type does not satisfy the expected type
+(not evaluated)
+> x = good * 3
+> x
+6
+(partial)
+> :evaluate x
+error [E4001]: expression type does not satisfy the expected type
+(not evaluated)
+> :roots
+output  good             exported     main.decl
+output  bad              exported     main.decl
+output  x                session

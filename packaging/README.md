@@ -7,12 +7,14 @@ import name in Python is `decl`, and the binary is `decl` everywhere.
 
 | Channel | Package | Install | Status |
 |---|---|---|---|
-| npm | `decl-lang` | `npm install -g decl-lang` | prepared (`decl-typescript/`) |
-| PyPI | `decl-lang` | `pip install decl-lang` / `pip install 'decl-lang[node]'` | prepared (`decl-python/`) |
+| npm | `decl-lang` | `npm install -g decl-lang` | prepared (`decl-ts/`) |
+| PyPI | `decl-lang` | `pip install decl-lang` / `pip install 'decl-lang[node]'` | prepared (`decl-py/`) |
 | Homebrew | tap `luuvish/tap`, formula `decl-lang` | `brew install luuvish/tap/decl-lang` | prepared (`homebrew/`) |
-| crates.io | `decl-lang` (bin `decl`) | `cargo install decl-lang` | prepared (`decl-rust/`, native runtime) |
+| crates.io | `decl-lang` (bin `decl`) | `cargo install decl-lang` | prepared (`decl-rs/`, native runtime) |
+| Visual Studio Marketplace, Open VSX | `luuvish.vscode-decl` (the VS Code extension, bundling npm `decl-lang`) | Extensions view: "Decl" | scaffolded (`extension/vscode/`, [docs/tooling/04_extension.md](../docs/tooling/04_extension.md)), unpublished |
+| Zed extension registry | `decl` (the Zed extension: grammar, queries, `decl-lsp` pointer) | Zed: extensions, "Decl" | scaffolded (`extension/zed/`, [docs/tooling/04_extension.md](../docs/tooling/04_extension.md)), unpublished; needs prebuilt `decl-lsp` binaries as GitHub release assets |
 
-npm and Homebrew ship **the same bytes**: `decl-typescript/dist/` — the esbuild
+npm and Homebrew ship **the same bytes**: `decl-ts/dist/` — the esbuild
 bundles of the CLI, LSP server, and library (web-tree-sitter included,
 zero runtime dependencies) plus the two wasm files. PyPI and crates.io
 ship the native Python and Rust implementations of the same language. Every channel's smoke test drives the installed `decl`
@@ -22,7 +24,7 @@ byte-identical to the reference by `tests/parity/differential.py`
 
 ## PyPI — `decl-lang`
 
-`decl-python/` is a fully native Python implementation: `decl.runtime` is
+`decl-py/` is a fully native Python implementation: `decl.runtime` is
 a pure-Python port of the whole language (checker, evaluator, packages,
 formatter, language server) behind the console scripts `decl` /
 `decl-lsp` and the API (`decl.check` / `decl.evaluate` /
@@ -30,8 +32,8 @@ formatter, language server) behind the console scripts `decl` /
 compiles the grammar's C sources into a small extension module. No
 Node.js is involved. Node comes from `$DECL_NODE`, the optional
 `nodejs-wheel-binaries` dependency (`pip install 'decl-lang[node]'`), or
-`npm run build` in `decl-typescript/` copies the grammar sources into
-`decl-python/decl/_tree_sitter/src/` (gitignored; `setup.py` copies them
+`npm run build` in `decl-ts/` copies the grammar sources into
+`decl-py/decl/_tree_sitter/src/` (gitignored; `setup.py` copies them
 itself from a fresh checkout).
 
 ```bash
@@ -49,15 +51,15 @@ The sdist needs a C compiler at install time; publish platform wheels
 
 ## crates.io — `decl-lang`
 
-`decl-rust/` is the native Rust implementation: the grammar is compiled in by
+`decl-rs/` is the native Rust implementation: the grammar is compiled in by
 `build.rs` (from `../tree-sitter-decl/src` inside the repository, or
-from `grammar/` in the published crate — `npm run build` in `decl-typescript/`
+from `grammar/` in the published crate — `npm run build` in `decl-ts/`
 copies the sources there); the `decl` binary offers `check`, `evaluate`,
 `validate`, and `fmt` with the reference CLI's exact output format, and
 `decl-lsp` is the language server.
 
 ```bash
-npm run build -w decl-lang                     # refreshes decl-rust/grammar and decl-rust/LICENSE
+npm run build -w decl-lang                     # refreshes decl-rs/grammar and decl-rs/LICENSE
 cd ../rust
 cargo build --release                          # from the repository root (Cargo workspace)
 ./target/release/decl validate ../tests/validation
@@ -67,13 +69,13 @@ cargo publish --dry-run                        # then: cargo publish (first time
 
 ## npm — `decl-lang`
 
-The package root is `decl-typescript/`. `npm run build` bundles the CLI, the LSP
+The package root is `decl-ts/`. `npm run build` bundles the CLI, the LSP
 server, and the library entry with esbuild into `dist/` (ESM, Node 20+)
 and ships the tree-sitter grammar wasm next to them; `web-tree-sitter`
 is the only runtime dependency.
 
 ```bash
-cd decl-typescript
+cd decl-ts
 npm run build          # dist/cli.js, dist/lsp.js, dist/index.js, dist/tree-sitter-decl.wasm
 npm test               # the ten suites
 npm run smoke:dist     # npm pack -> install into a scratch project -> drive the installed binaries
@@ -106,7 +108,7 @@ gh repo create luuvish/homebrew-tap --public --description "Homebrew tap for the
 git clone git@github.com:luuvish/homebrew-tap.git
 cp -r packaging/homebrew/Formula homebrew-tap/
 # after `npm publish`, pin the tarball checksum:
-shasum -a 256 decl-typescript/decl-lang-0.2.0.tgz        # or: brew fetch --build-from-source ./Formula/decl-lang.rb
+shasum -a 256 decl-ts/decl-lang-0.2.0.tgz        # or: brew fetch --build-from-source ./Formula/decl-lang.rb
 # edit sha256 in Formula/decl-lang.rb, then
 cd homebrew-tap && brew install --build-from-source ./Formula/decl-lang.rb && brew test decl-lang
 git add Formula && git commit -m "decl-lang 0.2.0" && git push
@@ -127,11 +129,11 @@ in core as of 2026-09-02).
 
 ## Release checklist
 
-1. Bump `version` in `decl-typescript/package.json`, `decl-python/pyproject.toml` and
-   `decl-python/decl/__init__.py`, and `decl-rust/Cargo.toml` (spec version + patch).
+1. Bump `version` in `decl-ts/package.json`, `decl-py/pyproject.toml` and
+   `decl-py/decl/__init__.py`, and `decl-rs/Cargo.toml` (spec version + patch).
 2. `make verify` — every implementation's tests and the parity harness
    (`tests/parity/differential.py`): every line `same`.
-3. `cd decl-typescript && npm run smoke:dist`; `cd decl-python && python scripts/smoke.py`.
+3. `cd decl-ts && npm run smoke:dist`; `cd decl-py && python scripts/smoke.py`.
 4. `npm publish` (first time: `npm login`; the name `decl-lang` is
    unclaimed as of 2026-09-02); `python -m twine upload dist/*`;
    `cargo publish`.

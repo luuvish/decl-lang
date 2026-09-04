@@ -1,0 +1,40 @@
+[build-system]
+requires = ["setuptools>=77", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "decl-lang"
+version = "0.3.0"
+description = "Decl — a declarative language for describing, generating, and validating structured data: the decl CLI (check / evaluate / validate / fmt), the decl-lsp language server, and a Python API, implemented natively"
+readme = "README.md"
+license = "MIT"
+license-files = ["LICENSE"]
+requires-python = ">=3.9"
+authors = [{ name = "luuvish" }]
+keywords = ["decl", "declarative", "schema", "validation", "configuration", "json", "language", "lsp"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: C",
+    "Topic :: Software Development :: Compilers",
+    "Topic :: Software Development :: Quality Assurance",
+]
+dependencies = ["tree-sitter>=0.25"]
+
+[project.scripts]
+decl = "decl.cli:main"
+decl-lsp = "decl.cli:lsp_main"
+
+[project.urls]
+Homepage = "https://github.com/luuvish/decl-lang"
+Repository = "https://github.com/luuvish/decl-lang"
+Issues = "https://github.com/luuvish/decl-lang/issues"
+
+[tool.setuptools]
+packages = ["decl", "decl.runtime", "decl._tree_sitter"]
+
+# _tree_sitter/src/ (grammar C sources) is synced from ../tree-sitter-decl
+# by `npm run build` in ../decl-ts (or by setup.py) and gitignored
+[tool.setuptools.package-data]
+"decl._tree_sitter" = ["binding.c", "src/*.c", "src/tree_sitter/*.h"]

@@ -1,0 +1,11 @@
+// a universe with a static error: expressions still evaluate over what loaded
+:check
+good
+good + 1
+:evaluate
+:evaluate good
+:validate good
+x = good * 3
+x
+:evaluate x
+:roots

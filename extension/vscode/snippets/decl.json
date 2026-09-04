@@ -1,0 +1,10 @@
+{
+  "type": { "prefix": "type", "body": ["type ${1:Name} = {", "    ${2:member}: ${3:string}", "}"], "description": "a record type" },
+  "output": { "prefix": "output", "body": ["output ${1:name}: ${2:Type} = {", "    $0", "}"], "description": "an output root" },
+  "input": { "prefix": "input", "body": ["input ${1:name}: ${2:Type}$0"], "description": "an input root" },
+  "func": { "prefix": "func", "body": ["func ${1:name}(${2:x}: ${3:int}): ${4:int} = $0"], "description": "a function" },
+  "assert": { "prefix": "assert", "body": ["assert ${1:name}: ${2:condition}", "    else error `${3:message}`"], "description": "a constraint" },
+  "match": { "prefix": "match", "body": ["match ${1:subject} {", "    (${2:v}: ${3:Arm}) => $0", "}"], "description": "a match expression" },
+  "for": { "prefix": "for", "body": ["[${1:x} for ${1:x} in ${2:items}$0]"], "description": "an array comprehension" },
+  "import": { "prefix": "import", "body": ["import { ${1:Name} } from \"./${2:module}.decl\""], "description": "an import" }
+}

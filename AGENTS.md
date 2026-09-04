@@ -30,23 +30,26 @@ its phase table when a phase advances.
 
 | Directory | Role | Package |
 |---|---|---|
-| `decl-typescript/` | the **reference implementation**: the whole language (parser binding, checker, evaluator, packages, formatter, `decl-lsp`); its platform-neutral core is also what the website's playground runs | npm `decl-lang` |
-| `decl-rust/` | the whole language natively: `decl` (check / evaluate / validate / fmt, packages) and `decl-lsp` | crates.io `decl-lang` |
-| `decl-python/` | the whole language natively: `decl`, `decl-lsp`, and a Python API — no Node.js | PyPI `decl-lang` |
+| `decl-ts/` | the **reference implementation**: the whole language (parser binding, checker, evaluator, packages, formatter, `decl-lsp`); its platform-neutral core is also what the website's playground runs | npm `decl-lang` |
+| `decl-rs/` | the whole language natively: `decl` (check / evaluate / validate / fmt, packages) and `decl-lsp` | crates.io `decl-lang` |
+| `decl-py/` | the whole language natively: `decl`, `decl-lsp`, and a Python API — no Node.js | PyPI `decl-lang` |
 | `tree-sitter-decl/` | the single grammar all three use | — |
-| `tests/` | shared corpus (`validation/`, `modules/`, `packages/`) and the parity harness (`parity/`) | — |
+| `extension/vscode/`, `extension/zed/` | the editor extensions (docs/tooling/04_extension.md): clients of `decl-lsp`, the grammar's queries | Marketplace / Open VSX, the Zed registry (planned) |
+| `tests/` | shared corpus (`validation/`, `modules/`, `packages/`, REPL sessions `repl/`) and the parity harness (`parity/`) | — |
 
-The three sit side by side at the top level, named like the grammar
-(`tree-sitter-decl/`) — the Node side (`decl-typescript`,
-`tree-sitter-decl`, `site`) is one npm workspace rooted at the top-level
+The three sit side by side at the top level, named by language
+(`decl-ts`, `decl-rs`, `decl-py`) beside the grammar
+(`tree-sitter-decl/`) and the editor extensions (`extension/vscode`,
+`extension/zed`) — the Node side (`decl-ts`, `tree-sitter-decl`, `site`,
+`extension/vscode`) is one npm workspace rooted at the top-level
 `package.json` (single lockfile, `npm ci` once at the root), and
-`decl-rust` is a member of the Cargo workspace rooted at the
-top-level `Cargo.toml` (`cargo build` at the root, binary in `target/`).
+`decl-rs` is a member of the Cargo workspace rooted at the top-level
+`Cargo.toml` (`cargo build` at the root, binary in `target/`).
 `packaging/` is different: distribution channels and the Homebrew tap,
 not source. The three mirror one module layout; a language rule lives
 in the same-named file everywhere:
 
-| Concept | `decl-typescript/src` | `decl-rust/src` | `decl-python/decl/runtime` |
+| Concept | `decl-ts/src` | `decl-rs/src` | `decl-py/decl/runtime` |
 |---|---|---|---|
 | AST | `ast.ts` | `ast.rs` | dict-shaped, built by `parse.py` |
 | CST → AST | `parse.ts` | `parse.rs` | `parse.py` |
@@ -59,6 +62,7 @@ in the same-named file everywhere:
 | static checker, expression inference | `checker.ts`, `infer.ts` | `checker.rs`, `infer.rs` | `checker.py`, `infer.py` |
 | canonical formatter | `fmt.ts` | `fmt.rs` | `fmt.py` |
 | corpus judgment | `conformance.ts` | `conformance.rs` | `conformance.py` |
+| session object (universe + operation log), the REPL | `session.ts`, `repl.ts` | `session.rs`, `repl.rs` | `session.py`, `repl.py` |
 | language server (stdio) | `lsp.ts` | `lsp.rs` (+ `lsp_main.rs`) | `lsp.py` |
 | command line | `cli.ts` | `cli.rs` (+ `main.rs`) | `cli.py` (+ `__main__.py`) |
 | platform: locating the grammar (Rust and Python compile it in; TypeScript loads a wasm, from disk in `node.ts` or from a URL) | `node.ts`, entries `core.ts` (platform-neutral) / `index.ts` (Node) | `lib.rs` | `_tree_sitter/` |

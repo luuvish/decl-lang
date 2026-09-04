@@ -1,0 +1,55 @@
+:roots
+deployed
+deployed.tag$
+extra
+:validate
+// binding documents: a file, an inline document, an expression
+:bind deployed=tests/repl/documents/doc.json
+deployed.label
+:bind extra {
+    "port": 1,
+    "name": "inline"
+}
+extra.label
+:bind extra = site
+extra.label
+:bind extra=tests/repl/documents/bad.json
+:bind extra=tests/repl/documents/missing.json
+:bind nothing=tests/repl/documents/doc.json
+:roots
+// editing a document
+:update deployed.port = 9100
+:create deployed.replicas = 9
+:create deployed.replicas = 10
+:update deployed.nothing = 1
+:remove deployed.nothing
+:validate deployed
+:trace deployed.label
+:trace deployed.replicas
+:diff deployed
+:remove deployed.replicas
+:validate deployed
+:diff site
+// editing an output detaches it into its settable projection
+:update site.replicas = 3
+:roots
+:evaluate site mirror
+:trace site.label
+:trace mirror.label
+:diff site
+:create site.extra_flag = true
+site
+:undo 2
+:roots
+:evaluate site
+:redo
+:roots
+// the session's documents and the log
+:session
+:history
+:unbind deployed
+:unbind deployed
+:roots
+:reset
+:roots
+:history

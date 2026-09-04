@@ -1,7 +1,7 @@
 """Parity across the three implementations.
 
-Decl ships a TypeScript reference implementation (decl-typescript), a Rust
-runtime (decl-rust), and a Python runtime (decl-python). They must be
+Decl ships a TypeScript reference implementation (decl-ts), a Rust
+runtime (decl-rs), and a Python runtime (decl-py). They must be
 indistinguishable at the command line: for every module in the fixture
 corpus (valid and invalid), the documentation examples, and the domain
 examples, `check` and `evaluate` — with and without `--json` — must produce
@@ -17,7 +17,7 @@ harness itself creates.
 
     python tests/parity/differential.py                 # rust and python vs reference
     python tests/parity/differential.py --only rust     # one runtime
-    DECL_PYTHON=decl-python/.venv/bin/python ...             # the interpreter that has `decl` installed
+    DECL_PYTHON=decl-py/.venv/bin/python ...             # the interpreter that has `decl` installed
 
 Prerequisites: `npm ci` at the repository root, `cargo build --release`
 (the Cargo workspace), and the Python package importable (`make python-env`). A missing
@@ -34,7 +34,7 @@ import tempfile
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
-TS_CLI = ROOT / "decl-typescript/src/cli.ts"
+TS_CLI = ROOT / "decl-ts/src/cli.ts"
 RUST_BIN = ROOT / "target/release/decl"
 PYTHON = os.environ.get("DECL_PYTHON") or sys.executable
 
@@ -77,8 +77,10 @@ NORMALIZE: list[tuple[str, str]] = [(str(tmp), "<tmp>")]
 
 
 def outcome(cmd: list[str], args: list[str]) -> tuple[int, str, str]:
-    """(exit code, stdout, stderr) of one command line, temp paths normalized"""
-    r = subprocess.run(cmd + args, capture_output=True, text=True, check=False, cwd=str(ROOT))
+    """(exit code, stdout, stderr) of one command line, temp paths normalized;
+    a `--script -` reads the session from standard input"""
+    stdin = "deployed\n:roots\n" if args[-2:] == ["--script", "-"] else ""
+    r = subprocess.run(cmd + args, capture_output=True, text=True, check=False, cwd=str(ROOT), input=stdin)
     out, err = r.stdout, r.stderr
     for a, b in NORMALIZE:
         out, err = out.replace(a, b), err.replace(a, b)
@@ -206,6 +208,13 @@ cli_row("evaluate: --output without a name", ["evaluate", str(cfg.relative_to(RO
 cli_row("evaluate: two --output to stdout", ["evaluate", str(cfg.relative_to(ROOT)), "--output", "prod", "--output", "dev"])
 cli_row("evaluate: a module exporting no output", ["evaluate", "tests/validation/declarations/valid/output_from_input_fallback.decl"])
 cli_row("evaluate: --output of an unwritable file", ["evaluate", str(cfg.relative_to(ROOT)), "--output", f"prod={tmp}/no/such/dir/x.json"])
+cli_row("--version", ["--version"])
+cli_row("validate: a module with imports, nothing bound", ["validate", "tests/modules/basic/main.decl"])
+cli_row("validate: a module with imports (--json)", ["validate", "tests/modules/basic/main.decl", "--json"])
+cli_row("validate: a file that does not parse", ["validate", "tests/validation/lexical/invalid/semicolon.decl"])
+cli_row("validate: a missing file", ["validate", f"{tmp}/missing.decl"])
+cli_row("fmt: a missing file", ["fmt", f"{tmp}/missing.decl"])
+cli_row("fmt --check: a missing file", ["fmt", "--check", f"{tmp}/missing.decl"])
 cli_row("evaluate: --input without name=", ["evaluate", str(cfg.relative_to(ROOT)), "--input", "nope"])
 cli_row("evaluate: --input of an unknown input", ["evaluate", str(cfg.relative_to(ROOT)), "--input", f"nope={bad}"])
 
@@ -313,23 +322,76 @@ def lsp_transcript(cmd: list[str]) -> list:
         for x in ds:
             x["message"] = x["message"].replace(str(d), "<dir>")
         out.append((f"diagnostics {i}", ds))
-    s.notify("textDocument/didChange", {"textDocument": {"uri": uri, "version": 9}, "contentChanges": [{"text": 'import { Service, MAX as LIMIT } from "./lib.decl"\nconst top = LIMIT\nexport output s: Service = { name: "a" }\n'}]})
-    s.diagnostics(uri)
-    for label, pos in [("hover top", (1, 7)), ("hover LIMIT", (1, 13)), ("hover Service", (2, 19)), ("hover nothing", (0, 0))]:
-        out.append((label, s.request("textDocument/hover", {"textDocument": {"uri": uri}, "position": {"line": pos[0], "character": pos[1]}})))
-    for label, pos in [("definition Service", (2, 19)), ("definition LIMIT", (1, 13)), ("definition top", (1, 7))]:
-        r = s.request("textDocument/definition", {"textDocument": {"uri": uri}, "position": {"line": pos[0], "character": pos[1]}})
-        if r and "uri" in r:
-            r = dict(r, uri=r["uri"].replace(str(d), "<dir>").replace("%2F", "/"))   # servers encode file URIs differently
-        out.append((label, r))
+    MAIN = 'import { Service, MAX as LIMIT } from "./lib.decl"\nconst top = LIMIT\nexport output s: Service = { name: "a" }\nexport output t: Service = {\n    name: "b"\n}\nconst first = s.name\n'
+
+    def norm(v):
+        """temp paths and URI encodings normalized (servers encode file URIs differently)"""
+        if isinstance(v, str):
+            return v.replace(str(d), "<dir>").replace("%2F", "/")
+        if isinstance(v, list):
+            return [norm(x) for x in v]
+        if isinstance(v, dict):
+            return {norm(k): norm(x) for k, x in v.items()}
+        return v
+
+    def change(version: int, text: str):
+        s.notify("textDocument/didChange", {"textDocument": {"uri": uri, "version": version}, "contentChanges": [{"text": text}]})
+        return norm(s.diagnostics(uri)["diagnostics"])
+
+    def ask(label: str, method: str, params: dict):
+        out.append((label, norm(s.request(method, params))))
+
+    at = lambda line, ch: {"textDocument": {"uri": uri}, "position": {"line": line, "character": ch}}
+    change(9, MAIN)
+    for label, pos in [("hover top", (1, 7)), ("hover LIMIT", (1, 13)), ("hover Service", (2, 19)), ("hover nothing", (0, 0)), ("hover s.name", (6, 16)), ("hover a literal", (2, 36))]:
+        ask(label, "textDocument/hover", at(*pos))
+    for label, pos in [("definition Service", (2, 19)), ("definition LIMIT", (1, 13)), ("definition top", (1, 7)), ("definition s.name", (6, 16))]:
+        ask(label, "textDocument/definition", at(*pos))
+    ask("type definition of s", "textDocument/typeDefinition", at(6, 14))
+    ask("references of Service", "textDocument/references", dict(at(2, 19), context={"includeDeclaration": True}))
+    ask("references of s (uses only)", "textDocument/references", dict(at(6, 14), context={"includeDeclaration": False}))
+    ask("highlight of s", "textDocument/documentHighlight", at(6, 14))
+    ask("completion of a name prefix", "textDocument/completion", at(1, 15))
+    out.append(("diagnostics while typing", change(10, MAIN + "const e = s.\nconst f = std.arr\n")))
+    ask("member completion while typing", "textDocument/completion", at(7, 12))
+    ask("std completion", "textDocument/completion", at(8, 17))
+    change(11, MAIN)
+    ask("document symbols", "textDocument/documentSymbol", {"textDocument": {"uri": uri}})
+    ask("folding ranges", "textDocument/foldingRange", {"textDocument": {"uri": uri}})
+    out.append(("diagnostics of an unformatted text", change(12, "const x=1\nconst y = [s for s in [1, 2]]\n")))
+    ask("formatting", "textDocument/formatting", {"textDocument": {"uri": uri}, "options": {"tabSize": 4, "insertSpaces": True}})
+    change(13, MAIN)
+    ask("prepare rename top", "textDocument/prepareRename", at(1, 7))
+    ask("prepare rename a literal", "textDocument/prepareRename", at(2, 36))
+    ask("rename Service", "textDocument/rename", dict(at(2, 19), newName="Svc"))
+    ask("rename top", "textDocument/rename", dict(at(1, 7), newName="head"))
+    ask("code lenses", "textDocument/codeLens", {"textDocument": {"uri": uri}})
+    ask("decl.evaluate s", "workspace/executeCommand", {"command": "decl.evaluate", "arguments": [uri, "s"]})
+    ask("decl.evaluate all", "workspace/executeCommand", {"command": "decl.evaluate", "arguments": [uri]})
+    ask("decl.validate", "workspace/executeCommand", {"command": "decl.validate", "arguments": [uri]})
+    ask("decl.trace", "workspace/executeCommand", {"command": "decl.trace", "arguments": [uri, "s.port"]})
+    out.append(("diagnostics of an evaluation error", change(14, MAIN + 'export output u: Service = { name: "c", port: 70000 }\n')))
+    out.append(("diagnostics of a missing import", change(15, 'import { Nothing } from "./lib.decl"\nconst z = 1\n')))
+    change(16, MAIN)
     out.append(("shutdown", s.request("shutdown", {})))
     s.notify("exit", {})
     s.close()
     return out
 
 
-print("== lsp: one scripted editor session (diagnostics, hover, definition)")
-ref_t = lsp_transcript(["node", str(ROOT / "decl-typescript/src/lsp.ts")])
+# ---------------------------------------------------------------- repl
+repl_cases = sorted(p for p in (ROOT / "tests/repl").iterdir() if (p / "session.txt").exists())
+print(f"== repl: {len(repl_cases)} scripted sessions (the transcript, byte for byte, and the exit status)")
+for case in repl_cases:
+    rel = str(case.relative_to(ROOT))
+    entry = [f"{rel}/main.decl"] if (case / "main.decl").exists() else []
+    cli_row(f"repl {case.name}", ["repl", *entry, "--script", f"{rel}/session.txt"])
+cli_row("repl: --input binds before the first line, --script - reads stdin", ["repl", "tests/repl/documents/main.decl", "--input", "deployed=tests/repl/documents/doc.json", "--script", "-"])
+cli_row("repl: a missing script is a usage error", ["repl", "--script", f"{tmp}/nope.txt"])
+cli_row("repl: an unknown option is a usage error", ["repl", "--nope"])
+
+print("== lsp: one scripted editor session (diagnostics, hover, navigation, completion, symbols, formatting, rename, lenses, commands)")
+ref_t = lsp_transcript(["node", str(ROOT / "decl-ts/src/lsp.ts")])
 nat_t = {n: lsp_transcript(cmd) for n, cmd in LSP_SERVERS.items()}
 for i, (label, ref_v) in enumerate(ref_t):
     verdicts, detail = {}, {}

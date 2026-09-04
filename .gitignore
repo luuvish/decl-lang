@@ -5,18 +5,18 @@ build/
 target/
 __pycache__/
 *.egg-info/
-# decl-typescript: packed tarballs and the LICENSE copied in by the build
-decl-typescript/*.tgz
-decl-typescript/LICENSE
-# decl-python: grammar sources and the extension
-decl-python/decl/_tree_sitter/src/
-decl-python/decl/_tree_sitter/*.so
-decl-python/LICENSE
-decl-python/.venv/
-# decl-rust: grammar sources and LICENSE copied in by the build
-decl-rust/grammar/
-decl-rust/LICENSE
-# website: generated from docs/ and decl-typescript at build time (site/scripts/sync-docs.mjs)
+# decl-ts: packed tarballs and the LICENSE copied in by the build
+decl-ts/*.tgz
+decl-ts/LICENSE
+# decl-py: grammar sources and the extension
+decl-py/decl/_tree_sitter/src/
+decl-py/decl/_tree_sitter/*.so
+decl-py/LICENSE
+decl-py/.venv/
+# decl-rs: grammar sources and LICENSE copied in by the build
+decl-rs/grammar/
+decl-rs/LICENSE
+# website: generated from docs/ and decl-ts at build time (site/scripts/sync-docs.mjs)
 site/.astro/
 site/public/playground/
 site/src/content/docs/specification/
@@ -27,3 +27,10 @@ site/src/content/docs/tooling/
 site/src/content/docs/revisions.md
 site/src/content/docs/documentation.md
 site/src/samples/synced/
+# editor extensions: build outputs and packages
+extension/vscode/dist/
+extension/vscode/server/
+extension/vscode/syntaxes/
+extension/vscode/*.vsix
+extension/zed/target/
+extension/zed/grammars/

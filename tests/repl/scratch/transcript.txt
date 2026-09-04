@@ -1,0 +1,102 @@
+> // no entry module: expressions over literals and std, and a scratch module
+> :roots
+(no roots)
+> 1 + 2 * 3
+7
+(partial)
+> "a" + "b"
+"ab"
+(partial)
+> 250ms
+{
+  "value": 0.25,
+  "unit": "s"
+}
+(partial)
+> [1, 2, 3]
+[
+  1,
+  2,
+  3
+]
+(partial)
+> { a: 1, b: [true, null] }
+{
+  "a": 1,
+  "b": [
+    true,
+    null
+  ]
+}
+(partial)
+> std.string.length("decl")
+4
+(partial)
+> std.array.sum([1, 2, 3])
+6
+(partial)
+> type Point = { x: int, y: int, norm = x * x + y * y }
+> p: Point = { x: 3, y: 4 }
+> p
+{
+  "x": 3,
+  "y": 4,
+  "norm": 25
+}
+(partial)
+> p.norm
+25
+(partial)
+> :type p
+Point
+> :type p.norm
+unknown
+> :evaluate p
+{
+  "x": 3,
+  "y": 4,
+  "norm": 25
+}
+> :validate
+p: ok
+> q: Point = { x: 1, y: 2 }
+> :evaluate q
+{
+  "x": 1,
+  "y": 2,
+  "norm": 5
+}
+> :fmt
+type Point = { x: int, y: int, norm = x * x + y * y }
+output p: Point = { x: 3, y: 4 }
+output q: Point = { x: 1, y: 2 }
+> :complete Po
+Point
+> :complete p.
+norm  derived
+x  required: int
+y  required: int
+> :session
+declaration  Point            type Point = { x: int, y: int, norm = x * x + y * y }
+output       p                p: Point = { x: 3, y: 4 }
+output       q                q: Point = { x: 1, y: 2 }
+> :check
+ok
+> type Bad = { x: nothing }
+> :check
+error [E3003]: unknown type nothing (in Bad)
+> :drop Bad
+> :check
+ok
+> :set compact
+> p
+{"x":3,"y":4,"norm":25}
+(partial)
+> :set pretty
+> p
+{
+  "x": 3,
+  "y": 4,
+  "norm": 25
+}
+(partial)
