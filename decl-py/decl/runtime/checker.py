@@ -389,7 +389,9 @@ def check_module(decls: list, linked: Optional[Env] = None, hooks: Optional[dict
             for m in ast["members"]:
                 if m["m"] == "context":
                     vars_[m["variable"]] = TY(try_resolve(env, m["type"]))
-        return Ctx(cx.env, cx.report, vars_, set(cx.present), set(cx.nonnull), cx.const_memo)
+        # a child of the context: the record's members as variables, the
+        # shared anchor and the recording hooks kept (the reference's child(cx, vars))
+        return cx.child(vars_)
 
     def check_member_ast(cx: Ctx, m: dict) -> None:
         k = m["m"]

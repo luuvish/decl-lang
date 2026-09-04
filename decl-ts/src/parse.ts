@@ -23,7 +23,19 @@ export function getLanguage(): Language {
 
 export type ParseResult = { decls: Decl[]; errors: { row: number; col: number }[] };
 
+// the same text parses to the same result: the session and the language
+// server re-load the unchanged modules of a universe on every question,
+// and the AST is never mutated after lowering (a small bounded cache)
+const parseCache = new Map<string, ParseResult>();
 export function parseSource(src: string): ParseResult {
+  const hit = parseCache.get(src);
+  if (hit) return hit;
+  const r = parseSourceUncached(src);
+  if (parseCache.size >= 64) parseCache.delete(parseCache.keys().next().value!);
+  parseCache.set(src, r);
+  return r;
+}
+function parseSourceUncached(src: string): ParseResult {
   if (!language) throw new Error('call initParser() first');
   const parser = new Parser();
   parser.setLanguage(language);

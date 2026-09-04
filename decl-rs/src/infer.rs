@@ -474,7 +474,7 @@ pub fn type_text(rt: Option<&RT>) -> String {
         RTk::IsectN(_) => "?".into(),
     }
 }
-fn std_path(e: &Expr) -> Option<String> {
+pub fn std_path(e: &Expr) -> Option<String> {
     match e {
         Expr::Member { x, name, safe: false } => {
             let b = std_path(x)?;

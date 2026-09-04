@@ -221,11 +221,14 @@ in the parity harness; `decl-lsp` v2 on the session: positioned
 diagnostics (static and evaluation), hover with types, completion,
 definition / type definition / references / highlights, rename, symbols,
 folding, formatting, lenses, and the `decl.*` commands, one scripted
-editor session in the harness; the VS Code and Zed extensions
-scaffolded (`extension/vscode/`, `extension/zed/`, unpublished). Open: dependency
-tracking (the session recomputes fully today), semantic tokens, code
-actions, inlay hints, hierarchies, the extensions' tests, views, and
-releases.
+editor session in the harness — then signature help, workspace
+symbols, selection ranges, semantic tokens, inlay hints, the call and
+type hierarchies, code actions, and the syntax tree; the VS Code and
+Zed extensions scaffolded (`extension/vscode/`, `extension/zed/`,
+unpublished) with the output preview, the trace view, the syntax-tree
+document, the Test Explorer, and the release workflow. Open: dependency
+tracking (the session recomputes fully today), the remaining quick
+fixes, the extensions' tests and first release.
 
 **Exit criteria**: scripted REPL and LSP sessions in the parity harness,
 identical bytes from the three implementations · the reference scratch

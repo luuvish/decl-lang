@@ -137,5 +137,8 @@ in core as of 2026-09-02).
 4. `npm publish` (first time: `npm login`; the name `decl-lang` is
    unclaimed as of 2026-09-02); `python -m twine upload dist/*`;
    `cargo publish`.
-5. Tag the repository: `git tag v0.2.0 && git push --tags`.
+5. Tag the repository: `git tag v0.2.0 && git push --tags` — the tag
+   runs `.github/workflows/release.yml`: the prebuilt `decl-lsp` binaries
+   (the Zed extension's download), the VS Code `.vsix`, and, with
+   `VSCE_PAT` / `OVSX_PAT` configured, the Marketplace and Open VSX.
 6. Update `homebrew/Formula/decl-lang.rb` `url`/`sha256`, push to the tap.

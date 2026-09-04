@@ -286,11 +286,15 @@ definition, references, and document highlights, imports followed (§6);
 document symbols with record members (§7); prepare/rename across the
 universe (§8); formatting and folding (§9); lenses on outputs and inputs
 and the commands `decl.evaluate`, `decl.validate`, `decl.trace`,
-`decl.reloadWorkspace` (§12); the input bindings by configuration (§14).
-Open: signature help, workspace symbols and the hierarchies, linked
-editing, on-type formatting and selection ranges, code actions, inlay
-hints, semantic tokens, watched files and progress, the virtual
-documents.
+`decl.reloadWorkspace` (§12); the input bindings by configuration (§14);
+then signature help and workspace symbols (§5, §7), selection ranges
+(§9), semantic tokens with member kinds and unresolved names (§13),
+inlay hints — inferred types, parameter names, base-unit values (§11) —
+the call and type hierarchies (§7), the quick fixes *import the name*
+and *add the missing member* and the assist *annotate* (§10), and
+`decl.showSyntaxTree` (§12). Open: linked editing, on-type formatting,
+the remaining quick fixes and assists, the value and context-variable
+hints, `$/progress`, the virtual documents beyond the syntax tree.
 
 ## 18. Verification
 

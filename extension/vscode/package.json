@@ -1,82 +1,279 @@
 {
   "name": "vscode-decl",
   "displayName": "Decl",
-  "description": "Decl — a declarative language for describing, generating, and validating structured data: syntax, diagnostics, completion, navigation, rename, formatting, live output preview, and the REPL",
+  "description": "Decl \u2014 a declarative language for describing, generating, and validating structured data: syntax, diagnostics, completion, navigation, rename, formatting, live output preview, and the REPL",
   "version": "0.3.0",
   "publisher": "luuvish",
   "license": "MIT",
   "private": true,
-  "repository": { "type": "git", "url": "https://github.com/luuvish/decl-lang.git", "directory": "extension/vscode" },
-  "engines": { "vscode": "^1.90.0" },
-  "categories": ["Programming Languages", "Linters", "Formatters"],
-  "keywords": ["decl", "declarative", "schema", "validation", "configuration"],
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/luuvish/decl-lang.git",
+    "directory": "extension/vscode"
+  },
+  "engines": {
+    "vscode": "^1.90.0"
+  },
+  "categories": [
+    "Programming Languages",
+    "Linters",
+    "Formatters"
+  ],
+  "keywords": [
+    "decl",
+    "declarative",
+    "schema",
+    "validation",
+    "configuration"
+  ],
   "main": "./dist/extension.js",
-  "activationEvents": ["onLanguage:decl", "workspaceContains:**/*.decl", "workspaceContains:decl.toml"],
+  "activationEvents": [
+    "onLanguage:decl",
+    "workspaceContains:**/*.decl",
+    "workspaceContains:decl.toml"
+  ],
   "contributes": {
     "languages": [
       {
         "id": "decl",
-        "aliases": ["Decl", "decl"],
-        "extensions": [".decl"],
+        "aliases": [
+          "Decl",
+          "decl"
+        ],
+        "extensions": [
+          ".decl"
+        ],
         "configuration": "./language-configuration.json"
       }
     ],
     "grammars": [
-      { "language": "decl", "scopeName": "source.decl", "path": "./syntaxes/decl.tmLanguage.json" }
+      {
+        "language": "decl",
+        "scopeName": "source.decl",
+        "path": "./syntaxes/decl.tmLanguage.json"
+      }
     ],
-    "snippets": [{ "language": "decl", "path": "./snippets/decl.json" }],
+    "snippets": [
+      {
+        "language": "decl",
+        "path": "./snippets/decl.json"
+      }
+    ],
     "commands": [
-      { "command": "decl.openOutputPreview", "title": "Open Output Preview", "category": "Decl", "icon": "$(open-preview)" },
-      { "command": "decl.evaluate", "title": "Evaluate", "category": "Decl" },
-      { "command": "decl.validate", "title": "Validate", "category": "Decl" },
-      { "command": "decl.bindInput", "title": "Bind Input…", "category": "Decl" },
-      { "command": "decl.unbindInput", "title": "Unbind Input", "category": "Decl" },
-      { "command": "decl.trace", "title": "Trace Value", "category": "Decl" },
-      { "command": "decl.runFixtures", "title": "Run Fixtures", "category": "Decl" },
-      { "command": "decl.openRepl", "title": "Open REPL", "category": "Decl" },
-      { "command": "decl.sendToRepl", "title": "Send Selection to REPL", "category": "Decl" },
-      { "command": "decl.reloadWorkspace", "title": "Reload Workspace", "category": "Decl" },
-      { "command": "decl.restartServer", "title": "Restart Server", "category": "Decl" },
-      { "command": "decl.selectServer", "title": "Select Server", "category": "Decl" },
-      { "command": "decl.showOutput", "title": "Show Server Output", "category": "Decl" }
+      {
+        "command": "decl.openOutputPreview",
+        "title": "Open Output Preview",
+        "category": "Decl",
+        "icon": "$(open-preview)"
+      },
+      {
+        "command": "decl.evaluate",
+        "title": "Evaluate",
+        "category": "Decl"
+      },
+      {
+        "command": "decl.validate",
+        "title": "Validate",
+        "category": "Decl"
+      },
+      {
+        "command": "decl.bindInput",
+        "title": "Bind Input\u2026",
+        "category": "Decl"
+      },
+      {
+        "command": "decl.unbindInput",
+        "title": "Unbind Input",
+        "category": "Decl"
+      },
+      {
+        "command": "decl.trace",
+        "title": "Trace Value",
+        "category": "Decl"
+      },
+      {
+        "command": "decl.showSyntaxTree",
+        "title": "Show Syntax Tree",
+        "category": "Decl"
+      },
+      {
+        "command": "decl.runFixtures",
+        "title": "Run Fixtures",
+        "category": "Decl"
+      },
+      {
+        "command": "decl.openRepl",
+        "title": "Open REPL",
+        "category": "Decl"
+      },
+      {
+        "command": "decl.sendToRepl",
+        "title": "Send Selection to REPL",
+        "category": "Decl"
+      },
+      {
+        "command": "decl.reloadWorkspace",
+        "title": "Reload Workspace",
+        "category": "Decl"
+      },
+      {
+        "command": "decl.restartServer",
+        "title": "Restart Server",
+        "category": "Decl"
+      },
+      {
+        "command": "decl.selectServer",
+        "title": "Select Server",
+        "category": "Decl"
+      },
+      {
+        "command": "decl.showOutput",
+        "title": "Show Server Output",
+        "category": "Decl"
+      }
     ],
     "menus": {
       "editor/title": [
-        { "command": "decl.openOutputPreview", "when": "editorLangId == decl", "group": "navigation" }
+        {
+          "command": "decl.openOutputPreview",
+          "when": "editorLangId == decl",
+          "group": "navigation"
+        }
       ],
       "commandPalette": [
-        { "command": "decl.sendToRepl", "when": "editorLangId == decl" },
-        { "command": "decl.trace", "when": "editorLangId == decl" }
+        {
+          "command": "decl.sendToRepl",
+          "when": "editorLangId == decl"
+        },
+        {
+          "command": "decl.trace",
+          "when": "editorLangId == decl"
+        },
+        {
+          "command": "decl.showSyntaxTree",
+          "when": "editorLangId == decl"
+        }
       ]
     },
     "configuration": {
       "title": "Decl",
       "properties": {
-        "decl.server.path": { "type": "string", "default": "", "description": "The decl-lsp to run; empty runs the bundled reference server." },
-        "decl.server.args": { "type": "array", "items": { "type": "string" }, "default": [], "description": "Extra arguments for the server." },
-        "decl.trace.server": { "type": "string", "enum": ["off", "messages", "verbose"], "default": "off", "description": "Protocol trace in the output channel." },
-        "decl.inputs": { "type": "object", "additionalProperties": { "type": "string" }, "default": {}, "scope": "resource", "description": "Input name → JSON file (relative to the workspace folder): the editor's --input bindings." },
-        "decl.preview.refresh": { "type": "string", "enum": ["save", "type", "manual"], "default": "save", "description": "When output previews refresh." },
-        "decl.preview.compact": { "type": "boolean", "default": false, "description": "Previews in the wire form instead of pretty-printed." },
-        "decl.evaluate.idleDelay": { "type": "number", "default": 300, "description": "Milliseconds of quiet before re-evaluation while typing." },
-        "decl.inlayHints.types": { "type": "boolean", "default": true },
-        "decl.inlayHints.parameterNames": { "type": "boolean", "default": true },
-        "decl.inlayHints.values": { "type": "boolean", "default": false },
-        "decl.inlayHints.units": { "type": "boolean", "default": true },
-        "decl.inlayHints.contextVariables": { "type": "boolean", "default": false },
-        "decl.inlayHints.closingBraces": { "type": "boolean", "default": false },
-        "decl.codeLens.enable": { "type": "boolean", "default": true },
-        "decl.fixtures.directories": { "type": "array", "items": { "type": "string" }, "default": [], "description": "Globs of fixture corpora; empty detects directories holding valid/ or invalid/." },
-        "decl.fixtures.runOnSave": { "type": "boolean", "default": false }
+        "decl.server.path": {
+          "type": "string",
+          "default": "",
+          "description": "The decl-lsp to run; empty runs the bundled reference server."
+        },
+        "decl.server.args": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": [],
+          "description": "Extra arguments for the server."
+        },
+        "decl.trace.server": {
+          "type": "string",
+          "enum": [
+            "off",
+            "messages",
+            "verbose"
+          ],
+          "default": "off",
+          "description": "Protocol trace in the output channel."
+        },
+        "decl.inputs": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "string"
+          },
+          "default": {},
+          "scope": "resource",
+          "description": "Input name \u2192 JSON file (relative to the workspace folder): the editor's --input bindings."
+        },
+        "decl.preview.refresh": {
+          "type": "string",
+          "enum": [
+            "save",
+            "type",
+            "manual"
+          ],
+          "default": "save",
+          "description": "When output previews refresh."
+        },
+        "decl.preview.compact": {
+          "type": "boolean",
+          "default": false,
+          "description": "Previews in the wire form instead of pretty-printed."
+        },
+        "decl.evaluate.idleDelay": {
+          "type": "number",
+          "default": 300,
+          "description": "Milliseconds of quiet before re-evaluation while typing."
+        },
+        "decl.inlayHints.types": {
+          "type": "boolean",
+          "default": true
+        },
+        "decl.inlayHints.parameterNames": {
+          "type": "boolean",
+          "default": true
+        },
+        "decl.inlayHints.values": {
+          "type": "boolean",
+          "default": false
+        },
+        "decl.inlayHints.units": {
+          "type": "boolean",
+          "default": true
+        },
+        "decl.inlayHints.contextVariables": {
+          "type": "boolean",
+          "default": false
+        },
+        "decl.inlayHints.closingBraces": {
+          "type": "boolean",
+          "default": false
+        },
+        "decl.codeLens.enable": {
+          "type": "boolean",
+          "default": true
+        },
+        "decl.fixtures.directories": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": [],
+          "description": "Globs of fixture corpora; empty detects directories holding valid/ or invalid/."
+        },
+        "decl.fixtures.runOnSave": {
+          "type": "boolean",
+          "default": false
+        }
       }
     },
     "taskDefinitions": [
       {
         "type": "decl",
-        "required": ["command"],
+        "required": [
+          "command"
+        ],
         "properties": {
-          "command": { "type": "string", "enum": ["check", "evaluate", "validate", "fmt"] },
-          "args": { "type": "array", "items": { "type": "string" } }
+          "command": {
+            "type": "string",
+            "enum": [
+              "check",
+              "evaluate",
+              "validate",
+              "fmt"
+            ]
+          },
+          "args": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
         }
       }
     ],
@@ -84,7 +281,10 @@
       {
         "name": "decl",
         "owner": "decl",
-        "fileLocation": ["relative", "${workspaceFolder}"],
+        "fileLocation": [
+          "relative",
+          "${workspaceFolder}"
+        ],
         "pattern": {
           "regexp": "^(.+?): (error|warning|information)(?: \\[([A-Z0-9]+)\\])?(?: ([A-Za-z_][A-Za-z0-9_.]*))?(?: at (\\S+))?: (.*)$",
           "file": 1,
@@ -93,7 +293,16 @@
           "message": 6
         }
       }
-    ]
+    ],
+    "views": {
+      "explorer": [
+        {
+          "id": "decl.trace",
+          "name": "Decl: Trace",
+          "when": "decl.traceVisible"
+        }
+      ]
+    }
   },
   "scripts": {
     "build": "node scripts/build.mjs",

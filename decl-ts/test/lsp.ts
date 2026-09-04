@@ -58,7 +58,7 @@ const nextDiagnostics = (uri: string): Promise<any> => new Promise(res => {
 
 const dir = mkdtempSync(join(tmpdir(), 'decl-lsp-'));
 const libPath = join(dir, 'lib.decl');
-writeFileSync(libPath, 'export type Service = { name: string, port?: 1..65535 = 8080 }\nexport const MAX = 16\n');
+writeFileSync(libPath, 'export type Service = { name: string, port?: 1..65535 = 8080 }\nexport const MAX = 16\nexport func cap(n: int): int = std.math.min(n, MAX)\nexport type Public = Service { public: bool }\n');
 const mainPath = join(dir, 'main.decl');
 const mainUri = pathToFileURL(mainPath).toString();
 writeFileSync(mainPath, '');
@@ -87,7 +87,7 @@ notifyServer('initialized', {});
   check('diagnostic anchored to the name', d.diagnostics[0].range.start.line === 0 && d.diagnostics[0].range.start.character > 0, JSON.stringify(d.diagnostics[0].range));
 }
 // clean file + import; hover and definition
-const mainSrc = 'import { Service, MAX as LIMIT } from "./lib.decl"\nconst top = LIMIT\nexport output s: Service = { name: "a" }\nexport output t: Service = {\n    name: "b"\n}\nconst first = s.name\n';
+const mainSrc = 'import { Service, MAX as LIMIT, cap } from "./lib.decl"\nconst top = LIMIT\nexport output s: Service = { name: "a" }\nexport output t: Service = {\n    name: "b"\n}\nconst first = s.name\nconst c = cap(top)\nconst d = 250ms\ntype Local = Service { extra = name }\n';
 {
   const p = nextDiagnostics(mainUri);
   notifyServer('textDocument/didChange', {
@@ -116,7 +116,7 @@ const mainSrc = 'import { Service, MAX as LIMIT } from "./lib.decl"\nconst top =
   const td = await request('textDocument/typeDefinition', { textDocument: { uri: mainUri }, position: { line: 6, character: 14 } });
   check('type definition of a value of type Service', td && td.uri.endsWith('lib.decl') && td.range.start.line === 0, JSON.stringify(td));
   const refs = await request('textDocument/references', { textDocument: { uri: mainUri }, position: { line: 2, character: 19 }, context: { includeDeclaration: true } });
-  check('references of Service: declaration, import item, two annotations', refs.length === 4 && refs.filter((r: any) => r.uri.endsWith('lib.decl')).length === 1, JSON.stringify(refs));
+  check('references of Service: declaration, import item, annotations, extensions', refs.length === 6 && refs.filter((r: any) => r.uri.endsWith('lib.decl')).length === 2, JSON.stringify(refs));
   const hl = await request('textDocument/documentHighlight', { textDocument: { uri: mainUri }, position: { line: 6, character: 14 } });
   check('highlight of s: its declaration and its use', hl.length === 2 && hl[0].range.start.line === 2 && hl[1].range.start.line === 6, JSON.stringify(hl));
   const c1 = await request('textDocument/completion', { textDocument: { uri: mainUri }, position: { line: 1, character: 15 } });
@@ -125,13 +125,13 @@ const mainSrc = 'import { Service, MAX as LIMIT } from "./lib.decl"\nconst top =
   let p = nextDiagnostics(mainUri);
   notifyServer('textDocument/didChange', { textDocument: { uri: mainUri, version: 20 }, contentChanges: [{ text: broken }] });
   await p;
-  const c2 = await request('textDocument/completion', { textDocument: { uri: mainUri }, position: { line: 7, character: 12 } });
+  const c2 = await request('textDocument/completion', { textDocument: { uri: mainUri }, position: { line: 10, character: 12 } });
   check('member completion while the text does not parse', c2.items.map((i: any) => i.label).join(',') === 'name,port', JSON.stringify(c2));
   p = nextDiagnostics(mainUri);
   notifyServer('textDocument/didChange', { textDocument: { uri: mainUri, version: 21 }, contentChanges: [{ text: mainSrc }] });
   await p;
   const syms = await request('textDocument/documentSymbol', { textDocument: { uri: mainUri } });
-  check('document symbols', syms.map((s: any) => s.name).join(',') === 'top,s,t,first', JSON.stringify(syms));
+  check('document symbols', syms.map((s: any) => s.name).join(',') === 'top,s,t,first,c,d,Local', JSON.stringify(syms));
   const folds = await request('textDocument/foldingRange', { textDocument: { uri: mainUri } });
   check('folding of the multi-line output', folds.length === 1 && folds[0].startLine === 3 && folds[0].endLine === 5, JSON.stringify(folds));
   p = nextDiagnostics(mainUri);
@@ -145,13 +145,39 @@ const mainSrc = 'import { Service, MAX as LIMIT } from "./lib.decl"\nconst top =
   const pr = await request('textDocument/prepareRename', { textDocument: { uri: mainUri }, position: { line: 1, character: 7 } });
   check('prepare rename gives the name range', pr && pr.placeholder === 'top' && pr.range.start.character === 6, JSON.stringify(pr));
   const rn = await request('textDocument/rename', { textDocument: { uri: mainUri }, position: { line: 2, character: 19 }, newName: 'Svc' });
-  check('rename edits every module', rn && Object.keys(rn.changes).length === 2 && rn.changes[mainUri].length === 3, JSON.stringify(rn));
+  check('rename edits every module', rn && Object.keys(rn.changes).length === 2 && rn.changes[mainUri].length === 4, JSON.stringify(rn));
   const lenses = await request('textDocument/codeLens', { textDocument: { uri: mainUri } });
   check('lenses on the outputs', lenses.length === 2 && lenses[0].command.command === 'decl.evaluate', JSON.stringify(lenses));
   const ev = await request('workspace/executeCommand', { command: 'decl.evaluate', arguments: [mainUri, 's'] });
   check('decl.evaluate returns the document', ev && ev.document === '{"name":"a","port":8080}' && ev.diagnostics.length === 0, JSON.stringify(ev));
   const va = await request('workspace/executeCommand', { command: 'decl.validate', arguments: [mainUri, 's'] });
   check('decl.validate returns the verdict', va && va.verdicts.length === 1 && va.verdicts[0].errors === 0, JSON.stringify(va));
+  const sh = await request('textDocument/signatureHelp', { textDocument: { uri: mainUri }, position: { line: 7, character: 15 } });
+  check('signature help of a function call', sh && sh.signatures[0].label === 'cap(n: int): int' && sh.activeParameter === 0, JSON.stringify(sh));
+  const ws = await request('workspace/symbol', { query: 'ca' });
+  check('workspace symbols across the universe', ws.some((s: any) => s.name === 'cap' && s.location.uri.endsWith('lib.decl')), JSON.stringify(ws));
+  const sr = await request('textDocument/selectionRange', { textDocument: { uri: mainUri }, positions: [{ line: 6, character: 16 }] });
+  check('selection ranges grow outward', sr[0].range.start.character === 14 && sr[0].parent.range.start.character === 0, JSON.stringify(sr));
+  const st = await request('textDocument/semanticTokens/full', { textDocument: { uri: mainUri } });
+  check('semantic tokens are encoded in fives', st.data.length > 0 && st.data.length % 5 === 0, JSON.stringify(st));
+  const ih = await request('textDocument/inlayHint', { textDocument: { uri: mainUri }, range: { start: { line: 0, character: 0 }, end: { line: 20, character: 0 } } });
+  check('inlay hints: parameter name, unit base value, derived type', ih.some((h: any) => h.label === 'n:') && ih.some((h: any) => h.label === '= 0.25 s') && ih.some((h: any) => h.label === ': string'), JSON.stringify(ih));
+  const ch = await request('textDocument/prepareCallHierarchy', { textDocument: { uri: mainUri }, position: { line: 7, character: 11 } });
+  const inc = await request('callHierarchy/incomingCalls', { item: ch[0] });
+  check('call hierarchy: cap is called from c', ch[0].name === 'cap' && inc.length === 1 && inc[0].from.name === 'c', JSON.stringify(inc));
+  const th = await request('textDocument/prepareTypeHierarchy', { textDocument: { uri: mainUri }, position: { line: 2, character: 19 } });
+  const sub = await request('typeHierarchy/subtypes', { item: th[0] });
+  check('type hierarchy: Service has two subtypes', sub.map((s: any) => s.name).sort().join(',') === 'Local,Public', JSON.stringify(sub));
+  p = nextDiagnostics(mainUri);
+  notifyServer('textDocument/didChange', { textDocument: { uri: mainUri, version: 40 }, contentChanges: [{ text: 'const z = cap(1)\n' }] });
+  const dz = await p;
+  const ca = await request('textDocument/codeAction', { textDocument: { uri: mainUri }, range: { start: { line: 0, character: 10 }, end: { line: 0, character: 13 } }, context: { diagnostics: dz.diagnostics } });
+  check('code action: import the unknown name from the module beside', ca.length === 1 && ca[0].title === 'import cap from "./lib.decl"', JSON.stringify(ca));
+  p = nextDiagnostics(mainUri);
+  notifyServer('textDocument/didChange', { textDocument: { uri: mainUri, version: 41 }, contentChanges: [{ text: mainSrc }] });
+  await p;
+  const tree = await request('workspace/executeCommand', { command: 'decl.showSyntaxTree', arguments: [mainUri] });
+  check('decl.showSyntaxTree returns the tree', tree && tree.tree.startsWith('(module'), JSON.stringify(tree).slice(0, 120));
 }
 
 await request('shutdown', {});

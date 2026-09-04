@@ -229,7 +229,7 @@ fn lsp_editor_session() {
     let dir = std::env::temp_dir().join(format!("decl-lsp-{}", std::process::id()));
     std::fs::create_dir_all(&dir).unwrap();
     let lib_path = dir.join("lib.decl");
-    std::fs::write(&lib_path, "export type Service = { name: string, port?: 1..65535 = 8080 }\nexport const MAX = 16\n").unwrap();
+    std::fs::write(&lib_path, "export type Service = { name: string, port?: 1..65535 = 8080 }\nexport const MAX = 16\nexport func cap(n: int): int = std.math.min(n, MAX)\nexport type Public = Service { public: bool }\n").unwrap();
     let main_path = dir.join("main.decl");
     std::fs::write(&main_path, "").unwrap();
     let main_uri = decl_lang::lsp::uri_of(&main_path);
@@ -244,7 +244,7 @@ fn lsp_editor_session() {
     let d = c.next_diagnostics(&main_uri);
     assert!(d.contains("\"code\":\"E4011\""), "checker diagnostic published with code: {d}");
     assert!(d.contains("\"start\":{\"line\":0,\"character\":5}"), "diagnostic anchored to the name: {d}");
-    let main_src = "import { Service, MAX as LIMIT } from \\\"./lib.decl\\\"\\nconst top = LIMIT\\nexport output s: Service = { name: \\\"a\\\" }\\nexport output t: Service = {\\n    name: \\\"b\\\"\\n}\\nconst first = s.name\\n";
+    let main_src = "import { Service, MAX as LIMIT, cap } from \\\"./lib.decl\\\"\\nconst top = LIMIT\\nexport output s: Service = { name: \\\"a\\\" }\\nexport output t: Service = {\\n    name: \\\"b\\\"\\n}\\nconst first = s.name\\nconst c = cap(top)\\nconst d = 250ms\\ntype Local = Service { extra = name }\\n";
     c.notify("textDocument/didChange", &format!("{{\"textDocument\":{{\"uri\":\"{main_uri}\",\"version\":3}},\"contentChanges\":[{{\"text\":\"{main_src}\"}}]}}"));
     let d = c.next_diagnostics(&main_uri);
     assert!(d.contains("\"diagnostics\":[]"), "clean module publishes no diagnostics: {d}");
@@ -260,8 +260,8 @@ fn lsp_editor_session() {
     let td = c.request("textDocument/typeDefinition", &at(6, 14));
     assert!(td.contains("lib.decl") && td.contains("\"start\":{\"line\":0,"), "type definition of a value of type Service: {td}");
     let refs = c.request("textDocument/references", &format!("{{\"textDocument\":{{\"uri\":\"{main_uri}\"}},\"position\":{{\"line\":2,\"character\":19}},\"context\":{{\"includeDeclaration\":true}}}}"));
-    assert_eq!(refs.matches("\"uri\":").count(), 4, "references of Service: declaration, import item, two annotations: {refs}");
-    assert_eq!(refs.matches("lib.decl").count(), 1, "one reference in lib.decl: {refs}");
+    assert_eq!(refs.matches("\"uri\":").count(), 6, "references of Service: declaration, import item, annotations, extensions: {refs}");
+    assert_eq!(refs.matches("lib.decl").count(), 2, "two references in lib.decl: {refs}");
     let hl = c.request("textDocument/documentHighlight", &at(6, 14));
     assert_eq!(hl.matches("\"kind\":1").count(), 2, "highlight of s: its declaration and its use: {hl}");
     let c1 = c.request("textDocument/completion", &at(1, 15));
@@ -269,12 +269,12 @@ fn lsp_editor_session() {
     let broken = format!("{main_src}const e = s.\\n");
     c.notify("textDocument/didChange", &format!("{{\"textDocument\":{{\"uri\":\"{main_uri}\",\"version\":20}},\"contentChanges\":[{{\"text\":\"{broken}\"}}]}}"));
     c.next_diagnostics(&main_uri);
-    let c2 = c.request("textDocument/completion", &at(7, 12));
+    let c2 = c.request("textDocument/completion", &at(10, 12));
     assert!(c2.contains("\"label\":\"name\"") && c2.contains("\"label\":\"port\""), "member completion while the text does not parse: {c2}");
     c.notify("textDocument/didChange", &format!("{{\"textDocument\":{{\"uri\":\"{main_uri}\",\"version\":21}},\"contentChanges\":[{{\"text\":\"{main_src}\"}}]}}"));
     c.next_diagnostics(&main_uri);
     let syms = c.request("textDocument/documentSymbol", &format!("{{\"textDocument\":{{\"uri\":\"{main_uri}\"}}}}"));
-    for n in ["top", "s", "t", "first"] {
+    for n in ["top", "s", "t", "first", "c", "d", "Local"] {
         assert!(syms.contains(&format!("\"name\":\"{n}\"")), "document symbol {n}: {syms}");
     }
     let folds = c.request("textDocument/foldingRange", &format!("{{\"textDocument\":{{\"uri\":\"{main_uri}\"}}}}"));
@@ -288,13 +288,43 @@ fn lsp_editor_session() {
     let pr = c.request("textDocument/prepareRename", &at(1, 7));
     assert!(pr.contains("\"placeholder\":\"top\"") && pr.contains("\"start\":{\"line\":1,\"character\":6}"), "prepare rename gives the name range: {pr}");
     let rn = c.request("textDocument/rename", &format!("{{\"textDocument\":{{\"uri\":\"{main_uri}\"}},\"position\":{{\"line\":2,\"character\":19}},\"newName\":\"Svc\"}}"));
-    assert!(rn.contains("lib.decl") && rn.matches("\"newText\":\"Svc\"").count() == 4, "rename edits every module: {rn}");
+    assert!(rn.contains("lib.decl") && rn.matches("\"newText\":\"Svc\"").count() == 6, "rename edits every module: {rn}");
     let lenses = c.request("textDocument/codeLens", &format!("{{\"textDocument\":{{\"uri\":\"{main_uri}\"}}}}"));
     assert!(lenses.matches("\"command\":\"decl.evaluate\"").count() == 2, "lenses on the outputs: {lenses}");
     let ev = c.request("workspace/executeCommand", &format!("{{\"command\":\"decl.evaluate\",\"arguments\":[\"{main_uri}\",\"s\"]}}"));
     assert!(ev.contains("\"document\":\"{\\\"name\\\":\\\"a\\\",\\\"port\\\":8080}\"") && ev.contains("\"diagnostics\":[]"), "decl.evaluate returns the document: {ev}");
     let va = c.request("workspace/executeCommand", &format!("{{\"command\":\"decl.validate\",\"arguments\":[\"{main_uri}\",\"s\"]}}"));
     assert!(va.contains("\"verdicts\":[{\"name\":\"s\",\"errors\":0,\"warnings\":0}]"), "decl.validate returns the verdict: {va}");
+    // the language server v3: signature help, workspace symbols, selection ranges, semantic tokens, inlay hints, hierarchies, code actions, the syntax tree
+    let sh = c.request("textDocument/signatureHelp", &at(7, 15));
+    assert!(sh.contains("\"label\":\"cap(n: int): int\"") && sh.contains("\"activeParameter\":0"), "signature help of a function call: {sh}");
+    let ws = c.request("workspace/symbol", "{\"query\":\"ca\"}");
+    assert!(ws.contains("\"name\":\"cap\"") && ws.contains("lib.decl"), "workspace symbols across the universe: {ws}");
+    let sr = c.request("textDocument/selectionRange", &format!("{{\"textDocument\":{{\"uri\":\"{main_uri}\"}},\"positions\":[{{\"line\":6,\"character\":16}}]}}"));
+    assert!(sr.contains("\"start\":{\"line\":6,\"character\":14}") && sr.contains("\"parent\":{\"range\":{\"start\":{\"line\":6,\"character\":0}"), "selection ranges grow outward: {sr}");
+    let stok = c.request("textDocument/semanticTokens/full", &format!("{{\"textDocument\":{{\"uri\":\"{main_uri}\"}}}}"));
+    let n = stok.split("\"data\":[").nth(1).map(|d| d.split(']').next().unwrap().split(',').count()).unwrap_or(0);
+    assert!(n > 0 && n % 5 == 0, "semantic tokens are encoded in fives: {stok}");
+    let ih = c.request("textDocument/inlayHint", &format!("{{\"textDocument\":{{\"uri\":\"{main_uri}\"}},\"range\":{{\"start\":{{\"line\":0,\"character\":0}},\"end\":{{\"line\":20,\"character\":0}}}}}}"));
+    assert!(ih.contains("\"label\":\"n:\"") && ih.contains("\"label\":\"= 0.25 s\"") && ih.contains("\"label\":\": string\""), "inlay hints: parameter name, unit base value, derived type: {ih}");
+    let ch = c.request("textDocument/prepareCallHierarchy", &at(7, 11));
+    assert!(ch.contains("\"name\":\"cap\""), "call hierarchy: prepare cap: {ch}");
+    let item = ch.split("\"result\":[").nth(1).unwrap().trim_end_matches("]}").to_string();
+    let inc = c.request("callHierarchy/incomingCalls", &format!("{{\"item\":{item}}}"));
+    assert!(inc.contains("\"from\":{\"name\":\"c\"") && inc.matches("\"from\":").count() == 1, "call hierarchy: cap is called from c: {inc}");
+    let th = c.request("textDocument/prepareTypeHierarchy", &at(2, 19));
+    let item = th.split("\"result\":[").nth(1).unwrap().trim_end_matches("]}").to_string();
+    let sub = c.request("typeHierarchy/subtypes", &format!("{{\"item\":{item}}}"));
+    assert!(sub.contains("\"name\":\"Public\"") && sub.contains("\"name\":\"Local\""), "type hierarchy: Service has two subtypes: {sub}");
+    c.notify("textDocument/didChange", &format!("{{\"textDocument\":{{\"uri\":\"{main_uri}\",\"version\":40}},\"contentChanges\":[{{\"text\":\"const z = cap(1)\\n\"}}]}}"));
+    let dz = c.next_diagnostics(&main_uri);
+    let diags = dz.split("\"diagnostics\":").nth(1).unwrap().trim_end_matches("}}").to_string();
+    let ca = c.request("textDocument/codeAction", &format!("{{\"textDocument\":{{\"uri\":\"{main_uri}\"}},\"range\":{{\"start\":{{\"line\":0,\"character\":10}},\"end\":{{\"line\":0,\"character\":13}}}},\"context\":{{\"diagnostics\":{diags}}}}}"));
+    assert!(ca.contains("\"title\":\"import cap from \\\"./lib.decl\\\"\"") && ca.matches("\"title\":").count() == 1, "code action: import the unknown name from the module beside: {ca}");
+    c.notify("textDocument/didChange", &format!("{{\"textDocument\":{{\"uri\":\"{main_uri}\",\"version\":41}},\"contentChanges\":[{{\"text\":\"{main_src}\"}}]}}"));
+    c.next_diagnostics(&main_uri);
+    let tree = c.request("workspace/executeCommand", &format!("{{\"command\":\"decl.showSyntaxTree\",\"arguments\":[\"{main_uri}\"]}}"));
+    assert!(tree.contains("\"tree\":\"(module (import_declaration"), "decl.showSyntaxTree returns the tree: {}", &tree[..tree.len().min(160)]);
     c.request("shutdown", "{}");
     c.notify("exit", "{}");
     drop(c.stdin);

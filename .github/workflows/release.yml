@@ -1,0 +1,96 @@
+# A release (docs/tooling/04_extension.md §18): on a version tag, the
+# prebuilt `decl-lsp` binaries the Zed extension downloads (one per OS
+# and architecture, from the Rust implementation), the VS Code
+# extension's .vsix, and — when the tokens are configured — its
+# publication to the Marketplace and Open VSX. The registries of the
+# language itself (npm, PyPI, crates.io) keep the packaging/README.md
+# checklist.
+name: release
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  decl-lsp:
+    name: decl-lsp ${{ matrix.asset }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { os: ubuntu-latest,   target: x86_64-unknown-linux-gnu,  asset: decl-lsp-linux-x86_64 }
+          - { os: ubuntu-24.04-arm, target: aarch64-unknown-linux-gnu, asset: decl-lsp-linux-arm64 }
+          - { os: macos-13,        target: x86_64-apple-darwin,       asset: decl-lsp-macos-x86_64 }
+          - { os: macos-latest,    target: aarch64-apple-darwin,      asset: decl-lsp-macos-arm64 }
+          - { os: windows-latest,  target: x86_64-pc-windows-msvc,    asset: decl-lsp-windows-x86_64.exe }
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+      - uses: Swatinem/rust-cache@v2
+      # the grammar sources the crate compiles are synced by the reference build
+      - run: npm ci
+      - run: npm run build -w decl-lang
+      - run: cargo build --release --target ${{ matrix.target }} -p decl-lang --bin decl-lsp
+      - name: name the asset
+        shell: bash
+        run: |
+          mkdir -p assets
+          src="target/${{ matrix.target }}/release/decl-lsp"
+          [ -f "$src.exe" ] && src="$src.exe"
+          cp "$src" "assets/${{ matrix.asset }}"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.asset }}
+          path: assets/${{ matrix.asset }}
+
+  vsix:
+    name: vscode-decl .vsix
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - run: npm run build -w decl-lang
+      - run: npm run build -w vscode-decl
+      - run: cd extension/vscode && npx @vscode/vsce package --no-dependencies -o ../../vscode-decl.vsix
+      - uses: actions/upload-artifact@v4
+        with:
+          name: vscode-decl.vsix
+          path: vscode-decl.vsix
+      - name: publish to the Marketplace and Open VSX (when the tokens are configured)
+        if: startsWith(github.ref, 'refs/tags/v')
+        env:
+          VSCE_PAT: ${{ secrets.VSCE_PAT }}
+          OVSX_PAT: ${{ secrets.OVSX_PAT }}
+        run: |
+          if [ -n "$VSCE_PAT" ]; then npx @vscode/vsce publish --packagePath vscode-decl.vsix -p "$VSCE_PAT"; else echo "VSCE_PAT not set: skipping the Marketplace"; fi
+          if [ -n "$OVSX_PAT" ]; then npx ovsx publish vscode-decl.vsix -p "$OVSX_PAT"; else echo "OVSX_PAT not set: skipping Open VSX"; fi
+
+  release:
+    name: GitHub release
+    needs: [decl-lsp, vsix]
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: assets
+          merge-multiple: true
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: assets/*
+          generate_release_notes: true

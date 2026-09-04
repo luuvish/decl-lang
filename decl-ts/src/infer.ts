@@ -200,7 +200,7 @@ export const STD: Record<string, { arity: number; ret: RT | null }> = {
   'float.of': { arity: 1, ret: PRIM('float') },
   'object.merge': { arity: 2, ret: null },
 };
-function stdPath(e: Expr): string | null {
+export function stdPath(e: Expr): string | null {
   if (e.e === 'member' && !e.safe) {
     const b = stdPath(e.x);
     return b !== null ? (b ? `${b}.${e.name}` : e.name) : null;

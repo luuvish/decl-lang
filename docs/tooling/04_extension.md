@@ -428,10 +428,12 @@ terminal, the fixture runner as a task — and `extension/zed/` — the manifest
 pointing at the grammar, the language configuration and the
 `highlights` / `brackets` / `indents` / `outline` / `runnables` queries,
 and the wasm module locating `decl-lsp` (setting, `PATH`, release
-asset). Open: the Test Explorer, the trace view, the syntax-tree
-document, the web extension, the extension tests, the release workflows
-(and the prebuilt `decl-lsp` assets Zed downloads), the grammar's
-TextMate generation.
+asset); then the Test Explorer for fixture corpora, the trace view, the
+syntax-tree document, and the release workflow
+(`.github/workflows/release.yml`: the prebuilt `decl-lsp` assets per
+platform, the `.vsix`, publication when the tokens are configured).
+Open: the web extension, the extension tests, the first release, the
+grammar's TextMate generation.
 
 ## 21. Verification
 

@@ -152,7 +152,111 @@ async function trace() {
   if (!r) return;
   output.appendLine(`trace ${p}`);
   for (const l of r.lines ?? []) output.appendLine(`  ${l}`);
-  output.show(true);
+  traceProvider.set(r.lines ?? []);
+  await vscode.commands.executeCommand('setContext', 'decl.traceVisible', true);
+  await vscode.commands.executeCommand('decl.trace.focus');
+}
+
+// the syntax tree: a read-only document following the editor
+const SYNTAX_SCHEME = 'decl-syntax';
+const syntaxEmitter = new vscode.EventEmitter<vscode.Uri>();
+class SyntaxTreeProvider implements vscode.TextDocumentContentProvider {
+  onDidChange = syntaxEmitter.event;
+  async provideTextDocumentContent(uri: vscode.Uri): Promise<string> {
+    const source = decodeURIComponent(uri.query);
+    const r = await execute('decl.showSyntaxTree', source);
+    return r?.tree ? r.tree.replace(/\) \(/g, ')\n(').replace(/ \(/g, '\n(') : '// the language server is not running';
+  }
+}
+async function showSyntaxTree() {
+  const doc = activeDecl();
+  if (!doc) return;
+  const uri = vscode.Uri.parse(`${SYNTAX_SCHEME}:${path.basename(doc.fileName)}.tree?${encodeURIComponent(doc.uri.toString())}`);
+  const tree = await vscode.workspace.openTextDocument(uri);
+  await vscode.window.showTextDocument(tree, { viewColumn: vscode.ViewColumn.Beside, preserveFocus: true, preview: false });
+}
+
+// the trace view: the derivation of a place, or its root cause, as a tree
+type TraceNode = { label: string; depth: number; children: TraceNode[] };
+class TraceProvider implements vscode.TreeDataProvider<TraceNode> {
+  private roots: TraceNode[] = [];
+  private emitter = new vscode.EventEmitter<TraceNode | undefined>();
+  onDidChangeTreeData = this.emitter.event;
+  set(lines: string[]) {
+    // the REPL's indentation (two spaces per level) is the tree
+    const stack: TraceNode[] = [];
+    this.roots = [];
+    for (const l of lines) {
+      const depth = (l.match(/^ */)?.[0].length ?? 0) / 2;
+      const node: TraceNode = { label: l.trim(), depth, children: [] };
+      while (stack.length && stack[stack.length - 1].depth >= depth) stack.pop();
+      (stack.length ? stack[stack.length - 1].children : this.roots).push(node);
+      stack.push(node);
+    }
+    this.emitter.fire(undefined);
+  }
+  getTreeItem(n: TraceNode): vscode.TreeItem {
+    const item = new vscode.TreeItem(n.label, n.children.length ? vscode.TreeItemCollapsibleState.Expanded : vscode.TreeItemCollapsibleState.None);
+    if (/\(invalid\)|^error/.test(n.label)) item.iconPath = new vscode.ThemeIcon('error');
+    return item;
+  }
+  getChildren(n?: TraceNode): TraceNode[] { return n ? n.children : this.roots; }
+}
+const traceProvider = new TraceProvider();
+
+// fixtures in the Test Explorer: a corpus is a directory with valid/ and invalid/ children
+function fixtureController(context: vscode.ExtensionContext): vscode.TestController {
+  const ctrl = vscode.tests.createTestController('decl.fixtures', 'Decl fixtures');
+  const corpora = new Map<string, vscode.TestItem>();
+  const discover = async () => {
+    ctrl.items.replace([]);
+    corpora.clear();
+    // a corpus is the directory holding valid/ and invalid/ (a feature of
+    // tests/validation, or a project's own fixtures); `decl.fixtures.directories`
+    // narrows to the globs given, relative to the workspace folder
+    const globs = (cfg().get<string[]>('fixtures.directories') ?? []).map(g =>
+      new RegExp('^' + g.replace(/[.+^${}()|[\]\\]/g, '\\$&').replace(/\*\*\//g, '(?:.*/)?').replace(/\*\*/g, '.*').replace(/\*/g, '[^/]*') + '$'));
+    const files = await vscode.workspace.findFiles('**/{valid,invalid}/*.decl', '**/node_modules/**');
+    for (const f of files) {
+      const root = path.dirname(path.dirname(f.fsPath));
+      const folder = vscode.workspace.getWorkspaceFolder(f);
+      const rel = folder ? path.relative(folder.uri.fsPath, root).split(path.sep).join('/') : root;
+      if (globs.length && !globs.some(g => g.test(rel))) continue;
+      let corpus = corpora.get(root);
+      if (!corpus) { corpus = ctrl.createTestItem(root, rel || path.basename(root), vscode.Uri.file(root)); corpora.set(root, corpus); ctrl.items.add(corpus); }
+      corpus.children.add(ctrl.createTestItem(f.fsPath, path.relative(root, f.fsPath), f));
+    }
+  };
+  ctrl.resolveHandler = async () => { await discover(); };
+  ctrl.createRunProfile('judge', vscode.TestRunProfileKind.Run, async (request, token) => {
+    const run = ctrl.createTestRun(request);
+    const targets = request.include ?? [...corpora.values()];
+    for (const target of targets) {
+      const corpus = corpora.get(target.id) ?? [...corpora.values()].find(c => target.id.startsWith(c.id));
+      if (!corpus) continue;
+      const cli = declCli(context);
+      const { spawnSync } = await import('node:child_process');
+      const r = spawnSync(cli[0], [...cli.slice(1), 'validate', corpus.id], { encoding: 'utf8' });
+      const failed = new Map<string, string>();
+      for (const line of (r.stderr ?? '').split('\n')) {
+        const m = /^FAIL (\S+) (.*)$/.exec(line);
+        if (m) failed.set(path.resolve(corpus.id, m[1]), m[2]);
+      }
+      const items = target === corpus ? [...corpus.children].map(([, i]) => i) : [target];
+      for (const item of items) {
+        if (token.isCancellationRequested) break;
+        run.started(item);
+        const why = failed.get(item.id);
+        if (why) run.failed(item, new vscode.TestMessage(why)); else run.passed(item);
+      }
+    }
+    run.end();
+  }, true);
+  if (cfg().get<boolean>('fixtures.runOnSave')) context.subscriptions.push(vscode.workspace.onDidSaveTextDocument(doc => {
+    if (!/[\\/](valid|invalid)[\\/][^\\/]+\.decl$/.test(doc.fileName)) return;
+    for (const c of corpora.values()) { const item = c.children.get(doc.fileName); if (item) vscode.commands.executeCommand('testing.runTests', { include: [item] }); }
+  }));
+  return ctrl;
 }
 
 // the REPL in the terminal: `decl repl` on the file, with the bindings
@@ -236,6 +340,10 @@ export async function activate(context: vscode.ExtensionContext) {
   status.show();
   context.subscriptions.push(output, status,
     vscode.workspace.registerTextDocumentContentProvider(PREVIEW_SCHEME, new PreviewProvider()),
+    vscode.workspace.registerTextDocumentContentProvider(SYNTAX_SCHEME, new SyntaxTreeProvider()),
+    vscode.window.registerTreeDataProvider('decl.trace', traceProvider),
+    fixtureController(context),
+    vscode.commands.registerCommand('decl.showSyntaxTree', showSyntaxTree),
     vscode.tasks.registerTaskProvider('decl', new DeclTaskProvider(context)),
     vscode.commands.registerCommand('decl.openOutputPreview', () => openPreview(null)),
     vscode.commands.registerCommand('decl.evaluate', (_uri?: string, root?: string) => openPreview(root ?? null)),
@@ -251,6 +359,8 @@ export async function activate(context: vscode.ExtensionContext) {
     vscode.commands.registerCommand('decl.selectServer', () => selectServer(context)),
     vscode.commands.registerCommand('decl.showOutput', () => output.show()),
     vscode.workspace.onDidSaveTextDocument(doc => { if (doc.languageId === 'decl' && cfg().get('preview.refresh') !== 'manual') refreshPreviews(); }),
+    vscode.window.onDidChangeActiveTextEditor(ed => { if (ed?.document.languageId === 'decl') for (const d of vscode.workspace.textDocuments) if (d.uri.scheme === SYNTAX_SCHEME && decodeURIComponent(d.uri.query) === ed.document.uri.toString()) syntaxEmitter.fire(d.uri); }),
+    vscode.workspace.onDidChangeTextDocument(e => { if (e.document.languageId === 'decl') for (const d of vscode.workspace.textDocuments) if (d.uri.scheme === SYNTAX_SCHEME && decodeURIComponent(d.uri.query) === e.document.uri.toString()) syntaxEmitter.fire(d.uri); }),
     vscode.workspace.onDidChangeTextDocument(e => {
       if (e.document.languageId === 'decl' && cfg().get('preview.refresh') === 'type') {
         clearTimeout(typeTimer);

@@ -16,12 +16,15 @@ from pathlib import Path
 from typing import Any, Callable, Optional
 from urllib.parse import unquote, urlparse
 
+from tree_sitter import Parser
+
+from .._tree_sitter import LANGUAGE
 from .checker import check_module
 from .fmt import format_source, u16
-from .infer import resolve_in, type_text
+from .infer import STD, _std_path, js_str, resolve_in, type_text
 from .parse import parse_source
-from .semantics import parse_path, seg_text
-from .session import Session, fmt_diag
+from .semantics import js_num_str, parse_path, seg_text
+from .session import Session, SessionError, fmt_diag
 
 _out = None
 
@@ -798,12 +801,590 @@ def execute_command(command: str, args: Any) -> Any:
         return {"verdicts": r["verdicts"], "diagnostics": [fmt_diag(d) for d in run.load_diags + [c["diag"] for c in run.checks] + r["diags"]]}
     if command == "decl.trace":
         return {"lines": session.trace(root)} if root else None
+    if command == "decl.showSyntaxTree":
+        return syntax_tree(uri)
     if command == "decl.reloadWorkspace":
         analyses.clear()
         for u in list(docs):
             analyze(u)
         return None
     return None
+
+
+# ---------------- signature help ----------------
+def _after(l: dict, p: dict) -> bool:
+    return p["line"] > l["el"] or (p["line"] == l["el"] and p["character"] >= l["ec"])
+
+
+def _src_of(text: str, l: dict) -> str:
+    lines = text.split("\n")
+    if l["sl"] == l["el"]:
+        return _bslice(_line(lines, l["sl"]), l["sc"], l["ec"])
+    first = _line(lines, l["sl"])
+    return "\n".join([_bslice(first, l["sc"], len(first.encode("utf-8")))] + lines[l["sl"] + 1:l["el"]] + [_bslice(_line(lines, l["el"]), 0, l["ec"])])
+
+
+def signature_help(uri: str, pos: dict) -> Any:
+    a = analysis_of(uri)
+    if a is None:
+        a = last_good.get(uri)
+    if a is None:
+        return None
+    m = module_of(a, path_of(uri))
+    if m is None:
+        return None
+    bpos = _pos_of(uri, pos)
+    hit = node_at(m.decls, bpos)
+    if hit is None:
+        return None
+    calls = [n for n in hit["parents"] + [hit["node"]] if is_expr(n) and n["e"] == "call"][::-1]
+    for c in calls:
+        if not c["fn"].get("loc") or not _after(c["fn"]["loc"], bpos):
+            continue
+        active = 0
+        for i, arg in enumerate(c["args"]):
+            if arg.get("loc") and _after(arg["loc"], bpos):
+                active = i + 1
+            elif arg.get("loc") and contains(arg["loc"], bpos):
+                active = i
+        if c["fn"]["e"] == "name":
+            site = site_of_target(a, resolve_in(m.env, c["fn"]["name"]))
+            decl = site.decl if site is not None else None
+            if decl is None or decl["d"] != "func":
+                return None
+            text = text_of(a, site.module)
+            params = [f"{p['name']}: {_src_of(text, p['type']['loc']) if p.get('type') and p['type'].get('loc') else '…'}" for p in decl["params"]]
+            ret = f": {_src_of(text, decl['ret']['loc'])}" if decl.get("ret") and decl["ret"].get("loc") else ""
+            return {"signatures": [{"label": f"{decl['name']}({', '.join(params)}){ret}", "parameters": [{"label": p} for p in params]}],
+                    "activeSignature": 0, "activeParameter": min(active, max(0, len(params) - 1))}
+        sp = _std_path(c["fn"])
+        if sp is not None and sp in STD:
+            params = [f"a{i + 1}" for i in range(STD[sp][0])]
+            return {"signatures": [{"label": f"std.{sp}({', '.join(params)})", "parameters": [{"label": p} for p in params]}],
+                    "activeSignature": 0, "activeParameter": min(active, max(0, len(params) - 1))}
+        return None
+    return None
+
+
+# ---------------- workspace symbols, selection ranges ----------------
+def workspace_symbols(query: str) -> list:
+    out: list = []
+    seen: set = set()
+    q = query.lower()
+    for a in list(last_good.values()):
+        for m in a.run.modules:
+            if m.path in seen:
+                continue
+            seen.add(m.path)
+            text = text_of(a, m)
+            lines = text.split("\n")
+            for d in m.decls:
+                if d.get("loc") and isinstance(d.get("name"), str) and d["d"] in SYMBOL_KIND and q in d["name"].lower():
+                    out.append({"name": d["name"], "kind": SYMBOL_KIND[d["d"]],
+                                "location": {"uri": uri_of(m.path), "range": range_of(name_range(text, d, d["name"]), lines)}})
+    out.sort(key=lambda x: (x["name"], x["location"]["uri"]))
+    return out
+
+
+def selection_ranges(uri: str, positions: list) -> list:
+    text = docs.get(uri)
+    if text is None:
+        return []
+    parsed = parse_source(text)
+    if parsed["errors"]:
+        return [{"range": {"start": p, "end": p}} for p in positions]
+    lines = text.split("\n")
+    out: list = []
+    for p in positions:
+        hit = node_at(parsed["decls"], pos_bytes(p, lines))
+        chain = [n for n in ([hit["node"]] + hit["parents"][::-1]) if n.get("loc")] if hit else []
+        ranges = [range_of(n["loc"], lines) for n in chain]
+        sel: Any = None
+        for r in reversed(ranges):
+            sel = {"range": r, "parent": sel} if sel is not None else {"range": r}
+        out.append(sel if sel is not None else {"range": {"start": p, "end": p}})
+    return out
+
+
+# ---------------- semantic tokens ----------------
+TOKEN_TYPES = ["type", "property", "function", "variable", "namespace", "parameter"]
+TOKEN_MODS = ["declaration", "required", "optional", "defaulted", "derived", "hidden", "unresolved", "readonly"]
+_T = {t: i for i, t in enumerate(TOKEN_TYPES)}
+_M = {t: 1 << i for i, t in enumerate(TOKEN_MODS)}
+
+
+def _member_mods(kind: str, hidden: Any = None) -> int:
+    base = _M["derived"] if kind == "der" else _M["defaulted"] if kind == "dflt" else _M["optional"] if kind == "opt" else _M["required"]
+    return base | (_M["hidden"] if hidden else 0)
+
+
+def _param_loc(text: str, decl: dict, name: str) -> Optional[dict]:
+    l = decl["loc"]
+    line = _line(text.split("\n"), l["sl"]).encode("utf-8")
+    open_ = line.find(b"(", l["sc"])
+    if open_ < 0:
+        return None
+    mm = re.compile(rb"\b" + re.escape(name.encode("utf-8")) + rb"\b").search(line, open_)
+    return {"sl": l["sl"], "sc": mm.start(), "el": l["sl"], "ec": mm.start() + len(name.encode("utf-8"))} if mm else None
+
+
+def semantic_tokens(uri: str) -> dict:
+    a = analysis_of(uri)
+    if a is None:
+        return {"data": []}
+    m = module_of(a, path_of(uri))
+    if m is None:
+        return {"data": []}
+    text = text_of(a, m)
+    lines = text.split("\n")
+    t = tables_of(a, m)
+    toks: list = []
+
+    def push(l: dict, type_: int, mods: int = 0) -> None:
+        if l["sl"] == l["el"] and l["ec"] > l["sc"]:
+            toks.append((l, type_, mods))
+
+    def member_kind(rt: Optional[dict], name: str) -> Optional[dict]:
+        r = rt["base"] if rt and rt.get("t") == "pred" else rt["target"] if rt and rt.get("t") == "ref" else rt
+        mem = next((x for x in r["members"] if x.get("name") == name), None) if r and r.get("t") == "rec" else None
+        return {"kind": mem["kind"], "hidden": mem.get("hidden")} if mem else None
+
+    def visit(x: Any, in_func: frozenset) -> None:
+        if not x or not isinstance(x, (dict, list)):
+            return
+        if isinstance(x, list):
+            for y in x:
+                visit(y, in_func)
+            return
+        if is_decl(x) and x.get("loc") and isinstance(x.get("name"), str):
+            r = name_range(text, x, x["name"])
+            type_ = _T["type"] if x["d"] in ("type", "dimension", "unit") else _T["function"] if x["d"] in ("func", "diagnostic") else _T["variable"]
+            push(r, type_, _M["declaration"] | (_M["readonly"] if x["d"] == "const" else 0))
+            if x["d"] == "func":
+                in_func = frozenset(p["name"] for p in x["params"])
+                for p in x["params"]:
+                    pl = _param_loc(text, x, p["name"])
+                    if pl:
+                        push(pl, _T["parameter"], _M["declaration"])
+        if is_member(x) and x.get("loc") and isinstance(x.get("name"), str) and x["m"] in ("value", "derived"):
+            kind = "der" if x["m"] == "derived" else "dflt" if x.get("dflt") else "opt" if x.get("opt") else "req"
+            push(member_range(text, x, x["name"]), _T["property"], _M["declaration"] | _member_mods(kind, x.get("hidden")))
+        if is_type(x) and x.get("k") == "named" and x.get("loc"):
+            parts = x["name"].split(".")
+            head, tail = parts[0], parts[1] if len(parts) > 1 else None
+            if tail:
+                push(type_name_loc(x, 0, head), _T["namespace"])
+                push(type_name_loc(x, len(head) + 1, tail), _T["type"])
+            elif head not in ("map", "ref", "quantity"):
+                push(type_name_loc(x, 0, head), _T["type"], 0 if resolve_in(m.env, head) else _M["unresolved"])
+        if is_expr(x) and x.get("loc"):
+            if x["e"] == "name":
+                target = t["res"].get(id(x))
+                if target is None:
+                    target = resolve_in(m.env, x["name"])
+                if x["name"] == "std":
+                    push(x["loc"], _T["namespace"])
+                elif x["name"] in in_func or (target and target.get("kind") == "var"):
+                    push(x["loc"], _T["parameter"])
+                elif not target:
+                    push(x["loc"], _T["variable"], _M["unresolved"])
+                else:
+                    k = target["kind"]
+                    push(x["loc"], _T["function"] if k == "func" else _T["namespace"] if k == "namespace" else _T["type"] if k == "type" else _T["variable"],
+                         _M["readonly"] if k == "const" else 0)
+            elif x["e"] == "member":
+                xx = x["x"]
+                ml = member_token_loc(text, x)
+                sp = _std_path(x)
+                if sp is not None:
+                    push(ml, _T["function"] if sp in STD else _T["namespace"])
+                elif xx["e"] == "name" and xx["name"] in m.env.namespaces:
+                    ex = m.env.namespaces[xx["name"]]["exports"].get(x["name"])
+                    tg = resolve_in(ex["env"], ex["name"]) if ex else None
+                    push(ml, _T["function"] if tg and tg["kind"] == "func" else _T["type"] if tg and tg["kind"] == "type" else _T["variable"], 0 if tg else _M["unresolved"])
+                else:
+                    xt = t["types"].get(id(xx))
+                    mk = member_kind(xt["rt"] if xt else None, x["name"])
+                    push(ml, _T["property"], _member_mods(mk["kind"], mk["hidden"]) if mk else 0)
+            elif x["e"] == "lambda":
+                in_func = in_func | frozenset(x["params"])
+            elif x["e"] in ("comp", "mapcomp"):
+                in_func = in_func | frozenset(c["v"] for c in x["clauses"])
+        for k, v in x.items():
+            if k != "loc" and v and isinstance(v, (dict, list)):
+                visit(v, in_func)
+
+    visit(m.decls, frozenset())
+    toks.sort(key=lambda tk: (tk[0]["sl"], tk[0]["sc"]))
+    data: list = []
+    pl = pc = 0
+    for l, type_, mods in toks:
+        line = _line(lines, l["sl"])
+        sc, ec = _u16_col(line, l["sc"]), _u16_col(line, l["ec"])
+        dl = l["sl"] - pl
+        dc = sc - pc if dl == 0 else sc
+        if dl == 0 and dc < 0:
+            continue   # overlapping tokens: the first wins
+        data.extend([dl, dc, ec - sc, type_, mods])
+        pl, pc = l["sl"], sc
+    return {"data": data}
+
+
+# ---------------- inlay hints ----------------
+hints: dict = {"types": True, "parameterNames": True, "values": False, "units": True}
+
+
+def inlay_hints(uri: str, range_: dict) -> list:
+    a = analysis_of(uri)
+    if a is None:
+        return []
+    m = module_of(a, path_of(uri))
+    if m is None:
+        return []
+    text = text_of(a, m)
+    lines = text.split("\n")
+    t = tables_of(a, m)
+    out: list = []
+
+    def in_range(line: int) -> bool:
+        return range_["start"]["line"] <= line <= range_["end"]["line"]
+
+    def at(line: int, byte_col: int) -> dict:
+        return {"line": line, "character": _u16_col(_line(lines, line), byte_col)}
+
+    def visit(x: Any) -> None:
+        if not x or not isinstance(x, (dict, list)):
+            return
+        if isinstance(x, list):
+            for y in x:
+                visit(y)
+            return
+        if hints["types"] and is_member(x) and x["m"] == "derived" and not x.get("type") and x.get("loc"):
+            ty = t["types"].get(id(x["expr"]))
+            r = member_range(text, x, x["name"])
+            if ty and ty.get("rt") and in_range(r["el"]):
+                out.append({"position": at(r["el"], r["ec"] + (1 if x.get("hidden") else 0)), "label": f": {type_text(ty['rt'])}", "kind": 1})
+        if hints["types"] and is_decl(x) and x["d"] == "const" and not x.get("type") and x.get("loc"):
+            ty = t["types"].get(id(x["expr"]))
+            r = name_range(text, x, x["name"])
+            if ty and ty.get("rt") and in_range(r["el"]):
+                out.append({"position": at(r["el"], r["ec"]), "label": f": {type_text(ty['rt'])}", "kind": 1})
+        if hints["parameterNames"] and is_expr(x) and x["e"] == "call" and x["fn"]["e"] == "name":
+            tg = t["res"].get(id(x["fn"]))
+            if tg is None:
+                tg = resolve_in(m.env, x["fn"]["name"])
+            site = site_of_target(a, tg)
+            decl = site.decl if site is not None else None
+            if decl is not None and decl["d"] == "func":
+                for i, arg in enumerate(x["args"]):
+                    p = decl["params"][i] if i < len(decl["params"]) else None
+                    if p and arg.get("loc") and in_range(arg["loc"]["sl"]):
+                        out.append({"position": at(arg["loc"]["sl"], arg["loc"]["sc"]), "label": f"{p['name']}:", "kind": 2, "paddingRight": True})
+        if hints["units"] and is_expr(x) and x["e"] == "unitlit" and x.get("loc"):
+            try:
+                u = m.env.unit_info(x["unit"])
+                base = m.env.base_unit_of.get(u["key"], u["key"])
+                if base != x["unit"] and in_range(x["loc"]["el"]):
+                    out.append({"position": at(x["loc"]["el"], x["loc"]["ec"]), "label": f"= {js_num_str(x['num'] * u['to_base'])} {base}", "paddingLeft": True})
+            except Exception:
+                pass   # an unknown unit is a diagnostic
+        for k, v in x.items():
+            if k != "loc" and v and isinstance(v, (dict, list)):
+                visit(v)
+
+    visit(m.decls)
+    out.sort(key=lambda h: (h["position"]["line"], h["position"]["character"]))
+    return out
+
+
+# ---------------- hierarchies ----------------
+def hierarchy_item(a: Analysis, m, decl: dict) -> dict:
+    lines = text_of(a, m).split("\n")
+    return {"name": decl["name"], "kind": SYMBOL_KIND.get(decl["d"], 13), "uri": uri_of(m.path),
+            "range": range_of(decl["loc"], lines), "selectionRange": range_of(name_range(text_of(a, m), decl, decl["name"]), lines)}
+
+
+def prepare_hierarchy(uri: str, pos: dict, want: str) -> Any:
+    a = analysis_of(uri)
+    s = site_at(a, uri, _pos_of(uri, pos)) if a else None
+    if not s or s["site"] is None or s["site"].decl is None or s["site"].kind != want:
+        return None
+    return [hierarchy_item(a, s["site"].module, s["site"].decl)]
+
+
+def module_of_uri(uri: str) -> Optional[tuple]:
+    for a in list(last_good.values()):
+        m = next((x for x in a.run.modules if uri_of(x.path) == uri), None)
+        if m is not None:
+            return a, m
+    return None
+
+
+def decl_containing(m, loc: dict) -> Optional[dict]:
+    return next((d for d in m.decls if d.get("loc") and d["loc"]["sl"] <= loc["sl"] and loc["el"] <= d["loc"]["el"] and isinstance(d.get("name"), str)), None)
+
+
+def _resolved_site(a: Analysis, m, t: dict, fn: dict) -> Optional[Site]:
+    tg = t["res"].get(id(fn))
+    if tg is None:
+        tg = resolve_in(m.env, fn["name"])
+    return site_of_target(a, tg)
+
+
+def incoming_calls(item: dict) -> list:
+    found = module_of_uri(item["uri"])
+    if found is None:
+        return []
+    a, _ = found
+    out: list = []
+    for m in a.run.modules:
+        t = tables_of(a, m)
+        lines = text_of(a, m).split("\n")
+        by_caller: dict = {}
+        callers: dict = {}
+
+        def visit(x: Any) -> None:
+            if not x or not isinstance(x, (dict, list)):
+                return
+            if isinstance(x, list):
+                for y in x:
+                    visit(y)
+                return
+            if is_expr(x) and x["e"] == "call" and x["fn"]["e"] == "name" and x["fn"].get("loc"):
+                site = _resolved_site(a, m, t, x["fn"])
+                if site is not None and site.decl is not None and uri_of(site.module.path) == item["uri"] and site.decl["loc"]["sl"] == item["range"]["start"]["line"]:
+                    caller = decl_containing(m, x["fn"]["loc"])
+                    if caller is not None:
+                        callers.setdefault(id(caller), caller)
+                        by_caller.setdefault(id(caller), []).append(x["fn"]["loc"])
+            for k, v in x.items():
+                if k != "loc" and v and isinstance(v, (dict, list)):
+                    visit(v)
+
+        visit(m.decls)
+        for key, locs in by_caller.items():
+            out.append({"from": hierarchy_item(a, m, callers[key]), "fromRanges": [range_of(l, lines) for l in locs]})
+    return out
+
+
+def outgoing_calls(item: dict) -> list:
+    found = module_of_uri(item["uri"])
+    if found is None:
+        return []
+    a, m = found
+    t = tables_of(a, m)
+    lines = text_of(a, m).split("\n")
+    decl = next((d for d in m.decls if d.get("loc") and d["loc"]["sl"] == item["range"]["start"]["line"]), None)
+    if decl is None:
+        return []
+    by_callee: dict = {}
+
+    def visit(x: Any) -> None:
+        if not x or not isinstance(x, (dict, list)):
+            return
+        if isinstance(x, list):
+            for y in x:
+                visit(y)
+            return
+        if is_expr(x) and x["e"] == "call" and x["fn"]["e"] == "name" and x["fn"].get("loc"):
+            site = _resolved_site(a, m, t, x["fn"])
+            if site is not None and site.decl is not None and site.decl["d"] == "func":
+                key = f"{site.module.path}:{site.decl['loc']['sl']}"
+                e = by_callee.setdefault(key, {"to": hierarchy_item(a, site.module, site.decl), "locs": []})
+                e["locs"].append(x["fn"]["loc"])
+        for k, v in x.items():
+            if k != "loc" and v and isinstance(v, (dict, list)):
+                visit(v)
+
+    visit(decl)
+    return [{"to": e["to"], "fromRanges": [range_of(l, lines) for l in e["locs"]]} for e in by_callee.values()]
+
+
+def supertypes(item: dict) -> list:
+    found = module_of_uri(item["uri"])
+    if found is None:
+        return []
+    a, m = found
+    decl = next((d for d in m.decls if d["d"] == "type" and d.get("loc") and d["loc"]["sl"] == item["range"]["start"]["line"]), None)
+    base = decl["type"]["name"] if decl is not None and decl.get("type") and decl["type"].get("k") == "named" and decl["type"].get("ext") else None
+    if not base:
+        return []
+    site = site_of_target(a, resolve_in(m.env, base))
+    return [hierarchy_item(a, site.module, site.decl)] if site is not None and site.decl is not None else []
+
+
+def subtypes(item: dict) -> list:
+    found = module_of_uri(item["uri"])
+    if found is None:
+        return []
+    a, _ = found
+    out: list = []
+    for m in a.run.modules:
+        for d in m.decls:
+            if d["d"] != "type" or not d.get("loc") or not d.get("type") or d["type"].get("k") != "named" or not d["type"].get("ext"):
+                continue
+            site = site_of_target(a, resolve_in(m.env, d["type"]["name"]))
+            if site is not None and site.decl is not None and uri_of(site.module.path) == item["uri"] and site.decl["loc"]["sl"] == item["range"]["start"]["line"]:
+                out.append(hierarchy_item(a, m, d))
+    return out
+
+
+# ---------------- code actions ----------------
+def placeholder_for(rt: Optional[dict]) -> str:
+    r = rt["base"] if rt and rt.get("t") == "pred" else rt
+    if not r:
+        return "null"
+    t = r.get("t")
+    if t == "prim":
+        return '""' if r["name"] == "string" else "0" if r["name"] == "int" else "0.0" if r["name"] == "float" else "false" if r["name"] == "bool" else "null"
+    if t == "lit":
+        return json.dumps(r["v"], ensure_ascii=False) if isinstance(r["v"], str) else js_str(r["v"])
+    if t == "range":
+        return js_str(r["lo"])
+    if t == "rec":
+        return "{ }"
+    if t == "arr":
+        return "[]"
+    if t == "map":
+        return "{}"
+    if t == "union":
+        return placeholder_for(r["arms"][0])
+    return "null"
+
+
+def _relative_path(from_dir: str, to: str) -> str:
+    f = [x for x in from_dir.split("/") if x]
+    t = [x for x in to.split("/") if x]
+    i = 0
+    while i < len(f) and i < len(t) and f[i] == t[i]:
+        i += 1
+    return "/".join([".."] * (len(f) - i) + t[i:])
+
+
+def _require_rel(from_: str, to: str) -> str:
+    rel = _relative_path(os.path.dirname(from_), to)
+    return re.sub(r"^\./", "", rel) if rel.startswith(".") else rel
+
+
+def exporters_of(a: Analysis, m, name: str) -> list:
+    """the modules that export a name: the universe's, the other open
+    documents' universes, then the .decl files beside the module"""
+    out: list = []
+    seen: set = {m.path}
+
+    def consider(mod) -> None:
+        if mod.path not in seen and name in mod.exports:
+            seen.add(mod.path)
+            out.append(mod.path)
+
+    for mod in a.run.modules:
+        consider(mod)
+    for other in list(last_good.values()):
+        for mod in other.run.modules:
+            consider(mod)
+    try:
+        names = os.listdir(os.path.dirname(m.path))
+    except OSError:
+        names = []
+    for f in sorted(names):
+        if not f.endswith(".decl"):
+            continue
+        p = os.path.normpath(os.path.join(os.path.dirname(m.path), f))
+        if p in seen:
+            continue
+        text = overlay[p] if p in overlay else read_text(p)
+        parsed = parse_source(text)
+        if parsed["errors"]:
+            continue
+        if any(d.get("exported") and d.get("name") == name and d["d"] != "import" for d in parsed["decls"]):
+            seen.add(p)
+            out.append(p)
+    return out
+
+
+def code_actions(uri: str, range_: dict, diagnostics: list) -> list:
+    text = docs.get(uri)
+    if text is None:
+        return []
+    a = analysis_of(uri)
+    out: list = []
+    parsed = parse_source(text)
+    decls, errors = parsed["decls"], parsed["errors"]
+    lines = text.split("\n")
+    if a is not None and not errors:
+        m = module_of(a, path_of(uri))
+        t = tables_of(a, m)
+        for d in diagnostics or []:
+            mm = re.match(r"^unknown name ([A-Za-z_][A-Za-z0-9_]*)", d.get("message") or "")
+            if mm:
+                name = mm.group(1)
+                for other in exporters_of(a, m, name):
+                    spec = "./" + _require_rel(m.path, other)
+                    existing = next((x for x in decls if x["d"] == "import" and x.get("names") and os.path.normpath(os.path.join(os.path.dirname(m.path), x["from"])) == other), None)
+                    if existing is not None:
+                        close = _bfind(_line(lines, existing["loc"]["sl"]), "}", existing["loc"]["sc"])
+                        p = {"line": existing["loc"]["sl"], "character": _u16_col(_line(lines, existing["loc"]["sl"]), close)}
+                        edit = {"range": {"start": p, "end": p}, "newText": f", {name} "}
+                        spec = existing["from"]
+                    else:
+                        last_import = next((x for x in reversed(decls) if x["d"] in ("import", "re_export")), None)
+                        at_line = last_import["loc"]["el"] + 1 if last_import is not None and last_import.get("loc") else 0
+                        p = {"line": at_line, "character": 0}
+                        edit = {"range": {"start": p, "end": p}, "newText": f'import {{ {name} }} from "{spec}"\n'}
+                    out.append({"title": f'import {name} from "{spec}"', "kind": "quickfix", "diagnostics": [d], "isPreferred": True, "edit": {"changes": {uri: [edit]}}})
+            mm = re.match(r"^required member ([A-Za-z_][A-Za-z0-9_]*) missing", d.get("message") or "")
+            if mm:
+                name = mm.group(1)
+                # the construction: the literal at the diagnostic, or the root's literal when the diagnostic names the declaration
+                hit = node_at(decls, pos_bytes(d["range"]["start"], lines))
+                chain = [hit["node"]] + hit["parents"][::-1] if hit else []
+                obj = next((n for n in chain if is_expr(n) and n["e"] == "obj"), None)
+                if obj is None:
+                    for n in chain:
+                        if is_decl(n):
+                            e = n.get("expr") if n["d"] == "output" else n.get("fallback") if n["d"] == "input" else n.get("expr")
+                            if is_expr(e) and e["e"] == "obj":
+                                obj = e
+                                break
+                if obj is not None:
+                    # the literal's type: its declared position (a root's annotation), else what inference recorded
+                    owner = next((n for n in chain if is_decl(n) and n["d"] in ("output", "input") and n.get("type")), None)
+                    try:
+                        rt = m.env.resolve(owner["type"]) if owner is not None else ((t["types"].get(id(obj)) or {}).get("rt"))
+                    except Exception:
+                        rt = None
+                    mem = next((x for x in rt["members"] if x.get("name") == name), None) if rt and rt.get("t") == "rec" else None
+                    value = placeholder_for(mem.get("type") if mem else None)
+                    last = obj["entries"][-1] if obj["entries"] else None
+                    if last is not None and last.get("val") and last["val"].get("loc"):
+                        vl = last["val"]["loc"]
+                        p = {"line": vl["el"], "character": _u16_col(_line(lines, vl["el"]), vl["ec"])}
+                        edit = {"range": {"start": p, "end": p}, "newText": f", {name}: {value}"}
+                    else:
+                        ol = obj["loc"]
+                        p = {"line": ol["sl"], "character": _u16_col(_line(lines, ol["sl"]), ol["sc"] + 1)}
+                        edit = {"range": {"start": p, "end": p}, "newText": f" {name}: {value}"}
+                    out.append({"title": f"add {name}: {value}", "kind": "quickfix", "diagnostics": [d], "isPreferred": True, "edit": {"changes": {uri: [edit]}}})
+        # assists at the range: annotate an unannotated derived member or constant with its inferred type
+        hit = node_at(decls, pos_bytes(range_["start"], lines))
+        chain = [hit["node"]] + hit["parents"][::-1] if hit else []
+        target = next((n for n in chain if (is_member(n) and n["m"] == "derived" and not n.get("type")) or (is_decl(n) and n["d"] == "const" and not n.get("type"))), None)
+        if target is not None:
+            ty = t["types"].get(id(target["expr"]))
+            if ty and ty.get("rt"):
+                r = member_range(text, target, target["name"]) if is_member(target) else name_range(text, target, target["name"])
+                p = {"line": r["el"], "character": _u16_col(_line(lines, r["el"]), r["ec"] + (1 if target.get("hidden") else 0))}
+                out.append({"title": f"annotate: {type_text(ty['rt'])}", "kind": "refactor.rewrite",
+                            "edit": {"changes": {uri: [{"range": {"start": p, "end": p}, "newText": f": {type_text(ty['rt'])}"}]}}})
+    return out
+
+
+# ---------------- the syntax tree ----------------
+def syntax_tree(uri: str) -> Any:
+    text = docs.get(uri)
+    if text is None:
+        return None
+    return {"tree": str(Parser(LANGUAGE).parse(text.encode("utf-8")).root_node)}
 
 
 # ---------------- request handling ----------------
@@ -826,14 +1407,27 @@ def handle(msg: dict) -> None:
                 "renameProvider": {"prepareProvider": True},
                 "completionProvider": {"triggerCharacters": [".", "$", ":"]},
                 "codeLensProvider": {"resolveProvider": False},
-                "executeCommandProvider": {"commands": ["decl.evaluate", "decl.validate", "decl.trace", "decl.reloadWorkspace"]},
+                "signatureHelpProvider": {"triggerCharacters": ["(", ","]},
+                "workspaceSymbolProvider": True,
+                "selectionRangeProvider": True,
+                "semanticTokensProvider": {"legend": {"tokenTypes": TOKEN_TYPES, "tokenModifiers": TOKEN_MODS}, "full": True},
+                "inlayHintProvider": True,
+                "callHierarchyProvider": True,
+                "typeHierarchyProvider": True,
+                "codeActionProvider": {"codeActionKinds": ["quickfix", "refactor.rewrite"]},
+                "executeCommandProvider": {"commands": ["decl.evaluate", "decl.validate", "decl.trace", "decl.showSyntaxTree", "decl.reloadWorkspace"]},
             },
             "serverInfo": {"name": "decl-lsp", "version": "0.3.0"},
         })
     elif method == "initialized":
         pass
     elif method == "workspace/didChangeConfiguration":
-        config["inputs"] = ((params.get("settings") or {}).get("decl") or {}).get("inputs") or {}
+        decl_settings = (params.get("settings") or {}).get("decl") or {}
+        config["inputs"] = decl_settings.get("inputs") or {}
+        for k in list(hints):
+            v = (decl_settings.get("inlayHints") or {}).get(k)
+            if isinstance(v, bool):
+                hints[k] = v
         analyses.clear()
         for u in list(docs):
             analyze(u)
@@ -892,8 +1486,37 @@ def handle(msg: dict) -> None:
         reply(id_, rename(params["textDocument"]["uri"], params["position"], params["newName"]))
     elif method == "textDocument/codeLens":
         reply(id_, code_lenses(params["textDocument"]["uri"]))
+    elif method == "textDocument/signatureHelp":
+        reply(id_, signature_help(params["textDocument"]["uri"], params["position"]))
+    elif method == "workspace/symbol":
+        reply(id_, workspace_symbols(params.get("query") or ""))
+    elif method == "textDocument/selectionRange":
+        reply(id_, selection_ranges(params["textDocument"]["uri"], params.get("positions") or []))
+    elif method == "textDocument/semanticTokens/full":
+        reply(id_, semantic_tokens(params["textDocument"]["uri"]))
+    elif method == "textDocument/inlayHint":
+        reply(id_, inlay_hints(params["textDocument"]["uri"], params["range"]))
+    elif method == "textDocument/prepareCallHierarchy":
+        reply(id_, prepare_hierarchy(params["textDocument"]["uri"], params["position"], "func"))
+    elif method == "callHierarchy/incomingCalls":
+        reply(id_, incoming_calls(params["item"]))
+    elif method == "callHierarchy/outgoingCalls":
+        reply(id_, outgoing_calls(params["item"]))
+    elif method == "textDocument/prepareTypeHierarchy":
+        reply(id_, prepare_hierarchy(params["textDocument"]["uri"], params["position"], "type"))
+    elif method == "typeHierarchy/supertypes":
+        reply(id_, supertypes(params["item"]))
+    elif method == "typeHierarchy/subtypes":
+        reply(id_, subtypes(params["item"]))
+    elif method == "textDocument/codeAction":
+        reply(id_, code_actions(params["textDocument"]["uri"], params["range"], (params.get("context") or {}).get("diagnostics") or []))
     elif method == "workspace/executeCommand":
-        reply(id_, execute_command(params.get("command"), params.get("arguments")))
+        # a refused command (an unknown root, an unreadable binding) answers null, never silence
+        try:
+            result = execute_command(params.get("command"), params.get("arguments"))
+        except SessionError:
+            result = None
+        reply(id_, result)
     elif method == "shutdown":
         reply(id_, None)
     elif method == "exit":

@@ -9,10 +9,10 @@
 use crate::ast::*;
 use crate::checker::{check_module, CheckHooks};
 use crate::fmt::{format, u16len};
-use crate::infer::{resolve_in, type_text, Target, Ty};
+use crate::infer::{resolve_in, std_path, type_text, Target, Ty, STD};
 use crate::module::Module;
 use crate::parse::parse_source;
-use crate::semantics::{json_str, parse_path, read_json, seg_text, Diag, RTk, Seg, Value, RT};
+use crate::semantics::{json_str, parse_path, read_json, rec_members, seg_text, Diag, MKind, RTk, Seg, Value, RT};
 use crate::session::{fmt_diag, BindSource, Mode, Op, Run, Session};
 use regex::Regex;
 use std::cell::RefCell;
@@ -206,7 +206,6 @@ struct Analysis {
     tables: RefCell<HashMap<PathBuf, Rc<Tables>>>,
 }
 
-#[derive(Default)]
 struct State {
     /// uri -> text, in open order
     docs: Vec<(String, String)>,
@@ -217,6 +216,16 @@ struct State {
     last_good: HashMap<String, Rc<Analysis>>,
     /// `decl.inputs`: input name -> document file
     inputs: Vec<(String, String)>,
+    /// `decl.inlayHints.*`
+    hint_types: bool,
+    hint_parameter_names: bool,
+    hint_values: bool,
+    hint_units: bool,
+}
+impl Default for State {
+    fn default() -> Self {
+        State { docs: vec![], overlay: HashMap::new(), analyses: HashMap::new(), last_good: HashMap::new(), inputs: vec![], hint_types: true, hint_parameter_names: true, hint_values: false, hint_units: true }
+    }
 }
 impl State {
     fn set(&mut self, uri: &str, text: String) {
@@ -1678,6 +1687,7 @@ fn execute_command(st: &mut State, command: &str, args: Option<&Value>) -> J {
             },
             None => J::Null,
         },
+        "decl.showSyntaxTree" => syntax_tree(st, uri),
         "decl.reloadWorkspace" => {
             st.analyses.clear();
             let uris: Vec<String> = st.docs.iter().map(|(u, _)| u.clone()).collect();
@@ -1688,6 +1698,1248 @@ fn execute_command(st: &mut State, command: &str, args: Option<&Value>) -> J {
         }
         _ => J::Null,
     }
+}
+
+// ---------------- signature help ----------------
+fn after(l: Loc, p: Pos) -> bool {
+    p.line > l.el || (p.line == l.el && p.character >= l.ec)
+}
+fn src_of(text: &str, l: Loc) -> String {
+    let lines: Vec<&str> = text.split('\n').collect();
+    let line = |i: usize| lines.get(i).copied().unwrap_or("");
+    if l.sl == l.el {
+        return slice16(line(l.sl), l.sc, l.ec).to_string();
+    }
+    let mut parts = vec![slice16(line(l.sl), l.sc, u16len(line(l.sl))).to_string()];
+    parts.extend(lines[l.sl + 1..l.el].iter().map(|x| x.to_string()));
+    parts.push(slice16(line(l.el), 0, l.ec).to_string());
+    parts.join("\n")
+}
+fn sig_json(label: String, params: Vec<String>, active: usize) -> J {
+    J::obj(vec![
+        ("signatures", J::Arr(vec![J::obj(vec![("label", J::s(label)), ("parameters", J::Arr(params.into_iter().map(|p| J::obj(vec![("label", J::s(p))])).collect()))])])),
+        ("activeSignature", J::Num(0)),
+        ("activeParameter", J::Num(active as i64)),
+    ])
+}
+fn decl_by_id(m: &Module, id: Option<usize>) -> Option<&Decl> {
+    m.decls.iter().find(|d| decl_id(d) == id.unwrap_or(0))
+}
+fn signature_help(st: &mut State, uri: &str, pos: Pos) -> J {
+    let a = match st.analysis_of(uri) {
+        Some(a) => a,
+        None => match st.last_good.get(uri) {
+            Some(a) => a.clone(),
+            None => return J::Null,
+        },
+    };
+    let Some(m) = module_of(&a, &path_of(uri)) else { return J::Null };
+    let Some(mi) = a.run.modules.iter().position(|x| Rc::ptr_eq(x, &m)) else { return J::Null };
+    let Some(hit) = node_at(&a.run.modules[mi].decls, pos) else { return J::Null };
+    let mut chain: Vec<NodeRef> = hit.parents.clone();
+    chain.push(hit.node.clone());
+    let calls: Vec<&Rc<Expr>> = chain.iter().rev().filter_map(|n| match n { NodeRef::Expr(e) if matches!(&***e, Expr::Call { .. }) => Some(*e), _ => None }).collect();
+    for c in calls {
+        let Expr::Call { fun, args } = &**c else { continue };
+        let Some(fl) = expr_loc(fun) else { continue };
+        if !after(fl, pos) {
+            continue;
+        }
+        let mut active = 0usize;
+        for (i, arg) in args.iter().enumerate() {
+            if let Some(al) = expr_loc(arg) {
+                if after(al, pos) {
+                    active = i + 1;
+                } else if contains(al, pos) {
+                    active = i;
+                }
+            }
+        }
+        if let Expr::Name(n) = &**fun {
+            let target = resolve_in(&m.env, n);
+            let Some(site) = site_of_target(st, &a, target.as_ref()) else { return J::Null };
+            let sm = site.module.clone();
+            let Some(decl) = decl_by_id(&sm, site.decl) else { return J::Null };
+            let DeclBody::Func { name, params, ret, .. } = &decl.body else { return J::Null };
+            let text = text_of(st, &sm);
+            let ps: Vec<String> = params.iter().map(|p| format!("{}: {}", p.name, p.ty.as_ref().and_then(|t| t.loc()).map(|l| src_of(&text, l)).unwrap_or_else(|| "…".into()))).collect();
+            let r = ret.as_ref().and_then(|t| t.loc()).map(|l| format!(": {}", src_of(&text, l))).unwrap_or_default();
+            let n = ps.len();
+            return sig_json(format!("{name}({}){r}", ps.join(", ")), ps, active.min(n.saturating_sub(1)));
+        }
+        if let Some(sp) = std_path(fun) {
+            if let Some(e) = STD.iter().find(|e| e.0 == sp) {
+                let ps: Vec<String> = (1..=e.1).map(|i| format!("a{i}")).collect();
+                let n = ps.len();
+                return sig_json(format!("std.{sp}({})", ps.join(", ")), ps, active.min(n.saturating_sub(1)));
+            }
+        }
+        return J::Null;
+    }
+    J::Null
+}
+
+// ---------------- workspace symbols, selection ranges ----------------
+fn workspace_symbols(st: &State, query: &str) -> J {
+    let q = query.to_lowercase();
+    let mut out: Vec<(String, String, J)> = vec![];
+    let mut seen: Vec<PathBuf> = vec![];
+    for a in st.last_good.values() {
+        for m in &a.run.modules {
+            if seen.contains(&m.path) {
+                continue;
+            }
+            seen.push(m.path.clone());
+            let text = text_of(st, m);
+            for d in &m.decls {
+                let (Some(_), Some(name), Some(kind)) = (d.loc, d.name(), symbol_kind(d)) else { continue };
+                if !name.to_lowercase().contains(&q) {
+                    continue;
+                }
+                out.push((name.to_string(), uri_of(&m.path), J::obj(vec![("name", J::s(name)), ("kind", J::Num(kind)), ("location", location(m, name_range(&text, d, name)))])));
+            }
+        }
+    }
+    out.sort_by(|x, y| x.0.cmp(&y.0).then(x.1.cmp(&y.1)));
+    J::Arr(out.into_iter().map(|x| x.2).collect())
+}
+fn pos_json(p: Pos) -> J {
+    J::obj(vec![("line", J::Num(p.line as i64)), ("character", J::Num(p.character as i64))])
+}
+fn selection_ranges(st: &State, uri: &str, positions: &[Pos]) -> J {
+    let Some(text) = st.text(uri) else { return J::Arr(vec![]) };
+    let parsed = parse_source(text);
+    let point = |p: Pos| J::obj(vec![("range", J::obj(vec![("start", pos_json(p)), ("end", pos_json(p))]))]);
+    if !parsed.errors.is_empty() {
+        return J::Arr(positions.iter().map(|p| point(*p)).collect());
+    }
+    J::Arr(
+        positions
+            .iter()
+            .map(|p| {
+                let Some(hit) = node_at(&parsed.decls, *p) else { return point(*p) };
+                // the chain, innermost first; rebuilt from the outside in
+                let mut chain: Vec<Loc> = vec![hit.loc];
+                chain.extend(hit.parents.iter().rev().filter_map(|n| n.loc()));
+                let mut sel: Option<J> = None;
+                for l in chain.iter().rev() {
+                    sel = Some(match sel {
+                        Some(s) => J::obj(vec![("range", range_json(*l)), ("parent", s)]),
+                        None => J::obj(vec![("range", range_json(*l))]),
+                    });
+                }
+                sel.unwrap_or_else(|| point(*p))
+            })
+            .collect(),
+    )
+}
+
+// ---------------- semantic tokens ----------------
+const TOKEN_TYPES: [&str; 6] = ["type", "property", "function", "variable", "namespace", "parameter"];
+const TOKEN_MODS: [&str; 8] = ["declaration", "required", "optional", "defaulted", "derived", "hidden", "unresolved", "readonly"];
+const T_TYPE: i64 = 0;
+const T_PROPERTY: i64 = 1;
+const T_FUNCTION: i64 = 2;
+const T_VARIABLE: i64 = 3;
+const T_NAMESPACE: i64 = 4;
+const T_PARAMETER: i64 = 5;
+const M_DECLARATION: i64 = 1;
+const M_REQUIRED: i64 = 2;
+const M_OPTIONAL: i64 = 4;
+const M_DEFAULTED: i64 = 8;
+const M_DERIVED: i64 = 16;
+const M_HIDDEN: i64 = 32;
+const M_UNRESOLVED: i64 = 64;
+const M_READONLY: i64 = 128;
+fn member_mods(kind: MKind, hidden: bool) -> i64 {
+    (match kind {
+        MKind::Der => M_DERIVED,
+        MKind::Dflt => M_DEFAULTED,
+        MKind::Opt => M_OPTIONAL,
+        MKind::Req => M_REQUIRED,
+    }) | if hidden { M_HIDDEN } else { 0 }
+}
+fn member_kind_of(rt: Option<&RT>, name: &str) -> Option<(MKind, bool)> {
+    let rt = rt?;
+    let r: RT = match &rt.k {
+        RTk::Pred { base, .. } => base.clone(),
+        RTk::Ref(t) => t.clone(),
+        _ => rt.clone(),
+    };
+    rec_members(&r).into_iter().find(|m| m.name == name).map(|m| (m.kind, m.hidden))
+}
+fn param_loc(text: &str, decl: &Decl, name: &str) -> Option<Loc> {
+    let l = decl.loc?;
+    let line = text.split('\n').nth(l.sl).unwrap_or("");
+    let open = find16(line, "(", l.sc)?;
+    let re = Regex::new(&format!(r"\b{}\b", regex::escape(name))).unwrap();
+    let m = re.find_at(line, byte_col(line, open))?;
+    let a = u16_col(line, m.start());
+    Some(Loc { sl: l.sl, sc: a, el: l.sl, ec: a + u16len(name) })
+}
+struct TokenWalk<'a> {
+    st: &'a State,
+    a: &'a Analysis,
+    m: &'a Rc<Module>,
+    text: String,
+    t: Rc<Tables>,
+    toks: Vec<(Loc, i64, i64)>,
+}
+impl<'a> TokenWalk<'a> {
+    fn push(&mut self, l: Loc, ty: i64, mods: i64) {
+        if l.sl == l.el && l.ec > l.sc {
+            self.toks.push((l, ty, mods));
+        }
+    }
+    fn decl(&mut self, d: &Decl) {
+        let mut in_func: Vec<String> = vec![];
+        if let (Some(_), Some(name)) = (d.loc, d.name()) {
+            let r = name_range(&self.text, d, name);
+            let ty = match &d.body {
+                DeclBody::Type { .. } | DeclBody::Dimension { .. } | DeclBody::Unit { .. } => T_TYPE,
+                DeclBody::Func { .. } | DeclBody::Diagnostic { .. } => T_FUNCTION,
+                _ => T_VARIABLE,
+            };
+            self.push(r, ty, M_DECLARATION | if matches!(d.body, DeclBody::Const { .. }) { M_READONLY } else { 0 });
+            if let DeclBody::Func { params, .. } = &d.body {
+                in_func = params.iter().map(|p| p.name.clone()).collect();
+                for p in params {
+                    if let Some(pl) = param_loc(&self.text, d, &p.name) {
+                        self.push(pl, T_PARAMETER, M_DECLARATION);
+                    }
+                }
+            }
+        }
+        match &d.body {
+            DeclBody::Type { params, ty, tail, .. } => {
+                for p in params {
+                    if let Some(t) = &p.ty {
+                        self.ty(t, &in_func);
+                    }
+                }
+                self.ty(ty, &in_func);
+                if let Some(t) = tail {
+                    self.tail(t, &in_func);
+                }
+            }
+            DeclBody::Const { ty, expr, .. } => {
+                if let Some(t) = ty {
+                    self.ty(t, &in_func);
+                }
+                self.expr(expr, &in_func);
+            }
+            DeclBody::Func { params, ret, body, .. } => {
+                for p in params {
+                    if let Some(t) = &p.ty {
+                        self.ty(t, &in_func);
+                    }
+                }
+                if let Some(t) = ret {
+                    self.ty(t, &in_func);
+                }
+                self.expr(body, &in_func);
+            }
+            DeclBody::Output { ty, expr, .. } => {
+                self.ty(ty, &in_func);
+                self.expr(expr, &in_func);
+            }
+            DeclBody::Input { ty, fallback, .. } => {
+                self.ty(ty, &in_func);
+                if let Some(f) = fallback {
+                    self.expr(f, &in_func);
+                }
+            }
+            DeclBody::Diagnostic { params, template, .. } => {
+                for p in params {
+                    if let Some(t) = &p.ty {
+                        self.ty(t, &in_func);
+                    }
+                }
+                self.template(template, &in_func);
+            }
+            DeclBody::Unit { factor, .. } => {
+                if let Some(f) = factor {
+                    self.expr(f, &in_func);
+                }
+            }
+            _ => {}
+        }
+    }
+    fn tail(&mut self, t: &Tail, in_func: &Vec<String>) {
+        match t {
+            Tail::Inline { template, .. } => self.template(template, in_func),
+            Tail::Ref { args, .. } => {
+                for a in args {
+                    self.expr(a, in_func);
+                }
+            }
+        }
+    }
+    fn template(&mut self, parts: &[TPart], in_func: &Vec<String>) {
+        for p in parts {
+            if let TPart::Expr(x) = p {
+                self.expr(x, in_func);
+            }
+        }
+    }
+    fn ty(&mut self, t: &TypeAst, in_func: &Vec<String>) {
+        if let TypeAst::Named { name, loc: Some(l), .. } = t {
+            let mut parts = name.splitn(2, '.');
+            let head = parts.next().unwrap_or("");
+            match parts.next() {
+                Some(tail) => {
+                    self.push(type_name_loc(*l, 0, head), T_NAMESPACE, 0);
+                    self.push(type_name_loc(*l, u16len(head) + 1, tail), T_TYPE, 0);
+                }
+                None => {
+                    if !["map", "ref", "quantity"].contains(&head) {
+                        let mods = if resolve_in(&self.m.env, head).is_some() { 0 } else { M_UNRESOLVED };
+                        self.push(type_name_loc(*l, 0, head), T_TYPE, mods);
+                    }
+                }
+            }
+        }
+        match t {
+            TypeAst::Record { members, .. } => {
+                for m in members {
+                    self.member(m, in_func);
+                }
+            }
+            TypeAst::Map { key, val, .. } => {
+                self.ty(key, in_func);
+                self.ty(val, in_func);
+            }
+            TypeAst::Array { elem, .. } => self.ty(elem, in_func),
+            TypeAst::Union { arms, .. } | TypeAst::Isect { arms, .. } => {
+                for a in arms {
+                    self.ty(a, in_func);
+                }
+            }
+            TypeAst::Func { params, ret, .. } => {
+                for a in params {
+                    self.ty(a, in_func);
+                }
+                self.ty(ret, in_func);
+            }
+            TypeAst::Named { args, preds, ext, .. } => {
+                for a in args {
+                    self.ty(a, in_func);
+                }
+                for x in preds.iter().flatten() {
+                    self.expr(x, in_func);
+                }
+                if let Some(x) = ext {
+                    self.ty(x, in_func);
+                }
+            }
+            _ => {}
+        }
+    }
+    fn member(&mut self, m: &MemberAst, in_func: &Vec<String>) {
+        match m {
+            MemberAst::Value { name, opt, dflt, loc: Some(_), .. } => {
+                let kind = if dflt.is_some() { MKind::Dflt } else if *opt { MKind::Opt } else { MKind::Req };
+                let r = member_range(&self.text, m, name);
+                self.push(r, T_PROPERTY, M_DECLARATION | member_mods(kind, false));
+            }
+            MemberAst::Derived { name, hidden, loc: Some(_), .. } => {
+                let r = member_range(&self.text, m, name);
+                self.push(r, T_PROPERTY, M_DECLARATION | member_mods(MKind::Der, *hidden));
+            }
+            _ => {}
+        }
+        match m {
+            MemberAst::Value { ty, dflt, .. } => {
+                self.ty(ty, in_func);
+                if let Some(d) = dflt {
+                    self.expr(d, in_func);
+                }
+            }
+            MemberAst::Derived { ty, expr, .. } => {
+                if let Some(t) = ty {
+                    self.ty(t, in_func);
+                }
+                self.expr(expr, in_func);
+            }
+            MemberAst::Context { ty, .. } => self.ty(ty, in_func),
+            MemberAst::Assert { cond, tail, .. } => {
+                self.expr(cond, in_func);
+                if let Some(t) = tail {
+                    self.tail(t, in_func);
+                }
+            }
+            MemberAst::When { cond, body, .. } => {
+                self.expr(cond, in_func);
+                for b in body {
+                    self.member(b, in_func);
+                }
+            }
+        }
+    }
+    fn expr(&mut self, e: &Rc<Expr>, in_func: &Vec<String>) {
+        let mut scope: Vec<String> = in_func.clone();
+        if let Some(l) = expr_loc(e) {
+            match &**e {
+                Expr::Name(n) => {
+                    let target = match self.t.res.get(&key_of(e)) {
+                        Some(r) => r.clone(),
+                        None => resolve_in(&self.m.env, n),
+                    };
+                    if n == "std" {
+                        self.push(l, T_NAMESPACE, 0);
+                    } else if in_func.contains(n) || target.as_ref().map(|t| t.kind == "var").unwrap_or(false) {
+                        self.push(l, T_PARAMETER, 0);
+                    } else {
+                        match target {
+                            None => self.push(l, T_VARIABLE, M_UNRESOLVED),
+                            Some(t) => {
+                                let ty = match t.kind {
+                                    "func" => T_FUNCTION,
+                                    "namespace" => T_NAMESPACE,
+                                    "type" => T_TYPE,
+                                    _ => T_VARIABLE,
+                                };
+                                self.push(l, ty, if t.kind == "const" { M_READONLY } else { 0 });
+                            }
+                        }
+                    }
+                }
+                Expr::Member { x, name, .. } => {
+                    let ml = member_token_loc(&self.text, e, name);
+                    if let Some(sp) = std_path(e) {
+                        self.push(ml, if STD.iter().any(|s| s.0 == sp) { T_FUNCTION } else { T_NAMESPACE }, 0);
+                    } else if let Expr::Name(xn) = &**x {
+                        if self.m.env.namespaces.borrow().contains_key(xn) {
+                            let nss = self.m.env.namespaces.borrow();
+                            let ex = nss.get(xn).and_then(|(_, exports)| exports.borrow().get(name).cloned());
+                            let tg = ex.and_then(|ex| resolve_in(&ex.env, &ex.name));
+                            let ty = match tg.as_ref().map(|t| t.kind) {
+                                Some("func") => T_FUNCTION,
+                                Some("type") => T_TYPE,
+                                _ => T_VARIABLE,
+                            };
+                            self.push(ml, ty, if tg.is_some() { 0 } else { M_UNRESOLVED });
+                        } else {
+                            let mk = member_kind_of(self.t.types.get(&key_of(x)).and_then(|t| t.rt.as_ref()), name);
+                            self.push(ml, T_PROPERTY, mk.map(|(k, h)| member_mods(k, h)).unwrap_or(0));
+                        }
+                    } else {
+                        let mk = member_kind_of(self.t.types.get(&key_of(x)).and_then(|t| t.rt.as_ref()), name);
+                        self.push(ml, T_PROPERTY, mk.map(|(k, h)| member_mods(k, h)).unwrap_or(0));
+                    }
+                }
+                Expr::Lambda { params, .. } => scope.extend(params.iter().cloned()),
+                Expr::Comp { clauses, .. } | Expr::MapComp { clauses, .. } => scope.extend(clauses.iter().map(|c| c.v.clone())),
+                _ => {}
+            }
+        }
+        let s = &scope;
+        match &**e {
+            Expr::Template(parts) => self.template(parts, s),
+            Expr::Obj(entries) => {
+                for (_, v) in entries {
+                    self.expr(v, s);
+                }
+            }
+            Expr::Arr(items) => {
+                for (_, v) in items {
+                    self.expr(v, s);
+                }
+            }
+            Expr::Comp { head, clauses } => {
+                self.expr(head, s);
+                for c in clauses {
+                    self.expr(&c.iter, s);
+                    for f in &c.filters {
+                        self.expr(f, s);
+                    }
+                }
+            }
+            Expr::MapComp { key, val, clauses } => {
+                self.expr(key, s);
+                self.expr(val, s);
+                for c in clauses {
+                    self.expr(&c.iter, s);
+                    for f in &c.filters {
+                        self.expr(f, s);
+                    }
+                }
+            }
+            Expr::Bin { l, r, .. } => {
+                self.expr(l, s);
+                self.expr(r, s);
+            }
+            Expr::Un { x, .. } | Expr::Paren(x) => self.expr(x, s),
+            Expr::If { c, t, f } => {
+                self.expr(c, s);
+                self.expr(t, s);
+                self.expr(f, s);
+            }
+            Expr::Lambda { body, .. } => self.expr(body, s),
+            Expr::Call { fun, args } => {
+                self.expr(fun, s);
+                for a in args {
+                    self.expr(a, s);
+                }
+            }
+            Expr::Member { x, .. } => self.expr(x, s),
+            Expr::Index { x, i } => {
+                self.expr(x, s);
+                self.expr(i, s);
+            }
+            Expr::With { base, patch } => {
+                self.expr(base, s);
+                self.expr(patch, s);
+            }
+            Expr::Match { subject, arms } => {
+                self.expr(subject, s);
+                for a in arms {
+                    if let Some(t) = &a.ty {
+                        self.ty(t, s);
+                    }
+                    self.expr(&a.body, s);
+                }
+            }
+            _ => {}
+        }
+    }
+}
+fn semantic_tokens(st: &mut State, uri: &str) -> J {
+    let empty = J::obj(vec![("data", J::Arr(vec![]))]);
+    let Some(a) = st.analysis_of(uri) else { return empty };
+    let Some(m) = module_of(&a, &path_of(uri)) else { return empty };
+    let t = tables_of(&a, &m);
+    let text = text_of(st, &m);
+    let mut w = TokenWalk { st, a: &a, m: &m, text, t, toks: vec![] };
+    let _ = w.st;
+    let _ = w.a;
+    for d in &m.decls {
+        w.decl(d);
+    }
+    let mut toks = w.toks;
+    toks.sort_by(|p, q| p.0.sl.cmp(&q.0.sl).then(p.0.sc.cmp(&q.0.sc)));
+    let mut data: Vec<J> = vec![];
+    let (mut pl, mut pc) = (0usize, 0usize);
+    for (l, ty, mods) in toks {
+        let dl = l.sl - pl;
+        let dc: i64 = if dl == 0 { l.sc as i64 - pc as i64 } else { l.sc as i64 };
+        if dl == 0 && dc < 0 {
+            continue; // overlapping tokens: the first wins
+        }
+        data.extend([J::Num(dl as i64), J::Num(dc), J::Num((l.ec - l.sc) as i64), J::Num(ty), J::Num(mods)]);
+        pl = l.sl;
+        pc = l.sc;
+    }
+    J::obj(vec![("data", J::Arr(data))])
+}
+
+// ---------------- inlay hints ----------------
+struct HintWalk<'a> {
+    st: &'a State,
+    a: &'a Analysis,
+    m: &'a Rc<Module>,
+    text: String,
+    t: Rc<Tables>,
+    range: (Pos, Pos),
+    hints: (bool, bool, bool),
+    out: Vec<(Pos, J)>,
+}
+impl<'a> HintWalk<'a> {
+    fn in_range(&self, p: Pos) -> bool {
+        p.line >= self.range.0.line && p.line <= self.range.1.line
+    }
+    fn hint(&mut self, p: Pos, label: String, kind: Option<i64>, pad_left: bool, pad_right: bool) {
+        let mut item = vec![("position", pos_json(p)), ("label", J::s(label))];
+        if let Some(k) = kind {
+            item.push(("kind", J::Num(k)));
+        }
+        if pad_right {
+            item.push(("paddingRight", J::Bool(true)));
+        }
+        if pad_left {
+            item.push(("paddingLeft", J::Bool(true)));
+        }
+        self.out.push((p, J::obj(item)));
+    }
+    fn decl(&mut self, d: &Decl) {
+        if let DeclBody::Const { name, ty: None, expr } = &d.body {
+            if self.hints.0 && d.loc.is_some() {
+                if let Some(rt) = self.t.types.get(&key_of(expr)).and_then(|t| t.rt.clone()) {
+                    let r = name_range(&self.text, d, name);
+                    let p = Pos { line: r.el, character: r.ec };
+                    if self.in_range(p) {
+                        self.hint(p, format!(": {}", type_text(Some(&rt))), Some(1), false, false);
+                    }
+                }
+            }
+        }
+        match &d.body {
+            DeclBody::Type { params, ty, tail, .. } => {
+                for p in params {
+                    if let Some(t) = &p.ty {
+                        self.ty(t);
+                    }
+                }
+                self.ty(ty);
+                if let Some(t) = tail {
+                    self.tail(t);
+                }
+            }
+            DeclBody::Const { ty, expr, .. } => {
+                if let Some(t) = ty {
+                    self.ty(t);
+                }
+                self.expr(expr);
+            }
+            DeclBody::Func { params, ret, body, .. } => {
+                for p in params {
+                    if let Some(t) = &p.ty {
+                        self.ty(t);
+                    }
+                }
+                if let Some(t) = ret {
+                    self.ty(t);
+                }
+                self.expr(body);
+            }
+            DeclBody::Output { ty, expr, .. } => {
+                self.ty(ty);
+                self.expr(expr);
+            }
+            DeclBody::Input { ty, fallback, .. } => {
+                self.ty(ty);
+                if let Some(f) = fallback {
+                    self.expr(f);
+                }
+            }
+            DeclBody::Diagnostic { params, template, .. } => {
+                for p in params {
+                    if let Some(t) = &p.ty {
+                        self.ty(t);
+                    }
+                }
+                self.template(template);
+            }
+            DeclBody::Unit { factor, .. } => {
+                if let Some(f) = factor {
+                    self.expr(f);
+                }
+            }
+            _ => {}
+        }
+    }
+    fn tail(&mut self, t: &Tail) {
+        match t {
+            Tail::Inline { template, .. } => self.template(template),
+            Tail::Ref { args, .. } => {
+                for a in args {
+                    self.expr(a);
+                }
+            }
+        }
+    }
+    fn template(&mut self, parts: &[TPart]) {
+        for p in parts {
+            if let TPart::Expr(x) = p {
+                self.expr(x);
+            }
+        }
+    }
+    fn ty(&mut self, t: &TypeAst) {
+        match t {
+            TypeAst::Record { members, .. } => {
+                for m in members {
+                    self.member(m);
+                }
+            }
+            TypeAst::Map { key, val, .. } => {
+                self.ty(key);
+                self.ty(val);
+            }
+            TypeAst::Array { elem, .. } => self.ty(elem),
+            TypeAst::Union { arms, .. } | TypeAst::Isect { arms, .. } => {
+                for a in arms {
+                    self.ty(a);
+                }
+            }
+            TypeAst::Func { params, ret, .. } => {
+                for a in params {
+                    self.ty(a);
+                }
+                self.ty(ret);
+            }
+            TypeAst::Named { args, preds, ext, .. } => {
+                for a in args {
+                    self.ty(a);
+                }
+                for x in preds.iter().flatten() {
+                    self.expr(x);
+                }
+                if let Some(x) = ext {
+                    self.ty(x);
+                }
+            }
+            _ => {}
+        }
+    }
+    fn member(&mut self, m: &MemberAst) {
+        if let MemberAst::Derived { name, ty: None, expr, hidden, loc: Some(_) } = m {
+            if self.hints.0 {
+                if let Some(rt) = self.t.types.get(&key_of(expr)).and_then(|t| t.rt.clone()) {
+                    let r = member_range(&self.text, m, name);
+                    let p = Pos { line: r.el, character: r.ec + if *hidden { 1 } else { 0 } };
+                    if self.in_range(p) {
+                        self.hint(p, format!(": {}", type_text(Some(&rt))), Some(1), false, false);
+                    }
+                }
+            }
+        }
+        match m {
+            MemberAst::Value { ty, dflt, .. } => {
+                self.ty(ty);
+                if let Some(d) = dflt {
+                    self.expr(d);
+                }
+            }
+            MemberAst::Derived { ty, expr, .. } => {
+                if let Some(t) = ty {
+                    self.ty(t);
+                }
+                self.expr(expr);
+            }
+            MemberAst::Context { ty, .. } => self.ty(ty),
+            MemberAst::Assert { cond, tail, .. } => {
+                self.expr(cond);
+                if let Some(t) = tail {
+                    self.tail(t);
+                }
+            }
+            MemberAst::When { cond, body, .. } => {
+                self.expr(cond);
+                for b in body {
+                    self.member(b);
+                }
+            }
+        }
+    }
+    fn expr(&mut self, e: &Rc<Expr>) {
+        match &**e {
+            Expr::Call { fun, args } if self.hints.1 => {
+                if let Expr::Name(n) = &**fun {
+                    let target = match self.t.res.get(&key_of(fun)) {
+                        Some(r) => r.clone(),
+                        None => resolve_in(&self.m.env, n),
+                    };
+                    if let Some(site) = site_of_target(self.st, self.a, target.as_ref()) {
+                        let sm = site.module.clone();
+                        if let Some(DeclBody::Func { params, .. }) = decl_by_id(&sm, site.decl).map(|d| &d.body) {
+                            for (i, arg) in args.iter().enumerate() {
+                                if let (Some(p), Some(al)) = (params.get(i), expr_loc(arg)) {
+                                    let pos = Pos { line: al.sl, character: al.sc };
+                                    if self.in_range(pos) {
+                                        self.hint(pos, format!("{}:", p.name), Some(2), false, true);
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            Expr::UnitLit { num, unit } if self.hints.2 => {
+                if let (Ok((key, to_base)), Some(l)) = (self.m.env.unit_info(unit), expr_loc(e)) {
+                    let base = self.m.env.base_unit_of.borrow().get(&key).cloned().unwrap_or(key);
+                    let p = Pos { line: l.el, character: l.ec };
+                    if base != *unit && self.in_range(p) {
+                        self.hint(p, format!("= {} {}", crate::semantics::js_num_str(num * to_base), base), None, true, false);
+                    }
+                }
+            }
+            _ => {}
+        }
+        match &**e {
+            Expr::Template(parts) => self.template(parts),
+            Expr::Obj(entries) => {
+                for (_, v) in entries {
+                    self.expr(v);
+                }
+            }
+            Expr::Arr(items) => {
+                for (_, v) in items {
+                    self.expr(v);
+                }
+            }
+            Expr::Comp { head, clauses } => {
+                self.expr(head);
+                for c in clauses {
+                    self.expr(&c.iter);
+                    for f in &c.filters {
+                        self.expr(f);
+                    }
+                }
+            }
+            Expr::MapComp { key, val, clauses } => {
+                self.expr(key);
+                self.expr(val);
+                for c in clauses {
+                    self.expr(&c.iter);
+                    for f in &c.filters {
+                        self.expr(f);
+                    }
+                }
+            }
+            Expr::Bin { l, r, .. } => {
+                self.expr(l);
+                self.expr(r);
+            }
+            Expr::Un { x, .. } | Expr::Paren(x) => self.expr(x),
+            Expr::If { c, t, f } => {
+                self.expr(c);
+                self.expr(t);
+                self.expr(f);
+            }
+            Expr::Lambda { body, .. } => self.expr(body),
+            Expr::Call { fun, args } => {
+                self.expr(fun);
+                for a in args {
+                    self.expr(a);
+                }
+            }
+            Expr::Member { x, .. } => self.expr(x),
+            Expr::Index { x, i } => {
+                self.expr(x);
+                self.expr(i);
+            }
+            Expr::With { base, patch } => {
+                self.expr(base);
+                self.expr(patch);
+            }
+            Expr::Match { subject, arms } => {
+                self.expr(subject);
+                for a in arms {
+                    if let Some(t) = &a.ty {
+                        self.ty(t);
+                    }
+                    self.expr(&a.body);
+                }
+            }
+            _ => {}
+        }
+    }
+}
+fn inlay_hints(st: &mut State, uri: &str, range: (Pos, Pos)) -> J {
+    let Some(a) = st.analysis_of(uri) else { return J::Arr(vec![]) };
+    let Some(m) = module_of(&a, &path_of(uri)) else { return J::Arr(vec![]) };
+    let t = tables_of(&a, &m);
+    let text = text_of(st, &m);
+    let hints = (st.hint_types, st.hint_parameter_names, st.hint_units);
+    let mut w = HintWalk { st, a: &a, m: &m, text, t, range, hints, out: vec![] };
+    for d in &m.decls {
+        w.decl(d);
+    }
+    let mut out = w.out;
+    out.sort_by(|p, q| p.0.line.cmp(&q.0.line).then(p.0.character.cmp(&q.0.character)));
+    J::Arr(out.into_iter().map(|x| x.1).collect())
+}
+
+// ---------------- hierarchies ----------------
+fn hierarchy_item(m: &Module, d: &Decl, text: &str) -> J {
+    let name = d.name().unwrap_or("");
+    J::obj(vec![
+        ("name", J::s(name)),
+        ("kind", J::Num(symbol_kind(d).unwrap_or(13))),
+        ("uri", J::s(uri_of(&m.path))),
+        ("range", range_json(d.loc.unwrap())),
+        ("selectionRange", range_json(name_range(text, d, name))),
+    ])
+}
+fn prepare_hierarchy(st: &mut State, uri: &str, pos: Pos, want: &str) -> J {
+    let Some(a) = st.analysis_of(uri) else { return J::Null };
+    let Some(site) = site_at(st, &a, uri, pos).and_then(|s| s.site) else { return J::Null };
+    if site.decl.is_none() || site.kind != want {
+        return J::Null;
+    }
+    let sm = site.module.clone();
+    let Some(decl) = decl_by_id(&sm, site.decl) else { return J::Null };
+    J::Arr(vec![hierarchy_item(&sm, decl, &text_of(st, &sm))])
+}
+fn module_of_uri(st: &State, uri: &str) -> Option<(Rc<Analysis>, Rc<Module>)> {
+    for a in st.last_good.values() {
+        if let Some(m) = a.run.modules.iter().find(|x| uri_of(&x.path) == uri) {
+            return Some((a.clone(), m.clone()));
+        }
+    }
+    None
+}
+fn decl_containing(m: &Module, loc: Loc) -> Option<&Decl> {
+    m.decls.iter().find(|d| d.loc.map(|dl| dl.sl <= loc.sl && loc.el <= dl.el).unwrap_or(false) && d.name().is_some())
+}
+fn item_uri_line(item: Option<&Value>) -> Option<(String, usize)> {
+    let item = item?;
+    let uri = as_str(get(item, "uri"))?.to_string();
+    let line = as_usize(get(item, "range").and_then(|r| get(r, "start")).and_then(|s| get(s, "line")))?;
+    Some((uri, line))
+}
+fn incoming_calls(st: &State, item: Option<&Value>) -> J {
+    let Some((uri, line)) = item_uri_line(item) else { return J::Arr(vec![]) };
+    let Some((a, _)) = module_of_uri(st, &uri) else { return J::Arr(vec![]) };
+    let mut out: Vec<J> = vec![];
+    for m in a.run.modules.clone() {
+        let t = tables_of(&a, &m);
+        let text = text_of(st, &m);
+        let mut by_caller: Vec<(usize, Vec<Loc>)> = vec![];
+        for d in &m.decls {
+            let mut exprs: Vec<Rc<Expr>> = vec![];
+            let mut types: Vec<&TypeAst> = vec![];
+            collect_decl(d, &mut exprs, &mut types);
+            for x in &exprs {
+                let Expr::Call { fun, .. } = &**x else { continue };
+                let Expr::Name(n) = &**fun else { continue };
+                let Some(fl) = expr_loc(fun) else { continue };
+                let tg = match t.res.get(&key_of(fun)) {
+                    Some(r) => r.clone(),
+                    None => resolve_in(&m.env, n),
+                };
+                let Some(site) = site_of_target(st, &a, tg.as_ref()) else { continue };
+                if site.decl.is_none() || uri_of(&site.module.path) != uri || site.decl_loc.map(|l| l.sl) != Some(line) {
+                    continue;
+                }
+                if let Some(caller) = decl_containing(&m, fl) {
+                    let id = decl_id(caller);
+                    match by_caller.iter_mut().find(|(k, _)| *k == id) {
+                        Some(e) => e.1.push(fl),
+                        None => by_caller.push((id, vec![fl])),
+                    }
+                }
+            }
+        }
+        for (id, locs) in by_caller {
+            let Some(caller) = decl_by_id(&m, Some(id)) else { continue };
+            out.push(J::obj(vec![("from", hierarchy_item(&m, caller, &text)), ("fromRanges", J::Arr(locs.into_iter().map(range_json).collect()))]));
+        }
+    }
+    J::Arr(out)
+}
+fn outgoing_calls(st: &State, item: Option<&Value>) -> J {
+    let Some((uri, line)) = item_uri_line(item) else { return J::Arr(vec![]) };
+    let Some((a, m)) = module_of_uri(st, &uri) else { return J::Arr(vec![]) };
+    let t = tables_of(&a, &m);
+    let Some(decl) = m.decls.iter().find(|d| d.loc.map(|l| l.sl) == Some(line)) else { return J::Arr(vec![]) };
+    let mut exprs: Vec<Rc<Expr>> = vec![];
+    let mut types: Vec<&TypeAst> = vec![];
+    collect_decl(decl, &mut exprs, &mut types);
+    let mut by_callee: Vec<(String, J, Vec<Loc>)> = vec![];
+    for x in &exprs {
+        let Expr::Call { fun, .. } = &**x else { continue };
+        let Expr::Name(n) = &**fun else { continue };
+        let Some(fl) = expr_loc(fun) else { continue };
+        let tg = match t.res.get(&key_of(fun)) {
+            Some(r) => r.clone(),
+            None => resolve_in(&m.env, n),
+        };
+        let Some(site) = site_of_target(st, &a, tg.as_ref()) else { continue };
+        if site.kind != "func" {
+            continue;
+        }
+        let sm = site.module.clone();
+        let Some(callee) = decl_by_id(&sm, site.decl) else { continue };
+        let key = format!("{}:{}", sm.path.to_string_lossy(), callee.loc.map(|l| l.sl).unwrap_or(0));
+        match by_callee.iter_mut().find(|(k, _, _)| *k == key) {
+            Some(e) => e.2.push(fl),
+            None => by_callee.push((key, hierarchy_item(&sm, callee, &text_of(st, &sm)), vec![fl])),
+        }
+    }
+    J::Arr(by_callee.into_iter().map(|(_, to, locs)| J::obj(vec![("to", to), ("fromRanges", J::Arr(locs.into_iter().map(range_json).collect()))])).collect())
+}
+fn supertypes(st: &State, item: Option<&Value>) -> J {
+    let Some((uri, line)) = item_uri_line(item) else { return J::Arr(vec![]) };
+    let Some((a, m)) = module_of_uri(st, &uri) else { return J::Arr(vec![]) };
+    let base = m.decls.iter().find_map(|d| match &d.body {
+        DeclBody::Type { ty: TypeAst::Named { name, ext: Some(_), .. }, .. } if d.loc.map(|l| l.sl) == Some(line) => Some(name.clone()),
+        _ => None,
+    });
+    let Some(base) = base else { return J::Arr(vec![]) };
+    let Some(site) = site_of_target(st, &a, resolve_in(&m.env, &base).as_ref()) else { return J::Arr(vec![]) };
+    let sm = site.module.clone();
+    match decl_by_id(&sm, site.decl) {
+        Some(d) => J::Arr(vec![hierarchy_item(&sm, d, &text_of(st, &sm))]),
+        None => J::Arr(vec![]),
+    }
+}
+fn subtypes(st: &State, item: Option<&Value>) -> J {
+    let Some((uri, line)) = item_uri_line(item) else { return J::Arr(vec![]) };
+    let Some((a, _)) = module_of_uri(st, &uri) else { return J::Arr(vec![]) };
+    let mut out: Vec<J> = vec![];
+    for m in a.run.modules.clone() {
+        for d in &m.decls {
+            let DeclBody::Type { ty: TypeAst::Named { name, ext: Some(_), .. }, .. } = &d.body else { continue };
+            if d.loc.is_none() {
+                continue;
+            }
+            let Some(site) = site_of_target(st, &a, resolve_in(&m.env, name).as_ref()) else { continue };
+            if site.decl.is_some() && uri_of(&site.module.path) == uri && site.decl_loc.map(|l| l.sl) == Some(line) {
+                out.push(hierarchy_item(&m, d, &text_of(st, &m)));
+            }
+        }
+    }
+    J::Arr(out)
+}
+
+// ---------------- code actions ----------------
+fn js_value_string(v: &Value) -> String {
+    match v {
+        Value::Str(s) => json_str(s),
+        Value::Int(i) => i.to_string(),
+        Value::Float(f) => crate::semantics::js_num_str(*f),
+        Value::Bool(b) => b.to_string(),
+        _ => "null".into(),
+    }
+}
+fn placeholder_for(rt: Option<&RT>) -> String {
+    let Some(rt) = rt else { return "null".into() };
+    let r: RT = match &rt.k {
+        RTk::Pred { base, .. } => base.clone(),
+        _ => rt.clone(),
+    };
+    match &r.k {
+        RTk::Prim(name) => match name.as_str() {
+            "string" => "\"\"".into(),
+            "int" => "0".into(),
+            "float" => "0.0".into(),
+            "bool" => "false".into(),
+            _ => "null".into(),
+        },
+        RTk::Lit(v) => js_value_string(v),
+        RTk::Range { lo, .. } => js_value_string(lo),
+        RTk::Rec(_) => "{ }".into(),
+        RTk::Arr { .. } => "[]".into(),
+        RTk::Map { .. } => "{}".into(),
+        RTk::Union(arms) => placeholder_for(arms.first()),
+        _ => "null".into(),
+    }
+}
+fn value_to_j(v: &Value) -> J {
+    match v {
+        Value::Null | Value::Undef | Value::Absent => J::Null,
+        Value::Bool(b) => J::Bool(*b),
+        Value::Int(i) => J::Num(i.to_string().parse().unwrap_or(0)),
+        Value::Float(f) => J::Str(crate::semantics::js_num_str(*f)),
+        Value::Str(s) => J::s(s.clone()),
+        Value::JArr(items) => J::Arr(items.iter().map(value_to_j).collect()),
+        Value::JObj(es) => J::Obj(es.iter().map(|(k, x)| (k.clone(), value_to_j(x))).collect()),
+        other => J::s(format!("{other:?}")),
+    }
+}
+// `path.resolve(dir, spec)`: the joined path, `.` and `..` folded lexically
+fn resolve_lexical(dir: &Path, spec: &str) -> PathBuf {
+    let joined = if spec.starts_with('/') { PathBuf::from(spec) } else { dir.join(spec) };
+    let mut parts: Vec<String> = vec![];
+    for c in joined.to_string_lossy().split('/') {
+        match c {
+            "" | "." => {}
+            ".." => {
+                parts.pop();
+            }
+            x => parts.push(x.to_string()),
+        }
+    }
+    PathBuf::from(format!("/{}", parts.join("/")))
+}
+fn relative_path(from_dir: &Path, to: &Path) -> String {
+    let f: Vec<&str> = from_dir.to_str().unwrap_or("").split('/').filter(|x| !x.is_empty()).collect();
+    let t: Vec<&str> = to.to_str().unwrap_or("").split('/').filter(|x| !x.is_empty()).collect();
+    let mut i = 0;
+    while i < f.len() && i < t.len() && f[i] == t[i] {
+        i += 1;
+    }
+    let mut parts: Vec<&str> = f[i..].iter().map(|_| "..").collect();
+    parts.extend(t[i..].iter().copied());
+    parts.join("/")
+}
+fn require_rel(from: &Path, to: &Path) -> String {
+    let rel = relative_path(from.parent().unwrap_or(Path::new("/")), to);
+    if rel.starts_with('.') {
+        rel.strip_prefix("./").unwrap_or(&rel).to_string()
+    } else {
+        rel
+    }
+}
+// the modules that export a name: the universe's, the other open
+// documents' universes, then the .decl files beside the module
+fn exporters_of(st: &State, a: &Analysis, m: &Module, name: &str) -> Vec<PathBuf> {
+    let mut out: Vec<PathBuf> = vec![];
+    let mut seen: Vec<PathBuf> = vec![m.path.clone()];
+    let consider = |md: &Module, out: &mut Vec<PathBuf>, seen: &mut Vec<PathBuf>| {
+        if !seen.contains(&md.path) && md.exports.borrow().contains_key(name) {
+            seen.push(md.path.clone());
+            out.push(md.path.clone());
+        }
+    };
+    for md in &a.run.modules {
+        consider(md, &mut out, &mut seen);
+    }
+    for other in st.last_good.values() {
+        for md in &other.run.modules {
+            consider(md, &mut out, &mut seen);
+        }
+    }
+    let dir = m.path.parent().map(|p| p.to_path_buf()).unwrap_or_default();
+    let mut names: Vec<String> = std::fs::read_dir(&dir).map(|rd| rd.flatten().map(|e| e.file_name().to_string_lossy().to_string()).collect()).unwrap_or_default();
+    names.sort();
+    for f in names {
+        if !f.ends_with(".decl") {
+            continue;
+        }
+        let p = resolve_lexical(&dir, &f);
+        if seen.contains(&p) {
+            continue;
+        }
+        let text = st.overlay.get(&p).cloned().unwrap_or_else(|| read_text(&p));
+        let parsed = parse_source(&text);
+        if !parsed.errors.is_empty() {
+            continue;
+        }
+        if parsed.decls.iter().any(|d| d.exported && d.name() == Some(name) && !matches!(d.body, DeclBody::Import { .. })) {
+            seen.push(p.clone());
+            out.push(p);
+        }
+    }
+    out
+}
+fn edit_json(l: Loc, new_text: &str) -> J {
+    J::obj(vec![("range", range_json(l)), ("newText", J::s(new_text))])
+}
+fn action_json(title: String, kind: &str, diagnostic: Option<J>, preferred: bool, uri: &str, edit: J) -> J {
+    let mut item = vec![("title", J::s(title)), ("kind", J::s(kind))];
+    if let Some(d) = diagnostic {
+        item.push(("diagnostics", J::Arr(vec![d])));
+    }
+    if preferred {
+        item.push(("isPreferred", J::Bool(true)));
+    }
+    item.push(("edit", J::obj(vec![("changes", J::Obj(vec![(uri.to_string(), J::Arr(vec![edit]))]))])));
+    J::obj(item)
+}
+fn code_actions(st: &mut State, uri: &str, range: (Pos, Pos), diagnostics: &[Value]) -> J {
+    let Some(text) = st.text(uri).cloned() else { return J::Arr(vec![]) };
+    let a = st.analysis_of(uri);
+    let mut out: Vec<J> = vec![];
+    let parsed = parse_source(&text);
+    let lines: Vec<&str> = text.split('\n').collect();
+    let (Some(a), true) = (a, parsed.errors.is_empty()) else { return J::Arr(out) };
+    let Some(m) = module_of(&a, &path_of(uri)) else { return J::Arr(out) };
+    let t = tables_of(&a, &m);
+    let re_unknown = Regex::new(r"^unknown name ([A-Za-z_][A-Za-z0-9_]*)").unwrap();
+    let re_missing = Regex::new(r"^required member ([A-Za-z_][A-Za-z0-9_]*) missing").unwrap();
+    for d in diagnostics {
+        let message = as_str(get(d, "message")).unwrap_or("").to_string();
+        if let Some(cap) = re_unknown.captures(&message) {
+            let name = cap[1].to_string();
+            for other in exporters_of(st, &a, &m, &name) {
+                let mut spec = format!("./{}", require_rel(&m.path, &other));
+                let dir = m.path.parent().map(|p| p.to_path_buf()).unwrap_or_default();
+                let existing = parsed.decls.iter().find(|x| match &x.body {
+                    DeclBody::Import { from, names: Some(_), .. } => resolve_lexical(&dir, from) == other,
+                    _ => false,
+                });
+                let edit = match existing {
+                    Some(x) => {
+                        let l = x.loc.unwrap();
+                        let line = lines.get(l.sl).copied().unwrap_or("");
+                        let close = find16(line, "}", l.sc).map(|c| c as i64).unwrap_or(-1);
+                        if let DeclBody::Import { from, .. } = &x.body {
+                            spec = from.clone();
+                        }
+                        let c = if close < 0 { 0 } else { close as usize };
+                        // JS `indexOf` returns -1 when absent; the position keeps that value
+                        let _ = c;
+                        edit_json(Loc { sl: l.sl, sc: close.max(0) as usize, el: l.sl, ec: close.max(0) as usize }, &format!(", {name} "))
+                    }
+                    None => {
+                        let last_import = parsed.decls.iter().rev().find(|x| matches!(x.body, DeclBody::Import { .. } | DeclBody::ReExport { .. }));
+                        let at = last_import.and_then(|x| x.loc).map(|l| l.el + 1).unwrap_or(0);
+                        edit_json(Loc { sl: at, sc: 0, el: at, ec: 0 }, &format!("import {{ {name} }} from \"{spec}\"\n"))
+                    }
+                };
+                out.push(action_json(format!("import {name} from \"{spec}\""), "quickfix", Some(value_to_j(d)), true, uri, edit));
+            }
+        }
+        if let Some(cap) = re_missing.captures(&message) {
+            let name = cap[1].to_string();
+            let start = get(d, "range").and_then(|r| get(r, "start"));
+            let dpos = Pos { line: as_usize(start.and_then(|s| get(s, "line"))).unwrap_or(0), character: as_usize(start.and_then(|s| get(s, "character"))).unwrap_or(0) };
+            // the construction: the literal at the diagnostic, or the root's literal when the diagnostic names the declaration
+            let Some(hit) = node_at(&parsed.decls, dpos) else { continue };
+            let mut chain: Vec<NodeRef> = vec![hit.node.clone()];
+            chain.extend(hit.parents.iter().rev().cloned());
+            let mut obj: Option<Rc<Expr>> = chain.iter().find_map(|n| match n { NodeRef::Expr(e) if matches!(&***e, Expr::Obj(_)) => Some((*e).clone()), _ => None });
+            if obj.is_none() {
+                obj = chain.iter().filter_map(|n| match n { NodeRef::Decl(d) => Some(*d), _ => None }).filter_map(|d| match &d.body {
+                    DeclBody::Output { expr, .. } => Some(expr.clone()),
+                    DeclBody::Input { fallback, .. } => fallback.clone(),
+                    DeclBody::Const { expr, .. } => Some(expr.clone()),
+                    _ => None,
+                }).find(|e| matches!(&**e, Expr::Obj(_)));
+            }
+            let Some(obj) = obj else { continue };
+            // the literal's type: its declared position (a root's annotation), else what inference recorded
+            let owner = chain.iter().find_map(|n| match n {
+                NodeRef::Decl(d) => match &d.body {
+                    DeclBody::Output { ty, .. } | DeclBody::Input { ty, .. } => Some(ty.clone()),
+                    _ => None,
+                },
+                _ => None,
+            });
+            let rt: Option<RT> = match owner {
+                Some(ty) => m.env.resolve(&ty, None).ok(),
+                None => t.types.get(&key_of(&obj)).and_then(|x| x.rt.clone()),
+            };
+            let mem = rt.as_ref().and_then(|r| rec_members(r).into_iter().find(|x| x.name == name));
+            let value = placeholder_for(mem.as_ref().and_then(|x| x.ty.as_ref()));
+            let Expr::Obj(entries) = &*obj else { continue };
+            let edit = match entries.last().and_then(|(_, v)| expr_loc(v)) {
+                Some(vl) => edit_json(Loc { sl: vl.el, sc: vl.ec, el: vl.el, ec: vl.ec }, &format!(", {name}: {value}")),
+                None => {
+                    let ol = expr_loc(&obj).unwrap();
+                    edit_json(Loc { sl: ol.sl, sc: ol.sc + 1, el: ol.sl, ec: ol.sc + 1 }, &format!(" {name}: {value}"))
+                }
+            };
+            out.push(action_json(format!("add {name}: {value}"), "quickfix", Some(value_to_j(d)), true, uri, edit));
+        }
+    }
+    // assists at the range: annotate an unannotated derived member or constant with its inferred type
+    if let Some(hit) = node_at(&parsed.decls, range.0) {
+        let mut chain: Vec<NodeRef> = vec![hit.node.clone()];
+        chain.extend(hit.parents.iter().rev().cloned());
+        for n in &chain {
+            let (expr, r, hidden) = match n {
+                NodeRef::Member(mm @ MemberAst::Derived { name, ty: None, expr, hidden, .. }) => (expr.clone(), member_range(&text, mm, name), *hidden),
+                NodeRef::Decl(d) => match &d.body {
+                    DeclBody::Const { name, ty: None, expr } => (expr.clone(), name_range(&text, d, name), false),
+                    _ => continue,
+                },
+                _ => continue,
+            };
+            if let Some(rt) = t.types.get(&key_of(&expr)).and_then(|x| x.rt.clone()) {
+                let tt = type_text(Some(&rt));
+                let at = Loc { sl: r.el, sc: r.ec + if hidden { 1 } else { 0 }, el: r.el, ec: r.ec + if hidden { 1 } else { 0 } };
+                out.push(action_json(format!("annotate: {tt}"), "refactor.rewrite", None, false, uri, edit_json(at, &format!(": {tt}"))));
+            }
+            break;
+        }
+    }
+    J::Arr(out)
+}
+
+// ---------------- the syntax tree ----------------
+// tree-sitter's own S-expression (`ts_node_string`): named nodes with
+// their field names — what web-tree-sitter's `toString()` prints too
+fn syntax_tree(st: &State, uri: &str) -> J {
+    let Some(text) = st.text(uri) else { return J::Null };
+    let mut parser = tree_sitter::Parser::new();
+    let lang: tree_sitter::Language = crate::parse::LANGUAGE.into();
+    parser.set_language(&lang).expect("grammar");
+    let tree = parser.parse(text, None).expect("parse");
+    J::obj(vec![("tree", J::s(tree.root_node().to_sexp()))])
 }
 
 // ---------------- request handling ----------------
@@ -1723,7 +2975,15 @@ fn handle(st: &mut State, msg: &Value) -> Option<i32> {
                 ("renameProvider", J::obj(vec![("prepareProvider", J::Bool(true))])),
                 ("completionProvider", J::obj(vec![("triggerCharacters", J::Arr(vec![J::s("."), J::s("$"), J::s(":")]))])),
                 ("codeLensProvider", J::obj(vec![("resolveProvider", J::Bool(false))])),
-                ("executeCommandProvider", J::obj(vec![("commands", J::Arr(["decl.evaluate", "decl.validate", "decl.trace", "decl.reloadWorkspace"].iter().map(|c| J::s(*c)).collect()))])),
+                ("signatureHelpProvider", J::obj(vec![("triggerCharacters", J::Arr(vec![J::s("("), J::s(",")]))])),
+                ("workspaceSymbolProvider", J::Bool(true)),
+                ("selectionRangeProvider", J::Bool(true)),
+                ("semanticTokensProvider", J::obj(vec![("legend", J::obj(vec![("tokenTypes", J::Arr(TOKEN_TYPES.iter().map(|t| J::s(*t)).collect())), ("tokenModifiers", J::Arr(TOKEN_MODS.iter().map(|t| J::s(*t)).collect()))])), ("full", J::Bool(true))])),
+                ("inlayHintProvider", J::Bool(true)),
+                ("callHierarchyProvider", J::Bool(true)),
+                ("typeHierarchyProvider", J::Bool(true)),
+                ("codeActionProvider", J::obj(vec![("codeActionKinds", J::Arr(vec![J::s("quickfix"), J::s("refactor.rewrite")]))])),
+                ("executeCommandProvider", J::obj(vec![("commands", J::Arr(["decl.evaluate", "decl.validate", "decl.trace", "decl.showSyntaxTree", "decl.reloadWorkspace"].iter().map(|c| J::s(*c)).collect()))])),
             ]);
             reply(id, J::obj(vec![("capabilities", caps), ("serverInfo", J::obj(vec![("name", J::s("decl-lsp")), ("version", J::s("0.3.0"))]))]));
         }
@@ -1734,6 +2994,11 @@ fn handle(st: &mut State, msg: &Value) -> Option<i32> {
                 Some(Value::JObj(es)) => es.iter().filter_map(|(k, v)| as_str(Some(v)).map(|f| (k.clone(), f.to_string()))).collect(),
                 _ => vec![],
             };
+            let hints = params.and_then(|p| get(p, "settings")).and_then(|s| get(s, "decl")).and_then(|d| get(d, "inlayHints"));
+            if let Some(b) = as_bool(hints.and_then(|h| get(h, "types"))) { st.hint_types = b; }
+            if let Some(b) = as_bool(hints.and_then(|h| get(h, "parameterNames"))) { st.hint_parameter_names = b; }
+            if let Some(b) = as_bool(hints.and_then(|h| get(h, "values"))) { st.hint_values = b; }
+            if let Some(b) = as_bool(hints.and_then(|h| get(h, "units"))) { st.hint_units = b; }
             reanalyze(st);
         }
         "workspace/didChangeWatchedFiles" => reanalyze(st),
@@ -1805,6 +3070,58 @@ fn handle(st: &mut State, msg: &Value) -> Option<i32> {
             reply(id, r);
         }
         "textDocument/codeLens" => reply(id, code_lenses(st, &td_uri())),
+        "textDocument/signatureHelp" => {
+            let r = signature_help(st, &td_uri(), position());
+            reply(id, r);
+        }
+        "workspace/symbol" => reply(id, workspace_symbols(st, as_str(params.and_then(|p| get(p, "query"))).unwrap_or(""))),
+        "textDocument/selectionRange" => {
+            let positions: Vec<Pos> = match params.and_then(|p| get(p, "positions")) {
+                Some(Value::JArr(items)) => items.iter().map(|p| Pos { line: as_usize(get(p, "line")).unwrap_or(0), character: as_usize(get(p, "character")).unwrap_or(0) }).collect(),
+                _ => vec![],
+            };
+            reply(id, selection_ranges(st, &td_uri(), &positions));
+        }
+        "textDocument/semanticTokens/full" => {
+            let r = semantic_tokens(st, &td_uri());
+            reply(id, r);
+        }
+        "textDocument/inlayHint" => {
+            let rg = params.and_then(|p| get(p, "range"));
+            let pt = |k: &str| {
+                let p = rg.and_then(|r| get(r, k));
+                Pos { line: as_usize(p.and_then(|x| get(x, "line"))).unwrap_or(0), character: as_usize(p.and_then(|x| get(x, "character"))).unwrap_or(0) }
+            };
+            let range = (pt("start"), pt("end"));
+            let r = inlay_hints(st, &td_uri(), range);
+            reply(id, r);
+        }
+        "textDocument/prepareCallHierarchy" => {
+            let r = prepare_hierarchy(st, &td_uri(), position(), "func");
+            reply(id, r);
+        }
+        "callHierarchy/incomingCalls" => reply(id, incoming_calls(st, params.and_then(|p| get(p, "item")))),
+        "callHierarchy/outgoingCalls" => reply(id, outgoing_calls(st, params.and_then(|p| get(p, "item")))),
+        "textDocument/prepareTypeHierarchy" => {
+            let r = prepare_hierarchy(st, &td_uri(), position(), "type");
+            reply(id, r);
+        }
+        "typeHierarchy/supertypes" => reply(id, supertypes(st, params.and_then(|p| get(p, "item")))),
+        "typeHierarchy/subtypes" => reply(id, subtypes(st, params.and_then(|p| get(p, "item")))),
+        "textDocument/codeAction" => {
+            let rg = params.and_then(|p| get(p, "range"));
+            let pt = |k: &str| {
+                let p = rg.and_then(|r| get(r, k));
+                Pos { line: as_usize(p.and_then(|x| get(x, "line"))).unwrap_or(0), character: as_usize(p.and_then(|x| get(x, "character"))).unwrap_or(0) }
+            };
+            let range = (pt("start"), pt("end"));
+            let diags: Vec<Value> = match params.and_then(|p| get(p, "context")).and_then(|c| get(c, "diagnostics")) {
+                Some(Value::JArr(items)) => items.iter().cloned().collect(),
+                _ => vec![],
+            };
+            let r = code_actions(st, &td_uri(), range, &diags);
+            reply(id, r);
+        }
         "workspace/executeCommand" => {
             let command = as_str(params.and_then(|p| get(p, "command"))).unwrap_or("").to_string();
             let r = execute_command(st, &command, params.and_then(|p| get(p, "arguments")));

@@ -12,9 +12,18 @@ extern "C" {
 }
 pub const LANGUAGE: LanguageFn = unsafe { LanguageFn::from_raw(tree_sitter_decl) };
 
+#[derive(Clone)]
 pub struct ParseResult {
     pub decls: Vec<Decl>,
     pub errors: Vec<(usize, usize)>,
+}
+
+// the same text parses to the same result: the session and the language
+// server re-load the unchanged modules of a universe on every question,
+// and the AST is never mutated after lowering (a small bounded cache; a
+// clone shares the expression nodes, whose addresses are their identity)
+thread_local! {
+    static PARSE_CACHE: std::cell::RefCell<Vec<(String, ParseResult)>> = std::cell::RefCell::new(Vec::new());
 }
 
 struct Lower<'a> {
@@ -22,6 +31,20 @@ struct Lower<'a> {
 }
 
 pub fn parse_source(src: &str) -> ParseResult {
+    if let Some(hit) = PARSE_CACHE.with(|c| c.borrow().iter().find(|(k, _)| k == src).map(|(_, r)| r.clone())) {
+        return hit;
+    }
+    let r = parse_source_uncached(src);
+    PARSE_CACHE.with(|c| {
+        let mut c = c.borrow_mut();
+        if c.len() >= 64 {
+            c.remove(0);
+        }
+        c.push((src.to_string(), r.clone()));
+    });
+    r
+}
+fn parse_source_uncached(src: &str) -> ParseResult {
     let mut parser = Parser::new();
     let lang: Language = LANGUAGE.into();
     parser.set_language(&lang).expect("grammar");

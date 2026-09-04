@@ -304,7 +304,7 @@ class LspSession:
 
 def lsp_transcript(cmd: list[str]) -> list:
     d = Path(tempfile.mkdtemp(prefix="decl-parity-lsp-"))
-    (d / "lib.decl").write_text("export type Service = { name: string, port: 1..65535 = 8080 }\nexport const MAX = 16\n")
+    (d / "lib.decl").write_text("export type Service = { name: string, port: 1..65535 = 8080 }\nexport const MAX = 16\nexport func cap(n: int): int = std.math.min(n, MAX)\nexport type Public = Service { public: bool }\n")
     main = d / "main.decl"
     main.write_text("")
     uri = main.as_uri()
@@ -322,7 +322,7 @@ def lsp_transcript(cmd: list[str]) -> list:
         for x in ds:
             x["message"] = x["message"].replace(str(d), "<dir>")
         out.append((f"diagnostics {i}", ds))
-    MAIN = 'import { Service, MAX as LIMIT } from "./lib.decl"\nconst top = LIMIT\nexport output s: Service = { name: "a" }\nexport output t: Service = {\n    name: "b"\n}\nconst first = s.name\n'
+    MAIN = 'import { Service, MAX as LIMIT, cap } from "./lib.decl"\nconst top = LIMIT\nexport output s: Service = { name: "a" }\nexport output t: Service = {\n    name: "b"\n}\nconst first = s.name\nconst c = cap(top)\nconst d = 250ms\ntype Local = Service { extra = name }\nconst m2 = std.math.min(top, 3)\n'
 
     def norm(v):
         """temp paths and URI encodings normalized (servers encode file URIs differently)"""
@@ -353,9 +353,37 @@ def lsp_transcript(cmd: list[str]) -> list:
     ask("highlight of s", "textDocument/documentHighlight", at(6, 14))
     ask("completion of a name prefix", "textDocument/completion", at(1, 15))
     out.append(("diagnostics while typing", change(10, MAIN + "const e = s.\nconst f = std.arr\n")))
-    ask("member completion while typing", "textDocument/completion", at(7, 12))
-    ask("std completion", "textDocument/completion", at(8, 17))
+    ask("member completion while typing", "textDocument/completion", at(11, 12))
+    ask("std completion", "textDocument/completion", at(12, 17))
     change(11, MAIN)
+    ask("signature help in cap(top)", "textDocument/signatureHelp", at(7, 15))
+    ask("signature help in a std call, second argument", "textDocument/signatureHelp", at(10, 27))
+    ask("signature help outside a call", "textDocument/signatureHelp", at(1, 7))
+    ask("workspace symbols", "workspace/symbol", {"query": "c"})
+    ask("selection ranges", "textDocument/selectionRange", {"textDocument": {"uri": uri}, "positions": [{"line": 6, "character": 16}, {"line": 4, "character": 11}]})
+    ask("semantic tokens", "textDocument/semanticTokens/full", {"textDocument": {"uri": uri}})
+    ask("inlay hints", "textDocument/inlayHint", {"textDocument": {"uri": uri}, "range": {"start": {"line": 0, "character": 0}, "end": {"line": 20, "character": 0}}})
+    ch = norm(s.request("textDocument/prepareCallHierarchy", at(7, 11)))
+    out.append(("call hierarchy: prepare cap", ch))
+    if ch:
+        item = s.request("textDocument/prepareCallHierarchy", at(7, 11))[0]
+        ask("call hierarchy: incoming calls of cap", "callHierarchy/incomingCalls", {"item": item})
+        ask("call hierarchy: outgoing calls of cap", "callHierarchy/outgoingCalls", {"item": item})
+    th = norm(s.request("textDocument/prepareTypeHierarchy", at(2, 19)))
+    out.append(("type hierarchy: prepare Service", th))
+    if th:
+        item = s.request("textDocument/prepareTypeHierarchy", at(2, 19))[0]
+        ask("type hierarchy: supertypes of Service", "typeHierarchy/supertypes", {"item": item})
+        ask("type hierarchy: subtypes of Service", "typeHierarchy/subtypes", {"item": item})
+    ask("code action: annotate a derived member", "textDocument/codeAction", {"textDocument": {"uri": uri}, "range": {"start": {"line": 9, "character": 24}, "end": {"line": 9, "character": 24}}, "context": {"diagnostics": []}})
+    ds = change(20, "const z = cap(1)\n")
+    out.append(("diagnostics of an unknown name", ds))
+    ask("code action: import the unknown name", "textDocument/codeAction", {"textDocument": {"uri": uri}, "range": {"start": {"line": 0, "character": 10}, "end": {"line": 0, "character": 13}}, "context": {"diagnostics": ds}})
+    ds = change(21, MAIN + "export output u: Service = { }\n")
+    out.append(("diagnostics of a missing member", ds))
+    ask("code action: add the missing member", "textDocument/codeAction", {"textDocument": {"uri": uri}, "range": {"start": {"line": 11, "character": 27}, "end": {"line": 11, "character": 30}}, "context": {"diagnostics": ds}})
+    change(22, MAIN)
+    ask("decl.showSyntaxTree", "workspace/executeCommand", {"command": "decl.showSyntaxTree", "arguments": [uri]})
     ask("document symbols", "textDocument/documentSymbol", {"textDocument": {"uri": uri}})
     ask("folding ranges", "textDocument/foldingRange", {"textDocument": {"uri": uri}})
     out.append(("diagnostics of an unformatted text", change(12, "const x=1\nconst y = [s for s in [1, 2]]\n")))
@@ -370,9 +398,9 @@ def lsp_transcript(cmd: list[str]) -> list:
     ask("decl.evaluate all", "workspace/executeCommand", {"command": "decl.evaluate", "arguments": [uri]})
     ask("decl.validate", "workspace/executeCommand", {"command": "decl.validate", "arguments": [uri]})
     ask("decl.trace", "workspace/executeCommand", {"command": "decl.trace", "arguments": [uri, "s.port"]})
-    out.append(("diagnostics of an evaluation error", change(14, MAIN + 'export output u: Service = { name: "c", port: 70000 }\n')))
-    out.append(("diagnostics of a missing import", change(15, 'import { Nothing } from "./lib.decl"\nconst z = 1\n')))
-    change(16, MAIN)
+    out.append(("diagnostics of an evaluation error", change(30, MAIN + 'export output u: Service = { name: "c", port: 70000 }\n')))
+    out.append(("diagnostics of a missing import", change(31, 'import { Nothing } from "./lib.decl"\nconst z = 1\n')))
+    change(32, MAIN)
     out.append(("shutdown", s.request("shutdown", {})))
     s.notify("exit", {})
     s.close()

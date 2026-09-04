@@ -8,12 +8,13 @@
 // in order, and the server exits when its input closes.
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { dirname, resolve as absPath } from 'node:path';
-import { readFileSync } from 'node:fs';
-import { parseSource } from './parse.ts';
+import { readFileSync, readdirSync } from 'node:fs';
+import { parseSource, getLanguage } from './parse.ts';
+import { Parser } from 'web-tree-sitter';
 import { initParser } from './node.ts';
 import { checkModule } from './checker.ts';
 import { format } from './fmt.ts';
-import { typeText, resolveIn } from './infer.ts';
+import { typeText, resolveIn, stdPath, STD } from './infer.ts';
 import type { Ty, Target } from './infer.ts';
 import { Session, SessionError, fmtDiag } from './session.ts';
 import type { Run } from './session.ts';
@@ -539,9 +540,429 @@ function executeCommand(command: string, args: any[]): any {
       return { verdicts, diagnostics: [...run.loadDiags, ...run.checks.map(c => c.diag), ...diags].map(d => fmtDiag(d)) };
     }
     case 'decl.trace': return root ? { lines: session.trace(root) } : null;
+    case 'decl.showSyntaxTree': return syntaxTree(uri);
     case 'decl.reloadWorkspace': analyses.clear(); for (const u of docs.keys()) analyze(u); return null;
     default: return null;
   }
+}
+
+// ---------------- signature help ----------------
+const after = (l: Loc, p: Pos) => p.line > l.el || (p.line === l.el && p.character >= l.ec);
+const before = (l: Loc, p: Pos) => p.line < l.sl || (p.line === l.sl && p.character < l.sc);
+const srcOf = (text: string, l: Loc): string => {
+  const lines = text.split('\n');
+  return l.sl === l.el ? lines[l.sl].slice(l.sc, l.ec) : [lines[l.sl].slice(l.sc), ...lines.slice(l.sl + 1, l.el), lines[l.el].slice(0, l.ec)].join('\n');
+};
+function signatureHelp(uri: string, pos: Pos): any {
+  const a = analysisOf(uri) ?? lastGood.get(uri);
+  if (!a) return null;
+  const m = moduleOf(a, pathOf(uri));
+  if (!m) return null;
+  const hit = nodeAt(m.decls, pos);
+  if (!hit) return null;
+  const calls = [...hit.parents, hit.node].filter(n => isExpr(n) && n.e === 'call').reverse();
+  for (const c of calls) {
+    if (!c.fn.loc || !after(c.fn.loc, pos)) continue;
+    let active = 0;
+    c.args.forEach((arg: any, i: number) => { if (arg.loc && after(arg.loc, pos)) active = i + 1; else if (arg.loc && contains(arg.loc, pos)) active = i; });
+    if (c.fn.e === 'name') {
+      const target = resolveIn(m.env, c.fn.name);
+      const site = siteOfTarget(a, target);
+      const decl: any = site?.decl;
+      if (!decl || decl.d !== 'func') return null;
+      const text = textOf(a, site!.module);
+      const params = decl.params.map((p: any) => `${p.name}: ${p.type?.loc ? srcOf(text, p.type.loc) : '…'}`);
+      const ret = decl.ret?.loc ? `: ${srcOf(text, decl.ret.loc)}` : '';
+      return { signatures: [{ label: `${decl.name}(${params.join(', ')})${ret}`, parameters: params.map((p: string) => ({ label: p })) }],
+        activeSignature: 0, activeParameter: Math.min(active, Math.max(0, params.length - 1)) };
+    }
+    const sp = stdPath(c.fn);
+    if (sp !== null && STD[sp]) {
+      const params = Array.from({ length: STD[sp].arity }, (_, i) => `a${i + 1}`);
+      return { signatures: [{ label: `std.${sp}(${params.join(', ')})`, parameters: params.map(p => ({ label: p })) }],
+        activeSignature: 0, activeParameter: Math.min(active, Math.max(0, params.length - 1)) };
+    }
+    return null;
+  }
+  return null;
+}
+
+// ---------------- workspace symbols, selection ranges ----------------
+function workspaceSymbols(query: string): any[] {
+  const out: any[] = [];
+  const seen = new Set<string>();
+  const q = query.toLowerCase();
+  for (const a of lastGood.values()) for (const m of a.run.modules) {
+    if (seen.has(m.path)) continue;
+    seen.add(m.path);
+    const text = textOf(a, m);
+    for (const d of m.decls as any[])
+      if (d.loc && typeof d.name === 'string' && d.d in SYMBOL_KIND && d.name.toLowerCase().includes(q))
+        out.push({ name: d.name, kind: SYMBOL_KIND[d.d], location: location(m, nameRange(text, d, d.name)) });
+  }
+  return out.sort((x, y) => x.name < y.name ? -1 : x.name > y.name ? 1 : x.location.uri < y.location.uri ? -1 : x.location.uri > y.location.uri ? 1 : 0);
+}
+function selectionRanges(uri: string, positions: Pos[]): any[] {
+  const text = docs.get(uri);
+  if (text === undefined) return [];
+  const { decls, errors } = parseSource(text);
+  if (errors.length) return positions.map(p => ({ range: { start: p, end: p } }));
+  return positions.map(p => {
+    const hit = nodeAt(decls, p);
+    const chain = hit ? [hit.node, ...[...hit.parents].reverse()].filter(n => n.loc) : [];
+    let out: any = { range: { start: p, end: p } };
+    for (const n of chain) out = { range: rangeOf(n.loc), parent: out };
+    // the innermost node's range first: rebuild from the outside in
+    const ranges = chain.map(n => rangeOf(n.loc));
+    let sel: any = undefined;
+    for (const r of ranges.reverse()) sel = sel ? { range: r, parent: sel } : { range: r };
+    return sel ?? { range: { start: p, end: p } };
+  });
+}
+
+// ---------------- semantic tokens ----------------
+const TOKEN_TYPES = ['type', 'property', 'function', 'variable', 'namespace', 'parameter'];
+const TOKEN_MODS = ['declaration', 'required', 'optional', 'defaulted', 'derived', 'hidden', 'unresolved', 'readonly'];
+const T = Object.fromEntries(TOKEN_TYPES.map((t, i) => [t, i])) as Record<string, number>;
+const M = Object.fromEntries(TOKEN_MODS.map((t, i) => [t, 1 << i])) as Record<string, number>;
+const memberMods = (kind: string, hidden?: boolean) =>
+  (kind === 'der' ? M.derived : kind === 'dflt' ? M.defaulted : kind === 'opt' ? M.optional : M.required) | (hidden ? M.hidden : 0);
+function semanticTokens(uri: string): any {
+  const a = analysisOf(uri);
+  if (!a) return { data: [] };
+  const m = moduleOf(a, pathOf(uri));
+  if (!m) return { data: [] };
+  const text = textOf(a, m);
+  const t = tablesOf(a, m);
+  const toks: { l: Loc; type: number; mods: number }[] = [];
+  const push = (l: Loc, type: number, mods = 0) => { if (l.sl === l.el && l.ec > l.sc) toks.push({ l, type, mods }); };
+  const memberKind = (rt: any, name: string): { kind: string; hidden?: boolean } | null => {
+    const r = rt?.t === 'pred' ? rt.base : rt?.t === 'ref' ? rt.target : rt;
+    const mem = r?.t === 'rec' ? r.members.find((x: any) => x.name === name) : null;
+    return mem ? { kind: mem.kind, hidden: mem.hidden } : null;
+  };
+  const visit = (x: any, inFunc: Set<string>) => {
+    if (!x || typeof x !== 'object') return;
+    if (Array.isArray(x)) { x.forEach(y => visit(y, inFunc)); return; }
+    if (isDecl(x) && x.loc && typeof x.name === 'string') {
+      const r = nameRange(text, x, x.name);
+      const type = x.d === 'type' || x.d === 'dimension' || x.d === 'unit' ? T.type : x.d === 'func' || x.d === 'diagnostic' ? T.function : T.variable;
+      push(r, type, M.declaration | (x.d === 'const' ? M.readonly : 0));
+      if (x.d === 'func') { inFunc = new Set(x.params.map((p: any) => p.name)); for (const p of x.params) { const pl = paramLoc(text, x, p.name); if (pl) push(pl, T.parameter, M.declaration); } }
+    }
+    if (isMember(x) && x.loc && typeof x.name === 'string' && (x.m === 'value' || x.m === 'derived')) {
+      push(memberRange(text, x, x.name), T.property, M.declaration | memberMods(x.m === 'derived' ? 'der' : x.dflt ? 'dflt' : x.opt ? 'opt' : 'req', x.hidden));
+    }
+    if (isType(x) && x.k === 'named' && x.loc) {
+      const [head, tail] = x.name.split('.');
+      if (tail) { push(typeNameLoc(x, 0, head), T.namespace); push(typeNameLoc(x, head.length + 1, tail), T.type); }
+      else if (!['map', 'ref', 'quantity'].includes(head)) push(typeNameLoc(x, 0, head), T.type, resolveIn(m.env, head) ? 0 : M.unresolved);
+    }
+    if (isExpr(x) && x.loc) {
+      if (x.e === 'name') {
+        const target = t.res.get(x) ?? resolveIn(m.env, x.name);
+        if (x.name === 'std') push(x.loc, T.namespace);
+        else if (inFunc.has(x.name) || target?.kind === 'var') push(x.loc, T.parameter);
+        else if (!target) push(x.loc, T.variable, M.unresolved);
+        else push(x.loc, target.kind === 'func' ? T.function : target.kind === 'namespace' ? T.namespace : target.kind === 'type' ? T.type : T.variable, target.kind === 'const' ? M.readonly : 0);
+      } else if (x.e === 'member') {
+        const xx = x.x;
+        const ml = memberTokenLoc(text, x);
+        if (stdPath(x) !== null) push(ml, x.e === 'member' && STD[stdPath(x)!] ? T.function : T.namespace);
+        else if (xx.e === 'name' && m.env.namespaces.has(xx.name)) {
+          const ex = m.env.namespaces.get(xx.name)!.exports.get(x.name);
+          const tg = ex ? resolveIn(ex.env, ex.name) : null;
+          push(ml, tg?.kind === 'func' ? T.function : tg?.kind === 'type' ? T.type : T.variable, tg ? 0 : M.unresolved);
+        } else {
+          const mk = memberKind(t.types.get(xx)?.rt, x.name);
+          push(ml, T.property, mk ? memberMods(mk.kind, mk.hidden) : 0);
+        }
+      } else if (x.e === 'lambda') inFunc = new Set([...inFunc, ...x.params]);
+      else if (x.e === 'comp' || x.e === 'mapcomp') inFunc = new Set([...inFunc, ...x.clauses.map((c: any) => c.v)]);
+    }
+    for (const [k, v] of Object.entries(x)) if (k !== 'loc' && v && typeof v === 'object') visit(v, inFunc);
+  };
+  visit(m.decls, new Set());
+  toks.sort((p, q) => p.l.sl - q.l.sl || p.l.sc - q.l.sc);
+  const data: number[] = [];
+  let pl = 0, pc = 0;
+  for (const tk of toks) {
+    const dl = tk.l.sl - pl, dc = dl === 0 ? tk.l.sc - pc : tk.l.sc;
+    if (dl === 0 && dc < 0) continue;                      // overlapping tokens: the first wins
+    data.push(dl, dc, tk.l.ec - tk.l.sc, tk.type, tk.mods);
+    pl = tk.l.sl; pc = tk.l.sc;
+  }
+  return { data };
+}
+const paramLoc = (text: string, decl: any, name: string): Loc | null => {
+  const l: Loc = decl.loc;
+  const line = text.split('\n')[l.sl] ?? '';
+  const open = line.indexOf('(', l.sc);
+  if (open < 0) return null;
+  const re = new RegExp(`\\b${name}\\b`, 'g'); re.lastIndex = open;
+  const mm = re.exec(line);
+  return mm ? { sl: l.sl, sc: mm.index, el: l.sl, ec: mm.index + name.length } : null;
+};
+
+// ---------------- inlay hints ----------------
+const hints = { types: true, parameterNames: true, values: false, units: true };
+function inlayHints(uri: string, range: Range): any[] {
+  const a = analysisOf(uri);
+  if (!a) return [];
+  const m = moduleOf(a, pathOf(uri));
+  if (!m) return [];
+  const text = textOf(a, m);
+  const t = tablesOf(a, m);
+  const out: any[] = [];
+  const inRange = (p: Pos) => p.line >= range.start.line && p.line <= range.end.line;
+  const visit = (x: any) => {
+    if (!x || typeof x !== 'object') return;
+    if (Array.isArray(x)) { x.forEach(visit); return; }
+    if (hints.types && isMember(x) && x.m === 'derived' && !x.type && x.loc) {
+      const ty = t.types.get(x.expr);
+      const r = memberRange(text, x, x.name);
+      const p = { line: r.el, character: r.ec + (x.hidden ? 1 : 0) };
+      if (ty?.rt && inRange(p)) out.push({ position: p, label: `: ${typeText(ty.rt)}`, kind: 1 });
+    }
+    if (hints.types && isDecl(x) && x.d === 'const' && !x.type && x.loc) {
+      const ty = t.types.get(x.expr);
+      const r = nameRange(text, x, x.name);
+      const p = { line: r.el, character: r.ec };
+      if (ty?.rt && inRange(p)) out.push({ position: p, label: `: ${typeText(ty.rt)}`, kind: 1 });
+    }
+    if (hints.parameterNames && isExpr(x) && x.e === 'call' && x.fn.e === 'name') {
+      const site = siteOfTarget(a, t.res.get(x.fn) ?? resolveIn(m.env, x.fn.name));
+      const decl: any = site?.decl;
+      if (decl?.d === 'func') x.args.forEach((arg: any, i: number) => {
+        const p = decl.params[i];
+        if (p && arg.loc && inRange({ line: arg.loc.sl, character: arg.loc.sc })) out.push({ position: { line: arg.loc.sl, character: arg.loc.sc }, label: `${p.name}:`, kind: 2, paddingRight: true });
+      });
+    }
+    if (hints.units && isExpr(x) && x.e === 'unitlit' && x.loc) {
+      try {
+        const u = m.env.unitInfo(x.unit);
+        const base = m.env.baseUnitOf.get(u.key) ?? u.key;
+        const p = { line: x.loc.el, character: x.loc.ec };
+        if (base !== x.unit && inRange(p)) out.push({ position: p, label: `= ${x.num * u.toBase} ${base}`, paddingLeft: true });
+      } catch { /* an unknown unit is a diagnostic */ }
+    }
+    for (const [k, v] of Object.entries(x)) if (k !== 'loc' && v && typeof v === 'object') visit(v);
+  };
+  visit(m.decls);
+  return out.sort((p, q) => p.position.line - q.position.line || p.position.character - q.position.character);
+}
+
+// ---------------- hierarchies ----------------
+const hierarchyItem = (m: Module, decl: any, text: string) =>
+  ({ name: decl.name, kind: SYMBOL_KIND[decl.d] ?? 13, uri: uriOf(m.path), range: rangeOf(decl.loc), selectionRange: rangeOf(nameRange(text, decl, decl.name)) });
+function prepareHierarchy(uri: string, pos: Pos, want: 'func' | 'type'): any[] | null {
+  const a = analysisOf(uri);
+  const s = a && siteAt(a, uri, pos);
+  if (!s?.site?.decl || s.site.kind !== want) return null;
+  return [hierarchyItem(s.site.module, s.site.decl, textOf(a!, s.site.module))];
+}
+function moduleOfUri(uri: string): { a: Analysis; m: Module } | null {
+  for (const a of lastGood.values()) { const m = a.run.modules.find(x => uriOf(x.path) === uri); if (m) return { a, m }; }
+  return null;
+}
+function declContaining(m: Module, loc: Loc): any | null {
+  return m.decls.find(d => d.loc && d.loc.sl <= loc.sl && loc.el <= d.loc.el && typeof (d as any).name === 'string') ?? null;
+}
+function incomingCalls(item: any): any[] {
+  const found = moduleOfUri(item.uri);
+  if (!found) return [];
+  const { a } = found;
+  const out: any[] = [];
+  for (const m of a.run.modules) {
+    const t = tablesOf(a, m);
+    const text = textOf(a, m);
+    const byCaller = new Map<any, Loc[]>();
+    const visit = (x: any) => {
+      if (!x || typeof x !== 'object') return;
+      if (Array.isArray(x)) { x.forEach(visit); return; }
+      if (isExpr(x) && x.e === 'call' && x.fn.e === 'name' && x.fn.loc) {
+        const site = siteOfTarget(a, t.res.get(x.fn) ?? resolveIn(m.env, x.fn.name));
+        if (site?.decl && uriOf(site.module.path) === item.uri && site.decl.loc!.sl === item.range.start.line) {
+          const caller = declContaining(m, x.fn.loc);
+          if (caller) byCaller.set(caller, [...(byCaller.get(caller) ?? []), x.fn.loc]);
+        }
+      }
+      for (const [k, v] of Object.entries(x)) if (k !== 'loc' && v && typeof v === 'object') visit(v);
+    };
+    visit(m.decls);
+    for (const [caller, locs] of byCaller) out.push({ from: hierarchyItem(m, caller, text), fromRanges: locs.map(rangeOf) });
+  }
+  return out;
+}
+function outgoingCalls(item: any): any[] {
+  const found = moduleOfUri(item.uri);
+  if (!found) return [];
+  const { a, m } = found;
+  const t = tablesOf(a, m);
+  const decl: any = m.decls.find(d => d.loc && d.loc.sl === item.range.start.line);
+  if (!decl) return [];
+  const byCallee = new Map<string, { to: any; locs: Loc[] }>();
+  const visit = (x: any) => {
+    if (!x || typeof x !== 'object') return;
+    if (Array.isArray(x)) { x.forEach(visit); return; }
+    if (isExpr(x) && x.e === 'call' && x.fn.e === 'name' && x.fn.loc) {
+      const site = siteOfTarget(a, t.res.get(x.fn) ?? resolveIn(m.env, x.fn.name));
+      if (site?.decl?.d === 'func') {
+        const key = `${site.module.path}:${site.decl.loc!.sl}`;
+        const e = byCallee.get(key) ?? { to: hierarchyItem(site.module, site.decl, textOf(a, site.module)), locs: [] };
+        e.locs.push(x.fn.loc); byCallee.set(key, e);
+      }
+    }
+    for (const [k, v] of Object.entries(x)) if (k !== 'loc' && v && typeof v === 'object') visit(v);
+  };
+  visit(decl);
+  return [...byCallee.values()].map(e => ({ to: e.to, fromRanges: e.locs.map(rangeOf) }));
+}
+function supertypes(item: any): any[] {
+  const found = moduleOfUri(item.uri);
+  if (!found) return [];
+  const { a, m } = found;
+  const decl: any = m.decls.find(d => d.d === 'type' && d.loc && d.loc.sl === item.range.start.line);
+  const base = decl?.type?.k === 'named' && decl.type.ext ? decl.type.name : null;
+  if (!base) return [];
+  const site = siteOfTarget(a, resolveIn(m.env, base));
+  return site?.decl ? [hierarchyItem(site.module, site.decl, textOf(a, site.module))] : [];
+}
+function subtypes(item: any): any[] {
+  const found = moduleOfUri(item.uri);
+  if (!found) return [];
+  const { a } = found;
+  const out: any[] = [];
+  for (const m of a.run.modules) for (const d of m.decls as any[]) {
+    if (d.d !== 'type' || !d.loc || d.type?.k !== 'named' || !d.type.ext) continue;
+    const site = siteOfTarget(a, resolveIn(m.env, d.type.name));
+    if (site?.decl && uriOf(site.module.path) === item.uri && site.decl.loc!.sl === item.range.start.line) out.push(hierarchyItem(m, d, textOf(a, m)));
+  }
+  return out;
+}
+
+// ---------------- code actions ----------------
+const placeholderFor = (rt: any): string => {
+  const r = rt?.t === 'pred' ? rt.base : rt;
+  if (!r) return 'null';
+  if (r.t === 'prim') return r.name === 'string' ? '""' : r.name === 'int' ? '0' : r.name === 'float' ? '0.0' : r.name === 'bool' ? 'false' : 'null';
+  if (r.t === 'lit') return typeof r.v === 'string' ? JSON.stringify(r.v) : String(r.v);
+  if (r.t === 'range') return String(r.lo);
+  if (r.t === 'rec') return '{ }';
+  if (r.t === 'arr') return '[]';
+  if (r.t === 'map') return '{}';
+  if (r.t === 'union') return placeholderFor(r.arms[0]);
+  return 'null';
+};
+function codeActions(uri: string, range: Range, diagnostics: any[]): any[] {
+  const text = docs.get(uri);
+  if (text === undefined) return [];
+  const a = analysisOf(uri);
+  const out: any[] = [];
+  const { decls, errors } = parseSource(text);
+  const lines = text.split('\n');
+  if (a && !errors.length) {
+    const m = moduleOf(a, pathOf(uri))!;
+    const t = tablesOf(a, m);
+    for (const d of diagnostics ?? []) {
+      let mm = /^unknown name ([A-Za-z_][A-Za-z0-9_]*)/.exec(d.message ?? '');
+      if (mm) {
+        const name = mm[1];
+        for (const other of exportersOf(a, m, name)) {
+          let spec = './' + require_rel(m.path, other.path);
+          const existing: any = decls.find(x => x.d === 'import' && x.names && absPath(dirname(m.path), x.from) === other.path);
+          let edit: any;
+          if (existing) {
+            const line = lines[existing.loc.sl];
+            const close = line.indexOf('}', existing.loc.sc);
+            edit = { range: { start: { line: existing.loc.sl, character: close }, end: { line: existing.loc.sl, character: close } }, newText: `, ${name} ` };
+            spec = existing.from;
+          } else {
+            const lastImport = [...decls].reverse().find(x => x.d === 'import' || x.d === 're_export');
+            const at = lastImport?.loc ? lastImport.loc.el + 1 : 0;
+            edit = { range: { start: { line: at, character: 0 }, end: { line: at, character: 0 } }, newText: `import { ${name} } from "${spec}"\n` };
+          }
+          out.push({ title: `import ${name} from "${spec}"`, kind: 'quickfix', diagnostics: [d], isPreferred: true, edit: { changes: { [uri]: [edit] } } });
+        }
+      }
+      mm = /^required member ([A-Za-z_][A-Za-z0-9_]*) missing/.exec(d.message ?? '');
+      if (mm) {
+        const name = mm[1];
+        // the construction: the literal at the diagnostic, or the root's literal when the diagnostic names the declaration
+        const hit = nodeAt(decls, d.range.start);
+        const chain = hit ? [hit.node, ...[...hit.parents].reverse()] : [];
+        const obj = chain.find(n => isExpr(n) && n.e === 'obj')
+          ?? chain.filter(isDecl).map((n: any) => n.d === 'output' ? n.expr : n.d === 'input' ? n.fallback : n.expr).find(e => isExpr(e) && e.e === 'obj');
+        if (obj) {
+          // the literal's type: its declared position (a root's annotation), else what inference recorded
+          const owner: any = chain.find(n => isDecl(n) && (n.d === 'output' || n.d === 'input') && n.type);
+          let rt: any = null;
+          try { rt = owner ? m.env.resolve(owner.type) : t.types.get(obj)?.rt ?? null; } catch { rt = null; }
+          const mem = rt?.t === 'rec' ? rt.members.find((x: any) => x.name === name) : null;
+          const value = placeholderFor(mem?.type);
+          const last = obj.entries[obj.entries.length - 1];
+          const edit = last?.val?.loc
+            ? { range: { start: { line: last.val.loc.el, character: last.val.loc.ec }, end: { line: last.val.loc.el, character: last.val.loc.ec } }, newText: `, ${name}: ${value}` }
+            : { range: { start: { line: obj.loc.sl, character: obj.loc.sc + 1 }, end: { line: obj.loc.sl, character: obj.loc.sc + 1 } }, newText: ` ${name}: ${value}` };
+          out.push({ title: `add ${name}: ${value}`, kind: 'quickfix', diagnostics: [d], isPreferred: true, edit: { changes: { [uri]: [edit] } } });
+        }
+      }
+    }
+    // assists at the range: annotate an unannotated derived member or constant with its inferred type
+    const hit = nodeAt(decls, range.start);
+    const chain = hit ? [hit.node, ...[...hit.parents].reverse()] : [];
+    const target = chain.find(n => (isMember(n) && n.m === 'derived' && !n.type) || (isDecl(n) && n.d === 'const' && !n.type));
+    if (target) {
+      const ty = t.types.get(target.expr);
+      if (ty?.rt) {
+        const r = isMember(target) ? memberRange(text, target, target.name) : nameRange(text, target, target.name);
+        const at = { line: r.el, character: r.ec + (target.hidden ? 1 : 0) };
+        out.push({ title: `annotate: ${typeText(ty.rt)}`, kind: 'refactor.rewrite', edit: { changes: { [uri]: [{ range: { start: at, end: at }, newText: `: ${typeText(ty.rt)}` }] } } });
+      }
+    }
+  }
+  return out;
+}
+// the modules that export a name: the universe's, the other open
+// documents' universes, then the .decl files beside the module
+function exportersOf(a: Analysis, m: Module, name: string): { path: string }[] {
+  const out: { path: string }[] = [];
+  const seen = new Set<string>([m.path]);
+  const consider = (mod: Module) => { if (!seen.has(mod.path) && mod.exports.has(name)) { seen.add(mod.path); out.push({ path: mod.path }); } };
+  for (const mod of a.run.modules) consider(mod);
+  for (const other of lastGood.values()) for (const mod of other.run.modules) consider(mod);
+  let names: string[] = [];
+  try { names = require_readdir(dirname(m.path)); } catch { names = []; }
+  for (const f of names.sort()) {
+    if (!f.endsWith('.decl')) continue;
+    const p = absPath(dirname(m.path), f);
+    if (seen.has(p)) continue;
+    const text = overlay.get(p) ?? readText(p);
+    const { decls, errors } = parseSource(text);
+    if (errors.length) continue;
+    if (decls.some((d: any) => d.exported && d.name === name && d.d !== 'import')) { seen.add(p); out.push({ path: p }); }
+  }
+  return out;
+}
+function require_readdir(dir: string): string[] { return readdirSync(dir); }
+function require_rel(from: string, to: string): string {
+  const rel = relativePath(dirname(from), to);
+  return rel.startsWith('.') ? rel.replace(/^\.\//, '') : rel;
+}
+function relativePath(fromDir: string, to: string): string {
+  const f = fromDir.split('/').filter(Boolean), t = to.split('/').filter(Boolean);
+  let i = 0;
+  while (i < f.length && i < t.length && f[i] === t[i]) i++;
+  return [...f.slice(i).map(() => '..'), ...t.slice(i)].join('/');
+}
+
+// ---------------- the syntax tree ----------------
+function syntaxTree(uri: string): any {
+  const text = docs.get(uri);
+  if (text === undefined) return null;
+  const p = new Parser();
+  p.setLanguage(getLanguage());
+  return { tree: p.parse(text)!.rootNode.toString() };
 }
 
 // ---------------- request handling ----------------
@@ -564,7 +985,15 @@ async function handle(msg: any) {
           renameProvider: { prepareProvider: true },
           completionProvider: { triggerCharacters: ['.', '$', ':'] },
           codeLensProvider: { resolveProvider: false },
-          executeCommandProvider: { commands: ['decl.evaluate', 'decl.validate', 'decl.trace', 'decl.reloadWorkspace'] },
+          signatureHelpProvider: { triggerCharacters: ['(', ','] },
+          workspaceSymbolProvider: true,
+          selectionRangeProvider: true,
+          semanticTokensProvider: { legend: { tokenTypes: TOKEN_TYPES, tokenModifiers: TOKEN_MODS }, full: true },
+          inlayHintProvider: true,
+          callHierarchyProvider: true,
+          typeHierarchyProvider: true,
+          codeActionProvider: { codeActionKinds: ['quickfix', 'refactor.rewrite'] },
+          executeCommandProvider: { commands: ['decl.evaluate', 'decl.validate', 'decl.trace', 'decl.showSyntaxTree', 'decl.reloadWorkspace'] },
         },
         serverInfo: { name: 'decl-lsp', version: '0.3.0' },
       });
@@ -572,6 +1001,7 @@ async function handle(msg: any) {
     case 'initialized': break;
     case 'workspace/didChangeConfiguration':
       config.inputs = params?.settings?.decl?.inputs ?? {};
+      for (const k of Object.keys(hints) as (keyof typeof hints)[]) { const v = params?.settings?.decl?.inlayHints?.[k]; if (typeof v === 'boolean') hints[k] = v; }
       analyses.clear();
       for (const u of docs.keys()) analyze(u);
       break;
@@ -617,6 +1047,18 @@ async function handle(msg: any) {
     case 'textDocument/prepareRename': reply(id, prepareRename(params.textDocument.uri, params.position)); break;
     case 'textDocument/rename': reply(id, rename(params.textDocument.uri, params.position, params.newName)); break;
     case 'textDocument/codeLens': reply(id, codeLenses(params.textDocument.uri)); break;
+    case 'textDocument/signatureHelp': reply(id, signatureHelp(params.textDocument.uri, params.position)); break;
+    case 'workspace/symbol': reply(id, workspaceSymbols(params.query ?? '')); break;
+    case 'textDocument/selectionRange': reply(id, selectionRanges(params.textDocument.uri, params.positions ?? [])); break;
+    case 'textDocument/semanticTokens/full': reply(id, semanticTokens(params.textDocument.uri)); break;
+    case 'textDocument/inlayHint': reply(id, inlayHints(params.textDocument.uri, params.range)); break;
+    case 'textDocument/prepareCallHierarchy': reply(id, prepareHierarchy(params.textDocument.uri, params.position, 'func')); break;
+    case 'callHierarchy/incomingCalls': reply(id, incomingCalls(params.item)); break;
+    case 'callHierarchy/outgoingCalls': reply(id, outgoingCalls(params.item)); break;
+    case 'textDocument/prepareTypeHierarchy': reply(id, prepareHierarchy(params.textDocument.uri, params.position, 'type')); break;
+    case 'typeHierarchy/supertypes': reply(id, supertypes(params.item)); break;
+    case 'typeHierarchy/subtypes': reply(id, subtypes(params.item)); break;
+    case 'textDocument/codeAction': reply(id, codeActions(params.textDocument.uri, params.range, params.context?.diagnostics ?? [])); break;
     case 'workspace/executeCommand': {
       // a refused command (an unknown root, an unreadable binding) answers null, never silence
       let result: any = null;

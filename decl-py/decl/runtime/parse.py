@@ -51,7 +51,24 @@ def _kid(n: Node, type_: str) -> Optional[Node]:
     return None
 
 
+# the same text parses to the same result: the session and the language
+# server re-load the unchanged modules of a universe on every question,
+# and the AST is never mutated after lowering (a small bounded cache)
+_parse_cache: dict = {}
+
+
 def parse_source(src: str) -> dict:
+    hit = _parse_cache.get(src)
+    if hit is not None:
+        return hit
+    r = _parse_source_uncached(src)
+    if len(_parse_cache) >= 64:
+        del _parse_cache[next(iter(_parse_cache))]
+    _parse_cache[src] = r
+    return r
+
+
+def _parse_source_uncached(src: str) -> dict:
     global _parser
     if _parser is None:
         _parser = Parser(LANGUAGE)
