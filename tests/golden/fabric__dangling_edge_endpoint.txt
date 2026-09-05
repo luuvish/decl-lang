@@ -1,0 +1,1 @@
+tests/golden/inputs/fabric/site.decl: error [E6001] Node.edge_endpoints_exist at site: an edge of site_a references a missing port or node

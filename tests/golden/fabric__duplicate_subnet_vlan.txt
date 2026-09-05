@@ -1,0 +1,1 @@
+tests/golden/inputs/fabric/site.decl: error [E6001] Fabric.subnet_vlans_distinct at site: two subnets share a vlan

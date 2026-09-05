@@ -1,0 +1,94 @@
+[
+  {
+    "module": "docs/examples/01_interconnect.decl",
+    "golden": "tests/golden/docs__examples__01_interconnect.json"
+  },
+  {
+    "module": "docs/examples/02_config.decl",
+    "golden": "tests/golden/docs__examples__02_config.json"
+  },
+  {
+    "module": "docs/examples/03_fixtures.decl",
+    "golden": "tests/golden/docs__examples__03_fixtures.json"
+  },
+  {
+    "module": "examples/fabric/fabric.decl",
+    "golden": "tests/golden/examples__fabric__fabric.json"
+  },
+  {
+    "module": "examples/svcgraph/deployment.decl",
+    "golden": "tests/golden/examples__svcgraph__deployment.json"
+  },
+  {
+    "module": "examples/svcgraph/main.decl",
+    "golden": "tests/golden/examples__svcgraph__main.json"
+  },
+  {
+    "module": "examples/svcgraph/schemas.decl",
+    "golden": "tests/golden/examples__svcgraph__schemas.json"
+  },
+  {
+    "module": "examples/testgen/testgen.decl",
+    "golden": "tests/golden/examples__testgen__testgen.json"
+  },
+  {
+    "module": "tests/modules/basic/main.decl",
+    "golden": "tests/golden/tests__modules__basic__main.json"
+  },
+  {
+    "module": "tests/golden/inputs/fabric/site.decl",
+    "inputs": [
+      "site=tests/golden/inputs/fabric/site_2x4.json"
+    ],
+    "output": "site",
+    "golden": "tests/golden/fabric__site_2x4.json"
+  },
+  {
+    "module": "tests/golden/inputs/fabric/site.decl",
+    "inputs": [
+      "site=tests/golden/inputs/fabric/bad_port_direction.json"
+    ],
+    "rejected": true,
+    "golden": "tests/golden/fabric__bad_port_direction.txt"
+  },
+  {
+    "module": "tests/golden/inputs/fabric/site.decl",
+    "inputs": [
+      "site=tests/golden/inputs/fabric/zero_line_rate.json"
+    ],
+    "rejected": true,
+    "golden": "tests/golden/fabric__zero_line_rate.txt"
+  },
+  {
+    "module": "tests/golden/inputs/fabric/site.decl",
+    "inputs": [
+      "site=tests/golden/inputs/fabric/dangling_edge_endpoint.json"
+    ],
+    "rejected": true,
+    "golden": "tests/golden/fabric__dangling_edge_endpoint.txt"
+  },
+  {
+    "module": "tests/golden/inputs/fabric/site.decl",
+    "inputs": [
+      "site=tests/golden/inputs/fabric/dangling_uplink.json"
+    ],
+    "rejected": true,
+    "golden": "tests/golden/fabric__dangling_uplink.txt"
+  },
+  {
+    "module": "tests/golden/inputs/fabric/site.decl",
+    "inputs": [
+      "site=tests/golden/inputs/fabric/duplicate_subnet_vlan.json"
+    ],
+    "rejected": true,
+    "golden": "tests/golden/fabric__duplicate_subnet_vlan.txt"
+  },
+  {
+    "module": "tests/golden/inputs/fabric/site.decl",
+    "inputs": [
+      "site=tests/golden/inputs/fabric/edge_key_mismatch.json"
+    ],
+    "rejected": true,
+    "golden": "tests/golden/fabric__edge_key_mismatch.txt"
+  }
+]

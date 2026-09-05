@@ -10,9 +10,9 @@ export type NodeKind = /fabric\.node\.[a-z0-9_.]+/
 export type PortKind = /fabric\.port\.[a-z0-9_.]+/
 export type Direction = "up" | "down"
 
-dimension Bandwidth = DataSize / Time
-unit bps: Bandwidth
-unit Gbps = 1e9 bps
+export dimension Bandwidth = DataSize / Time
+export unit bps: Bandwidth
+export unit Gbps = 1e9 bps
 
 export type PortParams = {
     speed?: quantity<Bandwidth>

@@ -1,0 +1,1 @@
+{"net":{"services":[{"name":"a","port":8080,"endpoint":"a:8080"},{"name":"b","port":9000,"endpoint":"b:9000"}],"n":2},"first":{"name":"solo","port":8080,"endpoint":"solo:8080"},"capped":16,"vel":{"value":3.0,"unit":"mps"},"limit_used":15}

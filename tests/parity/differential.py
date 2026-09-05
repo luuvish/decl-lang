@@ -284,7 +284,8 @@ class LspSession:
         while True:
             m = self._recv()
             self.log.append(m)
-            if m.get("id") == self.next_id:
+            # a response carries no method; a server's own request (window/workDoneProgress/create) does
+            if "method" not in m and m.get("id") == self.next_id:
                 # a server error is an answer too (and a parity difference if only one server gives it)
                 return m["result"] if "result" in m else {"error": m.get("error")}
 
@@ -486,8 +487,55 @@ def lsp_transcript(cmd: list[str]) -> list:
     out.append(("shutdown", s.request("shutdown", {})))
     s.notify("exit", {})
     s.close()
+
+    # a client that accepts work-done progress (03_lsp.md §14): the analysis of
+    # an opened document is wrapped in a create request — its id an integer,
+    # which every client accepts — and begin/end notifications before the
+    # diagnostics; the client's response to the create request is not
+    # answered (a stray response breaks Neovim's client)
+    s2 = LspSession(cmd)
+    s2.request("initialize", {"processId": None, "rootUri": None, "capabilities": {"window": {"workDoneProgress": True}}})
+    s2.notify("initialized", {})
+    mark = len(s2.log)
+    s2.notify("textDocument/didOpen", {"textDocument": {"uri": uri, "languageId": "decl", "version": 1, "text": MAIN}})
+    s2.diagnostics(uri)
+    seen = [(m["method"], type(m["id"]).__name__ if "id" in m else None, ((m.get("params") or {}).get("value") or {}).get("kind")) for m in s2.log[mark:]]
+    create_id = next((m["id"] for m in s2.log[mark:] if m.get("method") == "window/workDoneProgress/create"), None)
+    out.append(("progress: the messages around the analysis of an opened document", {"seen": seen, "create id is an integer": isinstance(create_id, int)}))
+    s2._send({"jsonrpc": "2.0", "id": create_id, "result": None})
+    mark = len(s2.log)
+    hover = s2.request("textDocument/hover", {"textDocument": {"uri": uri}, "position": {"line": 2, "character": 19}})
+    out.append(("progress: after the client's response, hover is answered and nothing else arrives",
+                {"hover": hover is not None and "error" not in (hover or {}), "in between": [m.get("method", "response") for m in s2.log[mark:-1]]}))
+    s2.request("shutdown", {})
+    s2.notify("exit", {})
+    s2.close()
     return out
 
+
+# ---------------------------------------------------------------- golden
+# the evaluation of every example and module entry against the committed
+# expected document (tests/golden/): every implementation — the reference
+# included — must print exactly those bytes, so the expected outputs are
+# reviewed data, not whatever the reference happens to print
+golden_manifest = json.loads((ROOT / "tests/golden/manifest.json").read_text())
+print(f"== golden: {len(golden_manifest)} evaluations against tests/golden (every implementation, the reference included)")
+for g in golden_manifest:
+    # a golden is the evaluation's stdout; a `rejected` document's golden is
+    # validate's exit 1 and its stderr — the diagnostics, in canonical order
+    rejected = g.get("rejected", False)
+    args = ["validate" if rejected else "evaluate", g["module"]] + [x for spec in g.get("inputs", []) for x in ("--input", spec)] + ([] if "output" not in g else ["--output", g["output"]])
+    expected = (ROOT / g["golden"]).read_text()
+    want_exit, stream = (1, 2) if rejected else (0, 1)
+    ref = outcome(REF, args)
+    verdicts, detail = {}, {}
+    ref_ok = ref[0] == want_exit and ref[stream] == expected
+    for n, prefix in RUNTIMES.items():
+        nat = outcome(prefix, args)
+        verdicts[n] = ref_ok and nat[0] == want_exit and nat[stream] == expected
+        if not verdicts[n]:
+            detail[n] = ("the reference differs from the golden — " if not ref_ok else "") + f"ref {describe(ref)} | {n} {describe(nat)}"
+    row(f"golden {g['golden']}", verdicts, detail)
 
 # ---------------------------------------------------------------- repl
 repl_cases = sorted(p for p in (ROOT / "tests/repl").iterdir() if (p / "session.txt").exists())
@@ -503,12 +551,20 @@ cli_row("repl: an unknown option is a usage error", ["repl", "--nope"])
 print("== lsp: one scripted editor session (diagnostics, hover, navigation, completion, symbols, formatting, rename, lenses, commands)")
 ref_t = lsp_transcript(["node", str(ROOT / "decl-ts/src/lsp.ts")])
 nat_t = {n: lsp_transcript(cmd) for n, cmd in LSP_SERVERS.items()}
+# what the specification fixes beyond "the same as the reference": the reference must satisfy these too
+LSP_EXPECT = {
+    "progress: the messages around the analysis of an opened document":
+        lambda v: v["create id is an integer"] and [x[0] for x in v["seen"]] == ["window/workDoneProgress/create", "$/progress", "$/progress", "textDocument/publishDiagnostics"] and [x[2] for x in v["seen"]] == [None, "begin", "end", None],
+    "progress: after the client's response, hover is answered and nothing else arrives":
+        lambda v: v["hover"] is True and v["in between"] == [],
+}
 for i, (label, ref_v) in enumerate(ref_t):
     verdicts, detail = {}, {}
+    ref_ok = label not in LSP_EXPECT or LSP_EXPECT[label](ref_v)
     for n in names:
         nat_v = nat_t[n][i][1] if i < len(nat_t[n]) else None
-        verdicts[n] = canonical(ref_v) == canonical(nat_v)
-        detail[n] = f"ref={canonical(ref_v)[:160]} | {n}={canonical(nat_v)[:160]}"
+        verdicts[n] = ref_ok and canonical(ref_v) == canonical(nat_v)
+        detail[n] = ("the reference violates 03_lsp.md §14 — " if not ref_ok else "") + f"ref={canonical(ref_v)[:160]} | {n}={canonical(nat_v)[:160]}"
     row(f"lsp: {label}", verdicts, detail)
 
 print(f"\n{same} identical, {diff} different (reference vs {', '.join(names)})")

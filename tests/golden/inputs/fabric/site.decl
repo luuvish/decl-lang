@@ -1,0 +1,7 @@
+// A site document bound against the fabric example's schema
+// (examples/fabric/fabric.decl): the golden manifest evaluates the
+// well-formed site and checks that every corrupted variant is rejected
+// with the diagnostics the reference prints.
+import { Fabric } from "../../../../examples/fabric/fabric.decl"
+
+input site: Fabric

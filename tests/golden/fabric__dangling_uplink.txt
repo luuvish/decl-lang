@@ -1,0 +1,1 @@
+tests/golden/inputs/fabric/site.decl: error [E6001] Fabric.uplink_exists at site: the declared uplink is not a boundary port

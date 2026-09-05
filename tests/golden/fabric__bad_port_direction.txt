@@ -1,0 +1,1 @@
+tests/golden/inputs/fabric/site.decl: error [E4001] at site.ports["wan0"].dir: no union arm matches

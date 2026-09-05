@@ -1,0 +1,1 @@
+tests/golden/inputs/fabric/site.decl: error [E6001] Node.edge_keys_match at site: an edge's name differs from its map key in site_a

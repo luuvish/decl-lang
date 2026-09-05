@@ -1,0 +1,77 @@
+# The subsumption judgment (§3.17) and structural emptiness (§3.19), one
+# case per line, over the types of prelude.decl. Every implementation
+# runs these (decl-ts/test/subsume.ts, decl-rs/tests/e2e.rs,
+# decl-py/scripts/e2e.py): a side is a type written in the language.
+#
+#   yes    name :: A ⊑ B      A is subsumed by B
+#   no     name :: A ⊑ B      A is not subsumed by B
+#   empty  name :: T          T is structurally empty
+#   full   name :: T          T is not structurally empty
+
+# primitives, literals, ranges
+yes    lit int ⊑ int :: 3 ⊑ int
+no     lit float ⊄ int :: 3.5 ⊑ int
+yes    lit in range :: 15 ⊑ Small
+no     lit out of range :: 9 ⊑ Small
+yes    range ⊑ base prim :: Small ⊑ int
+yes    narrow range ⊑ wide :: Small ⊑ Wide
+no     wide range ⊄ narrow :: Wide ⊑ Small
+yes    exclusive hi honored :: 255 ⊑ Byte
+no     exclusive hi excluded :: 256 ⊑ Byte
+
+# strings and patterns
+yes    pattern ⊑ string :: Name ⊑ string
+yes    lit matches pattern :: "abc" ⊑ Name
+no     lit fails pattern :: "a1" ⊑ Name
+yes    pattern text identity :: Name ⊑ Word
+yes    lit ⊑ string-lit union :: "tcp" ⊑ Ip
+no     lit ⊄ union of others :: "ip" ⊑ Ip
+
+# unions
+yes    union ⊑ wider prim :: Ip ⊑ string
+yes    subset union ⊑ union :: "tcp" ⊑ Ip
+no     union ⊄ one arm :: Ip ⊑ "tcp"
+
+# predicates
+yes    pred ⊑ base :: Even ⊑ int
+yes    pred identity :: Even ⊑ Even
+yes    more preds ⊑ fewer :: EvenPos ⊑ Even
+no     fewer preds ⊄ more :: Even ⊑ EvenPos
+no     base ⊄ pred :: int ⊑ Even
+yes    lit satisfies pred :: 4 ⊑ Even
+no     lit violates pred :: 3 ⊑ Even
+yes    lit satisfies pred-with-args :: 8 ⊑ Div4
+no     lit violates pred-with-args :: 6 ⊑ Div4
+
+# arrays, maps, quantities, refs
+yes    elem covariance :: Bytes ⊑ Ints
+yes    size inside bound :: Bytes3 ⊑ Bytes
+no     unsized ⊄ sized :: Ints ⊑ Bytes
+yes    map key/value covariance :: NMap ⊑ SMap
+no     map value widening :: SMap ⊑ NMap
+yes    quantity same dim :: QT ⊑ QT
+no     quantity dim mismatch :: QT ⊑ QS
+yes    ref target covariance :: RN ⊑ ref<{ ... }>
+no     ref target mismatch :: RN ⊑ RB
+
+# records
+yes    extra + narrowed members ⊑ base :: Sub ⊑ Base
+yes    defaulted/optional members omissible :: OptDrop ⊑ Base
+no     missing required member :: NoReq ⊑ Base
+no     required weakened to optional :: ReqAsOpt ⊑ Base
+yes    same shape both ways :: Node ⊑ NodeAlias
+yes    recursive record coinduction :: Tree ⊑ TreeAlias
+yes    recursive record reflexive :: Tree ⊑ Tree
+
+# generics (§3.15: structural after substitution)
+yes    Pair<Small> ⊑ its structure :: PairSmall ⊑ PairStruct
+yes    structure ⊑ Pair<Small> :: PairStruct ⊑ PairSmall
+yes    Vec<Small,4> ⊑ Wide[4] :: Quad ⊑ Wide4
+no     Wide[4] ⊄ Vec<Small,4> :: Wide4 ⊑ Quad
+
+# structural emptiness
+empty  inverted range empty :: 5..3
+full   normal range non-empty :: Small
+empty  disjoint kinds intersection :: int & string
+empty  disjoint ranges intersection :: Small & 30..40
+full   overlapping ranges intersection :: Small & Wide

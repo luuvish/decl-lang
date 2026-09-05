@@ -38,3 +38,12 @@ extension/vscode/.vscode-test/
 # editor-local project settings (the Zed server path is a local absolute path)
 .zed/
 extension/zed/extension.wasm
+
+# tree-sitter query / parse runs compile the grammar beside it
+tree-sitter-decl/*.dylib
+tree-sitter-decl/*.so
+
+# lint and test caches
+.mypy_cache/
+.ruff_cache/
+.pytest_cache/

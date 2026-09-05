@@ -1,0 +1,1 @@
+tests/golden/inputs/fabric/site.decl: error [E6001] Port.eth_has_speed at site.ports["wan0"]: ethernet port wan0 needs params.speed > 0
