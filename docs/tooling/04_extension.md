@@ -483,7 +483,7 @@ through `DECL_SERVER_PATH`). The server's `decl.*` commands are
 registered by the language client and given their editor face through
 its execute-command middleware (a lens, a palette entry, or a keybinding
 all open the preview). The web extension (`src/web.ts`, the `browser`
-entry) runs the server's core in a worker (`server/lsp-web.mjs`) over an
+entry) runs the server's core in a worker (`server/lsp-web.js`) over an
 in-memory host — the reference implementation's modules, packages,
 session, and server no longer touch a file system directly but a host
 (`decl-ts/src/host.ts`), which Node binds to the disk and the worker to

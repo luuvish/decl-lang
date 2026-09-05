@@ -1,6 +1,6 @@
 // The web extension (docs/tooling/04_extension.md §13): on vscode.dev and
 // github.dev the language server runs in a web worker over the reference
-// implementation's core (server/lsp-web.mjs) with an in-memory host.
+// implementation's core (server/lsp-web.js) with an in-memory host.
 // The extension hands the worker the grammar and runtime wasm, keeps its
 // files current from the workspace, and gives the same previews as the
 // desktop extension; the REPL terminal and the tasks need a process and
@@ -110,8 +110,11 @@ class SyntaxTreeProvider implements vscode.TextDocumentContentProvider {
 
 export async function activate(context: vscode.ExtensionContext) {
   output = vscode.window.createOutputChannel('Decl Language Server');
-  const serverUri = vscode.Uri.joinPath(context.extensionUri, 'server', 'lsp-web.mjs');
+  const serverUri = vscode.Uri.joinPath(context.extensionUri, 'server', 'lsp-web.js');
+  // VS Code's extension host creates the worker on the page and loads the
+  // script by URL (importScripts), so the server must be a classic script
   const worker = new Worker(serverUri.toString(true));
+  worker.onerror = (e) => output.appendLine(`worker error: ${e.message}`);
   const wasm = {
     grammar: base64(
       await vscode.workspace.fs.readFile(

@@ -39,12 +39,13 @@ copyFileSync(
   join(root, 'syntaxes/decl.tmLanguage.json'),
 );
 mkdirSync(join(root, 'server'), { recursive: true });
-// the bundles are ES modules: they keep that as .mjs inside this
-// CommonJS package (the client forks the server with node)
+// the Node bundles are ES modules: they keep that as .mjs inside this
+// CommonJS package (the client forks the server with node); the worker
+// server is a classic script
 for (const [f, to] of [
   ['lsp.js', 'lsp.mjs'],
   ['cli.js', 'cli.mjs'],
-  ['lsp-web.js', 'lsp-web.mjs'],
+  ['lsp-web.js', 'lsp-web.js'],
   ['tree-sitter-decl.wasm', 'tree-sitter-decl.wasm'],
   ['tree-sitter.wasm', 'tree-sitter.wasm'],
 ]) {

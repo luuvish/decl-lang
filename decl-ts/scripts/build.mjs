@@ -34,8 +34,18 @@ await build({
 // the core has no Node imports of its own; web-tree-sitter's emscripten
 // glue mentions Node built-ins inside `if (isNode)` branches, which stay
 // external and are never reached in a browser
+const browserExternal = [
+  'fs',
+  'fs/promises',
+  'path',
+  'module',
+  'url',
+  'worker_threads',
+  'crypto',
+  'child_process',
+];
 await build({
-  entryPoints: ['src/core.ts', 'src/lsp-web.ts'],
+  entryPoints: ['src/core.ts'],
   bundle: true,
   platform: 'browser',
   format: 'esm',
@@ -43,19 +53,28 @@ await build({
   minify: true,
   outdir: 'dist',
   logLevel: 'info',
-  external: [
-    'fs',
-    'fs/promises',
-    'path',
-    'url',
-    'crypto',
-    'module',
-    'worker_threads',
-    'perf_hooks',
-    'os',
-    'util',
-    'child_process',
-  ],
+  external: browserExternal,
+});
+// the worker server is a classic script, not a module: a web extension's
+// nested worker is loaded with importScripts (VS Code's polyfill), which
+// cannot take a module. The emscripten glue reads import.meta.url once, for
+// the script's location; the worker gets its wasm from the client instead.
+await build({
+  entryPoints: ['src/lsp-web.ts'],
+  bundle: true,
+  platform: 'browser',
+  format: 'iife',
+  target: 'es2022',
+  minify: true,
+  outdir: 'dist',
+  logLevel: 'info',
+  // (a URL the glue can resolve a path against: inside VS Code's nested
+  // worker the script runs from a blob: URL, which is no base for new URL)
+  banner: {
+    js: 'var __declScriptUrl = typeof self !== "undefined" && self.location && /^https?:/.test(self.location.href) ? self.location.href : "http://localhost/lsp-web.js";',
+  },
+  define: { 'import.meta.url': '__declScriptUrl' },
+  external: browserExternal,
 });
 copyFileSync(join(GRAMMAR, 'tree-sitter-decl.wasm'), 'dist/tree-sitter-decl.wasm');
 copyFileSync(runtimeWasm, 'dist/tree-sitter.wasm');
