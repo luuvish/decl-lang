@@ -32,7 +32,7 @@ jobs:
   build:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - id: pins
         name: the pinned versions (mise.toml)
         shell: bash
@@ -40,7 +40,7 @@ jobs:
           for t in node python; do echo "$t=$(sed -n "s/^$t = \"\(.*\)\"/\1/p" mise.toml)" >> "$GITHUB_OUTPUT"; done
           rust=$(sed -n 's/^rust = { version = "\([^"]*\)".*/\1/p' mise.toml); echo "rust=$rust" >> "$GITHUB_OUTPUT"
           test "$rust" = "$(sed -n 's/^channel = "\(.*\)"/\1/p' rust-toolchain.toml)" || { echo "rust-toolchain.toml does not match mise.toml"; exit 1; }
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version: ${{ steps.pins.outputs.node }}
           cache: npm
@@ -49,7 +49,7 @@ jobs:
         run: npm run build -w decl-lang
       - name: Build the site (sync docs, copy the playground, render)
         run: npm run build -w site
-      - uses: actions/upload-pages-artifact@v3
+      - uses: actions/upload-pages-artifact@v5
         with:
           path: site/dist
 
@@ -61,4 +61,4 @@ jobs:
       url: ${{ steps.deployment.outputs.page_url }}
     steps:
       - id: deployment
-        uses: actions/deploy-pages@v4
+        uses: actions/deploy-pages@v5
