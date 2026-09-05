@@ -15,10 +15,13 @@ const REPO = resolve('..');
 const GRAMMAR = join(REPO, 'tree-sitter-decl');
 
 // web-tree-sitter's runtime wasm sits beside its entry (hoisted or not)
+// (named web-tree-sitter.wasm since 0.27, tree-sitter.wasm before; shipped
+// as dist/tree-sitter.wasm either way, the name every consumer loads)
 let wtsDir = dirname(require.resolve('web-tree-sitter'));
-while (!existsSync(join(wtsDir, 'tree-sitter.wasm')) && basename(wtsDir) !== 'web-tree-sitter')
-  wtsDir = dirname(wtsDir);
-const runtimeWasm = join(wtsDir, 'tree-sitter.wasm');
+const runtimeName = () =>
+  ['web-tree-sitter.wasm', 'tree-sitter.wasm'].find((f) => existsSync(join(wtsDir, f)));
+while (!runtimeName() && basename(wtsDir) !== 'web-tree-sitter') wtsDir = dirname(wtsDir);
+const runtimeWasm = join(wtsDir, runtimeName() ?? 'web-tree-sitter.wasm');
 
 rmSync('dist', { recursive: true, force: true });
 mkdirSync('dist', { recursive: true });

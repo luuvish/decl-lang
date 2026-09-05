@@ -116,14 +116,15 @@ the gate on both.
 
 | Component | Dependency | Version |
 |---|---|---|
-| `decl-rs` | `tree-sitter` (the runtime; the grammar's `parser.c` is compiled in by `build.rs`) | 0.25 (lock: 0.25.10) |
+| `decl-rs` | `tree-sitter` (the runtime; the grammar's `parser.c` is compiled in by `build.rs`) | 0.27 (lock: 0.27.0) |
 | | `tree-sitter-language` | 0.1 |
-| | `num-bigint` | 0.4 |
-| | `rustyline` (the REPL's line editor) | 15 (lock: 15.0.0) |
-| `extension/zed` | `zed_extension_api` | 0.6.0 |
-| `decl-ts` | no runtime dependency; dev: `esbuild` (the bundles), `web-tree-sitter` (the grammar's wasm runtime) | 0.25.12, 0.25.10 |
-| `tree-sitter-decl` | dev: `tree-sitter-cli` (`generate`, `build`, `test`, `query`) | 0.25.10 |
-| `extension/vscode` | `vscode-languageclient`; VS Code engine `^1.90.0`; dev: `@types/vscode`, `mocha`, `@vscode/test-electron`, `@vscode/test-web`, `esbuild` | 9.0.1; 1.136.0, 10.8.2, 3.1.0, 0.0.81 |
+| | `num-bigint` | 0.5 |
+| | `sha2` (lock hashes) | 0.11 |
+| | `rustyline` (the REPL's line editor) | 18 (lock: 18.0.1) |
+| `extension/zed` | `zed_extension_api` | 0.7.0 |
+| `decl-ts` | no runtime dependency; dev: `esbuild` (the bundles), `web-tree-sitter` (the grammar's wasm runtime) | 0.28.2, 0.27.0 |
+| `tree-sitter-decl` | dev: `tree-sitter-cli` (`generate`, `build`, `test`, `query`); the generated parser is ABI 15, which every runtime here takes | 0.27.0 |
+| `extension/vscode` | `vscode-languageclient`; VS Code engine `^1.90.0`; dev: `@types/vscode`, `mocha`, `@vscode/test-electron`, `@vscode/test-web`, `esbuild` | 10.1.1; 1.136.0, 12.0.0, 3.1.0, 0.0.81 |
 | `site` | `astro`, `@astrojs/starlight`, `codemirror` (the playground editor) | 7.2.10, 0.41.11, 6.0.2 |
 | `decl-py` | `tree-sitter` (the runtime; the grammar is a small C extension, `binding.c` + `parser.c` + `scanner.c`, exposing the language to it); build: `setuptools ≥ 77`, `wheel` | ≥ 0.25 (installed: 0.26.0) |
 | packaging | `cibuildwheel` (CI only), `@vscode/vsce` and `ovsx` (through `npx`) | latest at run time |
@@ -324,7 +325,7 @@ without an extension.
 | `expect` | 5.45 | driving Helix, Vim, and the REPLs on a pseudo-terminal |
 | Docker | 29.8 | the Alpine container that confirmed the musl binaries are static |
 | syntect | 5.3 (built from git by `extension/sublime/smoke.sh`) | running the Sublime syntax tests headlessly |
-| tree-sitter CLI | 0.25.10 (`npx tree-sitter`) | building the parser libraries for Neovim and Emacs, loading every query against the grammar |
+| tree-sitter CLI | 0.27.0 (`npx tree-sitter`) | regenerating the parser, building the wasm (through Docker when emscripten is absent), the parser libraries for Neovim and Emacs, loading every query against the grammar |
 
 ## 9. Conventions
 

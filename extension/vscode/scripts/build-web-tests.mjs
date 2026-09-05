@@ -11,6 +11,8 @@ await build({
   target: 'es2022',
   outfile: join(root, 'dist/test/web/index.js'),
   external: ['vscode'],
-  define: { 'process.env.NODE_ENV': '"test"' },
+  // `exports` defined away: mocha's UMD browser build then takes its global
+  // branch instead of overwriting this CommonJS bundle's exports (see index.ts)
+  define: { 'process.env.NODE_ENV': '"test"', exports: 'undefined' },
 });
 console.log('built dist/test/web');

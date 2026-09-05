@@ -107,7 +107,7 @@ function lowerDecl(n: Node): Decl | null {
         name: req(n, 'name').text,
         params: params
           ? kids(params, 'type_parameter').map((p) => ({
-              name: p.namedChildren[0]!.text,
+              name: p.namedChildren[0].text,
               type: p.namedChildren[1] ? lowerType(p.namedChildren[1]) : undefined,
             }))
           : undefined,
@@ -127,8 +127,8 @@ function lowerDecl(n: Node): Decl | null {
         d: 'func',
         name: req(n, 'name').text,
         params: kids(n, 'parameter').map((p) => ({
-          name: p.namedChildren[0]!.text,
-          type: lowerType(p.namedChildren[1]!),
+          name: p.namedChildren[0].text,
+          type: lowerType(p.namedChildren[1]),
         })),
         ret: field(n, 'return_type') ? lowerType(req(n, 'return_type')) : undefined,
         body: lowerExpr(req(n, 'body')),
@@ -154,8 +154,8 @@ function lowerDecl(n: Node): Decl | null {
         d: 'diagnostic',
         name: req(n, 'name').text,
         params: kids(n, 'parameter').map((p) => ({
-          name: p.namedChildren[0]!.text,
-          type: lowerType(p.namedChildren[1]!),
+          name: p.namedChildren[0].text,
+          type: lowerType(p.namedChildren[1]),
         })),
         severity: sev.text,
         template: lowerTemplateParts(tmpl),
@@ -194,7 +194,7 @@ function lowerDecl(n: Node): Decl | null {
 
 function lowerImportItem(it: Node): { name: string; as?: string } {
   const ids = it.namedChildren.filter(Boolean);
-  return { name: ids[0]!.text, as: ids[1]?.text };
+  return { name: ids[0].text, as: ids[1]?.text };
 }
 
 function maybeTail(n: Node): ElseTail | undefined {
@@ -243,13 +243,13 @@ function lowerType(n: Node): TypeAst {
 function lowerType0(n: Node): TypeAst {
   switch (n.type) {
     case 'union_type':
-      return { k: 'union', arms: n.namedChildren.filter(Boolean).map((c) => lowerType(c!)) };
+      return { k: 'union', arms: n.namedChildren.filter(Boolean).map((c) => lowerType(c)) };
     case 'intersection_type':
-      return { k: 'isect', arms: n.namedChildren.filter(Boolean).map((c) => lowerType(c!)) };
+      return { k: 'isect', arms: n.namedChildren.filter(Boolean).map((c) => lowerType(c)) };
     case 'nullable_type':
-      return { k: 'union', arms: [lowerType(n.namedChildren[0]!), { k: 'prim', name: 'null' }] };
+      return { k: 'union', arms: [lowerType(n.namedChildren[0]), { k: 'prim', name: 'null' }] };
     case 'array_type': {
-      const elem = lowerType(n.namedChildren[0]!);
+      const elem = lowerType(n.namedChildren[0]);
       const range =
         kid(n, 'array_size_range') ??
         (() => {
@@ -261,7 +261,7 @@ function lowerType0(n: Node): TypeAst {
         // resolution substitutes their evaluated values
         const [lo, hi] = range.namedChildren
           .filter(Boolean)
-          .map((c) => constNum(c!))
+          .map((c) => constNum(c))
           .map((v) => (typeof v === 'string' ? v : Number(v)));
         const excl = range.children.some((c) => c && !c.isNamed && c.text === '..<');
         if (typeof hi === 'number') return { k: 'array', elem, lo, hi: excl ? hi - 1 : hi };
@@ -277,7 +277,7 @@ function lowerType0(n: Node): TypeAst {
     }
     case 'range_type': {
       const [a, b] = n.namedChildren.filter(Boolean);
-      return { k: 'range', lo: constNum(a!), hi: constNum(b!), excl: n.text.includes('..<') };
+      return { k: 'range', lo: constNum(a), hi: constNum(b), excl: n.text.includes('..<') };
     }
     case 'number_literal':
       return { k: 'lit', v: constNum(n) };
@@ -286,7 +286,7 @@ function lowerType0(n: Node): TypeAst {
     case 'pattern':
       return { k: 'pattern', re: n.text.slice(1, -1) };
     case 'paren_type':
-      return lowerType(n.namedChildren[0]!);
+      return lowerType(n.namedChildren[0]);
     case 'record_type': {
       let open = false;
       const members: MemberAst[] = [];
@@ -304,16 +304,16 @@ function lowerType0(n: Node): TypeAst {
     case 'map_type':
       return { k: 'map', key: lowerType(req(n, 'key')), val: lowerType(req(n, 'value')) };
     case 'function_type': {
-      const cs = n.namedChildren.filter(Boolean).map((c) => lowerType(c!));
+      const cs = n.namedChildren.filter(Boolean).map((c) => lowerType(c));
       return { k: 'func', params: cs.slice(0, -1), ret: cs[cs.length - 1] };
     }
     case 'named_type': {
       const name = kid(n, 'qualified_name')!.text;
       const argsN = kid(n, 'type_arguments');
-      const args = argsN ? argsN.namedChildren.filter(Boolean).map((c) => lowerType(c!)) : [];
+      const args = argsN ? argsN.namedChildren.filter(Boolean).map((c) => lowerType(c)) : [];
       const predsN = field(n, 'predicates');
       const preds = predsN
-        ? predsN.namedChildren.filter(Boolean).map((c) => lowerExpr(c!))
+        ? predsN.namedChildren.filter(Boolean).map((c) => lowerExpr(c))
         : undefined;
       const extN = field(n, 'extension');
       const ext = extN ? lowerType(extN) : undefined;
@@ -355,7 +355,7 @@ function lowerDimExpr(n: Node): { name: string; exp: number }[] {
 function constNum(n: Node): any {
   if (n.type === 'number_literal') {
     const neg = n.text.trimStart().startsWith('-');
-    const inner = n.namedChildren[0]!;
+    const inner = n.namedChildren[0];
     const v = constNum(inner);
     return neg ? -v : v;
   }
@@ -478,7 +478,7 @@ function lowerExpr0(n: Node): Expr {
     case 'paren_expression':
       return { e: 'paren', x: lowerExpr(operands(n)[0]) };
     case 'unary_expression':
-      return { e: 'un', op: n.children[0]!.text, x: lowerExpr(operands(n)[0]) };
+      return { e: 'un', op: n.children[0].text, x: lowerExpr(operands(n)[0]) };
     case 'if_expression':
       return {
         e: 'if',
@@ -489,7 +489,7 @@ function lowerExpr0(n: Node): Expr {
     case 'lambda':
       return {
         e: 'lambda',
-        params: kids(n, 'lambda_parameter').map((p) => p.namedChildren[0]!.text),
+        params: kids(n, 'lambda_parameter').map((p) => p.namedChildren[0].text),
         body: lowerExpr(req(n, 'body')),
       };
     case 'with_expression': {
@@ -529,7 +529,7 @@ function lowerExpr0(n: Node): Expr {
               key: key.type === 'string' ? JSON.parse(key.text) : key.text,
               val: lowerExpr(req(en, 'value')),
             };
-          return { key: '...', val: lowerExpr(en.namedChildren[0]!) }; // spread entry
+          return { key: '...', val: lowerExpr(en.namedChildren[0]) }; // spread entry
         }),
       };
     }
@@ -562,7 +562,7 @@ function lowerExpr0(n: Node): Expr {
       };
     case 'matches_expression': {
       const [l, r] = n.namedChildren.filter(Boolean);
-      return { e: 'bin', op: 'matches', l: lowerExpr(l!), r: lowerExpr(r!) };
+      return { e: 'bin', op: 'matches', l: lowerExpr(l), r: lowerExpr(r) };
     }
     case 'pattern':
       return { e: 'pattern', re: n.text.slice(1, -1) };
@@ -600,6 +600,6 @@ function lowerFor(n: Node) {
     filters: n
       .childrenForFieldName('filter')
       .filter(Boolean)
-      .map((c) => lowerExpr(c!)),
+      .map((c) => lowerExpr(c)),
   };
 }

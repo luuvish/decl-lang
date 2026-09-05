@@ -205,7 +205,8 @@ pub fn package_hash(dir: &Path) -> String {
         h.update(std::fs::read(&f).unwrap_or_default());
         h.update(b"\0");
     }
-    format!("{:x}", h.finalize())
+    // the digest as lowercase hex (sha2 0.11 no longer formats its array)
+    h.finalize().iter().map(|b| format!("{b:02x}")).collect()
 }
 
 #[derive(Clone, Debug)]

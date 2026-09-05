@@ -10,7 +10,7 @@ import { LanguageClient } from 'vscode-languageclient/browser';
 import type { LanguageClientOptions } from 'vscode-languageclient/browser';
 
 let client: LanguageClient | undefined;
-let output: vscode.OutputChannel;
+let output: vscode.LogOutputChannel;
 const previews = new Map<string, { uri: vscode.Uri; root: string | null }>();
 const previewEmitter = new vscode.EventEmitter<vscode.Uri>();
 const cfg = () => vscode.workspace.getConfiguration('decl');
@@ -109,7 +109,7 @@ class SyntaxTreeProvider implements vscode.TextDocumentContentProvider {
 }
 
 export async function activate(context: vscode.ExtensionContext) {
-  output = vscode.window.createOutputChannel('Decl Language Server');
+  output = vscode.window.createOutputChannel('Decl Language Server', { log: true });
   const serverUri = vscode.Uri.joinPath(context.extensionUri, 'server', 'lsp-web.js');
   // VS Code's extension host creates the worker on the page and loads the
   // script by URL (importScripts), so the server must be a classic script
@@ -165,7 +165,7 @@ export async function activate(context: vscode.ExtensionContext) {
       },
     },
   };
-  client = new LanguageClient('decl', 'Decl Language Server', clientOptions, worker);
+  client = new LanguageClient('decl', 'Decl Language Server', worker, clientOptions);
   const pushFiles = async () => {
     if (client) await client.sendNotification('decl/files', { files: await workspaceFiles() });
   };

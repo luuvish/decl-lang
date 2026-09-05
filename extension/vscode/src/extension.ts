@@ -11,7 +11,7 @@ import { LanguageClient, TransportKind } from 'vscode-languageclient/node';
 import type { LanguageClientOptions, ServerOptions } from 'vscode-languageclient/node';
 
 let client: LanguageClient | undefined;
-let output: vscode.OutputChannel;
+let output: vscode.LogOutputChannel;
 let status: vscode.StatusBarItem;
 const previews = new Map<string, { uri: vscode.Uri; root: string | null }>(); // preview uri -> source
 const previewEmitter = new vscode.EventEmitter<vscode.Uri>();
@@ -528,7 +528,7 @@ async function selectServer(context: vscode.ExtensionContext) {
 
 // ---------------- activation ----------------
 export async function activate(context: vscode.ExtensionContext) {
-  output = vscode.window.createOutputChannel('Decl Language Server');
+  output = vscode.window.createOutputChannel('Decl Language Server', { log: true });
   status = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Right, 50);
   status.command = 'decl.showOutput';
   status.show();

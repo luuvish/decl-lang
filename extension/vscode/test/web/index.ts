@@ -2,8 +2,13 @@
 // @vscode/test-web inside VS Code for the Web in a browser — the server
 // is the worker over the in-memory host, fed the workspace's files.
 import * as vscode from 'vscode';
-import 'mocha/mocha'; // mocha's browser build: `mocha` becomes a global
-declare const mocha: any;
+// mocha's prebuilt browser build: `mocha` becomes a global. Since mocha 12
+// the package is `type: module`, so esbuild inlines this UMD file as ESM,
+// where its `module.exports = factory()` would replace this CommonJS bundle's
+// own exports (`run` included) with mocha itself — the build defines
+// `exports` away so the UMD takes its global branch.
+import 'mocha/mocha.js';
+declare const mocha: Mocha & { setup(options: Mocha.MochaOptions | Mocha.Interface): Mocha };
 declare function suite(name: string, fn: () => void): void;
 declare function test(name: string, fn: () => Promise<void> | void): void;
 
@@ -29,7 +34,9 @@ const codeOf = (c: vscode.Diagnostic['code']) =>
 
 export function run(): Promise<void> {
   return new Promise((resolve, reject) => {
-    mocha.setup({ ui: 'tdd', reporter: undefined, timeout: 60000 });
+    // mocha 12's default browser reporter is the HTML one, which needs a document
+    // the extension host worker does not have; spec writes to the console
+    mocha.setup({ ui: 'tdd', reporter: 'spec', timeout: 60000 });
     suite('vscode-decl (web)', () => {
       test('the worker server publishes diagnostics and answers hover and definition', async () => {
         const ext = vscode.extensions.getExtension('luuvish.vscode-decl');
