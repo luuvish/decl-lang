@@ -1,0 +1,3 @@
+docs/examples/02_config.decl: warn [W6001] ServerConfig.sane_workers at deployed: worker count 100 is unusually high
+docs/examples/02_config.decl: error [E4001] at deployed.port: out of range 1..65535
+docs/examples/02_config.decl: error [E6001] TlsConfig.cert_present at deployed.tls: tls is enabled but cert_path is missing

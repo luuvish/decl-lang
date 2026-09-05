@@ -1,0 +1,355 @@
+[
+  {
+    "name": "evaluate: the exported outputs by name, in declaration order",
+    "ok": true,
+    "value": {
+      "base": {
+        "host": "api.internal",
+        "rate_limits": {
+          "search": 100,
+          "write": 20
+        },
+        "port": 8080,
+        "workers": 4,
+        "log_level": "info",
+        "request_timeout": {
+          "value": 30.0,
+          "unit": "s"
+        },
+        "tls": {
+          "enabled": false,
+          "min_version": "1.3"
+        },
+        "insecure": true
+      },
+      "prod": {
+        "host": "api.internal",
+        "rate_limits": {
+          "search": 100,
+          "write": 20
+        },
+        "port": 8080,
+        "workers": 32,
+        "log_level": "warn",
+        "request_timeout": {
+          "value": 30.0,
+          "unit": "s"
+        },
+        "tls": {
+          "enabled": true,
+          "min_version": "1.3",
+          "cert_path": "/etc/ssl/api.pem"
+        },
+        "insecure": false
+      },
+      "dev": {
+        "host": "api.internal",
+        "rate_limits": {
+          "search": 100,
+          "write": 20
+        },
+        "port": 8081,
+        "workers": 4,
+        "log_level": "debug",
+        "request_timeout": {
+          "value": 30.0,
+          "unit": "s"
+        },
+        "tls": {
+          "enabled": false,
+          "min_version": "1.3"
+        },
+        "insecure": true
+      }
+    }
+  },
+  {
+    "name": "evaluate: outputs selects roots",
+    "ok": true,
+    "value": {
+      "prod": {
+        "host": "api.internal",
+        "rate_limits": {
+          "search": 100,
+          "write": 20
+        },
+        "port": 8080,
+        "workers": 32,
+        "log_level": "warn",
+        "request_timeout": {
+          "value": 30.0,
+          "unit": "s"
+        },
+        "tls": {
+          "enabled": true,
+          "min_version": "1.3",
+          "cert_path": "/etc/ssl/api.pem"
+        },
+        "insecure": false
+      }
+    }
+  },
+  {
+    "name": "evaluate: a module exporting nothing yields an empty object",
+    "ok": true,
+    "value": {}
+  },
+  {
+    "name": "evaluate: an input bound from a file is a root, and an output reads it",
+    "ok": true,
+    "value": {
+      "base": {
+        "host": "h",
+        "port": 8
+      },
+      "copy": {
+        "host": "h",
+        "port": 8
+      }
+    }
+  },
+  {
+    "name": "evaluate: an input bound from a value is completed",
+    "ok": true,
+    "value": {
+      "copy": {
+        "host": "v",
+        "port": 80
+      }
+    }
+  },
+  {
+    "name": "evaluate: an input demanded through its fallback is a root",
+    "ok": true,
+    "value": {
+      "base": {
+        "host": "example",
+        "port": 80
+      }
+    }
+  },
+  {
+    "name": "evaluate: an unknown root is an error",
+    "ok": false,
+    "message": "no root named nope",
+    "diagnostics": []
+  },
+  {
+    "name": "evaluate: an unknown input is an error",
+    "ok": false,
+    "message": "no input named nope",
+    "diagnostics": []
+  },
+  {
+    "name": "evaluate: an unreadable document is E6004",
+    "ok": false,
+    "message": "bound document cannot be read: tests/api/documents/missing.json",
+    "diagnostics": [
+      {
+        "file": "tests/validation/declarations/valid/output_from_input_fallback.decl",
+        "code": "E6004",
+        "severity": "error",
+        "message": "bound document cannot be read: tests/api/documents/missing.json",
+        "path": "base"
+      }
+    ]
+  },
+  {
+    "name": "evaluate: a document that is not well-formed JSON is E6004",
+    "ok": false,
+    "message": "bound document is not well-formed JSON: tests/api/documents/malformed.json",
+    "diagnostics": [
+      {
+        "file": "tests/validation/declarations/valid/output_from_input_fallback.decl",
+        "code": "E6004",
+        "severity": "error",
+        "message": "bound document is not well-formed JSON: tests/api/documents/malformed.json",
+        "path": "base"
+      }
+    ]
+  },
+  {
+    "name": "evaluate: error diagnostics of a bound document come back on the error",
+    "ok": false,
+    "message": "worker count 100 is unusually high",
+    "diagnostics": [
+      {
+        "file": "docs/examples/02_config.decl",
+        "code": "W6001",
+        "id": "ServerConfig.sane_workers",
+        "severity": "warn",
+        "message": "worker count 100 is unusually high",
+        "path": "deployed"
+      },
+      {
+        "file": "docs/examples/02_config.decl",
+        "code": "E4001",
+        "severity": "error",
+        "message": "out of range 1..65535",
+        "path": "deployed.port"
+      },
+      {
+        "file": "docs/examples/02_config.decl",
+        "code": "E6001",
+        "id": "TlsConfig.cert_present",
+        "severity": "error",
+        "message": "tls is enabled but cert_path is missing",
+        "path": "deployed.tls"
+      }
+    ]
+  },
+  {
+    "name": "evaluate: a module that does not parse cannot be loaded",
+    "ok": false,
+    "message": "/Users/luuvish/Projects/luuvish/decl-lang/tests/validation/lexical/invalid/semicolon.decl: 2 parse error(s)",
+    "diagnostics": [
+      {
+        "file": "tests/validation/lexical/invalid/semicolon.decl",
+        "code": "E2001",
+        "severity": "error",
+        "message": "/Users/luuvish/Projects/luuvish/decl-lang/tests/validation/lexical/invalid/semicolon.decl: 2 parse error(s)",
+        "path": ""
+      }
+    ]
+  },
+  {
+    "name": "evaluate: a module with a static error is not evaluated",
+    "ok": false,
+    "message": "empty range in Bad",
+    "diagnostics": [
+      {
+        "file": "tests/validation/types/invalid/empty_range.decl",
+        "code": "E4011",
+        "severity": "error",
+        "message": "empty range in Bad",
+        "path": ""
+      }
+    ]
+  },
+  {
+    "name": "evaluate: a module universe with imports",
+    "ok": true,
+    "value": {
+      "capped": 16,
+      "first": {
+        "name": "solo",
+        "port": 8080,
+        "endpoint": "solo:8080"
+      }
+    }
+  },
+  {
+    "name": "check: a clean file reports nothing",
+    "ok": true,
+    "value": []
+  },
+  {
+    "name": "check: a static error, with the file first",
+    "ok": true,
+    "value": [
+      {
+        "file": "tests/validation/types/invalid/empty_range.decl",
+        "code": "E4011",
+        "severity": "error",
+        "message": "empty range in Bad",
+        "path": ""
+      }
+    ]
+  },
+  {
+    "name": "check: several entries, a universe and a module-graph error",
+    "ok": true,
+    "value": [
+      {
+        "file": "tests/modules/errors/collision.decl",
+        "code": "E3006",
+        "severity": "error",
+        "message": "import pub collides with an existing binding in /Users/luuvish/Projects/luuvish/decl-lang/tests/modules/errors/collision.decl",
+        "path": ""
+      }
+    ]
+  },
+  {
+    "name": "check: a missing file",
+    "ok": true,
+    "value": [
+      {
+        "file": "tests/api/documents/missing.decl",
+        "code": "E3004",
+        "severity": "error",
+        "message": "module not found: /Users/luuvish/Projects/luuvish/decl-lang/tests/api/documents/missing.decl",
+        "path": ""
+      }
+    ]
+  },
+  {
+    "name": "validate: the diagnostics of a bound document, every severity",
+    "ok": true,
+    "value": [
+      {
+        "file": "docs/examples/02_config.decl",
+        "code": "W6001",
+        "id": "ServerConfig.sane_workers",
+        "severity": "warn",
+        "message": "worker count 100 is unusually high",
+        "path": "deployed"
+      },
+      {
+        "file": "docs/examples/02_config.decl",
+        "code": "E4001",
+        "severity": "error",
+        "message": "out of range 1..65535",
+        "path": "deployed.port"
+      },
+      {
+        "file": "docs/examples/02_config.decl",
+        "code": "E6001",
+        "id": "TlsConfig.cert_present",
+        "severity": "error",
+        "message": "tls is enabled but cert_path is missing",
+        "path": "deployed.tls"
+      }
+    ]
+  },
+  {
+    "name": "validate: nothing bound, fallbacks apply",
+    "ok": true,
+    "value": []
+  },
+  {
+    "name": "validate: a file that does not parse is an error",
+    "ok": false,
+    "message": "tests/validation/lexical/invalid/semicolon.decl: 2 parse error(s)",
+    "diagnostics": []
+  },
+  {
+    "name": "validate: a missing file is an error",
+    "ok": false,
+    "message": "tests/api/documents/missing.decl: cannot be read",
+    "diagnostics": []
+  },
+  {
+    "name": "validate: a static error is the report",
+    "ok": true,
+    "value": [
+      {
+        "file": "tests/validation/types/invalid/empty_range.decl",
+        "code": "E4011",
+        "severity": "error",
+        "message": "empty range in Bad",
+        "path": ""
+      }
+    ]
+  },
+  {
+    "name": "format: the canonical form",
+    "ok": true,
+    "value": "const x = 1 + 2\ntype T = { a: int, b?: string }\n"
+  },
+  {
+    "name": "format: a text that does not parse is an error",
+    "ok": false,
+    "message": "cannot format: file has parse errors",
+    "diagnostics": []
+  }
+]

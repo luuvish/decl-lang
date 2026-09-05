@@ -1,0 +1,116 @@
+{
+  "steps": [
+    {
+      "label": "initialize",
+      "request": "initialize",
+      "params": {
+        "processId": null,
+        "rootUri": null,
+        "capabilities": {}
+      }
+    },
+    {
+      "notify": "initialized",
+      "params": {}
+    },
+    {
+      "label": "diagnostics of the main text",
+      "open": "main.decl",
+      "text": "import { Service, MAX as LIMIT, cap, Level } from \"./lib.decl\"\nconst top = LIMIT\nexport output s: Service = { name: \"a\" }\nexport output t: Service = {\n    name: \"b\"\n}\nconst first = s.name\nconst c = cap(top)\nconst d = 250ms\ntype Local = Service { extra = name, level?: Level = \"low\" }\nconst m2 = std.math.min(top, 3)\n"
+    },
+    {
+      "label": "an unformatted text",
+      "change": "main.decl",
+      "text": "const x=1\nconst y = [s for s in [1, 2]]\n"
+    },
+    {
+      "label": "formatting",
+      "request": "textDocument/formatting",
+      "params": {
+        "textDocument": {
+          "uri": {
+            "$uri": "main.decl"
+          }
+        },
+        "options": {
+          "tabSize": 4,
+          "insertSpaces": true
+        }
+      }
+    },
+    {
+      "label": "a text to type in",
+      "change": "main.decl",
+      "text": "type T = {\nx: int,\n    }\nconst v = 1 +\n2\n"
+    },
+    {
+      "label": "on-type formatting: a new line after an opening brace",
+      "request": "textDocument/onTypeFormatting",
+      "params": {
+        "textDocument": {
+          "uri": {
+            "$uri": "main.decl"
+          }
+        },
+        "position": {
+          "line": 1,
+          "character": 0
+        },
+        "ch": "\n",
+        "options": {
+          "tabSize": 4,
+          "insertSpaces": true
+        }
+      }
+    },
+    {
+      "label": "on-type formatting: a closing brace",
+      "request": "textDocument/onTypeFormatting",
+      "params": {
+        "textDocument": {
+          "uri": {
+            "$uri": "main.decl"
+          }
+        },
+        "position": {
+          "line": 2,
+          "character": 5
+        },
+        "ch": "}",
+        "options": {
+          "tabSize": 4,
+          "insertSpaces": true
+        }
+      }
+    },
+    {
+      "label": "on-type formatting: a continuation line",
+      "request": "textDocument/onTypeFormatting",
+      "params": {
+        "textDocument": {
+          "uri": {
+            "$uri": "main.decl"
+          }
+        },
+        "position": {
+          "line": 4,
+          "character": 0
+        },
+        "ch": "\n",
+        "options": {
+          "tabSize": 4,
+          "insertSpaces": true
+        }
+      }
+    },
+    {
+      "label": "shutdown",
+      "request": "shutdown",
+      "params": {}
+    },
+    {
+      "notify": "exit",
+      "params": {}
+    }
+  ]
+}

@@ -1,0 +1,199 @@
+[
+  [
+    "initialize",
+    {
+      "capabilities": {
+        "textDocumentSync": 1,
+        "hoverProvider": true,
+        "definitionProvider": true,
+        "typeDefinitionProvider": true,
+        "referencesProvider": true,
+        "documentHighlightProvider": true,
+        "documentSymbolProvider": true,
+        "foldingRangeProvider": true,
+        "documentFormattingProvider": true,
+        "renameProvider": {
+          "prepareProvider": true
+        },
+        "completionProvider": {
+          "triggerCharacters": [
+            ".",
+            "$",
+            ":"
+          ]
+        },
+        "codeLensProvider": {
+          "resolveProvider": false
+        },
+        "signatureHelpProvider": {
+          "triggerCharacters": [
+            "(",
+            ","
+          ]
+        },
+        "workspaceSymbolProvider": true,
+        "selectionRangeProvider": true,
+        "semanticTokensProvider": {
+          "legend": {
+            "tokenTypes": [
+              "type",
+              "property",
+              "function",
+              "variable",
+              "namespace",
+              "parameter"
+            ],
+            "tokenModifiers": [
+              "declaration",
+              "required",
+              "optional",
+              "defaulted",
+              "derived",
+              "hidden",
+              "unresolved",
+              "readonly"
+            ]
+          },
+          "full": true
+        },
+        "inlayHintProvider": true,
+        "callHierarchyProvider": true,
+        "typeHierarchyProvider": true,
+        "codeActionProvider": {
+          "codeActionKinds": [
+            "quickfix",
+            "refactor.rewrite",
+            "refactor.extract",
+            "refactor.inline"
+          ]
+        },
+        "linkedEditingRangeProvider": true,
+        "documentOnTypeFormattingProvider": {
+          "firstTriggerCharacter": "\n",
+          "moreTriggerCharacter": [
+            "}",
+            "]",
+            ")"
+          ]
+        },
+        "executeCommandProvider": {
+          "commands": [
+            "decl.evaluate",
+            "decl.validate",
+            "decl.trace",
+            "decl.showSyntaxTree",
+            "decl.reloadWorkspace"
+          ]
+        }
+      },
+      "serverInfo": {
+        "name": "decl-lsp",
+        "version": "<version>"
+      }
+    }
+  ],
+  [
+    "diagnostics of the library",
+    []
+  ],
+  [
+    "diagnostics of the main text",
+    []
+  ],
+  [
+    "definition follows the import",
+    {
+      "uri": "file://<ws>/lib.decl",
+      "range": {
+        "start": {
+          "line": 0,
+          "character": 12
+        },
+        "end": {
+          "line": 0,
+          "character": 19
+        }
+      }
+    }
+  ],
+  [
+    "hover through the import",
+    {
+      "contents": {
+        "kind": "markdown",
+        "value": "```decl\nexport const MAX = 16\n```\n\n`16`"
+      },
+      "range": {
+        "start": {
+          "line": 1,
+          "character": 12
+        },
+        "end": {
+          "line": 1,
+          "character": 17
+        }
+      }
+    }
+  ],
+  [
+    "decl.evaluate s",
+    {
+      "root": "s",
+      "document": "{\"name\":\"a\",\"port\":8080}",
+      "diagnostics": []
+    }
+  ],
+  [
+    "diagnostics of the edited library",
+    []
+  ],
+  [
+    "decl.evaluate s after the edit",
+    {
+      "root": "s",
+      "document": "{\"name\":\"a\",\"port\":9000}",
+      "diagnostics": []
+    }
+  ],
+  [
+    "hover after the edit",
+    {
+      "contents": {
+        "kind": "markdown",
+        "value": "```decl\nport: 1..65535 = 9000\n```"
+      },
+      "range": {
+        "start": {
+          "line": 0,
+          "character": 38
+        },
+        "end": {
+          "line": 0,
+          "character": 59
+        }
+      }
+    }
+  ],
+  [
+    "references of Service across the two",
+    [
+      {
+        "uri": "file://<ws>/lib.decl",
+        "range": {
+          "start": {
+            "line": 0,
+            "character": 12
+          },
+          "end": {
+            "line": 0,
+            "character": 19
+          }
+        }
+      }
+    ]
+  ],
+  [
+    "shutdown",
+    null
+  ]
+]

@@ -47,7 +47,7 @@
     "build": "node scripts/build.mjs",
     "e2e": "node test/e2e.ts",
     "conformance": "node src/conformance.ts",
-    "test": "node --test --test-concurrency=1 'test/*.ts' src/conformance.ts",
+    "test": "node --test --test-concurrency=1 'tests/**/*_test.ts'",
     "smoke:dist": "node scripts/smoke-dist.mjs",
     "prepublishOnly": "npm run build && npm test && npm run smoke:dist"
   },

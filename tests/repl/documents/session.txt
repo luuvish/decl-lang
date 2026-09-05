@@ -4,7 +4,7 @@ deployed.tag$
 extra
 :validate
 // binding documents: a file, an inline document, an expression
-:bind deployed=tests/repl/documents/doc.json
+:bind deployed=doc.json
 deployed.label
 :bind extra {
     "port": 1,
@@ -13,9 +13,9 @@ deployed.label
 extra.label
 :bind extra = site
 extra.label
-:bind extra=tests/repl/documents/bad.json
-:bind extra=tests/repl/documents/missing.json
-:bind nothing=tests/repl/documents/doc.json
+:bind extra=bad.json
+:bind extra=missing.json
+:bind nothing=doc.json
 :roots
 // editing a document
 :diff deployed

@@ -1,0 +1,1 @@
+{"host":"api.internal","rate_limits":{"search":100,"write":20},"port":8080,"workers":32,"log_level":"warn","request_timeout":{"value":30.0,"unit":"s"},"tls":{"enabled":true,"min_version":"1.3","cert_path":"/etc/ssl/api.pem"},"insecure":false}

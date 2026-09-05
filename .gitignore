@@ -22,8 +22,8 @@ __pycache__/
 # the Python extension, the LICENSE carried into each package, packed tarballs
 decl-rs/grammar/
 decl-rs/LICENSE
-decl-py/decl/_tree_sitter/src/
-decl-py/decl/_tree_sitter/*.so
+decl-py/src/decl/_tree_sitter/src/
+decl-py/src/decl/_tree_sitter/*.so
 decl-py/LICENSE
 decl-ts/LICENSE
 decl-ts/*.tgz

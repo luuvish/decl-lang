@@ -1,0 +1,29 @@
+> :bind deployed=doc.json
+> y = deployed.port + 1
+> :update deployed.port = 9100
+> deployed.port
+9100
+(partial)
+> :save deployed=saved.json
+> :write scratch.decl
+> :history log.txt
+> :time
+total <ms> ms (load <ms> ms, check <ms> ms, bind <ms> ms, evaluate <ms> ms), recomputed 0 of 15 slots
+> site.port
+443
+(partial)
+> :reload
+> site.port
+443
+(partial)
+> :undo
+> site.port
+443
+(partial)
+> :redo
+> site.port
+443
+(partial)
+> :load main.decl
+> :history
+* 0  (start)

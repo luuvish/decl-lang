@@ -176,13 +176,23 @@ fail on them reads the `--json` report.
 The parity harness (`tests/parity/differential.py`) runs the Rust and
 Python `decl` against the reference on the same command lines and diffs
 exit code, standard output, and standard error byte for byte: `check`
-and `evaluate` (with and without `--json`) over every fixture and
-example, `validate --input` and `evaluate --input` over bound documents,
-`--output` to files and to standard output, `fmt` and `fmt --check` over
-every parseable module, package resolution and lock drift, missing
-files, usage errors, `--version`, and one scripted language-server
-session. A behavior this document describes that the harness does not
-exercise is a gap in the harness.
+and `evaluate` (with and without `--json`) over every fixture, example,
+and module entry, `validate --input` and `evaluate --input` over bound
+documents, `--output` to files and to standard output, the goldens
+(`tests/golden`), `fmt` over every parseable module and `fmt --check`
+over a corpus, package resolution and lock drift, and the command
+line's whole surface: usage (no arguments, `--help`, an unknown command,
+a missing operand), `--version`, several entry files, `--expect-errors`
+(matching, mismatching, with `--json`, against a document that cannot be
+read, a malformed document, a file that does not parse, without a
+value), `validate <dir>`, and every error path (a missing file, an
+unreadable or ill-formed document, an unknown root or input, a bad
+`--input` or `--output` spec, an unwritable file, two documents for
+standard output). The command line's cases with their recorded
+outcomes are `tests/cli/` (each suite replays them; the harness runs
+them three-way), the formatter's canonical-form cases `tests/fmt/`. A
+behavior this document describes that no case or row exercises is a
+gap in the corpus.
 
 ## 7. The language server and the REPL
 

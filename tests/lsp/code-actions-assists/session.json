@@ -1,0 +1,270 @@
+{
+  "steps": [
+    {
+      "label": "initialize",
+      "request": "initialize",
+      "params": {
+        "processId": null,
+        "rootUri": null,
+        "capabilities": {}
+      }
+    },
+    {
+      "notify": "initialized",
+      "params": {}
+    },
+    {
+      "label": "diagnostics of the main text",
+      "open": "main.decl",
+      "text": "import { Service, MAX as LIMIT, cap, Level } from \"./lib.decl\"\nconst top = LIMIT\nexport output s: Service = { name: \"a\" }\nexport output t: Service = {\n    name: \"b\"\n}\nconst first = s.name\nconst c = cap(top)\nconst d = 250ms\ntype Local = Service { extra = name, level?: Level = \"low\" }\nconst m2 = std.math.min(top, 3)\n"
+    },
+    {
+      "label": "diagnostics of the second actions text",
+      "change": "main.decl",
+      "text": "type Parent = { name: string, port: 1..65535, x?: int }\ntype Child = Parent { port: int, x = 1 }\ntype Item = { label = $parent.name }\ntype Bad = { $parent: Owner, t = $parent.name }\ntype Owner = { name: string, items: Item[], bad: Bad }\ntype A = { a: int }\ntype B = { b: int }\ntype U = A | B\nconst K = 2\nconst twice = K + K\ntype W = { inner: { q: int } }\nconst dur = 250ms\ntype R = {\n    d = 1,\n    a: int,\n    b?: int\n}\ntype Ctx = { $parent: ref<Owner2>, tag = $parent.name }\ntype Owner2 = { name: string, c: Ctx }\n"
+    },
+    {
+      "label": "code actions at the widened override",
+      "request": "textDocument/codeAction",
+      "params": {
+        "textDocument": {
+          "uri": {
+            "$uri": "main.decl"
+          }
+        },
+        "range": {
+          "$at": "port: int"
+        },
+        "context": {
+          "diagnostics": {
+            "$diagnostics": "main.decl"
+          }
+        }
+      }
+    },
+    {
+      "label": "code actions at the kind transition",
+      "request": "textDocument/codeAction",
+      "params": {
+        "textDocument": {
+          "uri": {
+            "$uri": "main.decl"
+          }
+        },
+        "range": {
+          "$at": "x = 1"
+        },
+        "context": {
+          "diagnostics": {
+            "$diagnostics": "main.decl"
+          }
+        }
+      }
+    },
+    {
+      "label": "code actions at the undeclared $parent",
+      "request": "textDocument/codeAction",
+      "params": {
+        "textDocument": {
+          "uri": {
+            "$uri": "main.decl"
+          }
+        },
+        "range": {
+          "$at": "$parent.name"
+        },
+        "context": {
+          "diagnostics": {
+            "$diagnostics": "main.decl"
+          }
+        }
+      }
+    },
+    {
+      "label": "code actions at the non-ref $parent declaration",
+      "request": "textDocument/codeAction",
+      "params": {
+        "textDocument": {
+          "uri": {
+            "$uri": "main.decl"
+          }
+        },
+        "range": {
+          "$at": "$parent: Owner"
+        },
+        "context": {
+          "diagnostics": {
+            "$diagnostics": "main.decl"
+          }
+        }
+      }
+    },
+    {
+      "label": "code actions at the union U",
+      "request": "textDocument/codeAction",
+      "params": {
+        "textDocument": {
+          "uri": {
+            "$uri": "main.decl"
+          }
+        },
+        "range": {
+          "$at": "type U"
+        },
+        "context": {
+          "diagnostics": {
+            "$diagnostics": "main.decl"
+          }
+        }
+      }
+    },
+    {
+      "label": "code actions at the constant K",
+      "request": "textDocument/codeAction",
+      "params": {
+        "textDocument": {
+          "uri": {
+            "$uri": "main.decl"
+          }
+        },
+        "range": {
+          "$at": "const K"
+        },
+        "context": {
+          "diagnostics": {
+            "$diagnostics": "main.decl"
+          }
+        }
+      }
+    },
+    {
+      "label": "code actions at the inline record type",
+      "request": "textDocument/codeAction",
+      "params": {
+        "textDocument": {
+          "uri": {
+            "$uri": "main.decl"
+          }
+        },
+        "range": {
+          "$at": "inner: {"
+        },
+        "context": {
+          "diagnostics": {
+            "$diagnostics": "main.decl"
+          }
+        }
+      }
+    },
+    {
+      "label": "code actions at the unit literal",
+      "request": "textDocument/codeAction",
+      "params": {
+        "textDocument": {
+          "uri": {
+            "$uri": "main.decl"
+          }
+        },
+        "range": {
+          "$at": "250ms"
+        },
+        "context": {
+          "diagnostics": {
+            "$diagnostics": "main.decl"
+          }
+        }
+      }
+    },
+    {
+      "label": "code actions at the type R",
+      "request": "textDocument/codeAction",
+      "params": {
+        "textDocument": {
+          "uri": {
+            "$uri": "main.decl"
+          }
+        },
+        "range": {
+          "$at": "type R"
+        },
+        "context": {
+          "diagnostics": {
+            "$diagnostics": "main.decl"
+          }
+        }
+      }
+    },
+    {
+      "config": {
+        "decl": {
+          "inlayHints": {
+            "contextVariables": true
+          }
+        }
+      }
+    },
+    {
+      "label": "inlay hints with context variables",
+      "request": "textDocument/inlayHint",
+      "params": {
+        "textDocument": {
+          "uri": {
+            "$uri": "main.decl"
+          }
+        },
+        "range": {
+          "start": {
+            "line": 0,
+            "character": 0
+          },
+          "end": {
+            "line": 30,
+            "character": 0
+          }
+        }
+      }
+    },
+    {
+      "config": {
+        "decl": {
+          "inlayHints": {
+            "contextVariables": false
+          }
+        }
+      }
+    },
+    {
+      "label": "diagnostics of a restated derived member",
+      "change": "main.decl",
+      "text": "type T = { n: int, m: int = n + 1 }\nexport output o: T = { n: 1, m: 5 }\n"
+    },
+    {
+      "label": "code actions at the restated member",
+      "request": "textDocument/codeAction",
+      "params": {
+        "textDocument": {
+          "uri": {
+            "$uri": "main.decl"
+          }
+        },
+        "range": {
+          "$at": "m: 5"
+        },
+        "context": {
+          "diagnostics": {
+            "$diagnostics": "main.decl"
+          }
+        }
+      }
+    },
+    {
+      "label": "shutdown",
+      "request": "shutdown",
+      "params": {}
+    },
+    {
+      "notify": "exit",
+      "params": {}
+    }
+  ]
+}

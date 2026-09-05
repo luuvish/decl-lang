@@ -22,7 +22,7 @@ error [E5006]: input extra is not bound
 site: ok
 mirror: ok
 > // binding documents: a file, an inline document, an expression
-> :bind deployed=tests/repl/documents/doc.json
+> :bind deployed=doc.json
 > deployed.label
 "doc:9000"
 (partial)
@@ -37,14 +37,14 @@ mirror: ok
 > extra.label
 "web:443"
 (partial)
-> :bind extra=tests/repl/documents/bad.json
-error: tests/repl/documents/bad.json is not well-formed JSON
-> :bind extra=tests/repl/documents/missing.json
-error: cannot read tests/repl/documents/missing.json
-> :bind nothing=tests/repl/documents/doc.json
+> :bind extra=bad.json
+error: bad.json is not well-formed JSON
+> :bind extra=missing.json
+error: cannot read missing.json
+> :bind nothing=doc.json
 error: no input named nothing
 > :roots
-input   deployed         bound        main.decl        tests/repl/documents/doc.json
+input   deployed         bound        main.decl        doc.json
 input   extra            bound        main.decl        (expression)
 output  site             exported     main.decl
 output  mirror           local        main.decl
@@ -84,7 +84,7 @@ error: site holds no document
 > // editing an output detaches it into its settable projection
 > :update site.replicas = 3
 > :roots
-input   deployed         bound        main.decl        tests/repl/documents/doc.json (edited)
+input   deployed         bound        main.decl        doc.json (edited)
 input   extra            bound        main.decl        (expression)
 output  site             detached     main.decl         (edited)
 output  mirror           local        main.decl
@@ -130,7 +130,7 @@ mirror.label = "mirror:443"  (derived: `${name}:${port}`)
 (partial)
 > :undo 2
 > :roots
-input   deployed         bound        main.decl        tests/repl/documents/doc.json (edited)
+input   deployed         bound        main.decl        doc.json (edited)
 input   extra            bound        main.decl        (expression)
 output  site             exported     main.decl
 output  mirror           local        main.decl
@@ -143,18 +143,18 @@ output  mirror           local        main.decl
 }
 > :redo
 > :roots
-input   deployed         bound        main.decl        tests/repl/documents/doc.json (edited)
+input   deployed         bound        main.decl        doc.json (edited)
 input   extra            bound        main.decl        (expression)
 output  site             detached     main.decl         (edited)
 output  mirror           local        main.decl
 > // the session's documents and the log
 > :session
-document     deployed         file tests/repl/documents/doc.json (edited)
+document     deployed         file doc.json (edited)
 document     extra            expr
 document     site             detached (edited)
 > :history
   0  (start)
-  1  :bind deployed=tests/repl/documents/doc.json
+  1  :bind deployed=doc.json
   2  :bind extra {"port":1,"name":"inline"}
   3  :bind extra = site
   4  :update deployed.port = 9100
@@ -178,7 +178,7 @@ output  site             exported     main.decl
 output  mirror           local        main.decl
 > :history
   0  (start)
-  1  :bind deployed=tests/repl/documents/doc.json
+  1  :bind deployed=doc.json
   2  :bind extra {"port":1,"name":"inline"}
   3  :bind extra = site
   4  :update deployed.port = 9100

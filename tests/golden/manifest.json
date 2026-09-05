@@ -90,5 +90,101 @@
     ],
     "rejected": true,
     "golden": "tests/golden/fabric__edge_key_mismatch.txt"
+  },
+  {
+    "module": "docs/examples/01_interconnect.decl",
+    "inputs": [
+      "doc=tests/golden/inputs/interconnect/xbar.json"
+    ],
+    "output": "doc",
+    "golden": "tests/golden/inputs/interconnect/xbar.json"
+  },
+  {
+    "module": "docs/examples/02_config.decl",
+    "inputs": [
+      "deployed=tests/golden/inputs/config/prod.json"
+    ],
+    "output": "deployed",
+    "golden": "tests/golden/inputs/config/prod.json"
+  },
+  {
+    "module": "tests/golden/inputs/fabric/site.decl",
+    "inputs": [
+      "site=tests/golden/fabric__site_2x4.json"
+    ],
+    "output": "site",
+    "golden": "tests/golden/fabric__site_2x4.json"
+  },
+  {
+    "module": "docs/examples/01_interconnect.decl",
+    "inputs": [
+      "doc=tests/golden/inputs/interconnect/xbar_width32.json"
+    ],
+    "rejected": true,
+    "golden": "tests/golden/interconnect__width32.txt"
+  },
+  {
+    "module": "docs/examples/02_config.decl",
+    "inputs": [
+      "deployed=tests/golden/inputs/config/deployed_bad.json"
+    ],
+    "rejected": true,
+    "golden": "tests/golden/config__deployed_bad.txt"
+  },
+  {
+    "module": "tests/golden/inputs/match/shapes.decl",
+    "inputs": [
+      "shape=tests/golden/inputs/match/rect.json",
+      "proto=tests/golden/inputs/match/grpc.json"
+    ],
+    "output": "area",
+    "golden": "tests/golden/match__area_rect.json"
+  },
+  {
+    "module": "tests/golden/inputs/match/shapes.decl",
+    "inputs": [
+      "shape=tests/golden/inputs/match/rect.json",
+      "proto=tests/golden/inputs/match/grpc.json"
+    ],
+    "output": "port",
+    "golden": "tests/golden/match__port_grpc.json"
+  },
+  {
+    "module": "tests/golden/inputs/match/shapes.decl",
+    "inputs": [
+      "shape=tests/golden/inputs/match/rect.json",
+      "proto=tests/golden/inputs/match/tcp.json"
+    ],
+    "output": "port",
+    "golden": "tests/golden/match__port_tcp.json"
+  },
+  {
+    "module": "tests/golden/inputs/generics/vec.decl",
+    "golden": "tests/golden/generics__vec.json"
+  },
+  {
+    "module": "tests/golden/inputs/generics/bad_size.decl",
+    "rejected": true,
+    "golden": "tests/golden/generics__bad_size.txt"
+  },
+  {
+    "module": "tests/golden/inputs/quantity/trip.decl",
+    "golden": "tests/golden/quantity__trip.json"
+  },
+  {
+    "module": "tests/golden/inputs/quantity/trip.decl",
+    "inputs": [
+      "t=tests/golden/inputs/quantity/trip_km.json"
+    ],
+    "output": "t",
+    "golden": "tests/golden/quantity__trip_km.json"
+  },
+  {
+    "markdown": "docs/guide/01_overview_by_example.md",
+    "golden": "tests/golden/docs__guide__01_overview_by_example.json"
+  },
+  {
+    "module": "tests/packages/app/main.decl",
+    "golden": "tests/golden/tests__packages__app.json"
   }
 ]

@@ -1,0 +1,1597 @@
+[
+  [
+    "initialize",
+    {
+      "capabilities": {
+        "textDocumentSync": 1,
+        "hoverProvider": true,
+        "definitionProvider": true,
+        "typeDefinitionProvider": true,
+        "referencesProvider": true,
+        "documentHighlightProvider": true,
+        "documentSymbolProvider": true,
+        "foldingRangeProvider": true,
+        "documentFormattingProvider": true,
+        "renameProvider": {
+          "prepareProvider": true
+        },
+        "completionProvider": {
+          "triggerCharacters": [
+            ".",
+            "$",
+            ":"
+          ]
+        },
+        "codeLensProvider": {
+          "resolveProvider": false
+        },
+        "signatureHelpProvider": {
+          "triggerCharacters": [
+            "(",
+            ","
+          ]
+        },
+        "workspaceSymbolProvider": true,
+        "selectionRangeProvider": true,
+        "semanticTokensProvider": {
+          "legend": {
+            "tokenTypes": [
+              "type",
+              "property",
+              "function",
+              "variable",
+              "namespace",
+              "parameter"
+            ],
+            "tokenModifiers": [
+              "declaration",
+              "required",
+              "optional",
+              "defaulted",
+              "derived",
+              "hidden",
+              "unresolved",
+              "readonly"
+            ]
+          },
+          "full": true
+        },
+        "inlayHintProvider": true,
+        "callHierarchyProvider": true,
+        "typeHierarchyProvider": true,
+        "codeActionProvider": {
+          "codeActionKinds": [
+            "quickfix",
+            "refactor.rewrite",
+            "refactor.extract",
+            "refactor.inline"
+          ]
+        },
+        "linkedEditingRangeProvider": true,
+        "documentOnTypeFormattingProvider": {
+          "firstTriggerCharacter": "\n",
+          "moreTriggerCharacter": [
+            "}",
+            "]",
+            ")"
+          ]
+        },
+        "executeCommandProvider": {
+          "commands": [
+            "decl.evaluate",
+            "decl.validate",
+            "decl.trace",
+            "decl.showSyntaxTree",
+            "decl.reloadWorkspace"
+          ]
+        }
+      },
+      "serverInfo": {
+        "name": "decl-lsp",
+        "version": "<version>"
+      }
+    }
+  ],
+  [
+    "diagnostics of the main text",
+    []
+  ],
+  [
+    "diagnostics of the second actions text",
+    [
+      {
+        "range": {
+          "start": {
+            "line": 7,
+            "character": 5
+          },
+          "end": {
+            "line": 7,
+            "character": 6
+          }
+        },
+        "severity": 1,
+        "source": "decl",
+        "code": "E4013",
+        "message": "record union arms not discriminable in U"
+      },
+      {
+        "range": {
+          "start": {
+            "line": 1,
+            "character": 0
+          },
+          "end": {
+            "line": 1,
+            "character": 40
+          }
+        },
+        "severity": 1,
+        "source": "decl",
+        "code": "E4030",
+        "message": "override widens inherited member port (Child)"
+      },
+      {
+        "range": {
+          "start": {
+            "line": 2,
+            "character": 0
+          },
+          "end": {
+            "line": 2,
+            "character": 36
+          }
+        },
+        "severity": 1,
+        "source": "decl",
+        "code": "E4094",
+        "message": "$parent used without a context declaration in Item"
+      },
+      {
+        "range": {
+          "start": {
+            "line": 3,
+            "character": 0
+          },
+          "end": {
+            "line": 3,
+            "character": 47
+          }
+        },
+        "severity": 1,
+        "source": "decl",
+        "code": "E4094",
+        "message": "$parent declaration must be ref<...> (Bad)"
+      }
+    ]
+  ],
+  [
+    "code actions at the widened override",
+    [
+      {
+        "title": "use the parent's declaration: port: 1..65535",
+        "kind": "quickfix",
+        "diagnostics": [
+          {
+            "range": {
+              "start": {
+                "line": 1,
+                "character": 0
+              },
+              "end": {
+                "line": 1,
+                "character": 40
+              }
+            },
+            "severity": 1,
+            "source": "decl",
+            "code": "E4030",
+            "message": "override widens inherited member port (Child)"
+          }
+        ],
+        "isPreferred": true,
+        "edit": {
+          "changes": {
+            "file://<ws>/main.decl": [
+              {
+                "range": {
+                  "start": {
+                    "line": 1,
+                    "character": 22
+                  },
+                  "end": {
+                    "line": 1,
+                    "character": 31
+                  }
+                },
+                "newText": "port: 1..65535"
+              }
+            ]
+          }
+        }
+      },
+      {
+        "title": "make optional",
+        "kind": "refactor.rewrite",
+        "edit": {
+          "changes": {
+            "file://<ws>/main.decl": [
+              {
+                "range": {
+                  "start": {
+                    "line": 1,
+                    "character": 26
+                  },
+                  "end": {
+                    "line": 1,
+                    "character": 26
+                  }
+                },
+                "newText": "?"
+              }
+            ]
+          }
+        }
+      },
+      {
+        "title": "export Child",
+        "kind": "refactor.rewrite",
+        "edit": {
+          "changes": {
+            "file://<ws>/main.decl": [
+              {
+                "range": {
+                  "start": {
+                    "line": 1,
+                    "character": 0
+                  },
+                  "end": {
+                    "line": 1,
+                    "character": 0
+                  }
+                },
+                "newText": "export "
+              }
+            ]
+          }
+        }
+      },
+      {
+        "title": "generate an output of Child",
+        "kind": "refactor.rewrite",
+        "edit": {
+          "changes": {
+            "file://<ws>/main.decl": [
+              {
+                "range": {
+                  "start": {
+                    "line": 19,
+                    "character": 0
+                  },
+                  "end": {
+                    "line": 19,
+                    "character": 0
+                  }
+                },
+                "newText": "output child: Child = { name: \"\", port: 0 }\n"
+              }
+            ]
+          }
+        }
+      },
+      {
+        "title": "generate an input of Child",
+        "kind": "refactor.rewrite",
+        "edit": {
+          "changes": {
+            "file://<ws>/main.decl": [
+              {
+                "range": {
+                  "start": {
+                    "line": 19,
+                    "character": 0
+                  },
+                  "end": {
+                    "line": 19,
+                    "character": 0
+                  }
+                },
+                "newText": "input child: Child\n"
+              }
+            ]
+          }
+        }
+      },
+      {
+        "title": "generate the fixture header (@expect-phase / @expect-error)",
+        "kind": "refactor.rewrite",
+        "edit": {
+          "changes": {
+            "file://<ws>/main.decl": [
+              {
+                "range": {
+                  "start": {
+                    "line": 0,
+                    "character": 0
+                  },
+                  "end": {
+                    "line": 0,
+                    "character": 0
+                  }
+                },
+                "newText": "// @expect-phase: checking\n// @expect-error: E4013\n"
+              }
+            ]
+          }
+        }
+      }
+    ]
+  ],
+  [
+    "code actions at the kind transition",
+    [
+      {
+        "title": "use the parent's declaration: port: 1..65535",
+        "kind": "quickfix",
+        "diagnostics": [
+          {
+            "range": {
+              "start": {
+                "line": 1,
+                "character": 0
+              },
+              "end": {
+                "line": 1,
+                "character": 40
+              }
+            },
+            "severity": 1,
+            "source": "decl",
+            "code": "E4030",
+            "message": "override widens inherited member port (Child)"
+          }
+        ],
+        "isPreferred": true,
+        "edit": {
+          "changes": {
+            "file://<ws>/main.decl": [
+              {
+                "range": {
+                  "start": {
+                    "line": 1,
+                    "character": 22
+                  },
+                  "end": {
+                    "line": 1,
+                    "character": 31
+                  }
+                },
+                "newText": "port: 1..65535"
+              }
+            ]
+          }
+        }
+      },
+      {
+        "title": "annotate: 1",
+        "kind": "refactor.rewrite",
+        "edit": {
+          "changes": {
+            "file://<ws>/main.decl": [
+              {
+                "range": {
+                  "start": {
+                    "line": 1,
+                    "character": 34
+                  },
+                  "end": {
+                    "line": 1,
+                    "character": 34
+                  }
+                },
+                "newText": ": 1"
+              }
+            ]
+          }
+        }
+      },
+      {
+        "title": "make hidden (x$)",
+        "kind": "refactor.rewrite",
+        "edit": {
+          "changes": {
+            "file://<ws>/main.decl": [
+              {
+                "range": {
+                  "start": {
+                    "line": 1,
+                    "character": 34
+                  },
+                  "end": {
+                    "line": 1,
+                    "character": 34
+                  }
+                },
+                "newText": "$"
+              }
+            ]
+          }
+        }
+      },
+      {
+        "title": "export Child",
+        "kind": "refactor.rewrite",
+        "edit": {
+          "changes": {
+            "file://<ws>/main.decl": [
+              {
+                "range": {
+                  "start": {
+                    "line": 1,
+                    "character": 0
+                  },
+                  "end": {
+                    "line": 1,
+                    "character": 0
+                  }
+                },
+                "newText": "export "
+              }
+            ]
+          }
+        }
+      },
+      {
+        "title": "generate an output of Child",
+        "kind": "refactor.rewrite",
+        "edit": {
+          "changes": {
+            "file://<ws>/main.decl": [
+              {
+                "range": {
+                  "start": {
+                    "line": 19,
+                    "character": 0
+                  },
+                  "end": {
+                    "line": 19,
+                    "character": 0
+                  }
+                },
+                "newText": "output child: Child = { name: \"\", port: 0 }\n"
+              }
+            ]
+          }
+        }
+      },
+      {
+        "title": "generate an input of Child",
+        "kind": "refactor.rewrite",
+        "edit": {
+          "changes": {
+            "file://<ws>/main.decl": [
+              {
+                "range": {
+                  "start": {
+                    "line": 19,
+                    "character": 0
+                  },
+                  "end": {
+                    "line": 19,
+                    "character": 0
+                  }
+                },
+                "newText": "input child: Child\n"
+              }
+            ]
+          }
+        }
+      },
+      {
+        "title": "generate the fixture header (@expect-phase / @expect-error)",
+        "kind": "refactor.rewrite",
+        "edit": {
+          "changes": {
+            "file://<ws>/main.decl": [
+              {
+                "range": {
+                  "start": {
+                    "line": 0,
+                    "character": 0
+                  },
+                  "end": {
+                    "line": 0,
+                    "character": 0
+                  }
+                },
+                "newText": "// @expect-phase: checking\n// @expect-error: E4013\n"
+              }
+            ]
+          }
+        }
+      }
+    ]
+  ],
+  [
+    "code actions at the undeclared $parent",
+    [
+      {
+        "title": "declare $parent: ref<{ ... }> on Item",
+        "kind": "quickfix",
+        "diagnostics": [
+          {
+            "range": {
+              "start": {
+                "line": 2,
+                "character": 0
+              },
+              "end": {
+                "line": 2,
+                "character": 36
+              }
+            },
+            "severity": 1,
+            "source": "decl",
+            "code": "E4094",
+            "message": "$parent used without a context declaration in Item"
+          }
+        ],
+        "isPreferred": true,
+        "edit": {
+          "changes": {
+            "file://<ws>/main.decl": [
+              {
+                "range": {
+                  "start": {
+                    "line": 2,
+                    "character": 14
+                  },
+                  "end": {
+                    "line": 2,
+                    "character": 14
+                  }
+                },
+                "newText": "$parent: ref<{ ... }>, "
+              }
+            ]
+          }
+        }
+      },
+      {
+        "title": "make hidden (x$)",
+        "kind": "refactor.rewrite",
+        "edit": {
+          "changes": {
+            "file://<ws>/main.decl": [
+              {
+                "range": {
+                  "start": {
+                    "line": 2,
+                    "character": 19
+                  },
+                  "end": {
+                    "line": 2,
+                    "character": 19
+                  }
+                },
+                "newText": "$"
+              }
+            ]
+          }
+        }
+      },
+      {
+        "title": "export Item",
+        "kind": "refactor.rewrite",
+        "edit": {
+          "changes": {
+            "file://<ws>/main.decl": [
+              {
+                "range": {
+                  "start": {
+                    "line": 2,
+                    "character": 0
+                  },
+                  "end": {
+                    "line": 2,
+                    "character": 0
+                  }
+                },
+                "newText": "export "
+              }
+            ]
+          }
+        }
+      },
+      {
+        "title": "generate an output of Item",
+        "kind": "refactor.rewrite",
+        "edit": {
+          "changes": {
+            "file://<ws>/main.decl": [
+              {
+                "range": {
+                  "start": {
+                    "line": 19,
+                    "character": 0
+                  },
+                  "end": {
+                    "line": 19,
+                    "character": 0
+                  }
+                },
+                "newText": "output item: Item = { }\n"
+              }
+            ]
+          }
+        }
+      },
+      {
+        "title": "generate an input of Item",
+        "kind": "refactor.rewrite",
+        "edit": {
+          "changes": {
+            "file://<ws>/main.decl": [
+              {
+                "range": {
+                  "start": {
+                    "line": 19,
+                    "character": 0
+                  },
+                  "end": {
+                    "line": 19,
+                    "character": 0
+                  }
+                },
+                "newText": "input item: Item\n"
+              }
+            ]
+          }
+        }
+      },
+      {
+        "title": "generate the fixture header (@expect-phase / @expect-error)",
+        "kind": "refactor.rewrite",
+        "edit": {
+          "changes": {
+            "file://<ws>/main.decl": [
+              {
+                "range": {
+                  "start": {
+                    "line": 0,
+                    "character": 0
+                  },
+                  "end": {
+                    "line": 0,
+                    "character": 0
+                  }
+                },
+                "newText": "// @expect-phase: checking\n// @expect-error: E4013\n"
+              }
+            ]
+          }
+        }
+      }
+    ]
+  ],
+  [
+    "code actions at the non-ref $parent declaration",
+    [
+      {
+        "title": "declare $parent as ref<Owner>",
+        "kind": "quickfix",
+        "diagnostics": [
+          {
+            "range": {
+              "start": {
+                "line": 3,
+                "character": 0
+              },
+              "end": {
+                "line": 3,
+                "character": 47
+              }
+            },
+            "severity": 1,
+            "source": "decl",
+            "code": "E4094",
+            "message": "$parent declaration must be ref<...> (Bad)"
+          }
+        ],
+        "isPreferred": true,
+        "edit": {
+          "changes": {
+            "file://<ws>/main.decl": [
+              {
+                "range": {
+                  "start": {
+                    "line": 3,
+                    "character": 22
+                  },
+                  "end": {
+                    "line": 3,
+                    "character": 27
+                  }
+                },
+                "newText": "ref<Owner>"
+              }
+            ]
+          }
+        }
+      },
+      {
+        "title": "export Bad",
+        "kind": "refactor.rewrite",
+        "edit": {
+          "changes": {
+            "file://<ws>/main.decl": [
+              {
+                "range": {
+                  "start": {
+                    "line": 3,
+                    "character": 0
+                  },
+                  "end": {
+                    "line": 3,
+                    "character": 0
+                  }
+                },
+                "newText": "export "
+              }
+            ]
+          }
+        }
+      },
+      {
+        "title": "generate an output of Bad",
+        "kind": "refactor.rewrite",
+        "edit": {
+          "changes": {
+            "file://<ws>/main.decl": [
+              {
+                "range": {
+                  "start": {
+                    "line": 19,
+                    "character": 0
+                  },
+                  "end": {
+                    "line": 19,
+                    "character": 0
+                  }
+                },
+                "newText": "output bad: Bad = { }\n"
+              }
+            ]
+          }
+        }
+      },
+      {
+        "title": "generate an input of Bad",
+        "kind": "refactor.rewrite",
+        "edit": {
+          "changes": {
+            "file://<ws>/main.decl": [
+              {
+                "range": {
+                  "start": {
+                    "line": 19,
+                    "character": 0
+                  },
+                  "end": {
+                    "line": 19,
+                    "character": 0
+                  }
+                },
+                "newText": "input bad: Bad\n"
+              }
+            ]
+          }
+        }
+      },
+      {
+        "title": "generate the fixture header (@expect-phase / @expect-error)",
+        "kind": "refactor.rewrite",
+        "edit": {
+          "changes": {
+            "file://<ws>/main.decl": [
+              {
+                "range": {
+                  "start": {
+                    "line": 0,
+                    "character": 0
+                  },
+                  "end": {
+                    "line": 0,
+                    "character": 0
+                  }
+                },
+                "newText": "// @expect-phase: checking\n// @expect-error: E4013\n"
+              }
+            ]
+          }
+        }
+      }
+    ]
+  ],
+  [
+    "code actions at the union U",
+    [
+      {
+        "title": "add a discriminant `kind` to the arms of U",
+        "kind": "quickfix",
+        "diagnostics": [
+          {
+            "range": {
+              "start": {
+                "line": 7,
+                "character": 5
+              },
+              "end": {
+                "line": 7,
+                "character": 6
+              }
+            },
+            "severity": 1,
+            "source": "decl",
+            "code": "E4013",
+            "message": "record union arms not discriminable in U"
+          }
+        ],
+        "isPreferred": true,
+        "edit": {
+          "changes": {
+            "file://<ws>/main.decl": [
+              {
+                "range": {
+                  "start": {
+                    "line": 5,
+                    "character": 11
+                  },
+                  "end": {
+                    "line": 5,
+                    "character": 11
+                  }
+                },
+                "newText": "kind: \"A\", "
+              },
+              {
+                "range": {
+                  "start": {
+                    "line": 6,
+                    "character": 11
+                  },
+                  "end": {
+                    "line": 6,
+                    "character": 11
+                  }
+                },
+                "newText": "kind: \"B\", "
+              }
+            ]
+          }
+        }
+      },
+      {
+        "title": "export U",
+        "kind": "refactor.rewrite",
+        "edit": {
+          "changes": {
+            "file://<ws>/main.decl": [
+              {
+                "range": {
+                  "start": {
+                    "line": 7,
+                    "character": 0
+                  },
+                  "end": {
+                    "line": 7,
+                    "character": 0
+                  }
+                },
+                "newText": "export "
+              }
+            ]
+          }
+        }
+      },
+      {
+        "title": "generate the fixture header (@expect-phase / @expect-error)",
+        "kind": "refactor.rewrite",
+        "edit": {
+          "changes": {
+            "file://<ws>/main.decl": [
+              {
+                "range": {
+                  "start": {
+                    "line": 0,
+                    "character": 0
+                  },
+                  "end": {
+                    "line": 0,
+                    "character": 0
+                  }
+                },
+                "newText": "// @expect-phase: checking\n// @expect-error: E4013\n"
+              }
+            ]
+          }
+        }
+      }
+    ]
+  ],
+  [
+    "code actions at the constant K",
+    [
+      {
+        "title": "annotate: 2",
+        "kind": "refactor.rewrite",
+        "edit": {
+          "changes": {
+            "file://<ws>/main.decl": [
+              {
+                "range": {
+                  "start": {
+                    "line": 8,
+                    "character": 7
+                  },
+                  "end": {
+                    "line": 8,
+                    "character": 7
+                  }
+                },
+                "newText": ": 2"
+              }
+            ]
+          }
+        }
+      },
+      {
+        "title": "export K",
+        "kind": "refactor.rewrite",
+        "edit": {
+          "changes": {
+            "file://<ws>/main.decl": [
+              {
+                "range": {
+                  "start": {
+                    "line": 8,
+                    "character": 0
+                  },
+                  "end": {
+                    "line": 8,
+                    "character": 0
+                  }
+                },
+                "newText": "export "
+              }
+            ]
+          }
+        }
+      },
+      {
+        "title": "generate the fixture header (@expect-phase / @expect-error)",
+        "kind": "refactor.rewrite",
+        "edit": {
+          "changes": {
+            "file://<ws>/main.decl": [
+              {
+                "range": {
+                  "start": {
+                    "line": 0,
+                    "character": 0
+                  },
+                  "end": {
+                    "line": 0,
+                    "character": 0
+                  }
+                },
+                "newText": "// @expect-phase: checking\n// @expect-error: E4013\n"
+              }
+            ]
+          }
+        }
+      },
+      {
+        "title": "inline K",
+        "kind": "refactor.inline",
+        "edit": {
+          "changes": {
+            "file://<ws>/main.decl": [
+              {
+                "range": {
+                  "start": {
+                    "line": 9,
+                    "character": 14
+                  },
+                  "end": {
+                    "line": 9,
+                    "character": 15
+                  }
+                },
+                "newText": "2"
+              },
+              {
+                "range": {
+                  "start": {
+                    "line": 9,
+                    "character": 18
+                  },
+                  "end": {
+                    "line": 9,
+                    "character": 19
+                  }
+                },
+                "newText": "2"
+              },
+              {
+                "range": {
+                  "start": {
+                    "line": 8,
+                    "character": 0
+                  },
+                  "end": {
+                    "line": 9,
+                    "character": 0
+                  }
+                },
+                "newText": ""
+              }
+            ]
+          }
+        }
+      }
+    ]
+  ],
+  [
+    "code actions at the inline record type",
+    [
+      {
+        "title": "make optional",
+        "kind": "refactor.rewrite",
+        "edit": {
+          "changes": {
+            "file://<ws>/main.decl": [
+              {
+                "range": {
+                  "start": {
+                    "line": 10,
+                    "character": 16
+                  },
+                  "end": {
+                    "line": 10,
+                    "character": 16
+                  }
+                },
+                "newText": "?"
+              }
+            ]
+          }
+        }
+      },
+      {
+        "title": "export W",
+        "kind": "refactor.rewrite",
+        "edit": {
+          "changes": {
+            "file://<ws>/main.decl": [
+              {
+                "range": {
+                  "start": {
+                    "line": 10,
+                    "character": 0
+                  },
+                  "end": {
+                    "line": 10,
+                    "character": 0
+                  }
+                },
+                "newText": "export "
+              }
+            ]
+          }
+        }
+      },
+      {
+        "title": "generate an output of W",
+        "kind": "refactor.rewrite",
+        "edit": {
+          "changes": {
+            "file://<ws>/main.decl": [
+              {
+                "range": {
+                  "start": {
+                    "line": 19,
+                    "character": 0
+                  },
+                  "end": {
+                    "line": 19,
+                    "character": 0
+                  }
+                },
+                "newText": "output w: W = { inner: { } }\n"
+              }
+            ]
+          }
+        }
+      },
+      {
+        "title": "generate an input of W",
+        "kind": "refactor.rewrite",
+        "edit": {
+          "changes": {
+            "file://<ws>/main.decl": [
+              {
+                "range": {
+                  "start": {
+                    "line": 19,
+                    "character": 0
+                  },
+                  "end": {
+                    "line": 19,
+                    "character": 0
+                  }
+                },
+                "newText": "input w: W\n"
+              }
+            ]
+          }
+        }
+      },
+      {
+        "title": "generate the fixture header (@expect-phase / @expect-error)",
+        "kind": "refactor.rewrite",
+        "edit": {
+          "changes": {
+            "file://<ws>/main.decl": [
+              {
+                "range": {
+                  "start": {
+                    "line": 0,
+                    "character": 0
+                  },
+                  "end": {
+                    "line": 0,
+                    "character": 0
+                  }
+                },
+                "newText": "// @expect-phase: checking\n// @expect-error: E4013\n"
+              }
+            ]
+          }
+        }
+      },
+      {
+        "title": "extract to a named type",
+        "kind": "refactor.extract",
+        "edit": {
+          "changes": {
+            "file://<ws>/main.decl": [
+              {
+                "range": {
+                  "start": {
+                    "line": 10,
+                    "character": 0
+                  },
+                  "end": {
+                    "line": 10,
+                    "character": 0
+                  }
+                },
+                "newText": "type Extracted = { q: int }\n"
+              },
+              {
+                "range": {
+                  "start": {
+                    "line": 10,
+                    "character": 18
+                  },
+                  "end": {
+                    "line": 10,
+                    "character": 28
+                  }
+                },
+                "newText": "Extracted"
+              }
+            ]
+          }
+        }
+      }
+    ]
+  ],
+  [
+    "code actions at the unit literal",
+    [
+      {
+        "title": "annotate: quantity<Time>",
+        "kind": "refactor.rewrite",
+        "edit": {
+          "changes": {
+            "file://<ws>/main.decl": [
+              {
+                "range": {
+                  "start": {
+                    "line": 11,
+                    "character": 9
+                  },
+                  "end": {
+                    "line": 11,
+                    "character": 9
+                  }
+                },
+                "newText": ": quantity<Time>"
+              }
+            ]
+          }
+        }
+      },
+      {
+        "title": "export dur",
+        "kind": "refactor.rewrite",
+        "edit": {
+          "changes": {
+            "file://<ws>/main.decl": [
+              {
+                "range": {
+                  "start": {
+                    "line": 11,
+                    "character": 0
+                  },
+                  "end": {
+                    "line": 11,
+                    "character": 0
+                  }
+                },
+                "newText": "export "
+              }
+            ]
+          }
+        }
+      },
+      {
+        "title": "generate the fixture header (@expect-phase / @expect-error)",
+        "kind": "refactor.rewrite",
+        "edit": {
+          "changes": {
+            "file://<ws>/main.decl": [
+              {
+                "range": {
+                  "start": {
+                    "line": 0,
+                    "character": 0
+                  },
+                  "end": {
+                    "line": 0,
+                    "character": 0
+                  }
+                },
+                "newText": "// @expect-phase: checking\n// @expect-error: E4013\n"
+              }
+            ]
+          }
+        }
+      },
+      {
+        "title": "convert to 0.25s",
+        "kind": "refactor.rewrite",
+        "edit": {
+          "changes": {
+            "file://<ws>/main.decl": [
+              {
+                "range": {
+                  "start": {
+                    "line": 11,
+                    "character": 12
+                  },
+                  "end": {
+                    "line": 11,
+                    "character": 17
+                  }
+                },
+                "newText": "0.25s"
+              }
+            ]
+          }
+        }
+      }
+    ]
+  ],
+  [
+    "code actions at the type R",
+    [
+      {
+        "title": "export R",
+        "kind": "refactor.rewrite",
+        "edit": {
+          "changes": {
+            "file://<ws>/main.decl": [
+              {
+                "range": {
+                  "start": {
+                    "line": 12,
+                    "character": 0
+                  },
+                  "end": {
+                    "line": 12,
+                    "character": 0
+                  }
+                },
+                "newText": "export "
+              }
+            ]
+          }
+        }
+      },
+      {
+        "title": "generate an output of R",
+        "kind": "refactor.rewrite",
+        "edit": {
+          "changes": {
+            "file://<ws>/main.decl": [
+              {
+                "range": {
+                  "start": {
+                    "line": 19,
+                    "character": 0
+                  },
+                  "end": {
+                    "line": 19,
+                    "character": 0
+                  }
+                },
+                "newText": "output r: R = { a: 0 }\n"
+              }
+            ]
+          }
+        }
+      },
+      {
+        "title": "generate an input of R",
+        "kind": "refactor.rewrite",
+        "edit": {
+          "changes": {
+            "file://<ws>/main.decl": [
+              {
+                "range": {
+                  "start": {
+                    "line": 19,
+                    "character": 0
+                  },
+                  "end": {
+                    "line": 19,
+                    "character": 0
+                  }
+                },
+                "newText": "input r: R\n"
+              }
+            ]
+          }
+        }
+      },
+      {
+        "title": "generate the fixture header (@expect-phase / @expect-error)",
+        "kind": "refactor.rewrite",
+        "edit": {
+          "changes": {
+            "file://<ws>/main.decl": [
+              {
+                "range": {
+                  "start": {
+                    "line": 0,
+                    "character": 0
+                  },
+                  "end": {
+                    "line": 0,
+                    "character": 0
+                  }
+                },
+                "newText": "// @expect-phase: checking\n// @expect-error: E4013\n"
+              }
+            ]
+          }
+        }
+      },
+      {
+        "title": "reorder the members canonically",
+        "kind": "refactor.rewrite",
+        "edit": {
+          "changes": {
+            "file://<ws>/main.decl": [
+              {
+                "range": {
+                  "start": {
+                    "line": 12,
+                    "character": 9
+                  },
+                  "end": {
+                    "line": 16,
+                    "character": 1
+                  }
+                },
+                "newText": "{\n    a: int\n    b?: int\n    d = 1\n}"
+              }
+            ]
+          }
+        }
+      }
+    ]
+  ],
+  [
+    "inlay hints with context variables",
+    [
+      {
+        "position": {
+          "line": 1,
+          "character": 34
+        },
+        "label": ": 1",
+        "kind": 1
+      },
+      {
+        "position": {
+          "line": 3,
+          "character": 30
+        },
+        "label": ": string",
+        "kind": 1
+      },
+      {
+        "position": {
+          "line": 3,
+          "character": 40
+        },
+        "label": ": Owner",
+        "kind": 1
+      },
+      {
+        "position": {
+          "line": 8,
+          "character": 7
+        },
+        "label": ": 2",
+        "kind": 1
+      },
+      {
+        "position": {
+          "line": 9,
+          "character": 11
+        },
+        "label": ": 4..4",
+        "kind": 1
+      },
+      {
+        "position": {
+          "line": 11,
+          "character": 9
+        },
+        "label": ": quantity<Time>",
+        "kind": 1
+      },
+      {
+        "position": {
+          "line": 11,
+          "character": 17
+        },
+        "label": "= 0.25 s",
+        "paddingLeft": true
+      },
+      {
+        "position": {
+          "line": 13,
+          "character": 5
+        },
+        "label": ": 1",
+        "kind": 1
+      },
+      {
+        "position": {
+          "line": 17,
+          "character": 38
+        },
+        "label": ": string",
+        "kind": 1
+      },
+      {
+        "position": {
+          "line": 17,
+          "character": 48
+        },
+        "label": ": ref<Owner2>",
+        "kind": 1
+      }
+    ]
+  ],
+  [
+    "diagnostics of a restated derived member",
+    [
+      {
+        "range": {
+          "start": {
+            "line": 1,
+            "character": 32
+          },
+          "end": {
+            "line": 1,
+            "character": 33
+          }
+        },
+        "severity": 1,
+        "source": "decl",
+        "code": "E4005",
+        "message": "derived member m restated with a differing value (at o.m)"
+      }
+    ]
+  ],
+  [
+    "code actions at the restated member",
+    [
+      {
+        "title": "make T.m defaulted (x?: T = e)",
+        "kind": "quickfix",
+        "diagnostics": [
+          {
+            "range": {
+              "start": {
+                "line": 1,
+                "character": 32
+              },
+              "end": {
+                "line": 1,
+                "character": 33
+              }
+            },
+            "severity": 1,
+            "source": "decl",
+            "code": "E4005",
+            "message": "derived member m restated with a differing value (at o.m)"
+          }
+        ],
+        "edit": {
+          "changes": {
+            "file://<ws>/main.decl": [
+              {
+                "range": {
+                  "start": {
+                    "line": 0,
+                    "character": 20
+                  },
+                  "end": {
+                    "line": 0,
+                    "character": 20
+                  }
+                },
+                "newText": "?"
+              }
+            ]
+          }
+        }
+      },
+      {
+        "title": "generate the fixture header (@expect-phase / @expect-error)",
+        "kind": "refactor.rewrite",
+        "edit": {
+          "changes": {
+            "file://<ws>/main.decl": [
+              {
+                "range": {
+                  "start": {
+                    "line": 0,
+                    "character": 0
+                  },
+                  "end": {
+                    "line": 0,
+                    "character": 0
+                  }
+                },
+                "newText": "// @expect-phase: checking\n// @expect-error: E4005\n"
+              }
+            ]
+          }
+        }
+      }
+    ]
+  ],
+  [
+    "shutdown",
+    null
+  ]
+]

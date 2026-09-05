@@ -1,0 +1,1 @@
+tests/golden/inputs/generics/bad_size.decl: error [E4001] at q: array size 2 outside 3..3

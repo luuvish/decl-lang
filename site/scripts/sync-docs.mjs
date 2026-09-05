@@ -59,7 +59,13 @@ for (const d of (existsSync(resolve(ROOT, 'examples')) ? readdirSync(resolve(ROO
   const entry = files.includes('main.decl') ? 'main.decl' : files.length === 1 ? files[0] : null;
   add(`examples/${d}`, `examples/${d}`, { domain: true, files, entry, title: domainTitles[d] ?? d, order: 10 });
 }
-const toolingTitles = { '01_cli': 'Command line', '02_repl': 'REPL', '03_lsp': 'Language server', '04_extension': 'Editor extensions' };
+const toolingTitles = {
+  '01_cli': 'Command line',
+  '02_repl': 'REPL',
+  '03_lsp': 'Language server',
+  '04_extension': 'Editor extensions',
+  '05_render': 'Renderer',
+};
 for (const f of list('docs/tooling', '.md')) add(`docs/tooling/${f}`, `tooling/${f.slice(0, -3)}`, { title: toolingTitles[f.slice(0, -3)] ?? f.slice(0, -3) });
 add('decl-ts/README.md', 'tooling/javascript', { title: 'JavaScript / npm' });
 add('decl-py/README.md', 'tooling/python', { title: 'Python / PyPI' });

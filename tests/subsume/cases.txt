@@ -1,7 +1,7 @@
 # The subsumption judgment (§3.17) and structural emptiness (§3.19), one
 # case per line, over the types of prelude.decl. Every implementation
-# runs these (decl-ts/test/subsume.ts, decl-rs/tests/e2e.rs,
-# decl-py/scripts/e2e.py): a side is a type written in the language.
+# runs these (decl-ts/tests/subsume_test.ts, decl-rs/tests/e2e.rs,
+# decl-py/tests/subsume_test.py): a side is a type written in the language.
 #
 #   yes    name :: A ⊑ B      A is subsumed by B
 #   no     name :: A ⊑ B      A is not subsumed by B

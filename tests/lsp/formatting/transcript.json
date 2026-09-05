@@ -1,0 +1,183 @@
+[
+  [
+    "initialize",
+    {
+      "capabilities": {
+        "textDocumentSync": 1,
+        "hoverProvider": true,
+        "definitionProvider": true,
+        "typeDefinitionProvider": true,
+        "referencesProvider": true,
+        "documentHighlightProvider": true,
+        "documentSymbolProvider": true,
+        "foldingRangeProvider": true,
+        "documentFormattingProvider": true,
+        "renameProvider": {
+          "prepareProvider": true
+        },
+        "completionProvider": {
+          "triggerCharacters": [
+            ".",
+            "$",
+            ":"
+          ]
+        },
+        "codeLensProvider": {
+          "resolveProvider": false
+        },
+        "signatureHelpProvider": {
+          "triggerCharacters": [
+            "(",
+            ","
+          ]
+        },
+        "workspaceSymbolProvider": true,
+        "selectionRangeProvider": true,
+        "semanticTokensProvider": {
+          "legend": {
+            "tokenTypes": [
+              "type",
+              "property",
+              "function",
+              "variable",
+              "namespace",
+              "parameter"
+            ],
+            "tokenModifiers": [
+              "declaration",
+              "required",
+              "optional",
+              "defaulted",
+              "derived",
+              "hidden",
+              "unresolved",
+              "readonly"
+            ]
+          },
+          "full": true
+        },
+        "inlayHintProvider": true,
+        "callHierarchyProvider": true,
+        "typeHierarchyProvider": true,
+        "codeActionProvider": {
+          "codeActionKinds": [
+            "quickfix",
+            "refactor.rewrite",
+            "refactor.extract",
+            "refactor.inline"
+          ]
+        },
+        "linkedEditingRangeProvider": true,
+        "documentOnTypeFormattingProvider": {
+          "firstTriggerCharacter": "\n",
+          "moreTriggerCharacter": [
+            "}",
+            "]",
+            ")"
+          ]
+        },
+        "executeCommandProvider": {
+          "commands": [
+            "decl.evaluate",
+            "decl.validate",
+            "decl.trace",
+            "decl.showSyntaxTree",
+            "decl.reloadWorkspace"
+          ]
+        }
+      },
+      "serverInfo": {
+        "name": "decl-lsp",
+        "version": "<version>"
+      }
+    }
+  ],
+  [
+    "diagnostics of the main text",
+    []
+  ],
+  [
+    "an unformatted text",
+    []
+  ],
+  [
+    "formatting",
+    [
+      {
+        "range": {
+          "start": {
+            "line": 0,
+            "character": 0
+          },
+          "end": {
+            "line": 2,
+            "character": 0
+          }
+        },
+        "newText": "const x = 1\nconst y = [s for s in [1, 2]]\n"
+      }
+    ]
+  ],
+  [
+    "a text to type in",
+    []
+  ],
+  [
+    "on-type formatting: a new line after an opening brace",
+    [
+      {
+        "range": {
+          "start": {
+            "line": 1,
+            "character": 0
+          },
+          "end": {
+            "line": 1,
+            "character": 0
+          }
+        },
+        "newText": "    "
+      }
+    ]
+  ],
+  [
+    "on-type formatting: a closing brace",
+    [
+      {
+        "range": {
+          "start": {
+            "line": 2,
+            "character": 0
+          },
+          "end": {
+            "line": 2,
+            "character": 4
+          }
+        },
+        "newText": ""
+      }
+    ]
+  ],
+  [
+    "on-type formatting: a continuation line",
+    [
+      {
+        "range": {
+          "start": {
+            "line": 4,
+            "character": 0
+          },
+          "end": {
+            "line": 4,
+            "character": 0
+          }
+        },
+        "newText": "    "
+      }
+    ]
+  ],
+  [
+    "shutdown",
+    null
+  ]
+]

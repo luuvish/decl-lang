@@ -1,0 +1,56 @@
+{
+  "steps": [
+    {
+      "label": "initialize",
+      "request": "initialize",
+      "params": {
+        "processId": null,
+        "rootUri": null,
+        "capabilities": {
+          "window": {
+            "workDoneProgress": true
+          }
+        }
+      }
+    },
+    {
+      "notify": "initialized",
+      "params": {}
+    },
+    {
+      "label": "the messages around the analysis of an opened document",
+      "open": "main.decl",
+      "text": "import { Service, MAX as LIMIT, cap, Level } from \"./lib.decl\"\nconst top = LIMIT\nexport output s: Service = { name: \"a\" }\nexport output t: Service = {\n    name: \"b\"\n}\nconst first = s.name\nconst c = cap(top)\nconst d = 250ms\ntype Local = Service { extra = name, level?: Level = \"low\" }\nconst m2 = std.math.min(top, 3)\n",
+      "observe": true
+    },
+    {
+      "respond": "window/workDoneProgress/create",
+      "result": null
+    },
+    {
+      "label": "after the client's response, hover is answered and nothing else arrives",
+      "request": "textDocument/hover",
+      "params": {
+        "textDocument": {
+          "uri": {
+            "$uri": "main.decl"
+          }
+        },
+        "position": {
+          "line": 2,
+          "character": 19
+        }
+      },
+      "between": true
+    },
+    {
+      "label": "shutdown",
+      "request": "shutdown",
+      "params": {}
+    },
+    {
+      "notify": "exit",
+      "params": {}
+    }
+  ]
+}

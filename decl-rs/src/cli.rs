@@ -13,7 +13,7 @@ use std::path::{Path, PathBuf};
 use std::rc::Rc;
 
 fn usage() -> i32 {
-    eprintln!("usage:\n  decl --version\n  decl check <file>... [--json]\n  decl evaluate <file> [--input name=doc.json]... [--output name[=file]]... [--json]\n  decl validate <dir>\n  decl validate <file> [--input name=doc.json]... [--expect-errors E1,E2] [--json]\n  decl fmt <file>... [--check]\n  decl repl [file.decl] [--input name=doc.json]... [--script session.txt | --script -] [--compact]");
+    eprintln!("usage:\n  decl --version\n  decl check <files...>\n  decl evaluate <file> [--input name=doc.json]... [--output name[=file]]...\n  decl validate <dir>\n  decl validate <file> [--input name=doc.json]... [--expect-errors E1,E2]\n  decl fmt <files...> [--check]\n  decl repl [file.decl] [--input name=doc.json]... [--script session.txt | --script -] [--compact]\n  (check / validate accept --json: diagnostics as a JSON array on stdout)");
     2
 }
 
@@ -412,6 +412,10 @@ pub fn main(args: Vec<String>) -> i32 {
             let Some(target) = pos.first() else {
                 return usage();
             };
+            if flags.get("expect-errors").map(String::as_str) == Some("true") {
+                eprintln!("--expect-errors expects a list of codes: E1,E2");
+                return 2;
+            }
             let tp = Path::new(target);
             if tp.is_dir() {
                 let abs = std::path::absolute(tp).unwrap_or_else(|_| tp.to_path_buf());

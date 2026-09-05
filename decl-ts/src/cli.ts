@@ -58,11 +58,12 @@ for (let i = 0; i < args.length; i++) {
 // the documents named by --input, each bound to the module that declares
 // its input (§10): `name=doc.json`. A usage error (bad spec, unknown input)
 // exits 2 at once; a document that cannot be read or is not well-formed
-// JSON is one E6004 diagnostic against the entry file (null: exit 1)
+// JSON is one E6004 diagnostic against the entry file, printed and
+// returned (exit 1 — and, for validate, an error code like any other)
 function inputBinds(
   modules: { env: any }[],
   entryFile: string,
-): { module?: any; input: string; raw: any }[] | null {
+): { module?: any; input: string; raw: any }[] | Diag {
   const binds: { module?: any; input: string; raw: any }[] = [];
   for (const spec of inputFlags) {
     const eq = spec.indexOf('=');
@@ -78,28 +79,21 @@ function inputBinds(
       process.exit(2);
     }
     let text: string;
+    const problem = (message: string): Diag => {
+      const d: Diag = { severity: 'error', code: 'E6004', message, path: name };
+      printDiag(entryFile, d);
+      return d;
+    };
     try {
       text = readFileSync(file, 'utf8');
     } catch {
-      printDiag(entryFile, {
-        severity: 'error',
-        code: 'E6004',
-        message: `bound document cannot be read: ${file}`,
-        path: name,
-      });
-      return null;
+      return problem(`bound document cannot be read: ${file}`);
     }
     let raw: any;
     try {
       raw = readJson(text);
     } catch {
-      printDiag(entryFile, {
-        severity: 'error',
-        code: 'E6004',
-        message: `bound document is not well-formed JSON: ${file}`,
-        path: name,
-      });
-      return null;
+      return problem(`bound document is not well-formed JSON: ${file}`);
     }
     binds.push({ module, input: name, raw });
   }
@@ -203,7 +197,7 @@ async function main(): Promise<number> {
         }
       if (bad) return 1;
       const binds = inputBinds(modules, f);
-      if (!binds) return 1;
+      if (!Array.isArray(binds)) return 1;
       const { eng, diags: ed } = runUniverse(modules, entry, binds);
       const errs = ed.filter((d) => d.severity === 'error');
       ed.forEach((d) => printDiag(f, d));
@@ -245,6 +239,10 @@ async function main(): Promise<number> {
     case 'validate': {
       const target = positional[0];
       if (!target) return usage();
+      if (flags.get('expect-errors') === true) {
+        console.error('--expect-errors expects a list of codes: E1,E2');
+        return 2;
+      }
       if (existsSync(target) && statSync(target).isDirectory()) {
         let ok = 0,
           fail = 0;
@@ -274,10 +272,11 @@ async function main(): Promise<number> {
         diags = checks;
         if (!checks.length) {
           const binds = inputBinds(modules, target);
-          if (!binds) return 1;
-          const { diags: ed } = runUniverse(modules, entry, binds);
-          diags = ed;
-          ed.forEach((d) => printDiag(target, d));
+          if (Array.isArray(binds)) {
+            const { diags: ed } = runUniverse(modules, entry, binds);
+            diags = ed;
+            ed.forEach((d) => printDiag(target, d));
+          } else diags = [binds];
         }
       }
       const expect = flags.get('expect-errors');
@@ -352,7 +351,8 @@ function usage(): number {
 }
 
 process.exitCode = await main();
-if (jsonMode) {
+// a usage error (exit 2) prints its line or the usage text, and no report
+if (jsonMode && process.exitCode !== 2) {
   console.log(
     cmd === 'evaluate'
       ? `{"ok":${process.exitCode === 0},"value":${evalOut ?? 'null'},"diagnostics":${JSON.stringify(collected)}}`

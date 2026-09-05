@@ -14,7 +14,7 @@ reference implementation. It ships the `decl` command-line tool, the
 involved.
 
 ```bash
-pip install decl-lang     # installs as decl-lang, imports as `decl` — the command's name and the module path (decl.runtime)
+pip install decl-lang     # installs as decl-lang, imports as `decl` — the command's name and the module path (decl)
 ```
 
 ## Command line

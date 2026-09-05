@@ -1,0 +1,134 @@
+[
+  [
+    "initialize",
+    {
+      "capabilities": {
+        "textDocumentSync": 1,
+        "hoverProvider": true,
+        "definitionProvider": true,
+        "typeDefinitionProvider": true,
+        "referencesProvider": true,
+        "documentHighlightProvider": true,
+        "documentSymbolProvider": true,
+        "foldingRangeProvider": true,
+        "documentFormattingProvider": true,
+        "renameProvider": {
+          "prepareProvider": true
+        },
+        "completionProvider": {
+          "triggerCharacters": [
+            ".",
+            "$",
+            ":"
+          ]
+        },
+        "codeLensProvider": {
+          "resolveProvider": false
+        },
+        "signatureHelpProvider": {
+          "triggerCharacters": [
+            "(",
+            ","
+          ]
+        },
+        "workspaceSymbolProvider": true,
+        "selectionRangeProvider": true,
+        "semanticTokensProvider": {
+          "legend": {
+            "tokenTypes": [
+              "type",
+              "property",
+              "function",
+              "variable",
+              "namespace",
+              "parameter"
+            ],
+            "tokenModifiers": [
+              "declaration",
+              "required",
+              "optional",
+              "defaulted",
+              "derived",
+              "hidden",
+              "unresolved",
+              "readonly"
+            ]
+          },
+          "full": true
+        },
+        "inlayHintProvider": true,
+        "callHierarchyProvider": true,
+        "typeHierarchyProvider": true,
+        "codeActionProvider": {
+          "codeActionKinds": [
+            "quickfix",
+            "refactor.rewrite",
+            "refactor.extract",
+            "refactor.inline"
+          ]
+        },
+        "linkedEditingRangeProvider": true,
+        "documentOnTypeFormattingProvider": {
+          "firstTriggerCharacter": "\n",
+          "moreTriggerCharacter": [
+            "}",
+            "]",
+            ")"
+          ]
+        },
+        "executeCommandProvider": {
+          "commands": [
+            "decl.evaluate",
+            "decl.validate",
+            "decl.trace",
+            "decl.showSyntaxTree",
+            "decl.reloadWorkspace"
+          ]
+        }
+      },
+      "serverInfo": {
+        "name": "decl-lsp",
+        "version": "<version>"
+      }
+    }
+  ],
+  [
+    "the messages around the analysis of an opened document",
+    {
+      "seen": [
+        [
+          "window/workDoneProgress/create",
+          "int",
+          null
+        ],
+        [
+          "$/progress",
+          null,
+          "begin"
+        ],
+        [
+          "$/progress",
+          null,
+          "end"
+        ],
+        [
+          "textDocument/publishDiagnostics",
+          null,
+          null
+        ]
+      ],
+      "create id is an integer": true
+    }
+  ],
+  [
+    "after the client's response, hover is answered and nothing else arrives",
+    {
+      "answered": true,
+      "between": []
+    }
+  ],
+  [
+    "shutdown",
+    null
+  ]
+]

@@ -1,0 +1,1 @@
+docs/examples/01_interconnect.decl: error [E6001] Edge.width_match at doc.edges[3]: edge endpoints disagree on width: 64 != 32

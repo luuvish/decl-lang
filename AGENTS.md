@@ -54,7 +54,7 @@ The three sit side by side at the top level, named by language
 not source. The three mirror one module layout; a language rule lives
 in the same-named file everywhere:
 
-| Concept | `decl-ts/src` | `decl-rs/src` | `decl-py/decl/runtime` |
+| Concept | `decl-ts/src` | `decl-rs/src` | `decl-py/src/decl` |
 |---|---|---|---|
 | AST | `ast.ts` | `ast.rs` | dict-shaped, built by `parse.py` |
 | CST → AST | `parse.ts` | `parse.rs` | `parse.py` |
@@ -117,6 +117,10 @@ implementation.
   and clippy for Rust; ruff and mypy for Python. `make lint` must be
   clean and `make format` leaves the tree unchanged before a commit; a
   rule is switched off only in the configuration file, with its reason.
+- **Tests**: one driver per corpus under each implementation's `tests/`,
+  named `<corpus>_test.<ext>`; shared helpers in `tests/common/`; the
+  internal checks of `tests/internal/checks.json` under
+  `tests/internal/<module>_test.<ext>`, one per source module
 - **Decl files**: 4-space indentation, no tabs, 100-char line width
 - **Test fixtures**: descriptive `snake_case` filenames under `valid/` and
   `invalid/` per feature; `invalid/` files carry `@expect-error` /

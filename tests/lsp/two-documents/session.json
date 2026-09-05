@@ -1,0 +1,130 @@
+{
+  "steps": [
+    {
+      "label": "initialize",
+      "request": "initialize",
+      "params": {
+        "processId": null,
+        "rootUri": null,
+        "capabilities": {}
+      }
+    },
+    {
+      "notify": "initialized",
+      "params": {}
+    },
+    {
+      "label": "diagnostics of the library",
+      "open": "lib.decl",
+      "text": "export type Service = { name: string, port: 1..65535 = 8080 }\nexport const MAX = 16\n"
+    },
+    {
+      "label": "diagnostics of the main text",
+      "open": "main.decl",
+      "text": "import { Service, MAX as LIMIT } from \"./lib.decl\"\nconst top = LIMIT\nexport output s: Service = { name: \"a\" }\n"
+    },
+    {
+      "label": "definition follows the import",
+      "request": "textDocument/definition",
+      "params": {
+        "textDocument": {
+          "uri": {
+            "$uri": "main.decl"
+          }
+        },
+        "position": {
+          "line": 2,
+          "character": 19
+        }
+      }
+    },
+    {
+      "label": "hover through the import",
+      "request": "textDocument/hover",
+      "params": {
+        "textDocument": {
+          "uri": {
+            "$uri": "main.decl"
+          }
+        },
+        "position": {
+          "line": 1,
+          "character": 13
+        }
+      }
+    },
+    {
+      "label": "decl.evaluate s",
+      "request": "workspace/executeCommand",
+      "params": {
+        "command": "decl.evaluate",
+        "arguments": [
+          {
+            "$uri": "main.decl"
+          },
+          "s"
+        ]
+      }
+    },
+    {
+      "label": "diagnostics of the edited library",
+      "change": "lib.decl",
+      "text": "export type Service = { name: string, port: 1..65535 = 9000 }\nexport const MAX = 16\n"
+    },
+    {
+      "label": "decl.evaluate s after the edit",
+      "request": "workspace/executeCommand",
+      "params": {
+        "command": "decl.evaluate",
+        "arguments": [
+          {
+            "$uri": "main.decl"
+          },
+          "s"
+        ]
+      }
+    },
+    {
+      "label": "hover after the edit",
+      "request": "textDocument/hover",
+      "params": {
+        "textDocument": {
+          "uri": {
+            "$uri": "lib.decl"
+          }
+        },
+        "position": {
+          "line": 0,
+          "character": 40
+        }
+      }
+    },
+    {
+      "label": "references of Service across the two",
+      "request": "textDocument/references",
+      "params": {
+        "textDocument": {
+          "uri": {
+            "$uri": "lib.decl"
+          }
+        },
+        "position": {
+          "line": 0,
+          "character": 14
+        },
+        "context": {
+          "includeDeclaration": true
+        }
+      }
+    },
+    {
+      "label": "shutdown",
+      "request": "shutdown",
+      "params": {}
+    },
+    {
+      "notify": "exit",
+      "params": {}
+    }
+  ]
+}

@@ -1,0 +1,237 @@
+[
+  [
+    "initialize",
+    {
+      "capabilities": {
+        "textDocumentSync": 1,
+        "hoverProvider": true,
+        "definitionProvider": true,
+        "typeDefinitionProvider": true,
+        "referencesProvider": true,
+        "documentHighlightProvider": true,
+        "documentSymbolProvider": true,
+        "foldingRangeProvider": true,
+        "documentFormattingProvider": true,
+        "renameProvider": {
+          "prepareProvider": true
+        },
+        "completionProvider": {
+          "triggerCharacters": [
+            ".",
+            "$",
+            ":"
+          ]
+        },
+        "codeLensProvider": {
+          "resolveProvider": false
+        },
+        "signatureHelpProvider": {
+          "triggerCharacters": [
+            "(",
+            ","
+          ]
+        },
+        "workspaceSymbolProvider": true,
+        "selectionRangeProvider": true,
+        "semanticTokensProvider": {
+          "legend": {
+            "tokenTypes": [
+              "type",
+              "property",
+              "function",
+              "variable",
+              "namespace",
+              "parameter"
+            ],
+            "tokenModifiers": [
+              "declaration",
+              "required",
+              "optional",
+              "defaulted",
+              "derived",
+              "hidden",
+              "unresolved",
+              "readonly"
+            ]
+          },
+          "full": true
+        },
+        "inlayHintProvider": true,
+        "callHierarchyProvider": true,
+        "typeHierarchyProvider": true,
+        "codeActionProvider": {
+          "codeActionKinds": [
+            "quickfix",
+            "refactor.rewrite",
+            "refactor.extract",
+            "refactor.inline"
+          ]
+        },
+        "linkedEditingRangeProvider": true,
+        "documentOnTypeFormattingProvider": {
+          "firstTriggerCharacter": "\n",
+          "moreTriggerCharacter": [
+            "}",
+            "]",
+            ")"
+          ]
+        },
+        "executeCommandProvider": {
+          "commands": [
+            "decl.evaluate",
+            "decl.validate",
+            "decl.trace",
+            "decl.showSyntaxTree",
+            "decl.reloadWorkspace"
+          ]
+        }
+      },
+      "serverInfo": {
+        "name": "decl-lsp",
+        "version": "<version>"
+      }
+    }
+  ],
+  [
+    "a syntax error",
+    [
+      {
+        "range": {
+          "start": {
+            "line": 0,
+            "character": 9
+          },
+          "end": {
+            "line": 0,
+            "character": 10
+          }
+        },
+        "severity": 1,
+        "source": "decl",
+        "code": "E2001",
+        "message": "syntax error"
+      }
+    ]
+  ],
+  [
+    "a checker error, anchored to the name",
+    [
+      {
+        "range": {
+          "start": {
+            "line": 0,
+            "character": 5
+          },
+          "end": {
+            "line": 0,
+            "character": 8
+          }
+        },
+        "severity": 1,
+        "source": "decl",
+        "code": "E4011",
+        "message": "empty range in Bad"
+      }
+    ]
+  ],
+  [
+    "a clean module with an import",
+    []
+  ],
+  [
+    "a duplicate declaration",
+    [
+      {
+        "range": {
+          "start": {
+            "line": 0,
+            "character": 6
+          },
+          "end": {
+            "line": 0,
+            "character": 9
+          }
+        },
+        "severity": 1,
+        "source": "decl",
+        "code": "E3001",
+        "message": "duplicate name dup in <ws>/main.decl"
+      }
+    ]
+  ],
+  [
+    "the main text",
+    []
+  ],
+  [
+    "an evaluation error",
+    [
+      {
+        "range": {
+          "start": {
+            "line": 11,
+            "character": 46
+          },
+          "end": {
+            "line": 11,
+            "character": 51
+          }
+        },
+        "severity": 1,
+        "source": "decl",
+        "code": "E4001",
+        "message": "out of range 1..65535 (at u.port)"
+      }
+    ]
+  ],
+  [
+    "a missing import",
+    [
+      {
+        "range": {
+          "start": {
+            "line": 0,
+            "character": 0
+          },
+          "end": {
+            "line": 0,
+            "character": 36
+          }
+        },
+        "severity": 1,
+        "source": "decl",
+        "code": "E3005",
+        "message": "<ws>/lib.decl does not export Nothing"
+      }
+    ]
+  ],
+  [
+    "an unformatted text",
+    []
+  ],
+  [
+    "while typing",
+    [
+      {
+        "range": {
+          "start": {
+            "line": 12,
+            "character": 6
+          },
+          "end": {
+            "line": 12,
+            "character": 7
+          }
+        },
+        "severity": 1,
+        "source": "decl",
+        "code": "E2001",
+        "message": "syntax error"
+      }
+    ]
+  ],
+  [
+    "shutdown",
+    null
+  ]
+]

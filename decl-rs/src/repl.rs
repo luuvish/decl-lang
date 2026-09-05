@@ -10,7 +10,7 @@ use crate::session::{
     SessionError,
 };
 use regex::Regex;
-use std::io::{BufRead, Read, Write};
+use std::io::{BufRead, IsTerminal, Read, Write};
 
 pub const COMMANDS: &[(&str, &str, &str)] = &[
     // the universe
@@ -898,6 +898,11 @@ pub fn run_repl(args: Vec<String>) -> i32 {
             eprintln!("--input expects name=doc.json, got {spec}");
             return 2;
         }
+    }
+
+    // without a terminal there is no line editor: standard input is the script (§9)
+    if script.is_none() && !std::io::stdin().is_terminal() {
+        script = Some("-".into());
     }
 
     let out: Box<dyn Fn(&str)> = Box::new(|l: &str| {

@@ -1,0 +1,17 @@
+// Dimension algebra (§3.16): a derived dimension and its unit, quantities
+// composed and cancelled, and a document in a derived unit (`km`)
+// normalized to the base unit when bound to `t`.
+
+dimension Speed = Length / Time
+unit mps: Speed
+
+type Trip = {
+    dist: quantity<Length>
+    dur: quantity<Time>
+    speed: quantity<Speed> = dist / dur
+    ratio = dist / 1km
+}
+
+export output trip: Trip = { dist: 3km, dur: 500ms }
+
+export input t: Trip

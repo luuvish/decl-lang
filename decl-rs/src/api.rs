@@ -4,7 +4,7 @@
 //! programs that would otherwise assemble parser, checker, and engine by
 //! hand (those modules are public too). The npm package and the Python
 //! package offer the same functions with the same semantics.
-use std::collections::BTreeMap;
+use indexmap::IndexMap;
 use std::fmt;
 use std::path::PathBuf;
 
@@ -143,7 +143,7 @@ fn bind_inputs(
 /// Evaluate a module: bind the input documents, run the pipeline, and return
 /// the requested roots' documents (canonical JSON text) by name. Fails with
 /// the diagnostics on any error-severity outcome.
-pub fn evaluate(path: &str, opts: &EvaluateOptions) -> Result<BTreeMap<String, String>, DeclError> {
+pub fn evaluate(path: &str, opts: &EvaluateOptions) -> Result<IndexMap<String, String>, DeclError> {
     let r = open_universe(path);
     let Some(entry) = r.entry.clone() else {
         return fail(
@@ -187,7 +187,7 @@ pub fn evaluate(path: &str, opts: &EvaluateOptions) -> Result<BTreeMap<String, S
     } else {
         opts.outputs.clone()
     };
-    let mut out = BTreeMap::new();
+    let mut out = IndexMap::new();
     for n in &names {
         let Some(v) = entry.env.root(n) else {
             return Err(DeclError {

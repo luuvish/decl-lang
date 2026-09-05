@@ -19,7 +19,7 @@ const places = [
   ['extension/zed/Cargo.toml', /(^version = ")([^"]+)(")/m],
   ['extension/zed/extension.toml', /(^version = ")([^"]+)(")/m],
   ['decl-py/pyproject.toml', /(^version = ")([^"]+)(")/m],
-  ['decl-py/decl/__init__.py', /(^__version__ = ")([^"]+)(")/m],
+  ['decl-py/src/decl/api.py', /(^__version__ = ")([^"]+)(")/m],
 ];
 const read = () =>
   places.map(([file, re]) => {

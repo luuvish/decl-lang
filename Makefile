@@ -73,11 +73,10 @@ format-typescript: node_modules
 # ---------------------------------------------------------------- Rust
 # the Cargo workspace at the root (decl-rs); extension/zed is outside it
 build-rust:
-	cargo build --locked --release
+	cargo build --locked --release --examples
 
 test-rust: build-rust
 	cargo test --locked --release
-	target/release/decl validate tests/validation
 
 lint-rust:
 	cargo fmt --all --check
@@ -99,14 +98,12 @@ python-env: build-typescript
 	cd decl-py && $(VPY) setup.py -q build_ext --inplace
 
 test-python: python-env
-	cd decl-py && $(VPY) scripts/e2e.py
-	$(VPY) -m decl.runtime validate tests/validation
 	cd decl-py && $(VPY) -m pytest -q
 
 lint-python: python-env
 	cd decl-py && $(VPY) -m ruff check .
 	cd decl-py && $(VPY) -m ruff format --check .
-	cd decl-py && $(VPY) -m mypy decl
+	cd decl-py && $(VPY) -m mypy src/decl
 
 format-python: python-env
 	cd decl-py && $(VPY) -m ruff format .
@@ -122,7 +119,7 @@ site: build-typescript
 
 # ---------------------------------------------------------------- cleaning
 clean:
-	rm -rf decl-ts/dist target extension/zed/target decl-py/build decl-py/decl/*.egg-info decl-py/decl/_tree_sitter/*.so site/dist
+	rm -rf decl-ts/dist target extension/zed/target decl-py/build decl-py/src/*.egg-info decl-py/src/decl/_tree_sitter/*.so site/dist
 
 distclean: clean
 	rm -rf node_modules $(VENV)

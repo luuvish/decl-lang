@@ -1,0 +1,71 @@
+{
+  "steps": [
+    {
+      "label": "initialize",
+      "request": "initialize",
+      "params": {
+        "processId": null,
+        "rootUri": null,
+        "capabilities": {}
+      }
+    },
+    {
+      "notify": "initialized",
+      "params": {}
+    },
+    {
+      "label": "a syntax error",
+      "open": "main.decl",
+      "text": "const x = \n"
+    },
+    {
+      "label": "a checker error, anchored to the name",
+      "change": "main.decl",
+      "text": "type Bad = 10..3\n"
+    },
+    {
+      "label": "a clean module with an import",
+      "change": "main.decl",
+      "text": "import { Service, MAX as LIMIT } from \"./lib.decl\"\nconst top = LIMIT\nexport output s: Service = { name: \"a\" }\n"
+    },
+    {
+      "label": "a duplicate declaration",
+      "change": "main.decl",
+      "text": "const dup = 1\nconst dup = 2\n"
+    },
+    {
+      "label": "the main text",
+      "change": "main.decl",
+      "text": "import { Service, MAX as LIMIT, cap, Level } from \"./lib.decl\"\nconst top = LIMIT\nexport output s: Service = { name: \"a\" }\nexport output t: Service = {\n    name: \"b\"\n}\nconst first = s.name\nconst c = cap(top)\nconst d = 250ms\ntype Local = Service { extra = name, level?: Level = \"low\" }\nconst m2 = std.math.min(top, 3)\n"
+    },
+    {
+      "label": "an evaluation error",
+      "change": "main.decl",
+      "text": "import { Service, MAX as LIMIT, cap, Level } from \"./lib.decl\"\nconst top = LIMIT\nexport output s: Service = { name: \"a\" }\nexport output t: Service = {\n    name: \"b\"\n}\nconst first = s.name\nconst c = cap(top)\nconst d = 250ms\ntype Local = Service { extra = name, level?: Level = \"low\" }\nconst m2 = std.math.min(top, 3)\nexport output u: Service = { name: \"c\", port: 70000 }\n"
+    },
+    {
+      "label": "a missing import",
+      "change": "main.decl",
+      "text": "import { Nothing } from \"./lib.decl\"\nconst z = 1\n"
+    },
+    {
+      "label": "an unformatted text",
+      "change": "main.decl",
+      "text": "const x=1\nconst y = [s for s in [1, 2]]\n"
+    },
+    {
+      "label": "while typing",
+      "change": "main.decl",
+      "text": "import { Service, MAX as LIMIT, cap, Level } from \"./lib.decl\"\nconst top = LIMIT\nexport output s: Service = { name: \"a\" }\nexport output t: Service = {\n    name: \"b\"\n}\nconst first = s.name\nconst c = cap(top)\nconst d = 250ms\ntype Local = Service { extra = name, level?: Level = \"low\" }\nconst m2 = std.math.min(top, 3)\nconst e = s.\nconst f = std.arr\n"
+    },
+    {
+      "label": "shutdown",
+      "request": "shutdown",
+      "params": {}
+    },
+    {
+      "notify": "exit",
+      "params": {}
+    }
+  ]
+}

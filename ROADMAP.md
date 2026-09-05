@@ -14,7 +14,7 @@ here, and nothing was migrated from earlier work.
 |---|---|
 | Methodology | **Spec-first with an evidence gate** — author the complete specification, then a throwaway minimal-evaluator spike (§0.6) must meet it before v0.1 is frozen; implementation proper begins only after the freeze. Post-freeze spec changes are recorded as revisions. |
 | Parser | **tree-sitter as the single canonical parser**, written against the spec's formal grammar chapter. The reference implementation consumes it through bindings. |
-| Reference implementation | **TypeScript first, Rust later** — type checker, evaluator, and CLI in TypeScript (BigInt aligns with arbitrary-precision integers; `Number::toString` with shortest round-trip float printing). A Rust runtime is considered only after the spec and implementation stabilize. *Done 2026-09-02:* native **Rust** (`decl-rs/`, crate `decl-lang`) and **Python** (`decl-py/decl/runtime`) implementations cover the whole language: parser binding, static checker, evaluator, modules and packages, the canonical formatter, and the `decl-lsp` server (the Python package needs no Node.js). The layout is parallel (`decl-ts/`, `decl-rs/`, `decl-py/`, same module names) and `make verify` — each implementation's tests, then `tests/parity/differential.py` — keeps the three byte-identical over every output-bearing example and fixture, plus document binding with root-cause diagnostics; CI runs it on every push. The three now cover the whole language (checker, formatter, LSP, and packages ported 2026-09-02) and share one module layout; the reference's platform-neutral core (`decl-lang/core`) is what the website's playground runs. |
+| Reference implementation | **TypeScript first, Rust later** — type checker, evaluator, and CLI in TypeScript (BigInt aligns with arbitrary-precision integers; `Number::toString` with shortest round-trip float printing). A Rust runtime is considered only after the spec and implementation stabilize. *Done 2026-09-02:* native **Rust** (`decl-rs/`, crate `decl-lang`) and **Python** (`decl-py/src/decl`) implementations cover the whole language: parser binding, static checker, evaluator, modules and packages, the canonical formatter, and the `decl-lsp` server (the Python package needs no Node.js). The layout is parallel (`decl-ts/`, `decl-rs/`, `decl-py/`, same module names) and `make verify` — each implementation's tests, then `tests/parity/differential.py` — keeps the three byte-identical over every output-bearing example and fixture, plus document binding with root-cause diagnostics; CI runs it on every push. The three now cover the whole language (checker, formatter, LSP, and packages ported 2026-09-02) and share one module layout; the reference's platform-neutral core (`decl-lang/core`) is what the website's playground runs. |
 
 ## Phase overview
 
@@ -27,6 +27,10 @@ here, and nothing was migrated from earlier work.
 | 4 | CLI & tooling | `decl` CLI, formatter, minimal LSP | **done — 2026-09-01** (check/evaluate/validate/fmt; formatter idempotent + AST-safe over the corpus; stdio LSP with diagnostics/hover/definition) |
 | 5 | Real-world validation & feedback + v0.2 cycle | 3 domain examples, v0.2 revisions adjudicated | **done — 2026-09-01** (three domain examples under `examples/`: service graph, fixture generation, and a synthetic network fabric with scale + corruption probes; the full proprietary fixture corpus — 178 documents incl. the complete real set — additionally validated locally, artifacts kept out of the repo by security policy; v0.2 candidates adjudicated 2026-09-01 → revisions v0.1.4–v0.1.8, **v0.2 declared**) |
 | 6 | REPL, language server & editors | `decl repl`, `decl-lsp` v2/v3, `vscode-decl`, `zed-decl` | **delivered — 2026-09-05**; v0.3.0 released 2026-09-05 |
+| 7 | Conformance depth | the corpora cover every surface: the command line, an API corpus, a language-server corpus, the goldens | **done — 2026-09-05** |
+| 8 | Crate documentation | rustdoc on docs.rs; the Python and JavaScript API docs to the same bar | planned |
+| 9 | Website | design, content, playground | planned |
+| 10 | Renderer | `--format yaml`, `decl render` with a template dialect | planned |
 
 ---
 
@@ -227,6 +231,87 @@ identical bytes from the three implementations · the reference scratch
 explored end to end in the REPL · both extensions published, the VS Code
 tests green against the three servers · manual smoke in VS Code, Zed,
 Neovim, and Helix.
+
+---
+
+## Phase 7 — Conformance depth
+
+- Every surface of the three implementations held together by shared
+  data under `tests/` ([tests/README.md](tests/README.md)): the command
+  line's whole surface in the harness, the goldens grown to what the
+  reference's private suites checked, an API corpus (`tests/api/`), a
+  language-server corpus (`tests/lsp/`), the reference's private suites
+  reduced to corpus drivers
+
+Delivered (2026-09-05). Opening the phase found the command line's
+usage paths outside the harness and divergent — the Rust usage text,
+the reference's `--expect-errors` after a document that cannot be read
+and its `--json` report on a usage error, a valueless `--expect-errors`
+read as a code by Rust, a piped session without `--script` printed three
+ways, the Rust API's roots in alphabetical order, an unreadable file
+raised as a bare exception by the reference's and Python's `validate` —
+each fixed in the implementation that diverged, with the row that
+catches it. The goldens grew from 16 to 29 entries (round trips,
+corrupted documents, the guide, `match`, generics, dimension algebra),
+the harness gained the surface rows and a generated 10×20 site, and the
+API and language-server corpora (25 cases; 11 sessions, 153 answers)
+replaced the private suites and the hand-ported sessions. Then the
+four hand-written areas left — the formatter's cases, the command
+line's scenarios, the package and lock scenarios, the REPL's file and
+clock commands — became corpora too (`tests/fmt/`, `tests/cli/`,
+`tests/packages/cases.json`, `tests/repl/files/`), and the three suites
+now mirror each other file for file, one driver per corpus, under one
+layout (`tests/<corpus>_test.<ext>`, sources under `src/` in the three;
+`tests/README.md`). Beneath the corpora, an internal layer: the checks
+of `tests/internal/checks.json` — invariants no tool surface observes,
+and one check per module boundary — carried by each suite under
+`tests/internal/`, the harness holding the three to the same list.
+
+**Exit criteria**: `make verify` green over the grown corpora · each
+implementation's suite drives every corpus · no behavioral test lives in
+one language outside a corpus, except for a surface one language has ·
+every divergence found is fixed in the implementation that diverged,
+with the row that catches it.
+
+---
+
+## Phase 8 — Crate documentation
+
+- `decl-lang` on docs.rs: the crate page, every public item, the README
+  as doctests, `missing_docs` in the gate; the Python and JavaScript
+  APIs to the same bar — [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md) §5
+
+**Exit criteria**: `cargo doc` clean with `missing_docs` on · the README
+examples run as doctests · the package pages of the website agree with
+the generated documentation.
+
+---
+
+## Phase 9 — Website
+
+- Design: a theme of its own (palette, type, logo, social image), a
+  landing page that runs the language, light and dark
+- Content: "why Decl" against CUE, Pkl, jsonnet, Nickel, and JSON
+  Schema; tutorials after the guide; the tools shown; the standard
+  library as a browsable reference; the stale version notes
+- Playground: an example picker, bound input documents, shareable URLs,
+  diagnostics in place — [site/README.md](site/README.md)
+
+**Exit criteria**: every ```decl block on the site evaluates clean · the
+playground runs every example · the site builds from `docs/` as before.
+
+---
+
+## Phase 10 — Renderer
+
+- `decl evaluate --format yaml` and `decl render` with a template
+  dialect implemented three times, as tooling (§10.6 unchanged) —
+  [docs/tooling/05_render.md](docs/tooling/05_render.md); released as
+  v0.4.0
+
+**Exit criteria**: every renderer row of the harness identical across
+the three · every construct and filter of the dialect documented, each
+with a corpus case.
 
 ---
 

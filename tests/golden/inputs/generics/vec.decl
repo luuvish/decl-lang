@@ -1,0 +1,8 @@
+// Generic instantiation (§3.15): a sized array alias and a bounded record
+// with a derived count; `bad_size.decl` beside it violates the size.
+
+type Vec<T, N: int> = T[N]
+type Bounded<T, N: 1..1024> = { items: T[0..N], count = std.array.count(items) }
+
+export output q: Vec<int, 3> = [1, 2, 3]
+export output b: Bounded<string, 4> = { items: ["a", "b"] }

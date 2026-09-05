@@ -488,6 +488,8 @@ export async function runRepl(args: string[]): Promise<number> {
       return 2;
     }
 
+  // without a terminal there is no line editor: standard input is the script (§9)
+  if (script === undefined && !process.stdin.isTTY) script = '-';
   const lines: string[] = [];
   const out = (l: string) => {
     process.stdout.write(l + '\n');

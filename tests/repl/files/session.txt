@@ -1,0 +1,17 @@
+:bind deployed=doc.json
+y = deployed.port + 1
+:update deployed.port = 9100
+deployed.port
+:save deployed=saved.json
+:write scratch.decl
+:history log.txt
+:time
+site.port
+:reload
+site.port
+:undo
+site.port
+:redo
+site.port
+:load main.decl
+:history

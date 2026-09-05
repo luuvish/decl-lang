@@ -25,7 +25,7 @@ byte-identical to the reference by `tests/parity/differential.py`
 
 ## PyPI — `decl-lang`
 
-`decl-py/` is a fully native Python implementation: `decl.runtime` is
+`decl-py/` is a fully native Python implementation: `decl` is
 a pure-Python port of the whole language (checker, evaluator, packages,
 formatter, language server) behind the console scripts `decl` /
 `decl-lsp` and the API (`decl.check` / `decl.evaluate` /
@@ -34,7 +34,7 @@ compiles the grammar's C sources into a small extension module. No
 Node.js is involved. Node comes from `$DECL_NODE`, the optional
 `nodejs-wheel-binaries` dependency (`pip install 'decl-lang[node]'`), or
 `npm run build` in `decl-ts/` copies the grammar sources into
-`decl-py/decl/_tree_sitter/src/` (gitignored; `setup.py` copies them
+`decl-py/src/decl/_tree_sitter/src/` (gitignored; `setup.py` copies them
 itself from a fresh checkout).
 
 ```bash

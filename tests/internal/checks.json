@@ -1,0 +1,107 @@
+[
+  {
+    "module": "parse",
+    "name": "const_binary",
+    "check": "`const x = 1 + 2` parses to a const declaration named x whose expression is a binary `+` of the integer literals 1 and 2, with no parse error"
+  },
+  {
+    "module": "parse",
+    "name": "member_kinds",
+    "check": "`type T = { a: int, b?: int, c?: int = 1, d = 2, e$ = 3 }` yields the five member kinds in order: required, optional, defaulted, derived, hidden (D4, D34), the hidden member named `e$`"
+  },
+  {
+    "module": "parse",
+    "name": "decl_locs",
+    "check": "every declaration of a three-declaration module carries a source range whose first line is the line it is written on"
+  },
+  {
+    "module": "parse",
+    "name": "json_documents",
+    "check": "the document reader keeps an object's key order, reads an array of an integer, a float, a string, true, and null, keeps an integer beyond 2^53 exactly, and refuses trailing characters"
+  },
+  {
+    "module": "semantics",
+    "name": "resolve_types",
+    "check": "with `type A = int`, `type Vec<T, N: int> = T[N]`, `type V3 = Vec<int, 3>`, `type Small = 1..10` loaded, the names resolve to the types spelled `int`, `int[3..3]`, and `1..10`"
+  },
+  {
+    "module": "semantics",
+    "name": "number_text",
+    "check": "the number text the implementation relies on is JavaScript's: 1 → 1, 100 → 100, 2.5 → 2.5, 0.1+0.2 → 0.30000000000000004, 1e21 → 1e+21, 1e-7 → 1e-7, 123456789.125 → 123456789.125"
+  },
+  {
+    "module": "semantics",
+    "name": "json_string",
+    "check": "the JSON string writer escapes a quote, a backslash, a newline, a tab, and U+0001 (as \\u0001), and keeps é as is"
+  },
+  {
+    "module": "semantics",
+    "name": "paths",
+    "check": "`$.a.b[0][\"k\"]` parsed against the root r prints as `r.a.b[0][\"k\"]` and, relative to r, as `$.a.b[0][\"k\"]`; `$.a.b` < `$.a.c`, `$.a[1]` < `$.a[2]`, `$.a` < `$.a.b` in the canonical order"
+  },
+  {
+    "module": "semantics",
+    "name": "diag_order",
+    "check": "diagnostics sort by their path in the canonical order — the empty path first, at one depth an index segment before a name segment, indices by number — and, on the same path, by their id"
+  },
+  {
+    "module": "infer",
+    "name": "expressions",
+    "check": "with `type Small = 1..10`, `const a: Small = 1`, `const b: Small = 2` loaded, inference spells 1 as `1`, 1.5 as `1.5`, \"s\" as `\"s\"`, true as `true`, null as `null`, 1km as `quantity<Length>`, [1, 2] as `(1 | 2)[]`, and a + b as `2..20` (D31)"
+  },
+  {
+    "module": "checker",
+    "name": "anchored",
+    "check": "`const x = y` reports E3003 carrying the source range of `y` (line 0, columns 10 to 11); `type Bad = 10..3` reports exactly one E4011 without a range (a declaration-level finding, which the server anchors by its message); `type T = { a: int }` with `export output t: T = { a: 1 }` reports nothing"
+  },
+  {
+    "module": "engine",
+    "name": "values",
+    "check": "`3km / 2s` under `dimension Speed = Length / Time`, `unit mps: Speed` evaluates to a quantity of dimension Length*Time^-1 and value 1500; a record's references serialize document-relative (`$.services[0]`) and `$referrers` lists the referring links (`$.links[0]`)"
+  },
+  {
+    "module": "engine",
+    "name": "cycle",
+    "check": "`type T = { a = b, b = a }` with an output of T reports the dependency cycle as E5007"
+  },
+  {
+    "module": "module",
+    "name": "graph",
+    "check": "loading tests/modules/basic/main.decl yields three modules, the entry named main.decl, and no diagnostic"
+  },
+  {
+    "module": "module",
+    "name": "errors",
+    "check": "loading the module corpus's error cases reports the import cycle as E3007, an unexported name as E3005, an import collision as E3006, a root declared twice as E3018, and a missing module as E3004"
+  },
+  {
+    "module": "package",
+    "name": "manifest",
+    "check": "a manifest with name, version, and one exact pin parses to those fields and no report; an unknown field reports E3011 and a range pin E3012 (fail-closed, D28)"
+  },
+  {
+    "module": "package",
+    "name": "hash",
+    "check": "the hash of tests/packages/app/decl_modules/corelib is the one in tests/packages/lock/decl.lock, the same on a second call, and different for a copy with one file appended to"
+  },
+  {
+    "module": "fmt",
+    "name": "structure",
+    "check": "formatting keeps a line comment, a trailing comment, and the author's line break inside an array literal (§2.9): those texts format to themselves"
+  },
+  {
+    "module": "conformance",
+    "name": "judge",
+    "check": "walking tests/modules lists its eleven .decl files sorted; a valid fixture is judged ok; an invalid fixture judged as valid fails with the code in the detail and judged as invalid passes"
+  },
+  {
+    "module": "pipeline",
+    "name": "report",
+    "check": "evaluating source text reports the phase that decided: a parse error → parse, not ok; a checker error → check, not ok, with the code; a clean module → evaluate, ok, with every output's canonical JSON and the declared inputs"
+  },
+  {
+    "module": "session",
+    "name": "undo_redo",
+    "check": "over tests/repl/documents/main.decl, binding an inline document to `extra` makes its text available; undo removes it (the root is invalid), redo restores it; a new operation after undo discards what was undone, so redo then steps nothing"
+  }
+]

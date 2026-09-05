@@ -1,0 +1,403 @@
+{
+  "steps": [
+    {
+      "label": "initialize",
+      "request": "initialize",
+      "params": {
+        "processId": null,
+        "rootUri": null,
+        "capabilities": {}
+      }
+    },
+    {
+      "notify": "initialized",
+      "params": {}
+    },
+    {
+      "label": "diagnostics of the main text",
+      "open": "main.decl",
+      "text": "import { Service, MAX as LIMIT, cap, Level } from \"./lib.decl\"\nconst top = LIMIT\nexport output s: Service = { name: \"a\" }\nexport output t: Service = {\n    name: \"b\"\n}\nconst first = s.name\nconst c = cap(top)\nconst d = 250ms\ntype Local = Service { extra = name, level?: Level = \"low\" }\nconst m2 = std.math.min(top, 3)\n"
+    },
+    {
+      "label": "code action: annotate a derived member",
+      "request": "textDocument/codeAction",
+      "params": {
+        "textDocument": {
+          "uri": {
+            "$uri": "main.decl"
+          }
+        },
+        "range": {
+          "start": {
+            "line": 9,
+            "character": 24
+          },
+          "end": {
+            "line": 9,
+            "character": 24
+          }
+        },
+        "context": {
+          "diagnostics": []
+        }
+      }
+    },
+    {
+      "label": "diagnostics of an unknown name",
+      "change": "main.decl",
+      "text": "const z = cap(1)\n"
+    },
+    {
+      "label": "code action: import the unknown name",
+      "request": "textDocument/codeAction",
+      "params": {
+        "textDocument": {
+          "uri": {
+            "$uri": "main.decl"
+          }
+        },
+        "range": {
+          "start": {
+            "line": 0,
+            "character": 10
+          },
+          "end": {
+            "line": 0,
+            "character": 13
+          }
+        },
+        "context": {
+          "diagnostics": {
+            "$diagnostics": "main.decl"
+          }
+        }
+      }
+    },
+    {
+      "label": "diagnostics of a missing member",
+      "change": "main.decl",
+      "text": "import { Service, MAX as LIMIT, cap, Level } from \"./lib.decl\"\nconst top = LIMIT\nexport output s: Service = { name: \"a\" }\nexport output t: Service = {\n    name: \"b\"\n}\nconst first = s.name\nconst c = cap(top)\nconst d = 250ms\ntype Local = Service { extra = name, level?: Level = \"low\" }\nconst m2 = std.math.min(top, 3)\nexport output u: Service = { }\n"
+    },
+    {
+      "label": "code action: add the missing member",
+      "request": "textDocument/codeAction",
+      "params": {
+        "textDocument": {
+          "uri": {
+            "$uri": "main.decl"
+          }
+        },
+        "range": {
+          "start": {
+            "line": 11,
+            "character": 27
+          },
+          "end": {
+            "line": 11,
+            "character": 30
+          }
+        },
+        "context": {
+          "diagnostics": {
+            "$diagnostics": "main.decl"
+          }
+        }
+      }
+    },
+    {
+      "label": "diagnostics of the actions text",
+      "change": "main.decl",
+      "text": "import { Service, MAX as LIMIT } from \"./lib.decl\"\nimport * as lib from \"./lib.decl\"\ntype Pair = {\n    a: int,\n    r: string,\n    b?: int,\n    s?: Service,\n    c = a + 1,\n    d$ = a * 2,\n    e?: int = 3\n}\nconst xs = [x * 2 for x in [1, 2] if x > 0]\nconst f = (y) => y + 1\nexport output p: Pair = { a: 1, r: \"x\", zz: true }\nconst cmp = LIMIT < 3\nconst k = cap(1)\nconst q1 = p.s.name\nconst q2 = p.b + 1\nconst mixed = true && null ?? false\n"
+    },
+    {
+      "label": "code actions at derived member c",
+      "request": "textDocument/codeAction",
+      "params": {
+        "textDocument": {
+          "uri": {
+            "$uri": "main.decl"
+          }
+        },
+        "range": {
+          "$at": "c = a + 1"
+        },
+        "context": {
+          "diagnostics": {
+            "$diagnostics": "main.decl"
+          }
+        }
+      }
+    },
+    {
+      "label": "code actions at hidden member d$",
+      "request": "textDocument/codeAction",
+      "params": {
+        "textDocument": {
+          "uri": {
+            "$uri": "main.decl"
+          }
+        },
+        "range": {
+          "$at": "d$ = a * 2"
+        },
+        "context": {
+          "diagnostics": {
+            "$diagnostics": "main.decl"
+          }
+        }
+      }
+    },
+    {
+      "label": "code actions at optional member b",
+      "request": "textDocument/codeAction",
+      "params": {
+        "textDocument": {
+          "uri": {
+            "$uri": "main.decl"
+          }
+        },
+        "range": {
+          "$at": "b?: int"
+        },
+        "context": {
+          "diagnostics": {
+            "$diagnostics": "main.decl"
+          }
+        }
+      }
+    },
+    {
+      "label": "code actions at required member a",
+      "request": "textDocument/codeAction",
+      "params": {
+        "textDocument": {
+          "uri": {
+            "$uri": "main.decl"
+          }
+        },
+        "range": {
+          "$at": "a: int"
+        },
+        "context": {
+          "diagnostics": {
+            "$diagnostics": "main.decl"
+          }
+        }
+      }
+    },
+    {
+      "label": "code actions at defaulted member e",
+      "request": "textDocument/codeAction",
+      "params": {
+        "textDocument": {
+          "uri": {
+            "$uri": "main.decl"
+          }
+        },
+        "range": {
+          "$at": "e?: int = 3"
+        },
+        "context": {
+          "diagnostics": {
+            "$diagnostics": "main.decl"
+          }
+        }
+      }
+    },
+    {
+      "label": "code actions at the type Pair",
+      "request": "textDocument/codeAction",
+      "params": {
+        "textDocument": {
+          "uri": {
+            "$uri": "main.decl"
+          }
+        },
+        "range": {
+          "$at": "type Pair"
+        },
+        "context": {
+          "diagnostics": {
+            "$diagnostics": "main.decl"
+          }
+        }
+      }
+    },
+    {
+      "label": "code actions at the comparison",
+      "request": "textDocument/codeAction",
+      "params": {
+        "textDocument": {
+          "uri": {
+            "$uri": "main.decl"
+          }
+        },
+        "range": {
+          "$at": "LIMIT < 3"
+        },
+        "context": {
+          "diagnostics": {
+            "$diagnostics": "main.decl"
+          }
+        }
+      }
+    },
+    {
+      "label": "code actions at the unknown name cap",
+      "request": "textDocument/codeAction",
+      "params": {
+        "textDocument": {
+          "uri": {
+            "$uri": "main.decl"
+          }
+        },
+        "range": {
+          "$at": "cap(1)"
+        },
+        "context": {
+          "diagnostics": {
+            "$diagnostics": "main.decl"
+          }
+        }
+      }
+    },
+    {
+      "label": "code actions at the undeclared member zz",
+      "request": "textDocument/codeAction",
+      "params": {
+        "textDocument": {
+          "uri": {
+            "$uri": "main.decl"
+          }
+        },
+        "range": {
+          "$at": "zz: true"
+        },
+        "context": {
+          "diagnostics": {
+            "$diagnostics": "main.decl"
+          }
+        }
+      }
+    },
+    {
+      "label": "code actions at the maybe-absent access",
+      "request": "textDocument/codeAction",
+      "params": {
+        "textDocument": {
+          "uri": {
+            "$uri": "main.decl"
+          }
+        },
+        "range": {
+          "$at": "p.s.name"
+        },
+        "context": {
+          "diagnostics": {
+            "$diagnostics": "main.decl"
+          }
+        }
+      }
+    },
+    {
+      "label": "code actions at the maybe-absent operand",
+      "request": "textDocument/codeAction",
+      "params": {
+        "textDocument": {
+          "uri": {
+            "$uri": "main.decl"
+          }
+        },
+        "range": {
+          "$at": "p.b + 1"
+        },
+        "context": {
+          "diagnostics": {
+            "$diagnostics": "main.decl"
+          }
+        }
+      }
+    },
+    {
+      "label": "code actions at the mixed ?? expression",
+      "request": "textDocument/codeAction",
+      "params": {
+        "textDocument": {
+          "uri": {
+            "$uri": "main.decl"
+          }
+        },
+        "range": {
+          "$at": "true && null"
+        },
+        "context": {
+          "diagnostics": {
+            "$diagnostics": "main.decl"
+          }
+        }
+      }
+    },
+    {
+      "label": "code actions on a selected constant expression",
+      "request": "textDocument/codeAction",
+      "params": {
+        "textDocument": {
+          "uri": {
+            "$uri": "main.decl"
+          }
+        },
+        "range": {
+          "$span": "[1, 2]"
+        },
+        "context": {
+          "diagnostics": []
+        }
+      }
+    },
+    {
+      "label": "code actions on a selected member expression",
+      "request": "textDocument/codeAction",
+      "params": {
+        "textDocument": {
+          "uri": {
+            "$uri": "main.decl"
+          }
+        },
+        "range": {
+          "$span": "a + 1"
+        },
+        "context": {
+          "diagnostics": []
+        }
+      }
+    },
+    {
+      "label": "code actions in the literal (fill)",
+      "request": "textDocument/codeAction",
+      "params": {
+        "textDocument": {
+          "uri": {
+            "$uri": "main.decl"
+          }
+        },
+        "range": {
+          "$at": "a: 1"
+        },
+        "context": {
+          "diagnostics": {
+            "$diagnostics": "main.decl"
+          }
+        }
+      }
+    },
+    {
+      "label": "shutdown",
+      "request": "shutdown",
+      "params": {}
+    },
+    {
+      "notify": "exit",
+      "params": {}
+    }
+  ]
+}

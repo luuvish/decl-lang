@@ -1,0 +1,164 @@
+{
+  "steps": [
+    {
+      "label": "initialize",
+      "request": "initialize",
+      "params": {
+        "processId": null,
+        "rootUri": null,
+        "capabilities": {}
+      }
+    },
+    {
+      "notify": "initialized",
+      "params": {}
+    },
+    {
+      "label": "diagnostics of the main text",
+      "open": "main.decl",
+      "text": "import { Service, MAX as LIMIT, cap, Level } from \"./lib.decl\"\nconst top = LIMIT\nexport output s: Service = { name: \"a\" }\nexport output t: Service = {\n    name: \"b\"\n}\nconst first = s.name\nconst c = cap(top)\nconst d = 250ms\ntype Local = Service { extra = name, level?: Level = \"low\" }\nconst m2 = std.math.min(top, 3)\n"
+    },
+    {
+      "label": "inlay hints",
+      "request": "textDocument/inlayHint",
+      "params": {
+        "textDocument": {
+          "uri": {
+            "$uri": "main.decl"
+          }
+        },
+        "range": {
+          "start": {
+            "line": 0,
+            "character": 0
+          },
+          "end": {
+            "line": 20,
+            "character": 0
+          }
+        }
+      }
+    },
+    {
+      "config": {
+        "decl": {
+          "inlayHints": {
+            "values": true
+          }
+        }
+      }
+    },
+    {
+      "label": "inlay hints with values",
+      "request": "textDocument/inlayHint",
+      "params": {
+        "textDocument": {
+          "uri": {
+            "$uri": "main.decl"
+          }
+        },
+        "range": {
+          "start": {
+            "line": 0,
+            "character": 0
+          },
+          "end": {
+            "line": 30,
+            "character": 0
+          }
+        }
+      }
+    },
+    {
+      "config": {
+        "decl": {
+          "inlayHints": {
+            "values": false
+          }
+        }
+      }
+    },
+    {
+      "label": "code lenses",
+      "request": "textDocument/codeLens",
+      "params": {
+        "textDocument": {
+          "uri": {
+            "$uri": "main.decl"
+          }
+        }
+      }
+    },
+    {
+      "label": "decl.evaluate s",
+      "request": "workspace/executeCommand",
+      "params": {
+        "command": "decl.evaluate",
+        "arguments": [
+          {
+            "$uri": "main.decl"
+          },
+          "s"
+        ]
+      }
+    },
+    {
+      "label": "decl.evaluate all",
+      "request": "workspace/executeCommand",
+      "params": {
+        "command": "decl.evaluate",
+        "arguments": [
+          {
+            "$uri": "main.decl"
+          }
+        ]
+      }
+    },
+    {
+      "label": "decl.validate",
+      "request": "workspace/executeCommand",
+      "params": {
+        "command": "decl.validate",
+        "arguments": [
+          {
+            "$uri": "main.decl"
+          }
+        ]
+      }
+    },
+    {
+      "label": "decl.trace",
+      "request": "workspace/executeCommand",
+      "params": {
+        "command": "decl.trace",
+        "arguments": [
+          {
+            "$uri": "main.decl"
+          },
+          "s.port"
+        ]
+      }
+    },
+    {
+      "label": "decl.showSyntaxTree",
+      "request": "workspace/executeCommand",
+      "params": {
+        "command": "decl.showSyntaxTree",
+        "arguments": [
+          {
+            "$uri": "main.decl"
+          }
+        ]
+      }
+    },
+    {
+      "label": "shutdown",
+      "request": "shutdown",
+      "params": {}
+    },
+    {
+      "notify": "exit",
+      "params": {}
+    }
+  ]
+}

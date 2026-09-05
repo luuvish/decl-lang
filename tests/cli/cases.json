@@ -1,0 +1,398 @@
+[
+  {
+    "name": "--version prints the version",
+    "args": [
+      "--version"
+    ],
+    "exit": 0,
+    "stdout": "decl <version>\n",
+    "stderr": ""
+  },
+  {
+    "name": "decl-lsp --version prints the same version",
+    "program": "decl-lsp",
+    "args": [
+      "--version"
+    ],
+    "exit": 0,
+    "stdout": "decl-lsp <version>\n",
+    "stderr": ""
+  },
+  {
+    "name": "usage: no arguments",
+    "args": [],
+    "exit": 2,
+    "stdout": "",
+    "stderr": "usage:\n  decl --version\n  decl check <files...>\n  decl evaluate <file> [--input name=doc.json]... [--output name[=file]]...\n  decl validate <dir>\n  decl validate <file> [--input name=doc.json]... [--expect-errors E1,E2]\n  decl fmt <files...> [--check]\n  decl repl [file.decl] [--input name=doc.json]... [--script session.txt | --script -] [--compact]\n  (check / validate accept --json: diagnostics as a JSON array on stdout)\n"
+  },
+  {
+    "name": "check: a valid file",
+    "args": [
+      "check",
+      "tests/validation/types/valid/predicates.decl"
+    ],
+    "exit": 0,
+    "stdout": "",
+    "stderr": "ok: 1 entry file(s) check clean\n"
+  },
+  {
+    "name": "check: an invalid file reports the code",
+    "args": [
+      "check",
+      "tests/validation/types/invalid/empty_range.decl"
+    ],
+    "exit": 1,
+    "stdout": "",
+    "stderr": "tests/validation/types/invalid/empty_range.decl: error [E4011]: empty range in Bad\n"
+  },
+  {
+    "name": "check: a module universe",
+    "args": [
+      "check",
+      "tests/modules/basic/main.decl"
+    ],
+    "exit": 0,
+    "stdout": "",
+    "stderr": "ok: 1 entry file(s) check clean\n"
+  },
+  {
+    "name": "evaluate: canonical JSON of one output",
+    "files": {
+      "demo.decl": "type T = { a: int, b = a * 2 }\nexport output demo: T = { a: 21 }\n"
+    },
+    "args": [
+      "evaluate",
+      "<dir>/demo.decl",
+      "--output",
+      "demo"
+    ],
+    "exit": 0,
+    "stdout": "{\"a\":21,\"b\":42}\n",
+    "stderr": ""
+  },
+  {
+    "name": "evaluate: the entry module's exported outputs",
+    "args": [
+      "evaluate",
+      "tests/modules/basic/main.decl"
+    ],
+    "exit": 0,
+    "stdout": "{\"net\":{\"services\":[{\"name\":\"a\",\"port\":8080,\"endpoint\":\"a:8080\"},{\"name\":\"b\",\"port\":9000,\"endpoint\":\"b:9000\"}],\"n\":2},\"first\":{\"name\":\"solo\",\"port\":8080,\"endpoint\":\"solo:8080\"},\"capped\":16,\"vel\":{\"value\":3.0,\"unit\":\"mps\"},\"limit_used\":15}\n",
+    "stderr": ""
+  },
+  {
+    "name": "evaluate: --output name=file writes the document",
+    "files": {
+      "demo.decl": "type T = { a: int, b = a * 2 }\nexport output demo: T = { a: 21 }\n"
+    },
+    "args": [
+      "evaluate",
+      "<dir>/demo.decl",
+      "--output",
+      "demo=<dir>/demo.json"
+    ],
+    "after": {
+      "demo.json": "{\"a\":21,\"b\":42}\n"
+    },
+    "exit": 0,
+    "stdout": "",
+    "stderr": ""
+  },
+  {
+    "name": "evaluate: two documents cannot share standard output",
+    "files": {
+      "demo.decl": "type T = { a: int, b = a * 2 }\nexport output demo: T = { a: 21 }\n"
+    },
+    "args": [
+      "evaluate",
+      "<dir>/demo.decl",
+      "--output",
+      "demo",
+      "--output",
+      "demo"
+    ],
+    "exit": 2,
+    "stdout": "",
+    "stderr": "--output: at most one document can go to stdout\n"
+  },
+  {
+    "name": "evaluate --input: the bound input is a root",
+    "files": {
+      "main.decl": "type Cfg = { host: string, port?: int = 80 }\ninput base: Cfg\noutput copy: Cfg = base\n",
+      "base.json": "{\"host\": \"example\"}\n"
+    },
+    "args": [
+      "evaluate",
+      "<dir>/main.decl",
+      "--input",
+      "base=<dir>/base.json",
+      "--output",
+      "base"
+    ],
+    "exit": 0,
+    "stdout": "{\"host\":\"example\",\"port\":80}\n",
+    "stderr": ""
+  },
+  {
+    "name": "evaluate --input: an output reading the bound input completes from the document",
+    "files": {
+      "main.decl": "type Cfg = { host: string, port?: int = 80 }\ninput base: Cfg\noutput copy: Cfg = base\n",
+      "base.json": "{\"host\": \"example\"}\n"
+    },
+    "args": [
+      "evaluate",
+      "<dir>/main.decl",
+      "--input",
+      "base=<dir>/base.json",
+      "--output",
+      "copy"
+    ],
+    "exit": 0,
+    "stdout": "{\"host\":\"example\",\"port\":80}\n",
+    "stderr": ""
+  },
+  {
+    "name": "evaluate: a module exporting no output emits an empty object and says so",
+    "files": {
+      "main.decl": "type Cfg = { host: string, port?: int = 80 }\ninput base: Cfg\noutput copy: Cfg = base\n",
+      "base.json": "{\"host\": \"example\"}\n"
+    },
+    "args": [
+      "evaluate",
+      "<dir>/main.decl",
+      "--input",
+      "base=<dir>/base.json"
+    ],
+    "exit": 0,
+    "stdout": "{}\n",
+    "stderr": "<dir>/main.decl: exports no output; --output <name> selects a root\n"
+  },
+  {
+    "name": "evaluate: nothing bound, an input without a fallback demanded by an output is E5006",
+    "files": {
+      "main.decl": "type Cfg = { host: string, port?: int = 80 }\ninput base: Cfg\noutput copy: Cfg = base\n"
+    },
+    "args": [
+      "evaluate",
+      "<dir>/main.decl"
+    ],
+    "exit": 1,
+    "stdout": "",
+    "stderr": "<dir>/main.decl: error [E5006] at copy: input base is not bound\n"
+  },
+  {
+    "name": "evaluate: an input demanded through its fallback is a root",
+    "args": [
+      "evaluate",
+      "tests/validation/declarations/valid/output_from_input_fallback.decl",
+      "--output",
+      "base"
+    ],
+    "exit": 0,
+    "stdout": "{\"host\":\"example\",\"port\":80}\n",
+    "stderr": ""
+  },
+  {
+    "name": "evaluate: a root that does not exist",
+    "files": {
+      "main.decl": "type Cfg = { host: string, port?: int = 80 }\ninput base: Cfg\noutput copy: Cfg = base\n",
+      "base.json": "{\"host\": \"example\"}\n"
+    },
+    "args": [
+      "evaluate",
+      "<dir>/main.decl",
+      "--input",
+      "base=<dir>/base.json",
+      "--output",
+      "nope"
+    ],
+    "exit": 1,
+    "stdout": "",
+    "stderr": "no root named nope\n"
+  },
+  {
+    "name": "evaluate: --input naming no input is a usage error",
+    "args": [
+      "evaluate",
+      "tests/validation/declarations/valid/output_from_input_fallback.decl",
+      "--input",
+      "nope=x.json"
+    ],
+    "exit": 2,
+    "stdout": "",
+    "stderr": "no input named nope\n"
+  },
+  {
+    "name": "validate <dir>: the fixture corpus",
+    "args": [
+      "validate",
+      "tests/validation"
+    ],
+    "exit": 0,
+    "stdout": "",
+    "stderr": "121 ok, 0 failed\n"
+  },
+  {
+    "name": "validate --expect-errors: the codes match",
+    "files": {
+      "cfg.decl": "type Cfg = { port: 1..65535, ... }\ninput deployed: Cfg\n",
+      "doc.json": "{\"port\": 70000}\n"
+    },
+    "args": [
+      "validate",
+      "<dir>/cfg.decl",
+      "--input",
+      "deployed=<dir>/doc.json",
+      "--expect-errors",
+      "E4001"
+    ],
+    "exit": 0,
+    "stdout": "",
+    "stderr": "<dir>/cfg.decl: error [E4001] at deployed.port: out of range 1..65535\nok: expected errors reported (E4001)\n"
+  },
+  {
+    "name": "validate: an unexpected error exits 1",
+    "files": {
+      "cfg.decl": "type Cfg = { port: 1..65535, ... }\ninput deployed: Cfg\n",
+      "doc.json": "{\"port\": 70000}\n"
+    },
+    "args": [
+      "validate",
+      "<dir>/cfg.decl",
+      "--input",
+      "deployed=<dir>/doc.json"
+    ],
+    "exit": 1,
+    "stdout": "",
+    "stderr": "<dir>/cfg.decl: error [E4001] at deployed.port: out of range 1..65535\n"
+  },
+  {
+    "name": "validate <file> follows imports",
+    "args": [
+      "validate",
+      "tests/modules/basic/main.decl"
+    ],
+    "exit": 0,
+    "stdout": "",
+    "stderr": ""
+  },
+  {
+    "name": "validate: a missing file is E3004",
+    "args": [
+      "validate",
+      "<dir>/missing.decl"
+    ],
+    "exit": 1,
+    "stdout": "",
+    "stderr": "<dir>/missing.decl: error [E3004]: module not found: <dir>/missing.decl\n"
+  },
+  {
+    "name": "fmt --check flags drift and leaves the file",
+    "files": {
+      "messy.decl": "const x=1+2\ntype T = {a: int,b?: string}\n"
+    },
+    "args": [
+      "fmt",
+      "<dir>/messy.decl",
+      "--check"
+    ],
+    "after": {
+      "messy.decl": "const x=1+2\ntype T = {a: int,b?: string}\n"
+    },
+    "exit": 1,
+    "stdout": "",
+    "stderr": "would reformat <dir>/messy.decl\n"
+  },
+  {
+    "name": "fmt: an unreadable file",
+    "args": [
+      "fmt",
+      "<dir>/missing.decl"
+    ],
+    "exit": 1,
+    "stdout": "",
+    "stderr": "<dir>/missing.decl: cannot be read\n"
+  },
+  {
+    "name": "fmt rewrites in place",
+    "files": {
+      "messy.decl": "const x=1+2\ntype T = {a: int,b?: string}\n"
+    },
+    "args": [
+      "fmt",
+      "<dir>/messy.decl"
+    ],
+    "after": {
+      "messy.decl": "const x = 1 + 2\ntype T = { a: int, b?: string }\n"
+    },
+    "exit": 0,
+    "stdout": "",
+    "stderr": "reformatted <dir>/messy.decl\n"
+  },
+  {
+    "name": "fmt --check: a canonical file passes",
+    "files": {
+      "canon.decl": "const x = 1 + 2\ntype T = { a: int, b?: string }\n"
+    },
+    "args": [
+      "fmt",
+      "<dir>/canon.decl",
+      "--check"
+    ],
+    "after": {
+      "canon.decl": "const x = 1 + 2\ntype T = { a: int, b?: string }\n"
+    },
+    "exit": 0,
+    "stdout": "",
+    "stderr": ""
+  },
+  {
+    "name": "repl: an unknown option is a usage error",
+    "args": [
+      "repl",
+      "--nope"
+    ],
+    "exit": 2,
+    "stdout": "",
+    "stderr": "unknown option --nope\n"
+  },
+  {
+    "name": "repl: a missing script is a usage error",
+    "args": [
+      "repl",
+      "--script",
+      "<dir>/nope.txt"
+    ],
+    "exit": 2,
+    "stdout": "",
+    "stderr": "cannot read <dir>/nope.txt\n"
+  },
+  {
+    "name": "repl: a bad --input spec is a usage error",
+    "args": [
+      "repl",
+      "tests/repl/documents/main.decl",
+      "--input",
+      "x"
+    ],
+    "exit": 2,
+    "stdout": "",
+    "stderr": "--input expects name=doc.json, got x\n"
+  },
+  {
+    "name": "repl: --input binds before the first line, --script - reads standard input, --compact prints the wire form",
+    "args": [
+      "repl",
+      "tests/repl/documents/main.decl",
+      "--input",
+      "deployed=tests/repl/documents/doc.json",
+      "--script",
+      "-",
+      "--compact"
+    ],
+    "stdin": "deployed\n",
+    "exit": 0,
+    "stdout": "> deployed\n{\"port\":9000,\"name\":\"doc\",\"replicas\":1,\"label\":\"doc:9000\"}\n(partial)\n",
+    "stderr": ""
+  }
+]

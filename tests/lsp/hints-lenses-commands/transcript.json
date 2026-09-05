@@ -1,0 +1,336 @@
+[
+  [
+    "initialize",
+    {
+      "capabilities": {
+        "textDocumentSync": 1,
+        "hoverProvider": true,
+        "definitionProvider": true,
+        "typeDefinitionProvider": true,
+        "referencesProvider": true,
+        "documentHighlightProvider": true,
+        "documentSymbolProvider": true,
+        "foldingRangeProvider": true,
+        "documentFormattingProvider": true,
+        "renameProvider": {
+          "prepareProvider": true
+        },
+        "completionProvider": {
+          "triggerCharacters": [
+            ".",
+            "$",
+            ":"
+          ]
+        },
+        "codeLensProvider": {
+          "resolveProvider": false
+        },
+        "signatureHelpProvider": {
+          "triggerCharacters": [
+            "(",
+            ","
+          ]
+        },
+        "workspaceSymbolProvider": true,
+        "selectionRangeProvider": true,
+        "semanticTokensProvider": {
+          "legend": {
+            "tokenTypes": [
+              "type",
+              "property",
+              "function",
+              "variable",
+              "namespace",
+              "parameter"
+            ],
+            "tokenModifiers": [
+              "declaration",
+              "required",
+              "optional",
+              "defaulted",
+              "derived",
+              "hidden",
+              "unresolved",
+              "readonly"
+            ]
+          },
+          "full": true
+        },
+        "inlayHintProvider": true,
+        "callHierarchyProvider": true,
+        "typeHierarchyProvider": true,
+        "codeActionProvider": {
+          "codeActionKinds": [
+            "quickfix",
+            "refactor.rewrite",
+            "refactor.extract",
+            "refactor.inline"
+          ]
+        },
+        "linkedEditingRangeProvider": true,
+        "documentOnTypeFormattingProvider": {
+          "firstTriggerCharacter": "\n",
+          "moreTriggerCharacter": [
+            "}",
+            "]",
+            ")"
+          ]
+        },
+        "executeCommandProvider": {
+          "commands": [
+            "decl.evaluate",
+            "decl.validate",
+            "decl.trace",
+            "decl.showSyntaxTree",
+            "decl.reloadWorkspace"
+          ]
+        }
+      },
+      "serverInfo": {
+        "name": "decl-lsp",
+        "version": "<version>"
+      }
+    }
+  ],
+  [
+    "diagnostics of the main text",
+    []
+  ],
+  [
+    "inlay hints",
+    [
+      {
+        "position": {
+          "line": 1,
+          "character": 9
+        },
+        "label": ": 16",
+        "kind": 1
+      },
+      {
+        "position": {
+          "line": 6,
+          "character": 11
+        },
+        "label": ": string",
+        "kind": 1
+      },
+      {
+        "position": {
+          "line": 7,
+          "character": 7
+        },
+        "label": ": int",
+        "kind": 1
+      },
+      {
+        "position": {
+          "line": 7,
+          "character": 14
+        },
+        "label": "n:",
+        "kind": 2,
+        "paddingRight": true
+      },
+      {
+        "position": {
+          "line": 8,
+          "character": 7
+        },
+        "label": ": quantity<Time>",
+        "kind": 1
+      },
+      {
+        "position": {
+          "line": 8,
+          "character": 15
+        },
+        "label": "= 0.25 s",
+        "paddingLeft": true
+      },
+      {
+        "position": {
+          "line": 9,
+          "character": 28
+        },
+        "label": ": string",
+        "kind": 1
+      }
+    ]
+  ],
+  [
+    "inlay hints with values",
+    [
+      {
+        "position": {
+          "line": 1,
+          "character": 9
+        },
+        "label": ": 16",
+        "kind": 1
+      },
+      {
+        "position": {
+          "line": 2,
+          "character": 40
+        },
+        "label": "// port = 8080",
+        "paddingLeft": true
+      },
+      {
+        "position": {
+          "line": 5,
+          "character": 1
+        },
+        "label": "// port = 8080",
+        "paddingLeft": true
+      },
+      {
+        "position": {
+          "line": 6,
+          "character": 11
+        },
+        "label": ": string",
+        "kind": 1
+      },
+      {
+        "position": {
+          "line": 7,
+          "character": 7
+        },
+        "label": ": int",
+        "kind": 1
+      },
+      {
+        "position": {
+          "line": 7,
+          "character": 14
+        },
+        "label": "n:",
+        "kind": 2,
+        "paddingRight": true
+      },
+      {
+        "position": {
+          "line": 8,
+          "character": 7
+        },
+        "label": ": quantity<Time>",
+        "kind": 1
+      },
+      {
+        "position": {
+          "line": 8,
+          "character": 15
+        },
+        "label": "= 0.25 s",
+        "paddingLeft": true
+      },
+      {
+        "position": {
+          "line": 9,
+          "character": 28
+        },
+        "label": ": string",
+        "kind": 1
+      }
+    ]
+  ],
+  [
+    "code lenses",
+    [
+      {
+        "range": {
+          "start": {
+            "line": 2,
+            "character": 0
+          },
+          "end": {
+            "line": 2,
+            "character": 0
+          }
+        },
+        "command": {
+          "title": "evaluate",
+          "command": "decl.evaluate",
+          "arguments": [
+            "file://<ws>/main.decl",
+            "s"
+          ]
+        }
+      },
+      {
+        "range": {
+          "start": {
+            "line": 3,
+            "character": 0
+          },
+          "end": {
+            "line": 3,
+            "character": 0
+          }
+        },
+        "command": {
+          "title": "evaluate",
+          "command": "decl.evaluate",
+          "arguments": [
+            "file://<ws>/main.decl",
+            "t"
+          ]
+        }
+      }
+    ]
+  ],
+  [
+    "decl.evaluate s",
+    {
+      "root": "s",
+      "document": "{\"name\":\"a\",\"port\":8080}",
+      "diagnostics": []
+    }
+  ],
+  [
+    "decl.evaluate all",
+    {
+      "root": null,
+      "document": "{\"s\":{\"name\":\"a\",\"port\":8080},\"t\":{\"name\":\"b\",\"port\":8080}}",
+      "diagnostics": []
+    }
+  ],
+  [
+    "decl.validate",
+    {
+      "verdicts": [
+        {
+          "name": "s",
+          "errors": 0,
+          "warnings": 0
+        },
+        {
+          "name": "t",
+          "errors": 0,
+          "warnings": 0
+        }
+      ],
+      "diagnostics": []
+    }
+  ],
+  [
+    "decl.trace",
+    {
+      "lines": [
+        "s.port = 8080  (derived: 8080)"
+      ]
+    }
+  ],
+  [
+    "decl.showSyntaxTree",
+    {
+      "tree": "(module (import_declaration (named_imports (import_item (identifier)) (import_item (identifier) (identifier)) (import_item (identifier)) (import_item (identifier))) (string)) (const_declaration name: (identifier) value: (identifier)) (output_declaration name: (identifier) type: (named_type (qualified_name (identifier))) value: (object (object_entry key: (identifier) value: (string)))) (output_declaration name: (identifier) type: (named_type (qualified_name (identifier))) value: (object (object_entry key: (identifier) value: (string)))) (const_declaration name: (identifier) value: (member_access (identifier) (identifier))) (const_declaration name: (identifier) value: (call (identifier) (identifier))) (const_declaration name: (identifier) value: (unit_literal)) (type_declaration name: (identifier) type: (named_type (qualified_name (identifier)) extension: (record_type (derived_member name: (identifier) value: (identifier)) (value_member name: (identifier) type: (named_type (qualified_name (identifier))) default: (string))))) (const_declaration name: (identifier) value: (call (member_access (member_access (identifier) (identifier)) (identifier)) (identifier) (int))))"
+    }
+  ],
+  [
+    "shutdown",
+    null
+  ]
+]

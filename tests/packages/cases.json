@@ -1,0 +1,57 @@
+{
+  "lock": {
+    "package": "tests/packages/app",
+    "entry": "main.decl",
+    "lock": "tests/packages/lock/decl.lock",
+    "drift": [
+      {
+        "name": "content drift is E3017",
+        "append": {
+          "decl_modules/corelib/types/base.decl": "// drift\n"
+        },
+        "codes": [
+          "E3017"
+        ]
+      },
+      {
+        "name": "version drift is E3016",
+        "lock_replace": [
+          "1.0.0",
+          "1.0.1"
+        ],
+        "codes": [
+          "E3016"
+        ]
+      },
+      {
+        "name": "a missing entry is E3015",
+        "lock_text": "",
+        "codes": [
+          "E3015"
+        ]
+      }
+    ]
+  },
+  "errors": [
+    {
+      "entry": "tests/packages/bad_manifest/main.decl",
+      "codes": [
+        "E3011",
+        "E3012"
+      ]
+    },
+    {
+      "entry": "tests/packages/undeclared/main.decl",
+      "codes": [
+        "E3010"
+      ]
+    },
+    {
+      "entry": "tests/packages/conflict/main.decl",
+      "codes": [
+        "E3016",
+        "E3014"
+      ]
+    }
+  ]
+}

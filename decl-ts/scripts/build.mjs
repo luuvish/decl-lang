@@ -84,11 +84,11 @@ copyFileSync(runtimeWasm, 'dist/tree-sitter.wasm');
 if (existsSync(join(REPO, 'LICENSE'))) copyFileSync(join(REPO, 'LICENSE'), 'LICENSE');
 
 // the sibling packages (decl-py, decl-rs)
-if (existsSync('../decl-py/decl')) {
+if (existsSync('../decl-py/src/decl')) {
   copyFileSync(join(REPO, 'LICENSE'), '../decl-py/LICENSE');
   // the grammar C sources for the native Python parser extension
   const gsrc = join(GRAMMAR, 'src'),
-    gdst = '../decl-py/decl/_tree_sitter/src';
+    gdst = '../decl-py/src/decl/_tree_sitter/src';
   rmSync(gdst, { recursive: true, force: true });
   mkdirSync(join(gdst, 'tree_sitter'), { recursive: true });
   for (const f of ['parser.c', 'scanner.c']) copyFileSync(join(gsrc, f), join(gdst, f));

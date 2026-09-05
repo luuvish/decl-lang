@@ -1,0 +1,3 @@
+:bind deployed=doc.json
+y = deployed.port + 1
+:update deployed.port = 9100

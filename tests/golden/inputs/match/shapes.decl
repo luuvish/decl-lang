@@ -1,0 +1,22 @@
+// `match` over a record union and over a literal union (§4): the arm a
+// bound document selects, and the catch-all arm — the golden manifest
+// binds `shape` and `proto` and evaluates `area` and `port`.
+
+type Circle = { kind: "circle", r: float }
+type Rect = { kind: "rect", w: float, h: float }
+type Shape = Circle | Rect
+type Proto = "http" | "grpc" | "tcp"
+
+input shape: Shape
+input proto: Proto
+
+output area: float = match shape {
+    (c: Circle) => 3.0 * c.r * c.r
+    (r: Rect) => r.w * r.h
+}
+
+output port: int = match proto {
+    (p: "http") => 80
+    (p: "grpc") => 50051
+    (other) => 0
+}

@@ -1,0 +1,2489 @@
+[
+  [
+    "initialize",
+    {
+      "capabilities": {
+        "textDocumentSync": 1,
+        "hoverProvider": true,
+        "definitionProvider": true,
+        "typeDefinitionProvider": true,
+        "referencesProvider": true,
+        "documentHighlightProvider": true,
+        "documentSymbolProvider": true,
+        "foldingRangeProvider": true,
+        "documentFormattingProvider": true,
+        "renameProvider": {
+          "prepareProvider": true
+        },
+        "completionProvider": {
+          "triggerCharacters": [
+            ".",
+            "$",
+            ":"
+          ]
+        },
+        "codeLensProvider": {
+          "resolveProvider": false
+        },
+        "signatureHelpProvider": {
+          "triggerCharacters": [
+            "(",
+            ","
+          ]
+        },
+        "workspaceSymbolProvider": true,
+        "selectionRangeProvider": true,
+        "semanticTokensProvider": {
+          "legend": {
+            "tokenTypes": [
+              "type",
+              "property",
+              "function",
+              "variable",
+              "namespace",
+              "parameter"
+            ],
+            "tokenModifiers": [
+              "declaration",
+              "required",
+              "optional",
+              "defaulted",
+              "derived",
+              "hidden",
+              "unresolved",
+              "readonly"
+            ]
+          },
+          "full": true
+        },
+        "inlayHintProvider": true,
+        "callHierarchyProvider": true,
+        "typeHierarchyProvider": true,
+        "codeActionProvider": {
+          "codeActionKinds": [
+            "quickfix",
+            "refactor.rewrite",
+            "refactor.extract",
+            "refactor.inline"
+          ]
+        },
+        "linkedEditingRangeProvider": true,
+        "documentOnTypeFormattingProvider": {
+          "firstTriggerCharacter": "\n",
+          "moreTriggerCharacter": [
+            "}",
+            "]",
+            ")"
+          ]
+        },
+        "executeCommandProvider": {
+          "commands": [
+            "decl.evaluate",
+            "decl.validate",
+            "decl.trace",
+            "decl.showSyntaxTree",
+            "decl.reloadWorkspace"
+          ]
+        }
+      },
+      "serverInfo": {
+        "name": "decl-lsp",
+        "version": "<version>"
+      }
+    }
+  ],
+  [
+    "diagnostics of the main text",
+    []
+  ],
+  [
+    "code action: annotate a derived member",
+    [
+      {
+        "title": "annotate: string",
+        "kind": "refactor.rewrite",
+        "edit": {
+          "changes": {
+            "file://<ws>/main.decl": [
+              {
+                "range": {
+                  "start": {
+                    "line": 9,
+                    "character": 28
+                  },
+                  "end": {
+                    "line": 9,
+                    "character": 28
+                  }
+                },
+                "newText": ": string"
+              }
+            ]
+          }
+        }
+      },
+      {
+        "title": "make hidden (x$)",
+        "kind": "refactor.rewrite",
+        "edit": {
+          "changes": {
+            "file://<ws>/main.decl": [
+              {
+                "range": {
+                  "start": {
+                    "line": 9,
+                    "character": 28
+                  },
+                  "end": {
+                    "line": 9,
+                    "character": 28
+                  }
+                },
+                "newText": "$"
+              }
+            ]
+          }
+        }
+      },
+      {
+        "title": "export Local",
+        "kind": "refactor.rewrite",
+        "edit": {
+          "changes": {
+            "file://<ws>/main.decl": [
+              {
+                "range": {
+                  "start": {
+                    "line": 9,
+                    "character": 0
+                  },
+                  "end": {
+                    "line": 9,
+                    "character": 0
+                  }
+                },
+                "newText": "export "
+              }
+            ]
+          }
+        }
+      },
+      {
+        "title": "generate an output of Local",
+        "kind": "refactor.rewrite",
+        "edit": {
+          "changes": {
+            "file://<ws>/main.decl": [
+              {
+                "range": {
+                  "start": {
+                    "line": 11,
+                    "character": 0
+                  },
+                  "end": {
+                    "line": 11,
+                    "character": 0
+                  }
+                },
+                "newText": "output local: Local = { name: \"\" }\n"
+              }
+            ]
+          }
+        }
+      },
+      {
+        "title": "generate an input of Local",
+        "kind": "refactor.rewrite",
+        "edit": {
+          "changes": {
+            "file://<ws>/main.decl": [
+              {
+                "range": {
+                  "start": {
+                    "line": 11,
+                    "character": 0
+                  },
+                  "end": {
+                    "line": 11,
+                    "character": 0
+                  }
+                },
+                "newText": "input local: Local\n"
+              }
+            ]
+          }
+        }
+      },
+      {
+        "title": "reorder the members canonically",
+        "kind": "refactor.rewrite",
+        "edit": {
+          "changes": {
+            "file://<ws>/main.decl": [
+              {
+                "range": {
+                  "start": {
+                    "line": 9,
+                    "character": 21
+                  },
+                  "end": {
+                    "line": 9,
+                    "character": 60
+                  }
+                },
+                "newText": "{\n    level?: Level = \"low\"\n    extra = name\n}"
+              }
+            ]
+          }
+        }
+      }
+    ]
+  ],
+  [
+    "diagnostics of an unknown name",
+    [
+      {
+        "range": {
+          "start": {
+            "line": 0,
+            "character": 10
+          },
+          "end": {
+            "line": 0,
+            "character": 13
+          }
+        },
+        "severity": 1,
+        "source": "decl",
+        "code": "E3003",
+        "message": "unknown name cap"
+      }
+    ]
+  ],
+  [
+    "code action: import the unknown name",
+    [
+      {
+        "title": "import cap from \"./lib.decl\"",
+        "kind": "quickfix",
+        "diagnostics": [
+          {
+            "range": {
+              "start": {
+                "line": 0,
+                "character": 10
+              },
+              "end": {
+                "line": 0,
+                "character": 13
+              }
+            },
+            "severity": 1,
+            "source": "decl",
+            "code": "E3003",
+            "message": "unknown name cap"
+          }
+        ],
+        "isPreferred": true,
+        "edit": {
+          "changes": {
+            "file://<ws>/main.decl": [
+              {
+                "range": {
+                  "start": {
+                    "line": 0,
+                    "character": 0
+                  },
+                  "end": {
+                    "line": 0,
+                    "character": 0
+                  }
+                },
+                "newText": "import { cap } from \"./lib.decl\"\n"
+              }
+            ]
+          }
+        }
+      },
+      {
+        "title": "export z",
+        "kind": "refactor.rewrite",
+        "edit": {
+          "changes": {
+            "file://<ws>/main.decl": [
+              {
+                "range": {
+                  "start": {
+                    "line": 0,
+                    "character": 0
+                  },
+                  "end": {
+                    "line": 0,
+                    "character": 0
+                  }
+                },
+                "newText": "export "
+              }
+            ]
+          }
+        }
+      },
+      {
+        "title": "generate the fixture header (@expect-phase / @expect-error)",
+        "kind": "refactor.rewrite",
+        "edit": {
+          "changes": {
+            "file://<ws>/main.decl": [
+              {
+                "range": {
+                  "start": {
+                    "line": 0,
+                    "character": 0
+                  },
+                  "end": {
+                    "line": 0,
+                    "character": 0
+                  }
+                },
+                "newText": "// @expect-phase: checking\n// @expect-error: E3003\n"
+              }
+            ]
+          }
+        }
+      }
+    ]
+  ],
+  [
+    "diagnostics of a missing member",
+    [
+      {
+        "range": {
+          "start": {
+            "line": 11,
+            "character": 0
+          },
+          "end": {
+            "line": 11,
+            "character": 30
+          }
+        },
+        "severity": 1,
+        "source": "decl",
+        "code": "E4002",
+        "message": "required member name missing in the construction"
+      }
+    ]
+  ],
+  [
+    "code action: add the missing member",
+    [
+      {
+        "title": "add name: \"\"",
+        "kind": "quickfix",
+        "diagnostics": [
+          {
+            "range": {
+              "start": {
+                "line": 11,
+                "character": 0
+              },
+              "end": {
+                "line": 11,
+                "character": 30
+              }
+            },
+            "severity": 1,
+            "source": "decl",
+            "code": "E4002",
+            "message": "required member name missing in the construction"
+          }
+        ],
+        "isPreferred": true,
+        "edit": {
+          "changes": {
+            "file://<ws>/main.decl": [
+              {
+                "range": {
+                  "start": {
+                    "line": 11,
+                    "character": 28
+                  },
+                  "end": {
+                    "line": 11,
+                    "character": 28
+                  }
+                },
+                "newText": " name: \"\""
+              }
+            ]
+          }
+        }
+      },
+      {
+        "title": "generate the fixture header (@expect-phase / @expect-error)",
+        "kind": "refactor.rewrite",
+        "edit": {
+          "changes": {
+            "file://<ws>/main.decl": [
+              {
+                "range": {
+                  "start": {
+                    "line": 0,
+                    "character": 0
+                  },
+                  "end": {
+                    "line": 0,
+                    "character": 0
+                  }
+                },
+                "newText": "// @expect-phase: checking\n// @expect-error: E4002\n"
+              }
+            ]
+          }
+        }
+      },
+      {
+        "title": "fill the required members: name",
+        "kind": "refactor.rewrite",
+        "edit": {
+          "changes": {
+            "file://<ws>/main.decl": [
+              {
+                "range": {
+                  "start": {
+                    "line": 11,
+                    "character": 28
+                  },
+                  "end": {
+                    "line": 11,
+                    "character": 28
+                  }
+                },
+                "newText": " name: \"\""
+              }
+            ]
+          }
+        }
+      },
+      {
+        "title": "extract to a constant",
+        "kind": "refactor.extract",
+        "edit": {
+          "changes": {
+            "file://<ws>/main.decl": [
+              {
+                "range": {
+                  "start": {
+                    "line": 11,
+                    "character": 0
+                  },
+                  "end": {
+                    "line": 11,
+                    "character": 0
+                  }
+                },
+                "newText": "const extracted = { }\n"
+              },
+              {
+                "range": {
+                  "start": {
+                    "line": 11,
+                    "character": 27
+                  },
+                  "end": {
+                    "line": 11,
+                    "character": 30
+                  }
+                },
+                "newText": "extracted"
+              }
+            ]
+          }
+        }
+      }
+    ]
+  ],
+  [
+    "diagnostics of the actions text",
+    [
+      {
+        "range": {
+          "start": {
+            "line": 18,
+            "character": 0
+          },
+          "end": {
+            "line": 18,
+            "character": 35
+          }
+        },
+        "severity": 1,
+        "source": "decl",
+        "code": "E4052",
+        "message": "`??` mixed with `&&`/`||` without parentheses"
+      },
+      {
+        "range": {
+          "start": {
+            "line": 13,
+            "character": 0
+          },
+          "end": {
+            "line": 13,
+            "character": 50
+          }
+        },
+        "severity": 1,
+        "source": "decl",
+        "code": "E4003",
+        "message": "member zz is not declared on Pair"
+      },
+      {
+        "range": {
+          "start": {
+            "line": 15,
+            "character": 10
+          },
+          "end": {
+            "line": 15,
+            "character": 13
+          }
+        },
+        "severity": 1,
+        "source": "decl",
+        "code": "E3003",
+        "message": "unknown name cap"
+      },
+      {
+        "range": {
+          "start": {
+            "line": 16,
+            "character": 11
+          },
+          "end": {
+            "line": 16,
+            "character": 19
+          }
+        },
+        "severity": 1,
+        "source": "decl",
+        "code": "E4050",
+        "message": "member access on a maybe-absent expression (use ?. or an `in` guard)"
+      },
+      {
+        "range": {
+          "start": {
+            "line": 17,
+            "character": 11
+          },
+          "end": {
+            "line": 17,
+            "character": 18
+          }
+        },
+        "severity": 1,
+        "source": "decl",
+        "code": "E4050",
+        "message": "maybe-absent expression consumed as `+` operand (use ?. / ?? or an `in` guard)"
+      },
+      {
+        "range": {
+          "start": {
+            "line": 18,
+            "character": 14
+          },
+          "end": {
+            "line": 18,
+            "character": 26
+          }
+        },
+        "severity": 1,
+        "source": "decl",
+        "code": "E4071",
+        "message": "`&&` on a non-bool operand"
+      }
+    ]
+  ],
+  [
+    "code actions at derived member c",
+    [
+      {
+        "title": "annotate: int",
+        "kind": "refactor.rewrite",
+        "edit": {
+          "changes": {
+            "file://<ws>/main.decl": [
+              {
+                "range": {
+                  "start": {
+                    "line": 7,
+                    "character": 5
+                  },
+                  "end": {
+                    "line": 7,
+                    "character": 5
+                  }
+                },
+                "newText": ": int"
+              }
+            ]
+          }
+        }
+      },
+      {
+        "title": "make hidden (x$)",
+        "kind": "refactor.rewrite",
+        "edit": {
+          "changes": {
+            "file://<ws>/main.decl": [
+              {
+                "range": {
+                  "start": {
+                    "line": 7,
+                    "character": 5
+                  },
+                  "end": {
+                    "line": 7,
+                    "character": 5
+                  }
+                },
+                "newText": "$"
+              }
+            ]
+          }
+        }
+      },
+      {
+        "title": "export Pair",
+        "kind": "refactor.rewrite",
+        "edit": {
+          "changes": {
+            "file://<ws>/main.decl": [
+              {
+                "range": {
+                  "start": {
+                    "line": 2,
+                    "character": 0
+                  },
+                  "end": {
+                    "line": 2,
+                    "character": 0
+                  }
+                },
+                "newText": "export "
+              }
+            ]
+          }
+        }
+      },
+      {
+        "title": "generate an output of Pair",
+        "kind": "refactor.rewrite",
+        "edit": {
+          "changes": {
+            "file://<ws>/main.decl": [
+              {
+                "range": {
+                  "start": {
+                    "line": 19,
+                    "character": 0
+                  },
+                  "end": {
+                    "line": 19,
+                    "character": 0
+                  }
+                },
+                "newText": "output pair: Pair = { a: 0, r: \"\" }\n"
+              }
+            ]
+          }
+        }
+      },
+      {
+        "title": "generate an input of Pair",
+        "kind": "refactor.rewrite",
+        "edit": {
+          "changes": {
+            "file://<ws>/main.decl": [
+              {
+                "range": {
+                  "start": {
+                    "line": 19,
+                    "character": 0
+                  },
+                  "end": {
+                    "line": 19,
+                    "character": 0
+                  }
+                },
+                "newText": "input pair: Pair\n"
+              }
+            ]
+          }
+        }
+      },
+      {
+        "title": "generate the fixture header (@expect-phase / @expect-error)",
+        "kind": "refactor.rewrite",
+        "edit": {
+          "changes": {
+            "file://<ws>/main.decl": [
+              {
+                "range": {
+                  "start": {
+                    "line": 0,
+                    "character": 0
+                  },
+                  "end": {
+                    "line": 0,
+                    "character": 0
+                  }
+                },
+                "newText": "// @expect-phase: checking\n// @expect-error: E4052\n"
+              }
+            ]
+          }
+        }
+      },
+      {
+        "title": "reorder the members canonically",
+        "kind": "refactor.rewrite",
+        "edit": {
+          "changes": {
+            "file://<ws>/main.decl": [
+              {
+                "range": {
+                  "start": {
+                    "line": 2,
+                    "character": 12
+                  },
+                  "end": {
+                    "line": 10,
+                    "character": 1
+                  }
+                },
+                "newText": "{\n    a: int\n    r: string\n    b?: int\n    s?: Service\n    e?: int = 3\n    c = a + 1\n    d$ = a * 2\n}"
+              }
+            ]
+          }
+        }
+      }
+    ]
+  ],
+  [
+    "code actions at hidden member d$",
+    [
+      {
+        "title": "annotate: int",
+        "kind": "refactor.rewrite",
+        "edit": {
+          "changes": {
+            "file://<ws>/main.decl": [
+              {
+                "range": {
+                  "start": {
+                    "line": 8,
+                    "character": 7
+                  },
+                  "end": {
+                    "line": 8,
+                    "character": 7
+                  }
+                },
+                "newText": ": int"
+              }
+            ]
+          }
+        }
+      },
+      {
+        "title": "make visible (derived)",
+        "kind": "refactor.rewrite",
+        "edit": {
+          "changes": {
+            "file://<ws>/main.decl": [
+              {
+                "range": {
+                  "start": {
+                    "line": 8,
+                    "character": 6
+                  },
+                  "end": {
+                    "line": 8,
+                    "character": 7
+                  }
+                },
+                "newText": ""
+              }
+            ]
+          }
+        }
+      },
+      {
+        "title": "export Pair",
+        "kind": "refactor.rewrite",
+        "edit": {
+          "changes": {
+            "file://<ws>/main.decl": [
+              {
+                "range": {
+                  "start": {
+                    "line": 2,
+                    "character": 0
+                  },
+                  "end": {
+                    "line": 2,
+                    "character": 0
+                  }
+                },
+                "newText": "export "
+              }
+            ]
+          }
+        }
+      },
+      {
+        "title": "generate an output of Pair",
+        "kind": "refactor.rewrite",
+        "edit": {
+          "changes": {
+            "file://<ws>/main.decl": [
+              {
+                "range": {
+                  "start": {
+                    "line": 19,
+                    "character": 0
+                  },
+                  "end": {
+                    "line": 19,
+                    "character": 0
+                  }
+                },
+                "newText": "output pair: Pair = { a: 0, r: \"\" }\n"
+              }
+            ]
+          }
+        }
+      },
+      {
+        "title": "generate an input of Pair",
+        "kind": "refactor.rewrite",
+        "edit": {
+          "changes": {
+            "file://<ws>/main.decl": [
+              {
+                "range": {
+                  "start": {
+                    "line": 19,
+                    "character": 0
+                  },
+                  "end": {
+                    "line": 19,
+                    "character": 0
+                  }
+                },
+                "newText": "input pair: Pair\n"
+              }
+            ]
+          }
+        }
+      },
+      {
+        "title": "generate the fixture header (@expect-phase / @expect-error)",
+        "kind": "refactor.rewrite",
+        "edit": {
+          "changes": {
+            "file://<ws>/main.decl": [
+              {
+                "range": {
+                  "start": {
+                    "line": 0,
+                    "character": 0
+                  },
+                  "end": {
+                    "line": 0,
+                    "character": 0
+                  }
+                },
+                "newText": "// @expect-phase: checking\n// @expect-error: E4052\n"
+              }
+            ]
+          }
+        }
+      },
+      {
+        "title": "reorder the members canonically",
+        "kind": "refactor.rewrite",
+        "edit": {
+          "changes": {
+            "file://<ws>/main.decl": [
+              {
+                "range": {
+                  "start": {
+                    "line": 2,
+                    "character": 12
+                  },
+                  "end": {
+                    "line": 10,
+                    "character": 1
+                  }
+                },
+                "newText": "{\n    a: int\n    r: string\n    b?: int\n    s?: Service\n    e?: int = 3\n    c = a + 1\n    d$ = a * 2\n}"
+              }
+            ]
+          }
+        }
+      }
+    ]
+  ],
+  [
+    "code actions at optional member b",
+    [
+      {
+        "title": "make required",
+        "kind": "refactor.rewrite",
+        "edit": {
+          "changes": {
+            "file://<ws>/main.decl": [
+              {
+                "range": {
+                  "start": {
+                    "line": 5,
+                    "character": 5
+                  },
+                  "end": {
+                    "line": 5,
+                    "character": 6
+                  }
+                },
+                "newText": ""
+              }
+            ]
+          }
+        }
+      },
+      {
+        "title": "export Pair",
+        "kind": "refactor.rewrite",
+        "edit": {
+          "changes": {
+            "file://<ws>/main.decl": [
+              {
+                "range": {
+                  "start": {
+                    "line": 2,
+                    "character": 0
+                  },
+                  "end": {
+                    "line": 2,
+                    "character": 0
+                  }
+                },
+                "newText": "export "
+              }
+            ]
+          }
+        }
+      },
+      {
+        "title": "generate an output of Pair",
+        "kind": "refactor.rewrite",
+        "edit": {
+          "changes": {
+            "file://<ws>/main.decl": [
+              {
+                "range": {
+                  "start": {
+                    "line": 19,
+                    "character": 0
+                  },
+                  "end": {
+                    "line": 19,
+                    "character": 0
+                  }
+                },
+                "newText": "output pair: Pair = { a: 0, r: \"\" }\n"
+              }
+            ]
+          }
+        }
+      },
+      {
+        "title": "generate an input of Pair",
+        "kind": "refactor.rewrite",
+        "edit": {
+          "changes": {
+            "file://<ws>/main.decl": [
+              {
+                "range": {
+                  "start": {
+                    "line": 19,
+                    "character": 0
+                  },
+                  "end": {
+                    "line": 19,
+                    "character": 0
+                  }
+                },
+                "newText": "input pair: Pair\n"
+              }
+            ]
+          }
+        }
+      },
+      {
+        "title": "generate the fixture header (@expect-phase / @expect-error)",
+        "kind": "refactor.rewrite",
+        "edit": {
+          "changes": {
+            "file://<ws>/main.decl": [
+              {
+                "range": {
+                  "start": {
+                    "line": 0,
+                    "character": 0
+                  },
+                  "end": {
+                    "line": 0,
+                    "character": 0
+                  }
+                },
+                "newText": "// @expect-phase: checking\n// @expect-error: E4052\n"
+              }
+            ]
+          }
+        }
+      },
+      {
+        "title": "reorder the members canonically",
+        "kind": "refactor.rewrite",
+        "edit": {
+          "changes": {
+            "file://<ws>/main.decl": [
+              {
+                "range": {
+                  "start": {
+                    "line": 2,
+                    "character": 12
+                  },
+                  "end": {
+                    "line": 10,
+                    "character": 1
+                  }
+                },
+                "newText": "{\n    a: int\n    r: string\n    b?: int\n    s?: Service\n    e?: int = 3\n    c = a + 1\n    d$ = a * 2\n}"
+              }
+            ]
+          }
+        }
+      }
+    ]
+  ],
+  [
+    "code actions at required member a",
+    [
+      {
+        "title": "make optional",
+        "kind": "refactor.rewrite",
+        "edit": {
+          "changes": {
+            "file://<ws>/main.decl": [
+              {
+                "range": {
+                  "start": {
+                    "line": 3,
+                    "character": 5
+                  },
+                  "end": {
+                    "line": 3,
+                    "character": 5
+                  }
+                },
+                "newText": "?"
+              }
+            ]
+          }
+        }
+      },
+      {
+        "title": "export Pair",
+        "kind": "refactor.rewrite",
+        "edit": {
+          "changes": {
+            "file://<ws>/main.decl": [
+              {
+                "range": {
+                  "start": {
+                    "line": 2,
+                    "character": 0
+                  },
+                  "end": {
+                    "line": 2,
+                    "character": 0
+                  }
+                },
+                "newText": "export "
+              }
+            ]
+          }
+        }
+      },
+      {
+        "title": "generate an output of Pair",
+        "kind": "refactor.rewrite",
+        "edit": {
+          "changes": {
+            "file://<ws>/main.decl": [
+              {
+                "range": {
+                  "start": {
+                    "line": 19,
+                    "character": 0
+                  },
+                  "end": {
+                    "line": 19,
+                    "character": 0
+                  }
+                },
+                "newText": "output pair: Pair = { a: 0, r: \"\" }\n"
+              }
+            ]
+          }
+        }
+      },
+      {
+        "title": "generate an input of Pair",
+        "kind": "refactor.rewrite",
+        "edit": {
+          "changes": {
+            "file://<ws>/main.decl": [
+              {
+                "range": {
+                  "start": {
+                    "line": 19,
+                    "character": 0
+                  },
+                  "end": {
+                    "line": 19,
+                    "character": 0
+                  }
+                },
+                "newText": "input pair: Pair\n"
+              }
+            ]
+          }
+        }
+      },
+      {
+        "title": "generate the fixture header (@expect-phase / @expect-error)",
+        "kind": "refactor.rewrite",
+        "edit": {
+          "changes": {
+            "file://<ws>/main.decl": [
+              {
+                "range": {
+                  "start": {
+                    "line": 0,
+                    "character": 0
+                  },
+                  "end": {
+                    "line": 0,
+                    "character": 0
+                  }
+                },
+                "newText": "// @expect-phase: checking\n// @expect-error: E4052\n"
+              }
+            ]
+          }
+        }
+      },
+      {
+        "title": "reorder the members canonically",
+        "kind": "refactor.rewrite",
+        "edit": {
+          "changes": {
+            "file://<ws>/main.decl": [
+              {
+                "range": {
+                  "start": {
+                    "line": 2,
+                    "character": 12
+                  },
+                  "end": {
+                    "line": 10,
+                    "character": 1
+                  }
+                },
+                "newText": "{\n    a: int\n    r: string\n    b?: int\n    s?: Service\n    e?: int = 3\n    c = a + 1\n    d$ = a * 2\n}"
+              }
+            ]
+          }
+        }
+      }
+    ]
+  ],
+  [
+    "code actions at defaulted member e",
+    [
+      {
+        "title": "make derived (x: T = e)",
+        "kind": "refactor.rewrite",
+        "edit": {
+          "changes": {
+            "file://<ws>/main.decl": [
+              {
+                "range": {
+                  "start": {
+                    "line": 9,
+                    "character": 5
+                  },
+                  "end": {
+                    "line": 9,
+                    "character": 6
+                  }
+                },
+                "newText": ""
+              }
+            ]
+          }
+        }
+      },
+      {
+        "title": "export Pair",
+        "kind": "refactor.rewrite",
+        "edit": {
+          "changes": {
+            "file://<ws>/main.decl": [
+              {
+                "range": {
+                  "start": {
+                    "line": 2,
+                    "character": 0
+                  },
+                  "end": {
+                    "line": 2,
+                    "character": 0
+                  }
+                },
+                "newText": "export "
+              }
+            ]
+          }
+        }
+      },
+      {
+        "title": "generate an output of Pair",
+        "kind": "refactor.rewrite",
+        "edit": {
+          "changes": {
+            "file://<ws>/main.decl": [
+              {
+                "range": {
+                  "start": {
+                    "line": 19,
+                    "character": 0
+                  },
+                  "end": {
+                    "line": 19,
+                    "character": 0
+                  }
+                },
+                "newText": "output pair: Pair = { a: 0, r: \"\" }\n"
+              }
+            ]
+          }
+        }
+      },
+      {
+        "title": "generate an input of Pair",
+        "kind": "refactor.rewrite",
+        "edit": {
+          "changes": {
+            "file://<ws>/main.decl": [
+              {
+                "range": {
+                  "start": {
+                    "line": 19,
+                    "character": 0
+                  },
+                  "end": {
+                    "line": 19,
+                    "character": 0
+                  }
+                },
+                "newText": "input pair: Pair\n"
+              }
+            ]
+          }
+        }
+      },
+      {
+        "title": "generate the fixture header (@expect-phase / @expect-error)",
+        "kind": "refactor.rewrite",
+        "edit": {
+          "changes": {
+            "file://<ws>/main.decl": [
+              {
+                "range": {
+                  "start": {
+                    "line": 0,
+                    "character": 0
+                  },
+                  "end": {
+                    "line": 0,
+                    "character": 0
+                  }
+                },
+                "newText": "// @expect-phase: checking\n// @expect-error: E4052\n"
+              }
+            ]
+          }
+        }
+      },
+      {
+        "title": "reorder the members canonically",
+        "kind": "refactor.rewrite",
+        "edit": {
+          "changes": {
+            "file://<ws>/main.decl": [
+              {
+                "range": {
+                  "start": {
+                    "line": 2,
+                    "character": 12
+                  },
+                  "end": {
+                    "line": 10,
+                    "character": 1
+                  }
+                },
+                "newText": "{\n    a: int\n    r: string\n    b?: int\n    s?: Service\n    e?: int = 3\n    c = a + 1\n    d$ = a * 2\n}"
+              }
+            ]
+          }
+        }
+      }
+    ]
+  ],
+  [
+    "code actions at the type Pair",
+    [
+      {
+        "title": "export Pair",
+        "kind": "refactor.rewrite",
+        "edit": {
+          "changes": {
+            "file://<ws>/main.decl": [
+              {
+                "range": {
+                  "start": {
+                    "line": 2,
+                    "character": 0
+                  },
+                  "end": {
+                    "line": 2,
+                    "character": 0
+                  }
+                },
+                "newText": "export "
+              }
+            ]
+          }
+        }
+      },
+      {
+        "title": "generate an output of Pair",
+        "kind": "refactor.rewrite",
+        "edit": {
+          "changes": {
+            "file://<ws>/main.decl": [
+              {
+                "range": {
+                  "start": {
+                    "line": 19,
+                    "character": 0
+                  },
+                  "end": {
+                    "line": 19,
+                    "character": 0
+                  }
+                },
+                "newText": "output pair: Pair = { a: 0, r: \"\" }\n"
+              }
+            ]
+          }
+        }
+      },
+      {
+        "title": "generate an input of Pair",
+        "kind": "refactor.rewrite",
+        "edit": {
+          "changes": {
+            "file://<ws>/main.decl": [
+              {
+                "range": {
+                  "start": {
+                    "line": 19,
+                    "character": 0
+                  },
+                  "end": {
+                    "line": 19,
+                    "character": 0
+                  }
+                },
+                "newText": "input pair: Pair\n"
+              }
+            ]
+          }
+        }
+      },
+      {
+        "title": "generate the fixture header (@expect-phase / @expect-error)",
+        "kind": "refactor.rewrite",
+        "edit": {
+          "changes": {
+            "file://<ws>/main.decl": [
+              {
+                "range": {
+                  "start": {
+                    "line": 0,
+                    "character": 0
+                  },
+                  "end": {
+                    "line": 0,
+                    "character": 0
+                  }
+                },
+                "newText": "// @expect-phase: checking\n// @expect-error: E4052\n"
+              }
+            ]
+          }
+        }
+      },
+      {
+        "title": "reorder the members canonically",
+        "kind": "refactor.rewrite",
+        "edit": {
+          "changes": {
+            "file://<ws>/main.decl": [
+              {
+                "range": {
+                  "start": {
+                    "line": 2,
+                    "character": 12
+                  },
+                  "end": {
+                    "line": 10,
+                    "character": 1
+                  }
+                },
+                "newText": "{\n    a: int\n    r: string\n    b?: int\n    s?: Service\n    e?: int = 3\n    c = a + 1\n    d$ = a * 2\n}"
+              }
+            ]
+          }
+        }
+      }
+    ]
+  ],
+  [
+    "code actions at the comparison",
+    [
+      {
+        "title": "annotate: bool",
+        "kind": "refactor.rewrite",
+        "edit": {
+          "changes": {
+            "file://<ws>/main.decl": [
+              {
+                "range": {
+                  "start": {
+                    "line": 14,
+                    "character": 9
+                  },
+                  "end": {
+                    "line": 14,
+                    "character": 9
+                  }
+                },
+                "newText": ": bool"
+              }
+            ]
+          }
+        }
+      },
+      {
+        "title": "export cmp",
+        "kind": "refactor.rewrite",
+        "edit": {
+          "changes": {
+            "file://<ws>/main.decl": [
+              {
+                "range": {
+                  "start": {
+                    "line": 14,
+                    "character": 0
+                  },
+                  "end": {
+                    "line": 14,
+                    "character": 0
+                  }
+                },
+                "newText": "export "
+              }
+            ]
+          }
+        }
+      },
+      {
+        "title": "generate the fixture header (@expect-phase / @expect-error)",
+        "kind": "refactor.rewrite",
+        "edit": {
+          "changes": {
+            "file://<ws>/main.decl": [
+              {
+                "range": {
+                  "start": {
+                    "line": 0,
+                    "character": 0
+                  },
+                  "end": {
+                    "line": 0,
+                    "character": 0
+                  }
+                },
+                "newText": "// @expect-phase: checking\n// @expect-error: E4052\n"
+              }
+            ]
+          }
+        }
+      },
+      {
+        "title": "flip the comparison",
+        "kind": "refactor.rewrite",
+        "edit": {
+          "changes": {
+            "file://<ws>/main.decl": [
+              {
+                "range": {
+                  "start": {
+                    "line": 14,
+                    "character": 12
+                  },
+                  "end": {
+                    "line": 14,
+                    "character": 21
+                  }
+                },
+                "newText": "3 > LIMIT"
+              }
+            ]
+          }
+        }
+      }
+    ]
+  ],
+  [
+    "code actions at the unknown name cap",
+    [
+      {
+        "title": "import cap from \"./lib.decl\"",
+        "kind": "quickfix",
+        "diagnostics": [
+          {
+            "range": {
+              "start": {
+                "line": 15,
+                "character": 10
+              },
+              "end": {
+                "line": 15,
+                "character": 13
+              }
+            },
+            "severity": 1,
+            "source": "decl",
+            "code": "E3003",
+            "message": "unknown name cap"
+          }
+        ],
+        "isPreferred": true,
+        "edit": {
+          "changes": {
+            "file://<ws>/main.decl": [
+              {
+                "range": {
+                  "start": {
+                    "line": 0,
+                    "character": 31
+                  },
+                  "end": {
+                    "line": 0,
+                    "character": 31
+                  }
+                },
+                "newText": ", cap "
+              }
+            ]
+          }
+        }
+      },
+      {
+        "title": "qualify as lib.cap",
+        "kind": "quickfix",
+        "diagnostics": [
+          {
+            "range": {
+              "start": {
+                "line": 15,
+                "character": 10
+              },
+              "end": {
+                "line": 15,
+                "character": 13
+              }
+            },
+            "severity": 1,
+            "source": "decl",
+            "code": "E3003",
+            "message": "unknown name cap"
+          }
+        ],
+        "edit": {
+          "changes": {
+            "file://<ws>/main.decl": [
+              {
+                "range": {
+                  "start": {
+                    "line": 15,
+                    "character": 10
+                  },
+                  "end": {
+                    "line": 15,
+                    "character": 13
+                  }
+                },
+                "newText": "lib.cap"
+              }
+            ]
+          }
+        }
+      },
+      {
+        "title": "export k",
+        "kind": "refactor.rewrite",
+        "edit": {
+          "changes": {
+            "file://<ws>/main.decl": [
+              {
+                "range": {
+                  "start": {
+                    "line": 15,
+                    "character": 0
+                  },
+                  "end": {
+                    "line": 15,
+                    "character": 0
+                  }
+                },
+                "newText": "export "
+              }
+            ]
+          }
+        }
+      },
+      {
+        "title": "generate the fixture header (@expect-phase / @expect-error)",
+        "kind": "refactor.rewrite",
+        "edit": {
+          "changes": {
+            "file://<ws>/main.decl": [
+              {
+                "range": {
+                  "start": {
+                    "line": 0,
+                    "character": 0
+                  },
+                  "end": {
+                    "line": 0,
+                    "character": 0
+                  }
+                },
+                "newText": "// @expect-phase: checking\n// @expect-error: E4052\n"
+              }
+            ]
+          }
+        }
+      }
+    ]
+  ],
+  [
+    "code actions at the undeclared member zz",
+    [
+      {
+        "title": "declare zz: bool on Pair",
+        "kind": "quickfix",
+        "diagnostics": [
+          {
+            "range": {
+              "start": {
+                "line": 13,
+                "character": 0
+              },
+              "end": {
+                "line": 13,
+                "character": 50
+              }
+            },
+            "severity": 1,
+            "source": "decl",
+            "code": "E4003",
+            "message": "member zz is not declared on Pair"
+          }
+        ],
+        "isPreferred": true,
+        "edit": {
+          "changes": {
+            "file://<ws>/main.decl": [
+              {
+                "range": {
+                  "start": {
+                    "line": 9,
+                    "character": 15
+                  },
+                  "end": {
+                    "line": 9,
+                    "character": 15
+                  }
+                },
+                "newText": "\n    zz: bool"
+              }
+            ]
+          }
+        }
+      },
+      {
+        "title": "generate the fixture header (@expect-phase / @expect-error)",
+        "kind": "refactor.rewrite",
+        "edit": {
+          "changes": {
+            "file://<ws>/main.decl": [
+              {
+                "range": {
+                  "start": {
+                    "line": 0,
+                    "character": 0
+                  },
+                  "end": {
+                    "line": 0,
+                    "character": 0
+                  }
+                },
+                "newText": "// @expect-phase: checking\n// @expect-error: E4052\n"
+              }
+            ]
+          }
+        }
+      }
+    ]
+  ],
+  [
+    "code actions at the maybe-absent access",
+    [
+      {
+        "title": "use ?.",
+        "kind": "quickfix",
+        "diagnostics": [
+          {
+            "range": {
+              "start": {
+                "line": 16,
+                "character": 11
+              },
+              "end": {
+                "line": 16,
+                "character": 19
+              }
+            },
+            "severity": 1,
+            "source": "decl",
+            "code": "E4050",
+            "message": "member access on a maybe-absent expression (use ?. or an `in` guard)"
+          }
+        ],
+        "isPreferred": true,
+        "edit": {
+          "changes": {
+            "file://<ws>/main.decl": [
+              {
+                "range": {
+                  "start": {
+                    "line": 16,
+                    "character": 12
+                  },
+                  "end": {
+                    "line": 16,
+                    "character": 13
+                  }
+                },
+                "newText": "?."
+              }
+            ]
+          }
+        }
+      },
+      {
+        "title": "annotate: string",
+        "kind": "refactor.rewrite",
+        "edit": {
+          "changes": {
+            "file://<ws>/main.decl": [
+              {
+                "range": {
+                  "start": {
+                    "line": 16,
+                    "character": 8
+                  },
+                  "end": {
+                    "line": 16,
+                    "character": 8
+                  }
+                },
+                "newText": ": string"
+              }
+            ]
+          }
+        }
+      },
+      {
+        "title": "export q1",
+        "kind": "refactor.rewrite",
+        "edit": {
+          "changes": {
+            "file://<ws>/main.decl": [
+              {
+                "range": {
+                  "start": {
+                    "line": 16,
+                    "character": 0
+                  },
+                  "end": {
+                    "line": 16,
+                    "character": 0
+                  }
+                },
+                "newText": "export "
+              }
+            ]
+          }
+        }
+      },
+      {
+        "title": "generate the fixture header (@expect-phase / @expect-error)",
+        "kind": "refactor.rewrite",
+        "edit": {
+          "changes": {
+            "file://<ws>/main.decl": [
+              {
+                "range": {
+                  "start": {
+                    "line": 0,
+                    "character": 0
+                  },
+                  "end": {
+                    "line": 0,
+                    "character": 0
+                  }
+                },
+                "newText": "// @expect-phase: checking\n// @expect-error: E4052\n"
+              }
+            ]
+          }
+        }
+      }
+    ]
+  ],
+  [
+    "code actions at the maybe-absent operand",
+    [
+      {
+        "title": "supply a fallback with ??",
+        "kind": "quickfix",
+        "diagnostics": [
+          {
+            "range": {
+              "start": {
+                "line": 17,
+                "character": 11
+              },
+              "end": {
+                "line": 17,
+                "character": 18
+              }
+            },
+            "severity": 1,
+            "source": "decl",
+            "code": "E4050",
+            "message": "maybe-absent expression consumed as `+` operand (use ?. / ?? or an `in` guard)"
+          }
+        ],
+        "edit": {
+          "changes": {
+            "file://<ws>/main.decl": [
+              {
+                "range": {
+                  "start": {
+                    "line": 17,
+                    "character": 12
+                  },
+                  "end": {
+                    "line": 17,
+                    "character": 12
+                  }
+                },
+                "newText": " ?? null"
+              }
+            ]
+          }
+        }
+      },
+      {
+        "title": "annotate: int",
+        "kind": "refactor.rewrite",
+        "edit": {
+          "changes": {
+            "file://<ws>/main.decl": [
+              {
+                "range": {
+                  "start": {
+                    "line": 17,
+                    "character": 8
+                  },
+                  "end": {
+                    "line": 17,
+                    "character": 8
+                  }
+                },
+                "newText": ": int"
+              }
+            ]
+          }
+        }
+      },
+      {
+        "title": "export q2",
+        "kind": "refactor.rewrite",
+        "edit": {
+          "changes": {
+            "file://<ws>/main.decl": [
+              {
+                "range": {
+                  "start": {
+                    "line": 17,
+                    "character": 0
+                  },
+                  "end": {
+                    "line": 17,
+                    "character": 0
+                  }
+                },
+                "newText": "export "
+              }
+            ]
+          }
+        }
+      },
+      {
+        "title": "generate the fixture header (@expect-phase / @expect-error)",
+        "kind": "refactor.rewrite",
+        "edit": {
+          "changes": {
+            "file://<ws>/main.decl": [
+              {
+                "range": {
+                  "start": {
+                    "line": 0,
+                    "character": 0
+                  },
+                  "end": {
+                    "line": 0,
+                    "character": 0
+                  }
+                },
+                "newText": "// @expect-phase: checking\n// @expect-error: E4052\n"
+              }
+            ]
+          }
+        }
+      }
+    ]
+  ],
+  [
+    "code actions at the mixed ?? expression",
+    [
+      {
+        "title": "parenthesize the ?? expression",
+        "kind": "quickfix",
+        "diagnostics": [
+          {
+            "range": {
+              "start": {
+                "line": 18,
+                "character": 0
+              },
+              "end": {
+                "line": 18,
+                "character": 35
+              }
+            },
+            "severity": 1,
+            "source": "decl",
+            "code": "E4052",
+            "message": "`??` mixed with `&&`/`||` without parentheses"
+          }
+        ],
+        "isPreferred": true,
+        "edit": {
+          "changes": {
+            "file://<ws>/main.decl": [
+              {
+                "range": {
+                  "start": {
+                    "line": 18,
+                    "character": 14
+                  },
+                  "end": {
+                    "line": 18,
+                    "character": 14
+                  }
+                },
+                "newText": "("
+              },
+              {
+                "range": {
+                  "start": {
+                    "line": 18,
+                    "character": 26
+                  },
+                  "end": {
+                    "line": 18,
+                    "character": 26
+                  }
+                },
+                "newText": ")"
+              }
+            ]
+          }
+        }
+      },
+      {
+        "title": "annotate: bool | false",
+        "kind": "refactor.rewrite",
+        "edit": {
+          "changes": {
+            "file://<ws>/main.decl": [
+              {
+                "range": {
+                  "start": {
+                    "line": 18,
+                    "character": 11
+                  },
+                  "end": {
+                    "line": 18,
+                    "character": 11
+                  }
+                },
+                "newText": ": bool | false"
+              }
+            ]
+          }
+        }
+      },
+      {
+        "title": "export mixed",
+        "kind": "refactor.rewrite",
+        "edit": {
+          "changes": {
+            "file://<ws>/main.decl": [
+              {
+                "range": {
+                  "start": {
+                    "line": 18,
+                    "character": 0
+                  },
+                  "end": {
+                    "line": 18,
+                    "character": 0
+                  }
+                },
+                "newText": "export "
+              }
+            ]
+          }
+        }
+      },
+      {
+        "title": "generate the fixture header (@expect-phase / @expect-error)",
+        "kind": "refactor.rewrite",
+        "edit": {
+          "changes": {
+            "file://<ws>/main.decl": [
+              {
+                "range": {
+                  "start": {
+                    "line": 0,
+                    "character": 0
+                  },
+                  "end": {
+                    "line": 0,
+                    "character": 0
+                  }
+                },
+                "newText": "// @expect-phase: checking\n// @expect-error: E4052\n"
+              }
+            ]
+          }
+        }
+      }
+    ]
+  ],
+  [
+    "code actions on a selected constant expression",
+    [
+      {
+        "title": "annotate: (2..4)[]",
+        "kind": "refactor.rewrite",
+        "edit": {
+          "changes": {
+            "file://<ws>/main.decl": [
+              {
+                "range": {
+                  "start": {
+                    "line": 11,
+                    "character": 8
+                  },
+                  "end": {
+                    "line": 11,
+                    "character": 8
+                  }
+                },
+                "newText": ": (2..4)[]"
+              }
+            ]
+          }
+        }
+      },
+      {
+        "title": "export xs",
+        "kind": "refactor.rewrite",
+        "edit": {
+          "changes": {
+            "file://<ws>/main.decl": [
+              {
+                "range": {
+                  "start": {
+                    "line": 11,
+                    "character": 0
+                  },
+                  "end": {
+                    "line": 11,
+                    "character": 0
+                  }
+                },
+                "newText": "export "
+              }
+            ]
+          }
+        }
+      },
+      {
+        "title": "extract to a constant",
+        "kind": "refactor.extract",
+        "edit": {
+          "changes": {
+            "file://<ws>/main.decl": [
+              {
+                "range": {
+                  "start": {
+                    "line": 11,
+                    "character": 0
+                  },
+                  "end": {
+                    "line": 11,
+                    "character": 0
+                  }
+                },
+                "newText": "const extracted = [1, 2]\n"
+              },
+              {
+                "range": {
+                  "start": {
+                    "line": 11,
+                    "character": 27
+                  },
+                  "end": {
+                    "line": 11,
+                    "character": 33
+                  }
+                },
+                "newText": "extracted"
+              }
+            ]
+          }
+        }
+      }
+    ]
+  ],
+  [
+    "code actions on a selected member expression",
+    [
+      {
+        "title": "annotate: int",
+        "kind": "refactor.rewrite",
+        "edit": {
+          "changes": {
+            "file://<ws>/main.decl": [
+              {
+                "range": {
+                  "start": {
+                    "line": 7,
+                    "character": 5
+                  },
+                  "end": {
+                    "line": 7,
+                    "character": 5
+                  }
+                },
+                "newText": ": int"
+              }
+            ]
+          }
+        }
+      },
+      {
+        "title": "make hidden (x$)",
+        "kind": "refactor.rewrite",
+        "edit": {
+          "changes": {
+            "file://<ws>/main.decl": [
+              {
+                "range": {
+                  "start": {
+                    "line": 7,
+                    "character": 5
+                  },
+                  "end": {
+                    "line": 7,
+                    "character": 5
+                  }
+                },
+                "newText": "$"
+              }
+            ]
+          }
+        }
+      },
+      {
+        "title": "export Pair",
+        "kind": "refactor.rewrite",
+        "edit": {
+          "changes": {
+            "file://<ws>/main.decl": [
+              {
+                "range": {
+                  "start": {
+                    "line": 2,
+                    "character": 0
+                  },
+                  "end": {
+                    "line": 2,
+                    "character": 0
+                  }
+                },
+                "newText": "export "
+              }
+            ]
+          }
+        }
+      },
+      {
+        "title": "generate an output of Pair",
+        "kind": "refactor.rewrite",
+        "edit": {
+          "changes": {
+            "file://<ws>/main.decl": [
+              {
+                "range": {
+                  "start": {
+                    "line": 19,
+                    "character": 0
+                  },
+                  "end": {
+                    "line": 19,
+                    "character": 0
+                  }
+                },
+                "newText": "output pair: Pair = { a: 0, r: \"\" }\n"
+              }
+            ]
+          }
+        }
+      },
+      {
+        "title": "generate an input of Pair",
+        "kind": "refactor.rewrite",
+        "edit": {
+          "changes": {
+            "file://<ws>/main.decl": [
+              {
+                "range": {
+                  "start": {
+                    "line": 19,
+                    "character": 0
+                  },
+                  "end": {
+                    "line": 19,
+                    "character": 0
+                  }
+                },
+                "newText": "input pair: Pair\n"
+              }
+            ]
+          }
+        }
+      },
+      {
+        "title": "reorder the members canonically",
+        "kind": "refactor.rewrite",
+        "edit": {
+          "changes": {
+            "file://<ws>/main.decl": [
+              {
+                "range": {
+                  "start": {
+                    "line": 2,
+                    "character": 12
+                  },
+                  "end": {
+                    "line": 10,
+                    "character": 1
+                  }
+                },
+                "newText": "{\n    a: int\n    r: string\n    b?: int\n    s?: Service\n    e?: int = 3\n    c = a + 1\n    d$ = a * 2\n}"
+              }
+            ]
+          }
+        }
+      },
+      {
+        "title": "extract to a derived member",
+        "kind": "refactor.extract",
+        "edit": {
+          "changes": {
+            "file://<ws>/main.decl": [
+              {
+                "range": {
+                  "start": {
+                    "line": 7,
+                    "character": 0
+                  },
+                  "end": {
+                    "line": 7,
+                    "character": 0
+                  }
+                },
+                "newText": "    extracted = a + 1\n"
+              },
+              {
+                "range": {
+                  "start": {
+                    "line": 7,
+                    "character": 8
+                  },
+                  "end": {
+                    "line": 7,
+                    "character": 13
+                  }
+                },
+                "newText": "extracted"
+              }
+            ]
+          }
+        }
+      }
+    ]
+  ],
+  [
+    "code actions in the literal (fill)",
+    [
+      {
+        "title": "declare zz: bool on Pair",
+        "kind": "quickfix",
+        "diagnostics": [
+          {
+            "range": {
+              "start": {
+                "line": 13,
+                "character": 0
+              },
+              "end": {
+                "line": 13,
+                "character": 50
+              }
+            },
+            "severity": 1,
+            "source": "decl",
+            "code": "E4003",
+            "message": "member zz is not declared on Pair"
+          }
+        ],
+        "isPreferred": true,
+        "edit": {
+          "changes": {
+            "file://<ws>/main.decl": [
+              {
+                "range": {
+                  "start": {
+                    "line": 9,
+                    "character": 15
+                  },
+                  "end": {
+                    "line": 9,
+                    "character": 15
+                  }
+                },
+                "newText": "\n    zz: bool"
+              }
+            ]
+          }
+        }
+      },
+      {
+        "title": "generate the fixture header (@expect-phase / @expect-error)",
+        "kind": "refactor.rewrite",
+        "edit": {
+          "changes": {
+            "file://<ws>/main.decl": [
+              {
+                "range": {
+                  "start": {
+                    "line": 0,
+                    "character": 0
+                  },
+                  "end": {
+                    "line": 0,
+                    "character": 0
+                  }
+                },
+                "newText": "// @expect-phase: checking\n// @expect-error: E4052\n"
+              }
+            ]
+          }
+        }
+      }
+    ]
+  ],
+  [
+    "shutdown",
+    null
+  ]
+]

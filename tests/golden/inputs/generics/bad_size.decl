@@ -1,0 +1,6 @@
+// A size violation of a generic instantiation (§3.15): two items where
+// `Vec<int, 3>` demands three — rejected, the golden holds the diagnostic.
+
+type Vec<T, N: int> = T[N]
+
+export output q: Vec<int, 3> = [1, 2]

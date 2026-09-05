@@ -1,0 +1,155 @@
+{
+  "steps": [
+    {
+      "label": "initialize",
+      "request": "initialize",
+      "params": {
+        "processId": null,
+        "rootUri": null,
+        "capabilities": {}
+      }
+    },
+    {
+      "notify": "initialized",
+      "params": {}
+    },
+    {
+      "label": "diagnostics of the main text",
+      "open": "main.decl",
+      "text": "import { Service, MAX as LIMIT, cap, Level } from \"./lib.decl\"\nconst top = LIMIT\nexport output s: Service = { name: \"a\" }\nexport output t: Service = {\n    name: \"b\"\n}\nconst first = s.name\nconst c = cap(top)\nconst d = 250ms\ntype Local = Service { extra = name, level?: Level = \"low\" }\nconst m2 = std.math.min(top, 3)\n"
+    },
+    {
+      "label": "prepare rename top",
+      "request": "textDocument/prepareRename",
+      "params": {
+        "textDocument": {
+          "uri": {
+            "$uri": "main.decl"
+          }
+        },
+        "position": {
+          "line": 1,
+          "character": 7
+        }
+      }
+    },
+    {
+      "label": "prepare rename a literal",
+      "request": "textDocument/prepareRename",
+      "params": {
+        "textDocument": {
+          "uri": {
+            "$uri": "main.decl"
+          }
+        },
+        "position": {
+          "line": 2,
+          "character": 36
+        }
+      }
+    },
+    {
+      "label": "rename Service",
+      "request": "textDocument/rename",
+      "params": {
+        "textDocument": {
+          "uri": {
+            "$uri": "main.decl"
+          }
+        },
+        "position": {
+          "line": 2,
+          "character": 19
+        },
+        "newName": "Svc"
+      }
+    },
+    {
+      "label": "rename top",
+      "request": "textDocument/rename",
+      "params": {
+        "textDocument": {
+          "uri": {
+            "$uri": "main.decl"
+          }
+        },
+        "position": {
+          "line": 1,
+          "character": 7
+        },
+        "newName": "head"
+      }
+    },
+    {
+      "label": "diagnostics of the actions text",
+      "change": "main.decl",
+      "text": "import { Service, MAX as LIMIT } from \"./lib.decl\"\nimport * as lib from \"./lib.decl\"\ntype Pair = {\n    a: int,\n    r: string,\n    b?: int,\n    s?: Service,\n    c = a + 1,\n    d$ = a * 2,\n    e?: int = 3\n}\nconst xs = [x * 2 for x in [1, 2] if x > 0]\nconst f = (y) => y + 1\nexport output p: Pair = { a: 1, r: \"x\", zz: true }\nconst cmp = LIMIT < 3\nconst k = cap(1)\nconst q1 = p.s.name\nconst q2 = p.b + 1\nconst mixed = true && null ?? false\n"
+    },
+    {
+      "label": "linked editing of a comprehension variable",
+      "request": "textDocument/linkedEditingRange",
+      "params": {
+        "textDocument": {
+          "uri": {
+            "$uri": "main.decl"
+          }
+        },
+        "position": {
+          "$pos": "x * 2"
+        }
+      }
+    },
+    {
+      "label": "linked editing of a lambda parameter",
+      "request": "textDocument/linkedEditingRange",
+      "params": {
+        "textDocument": {
+          "uri": {
+            "$uri": "main.decl"
+          }
+        },
+        "position": {
+          "$pos": "y + 1"
+        }
+      }
+    },
+    {
+      "label": "prepare rename of a local",
+      "request": "textDocument/prepareRename",
+      "params": {
+        "textDocument": {
+          "uri": {
+            "$uri": "main.decl"
+          }
+        },
+        "position": {
+          "$pos": "x * 2"
+        }
+      }
+    },
+    {
+      "label": "rename of a local",
+      "request": "textDocument/rename",
+      "params": {
+        "textDocument": {
+          "uri": {
+            "$uri": "main.decl"
+          }
+        },
+        "position": {
+          "$pos": "x * 2"
+        },
+        "newName": "n"
+      }
+    },
+    {
+      "label": "shutdown",
+      "request": "shutdown",
+      "params": {}
+    },
+    {
+      "notify": "exit",
+      "params": {}
+    }
+  ]
+}

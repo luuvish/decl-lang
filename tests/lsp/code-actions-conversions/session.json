@@ -1,0 +1,121 @@
+{
+  "steps": [
+    {
+      "label": "initialize",
+      "request": "initialize",
+      "params": {
+        "processId": null,
+        "rootUri": null,
+        "capabilities": {}
+      }
+    },
+    {
+      "notify": "initialized",
+      "params": {}
+    },
+    {
+      "label": "diagnostics of the main text",
+      "open": "main.decl",
+      "text": "import { Service, MAX as LIMIT, cap, Level } from \"./lib.decl\"\nconst top = LIMIT\nexport output s: Service = { name: \"a\" }\nexport output t: Service = {\n    name: \"b\"\n}\nconst first = s.name\nconst c = cap(top)\nconst d = 250ms\ntype Local = Service { extra = name, level?: Level = \"low\" }\nconst m2 = std.math.min(top, 3)\n"
+    },
+    {
+      "label": "diagnostics of the conversions text",
+      "change": "main.decl",
+      "text": "type Circle = { kind: \"circle\", r: int }\ntype Rect = { kind: \"rect\", w: int, h: int }\ntype Shape = Circle | Rect\ninput shape: Shape\nconst area = if shape.kind == \"circle\" then shape.r * 2 else if shape.kind == \"rect\" then shape.w * shape.h else 0\nconst area2 = match shape {\n    (c: Circle) => c.r * 2\n    (r: Rect) => r.w * r.h\n}\ndiagnostic wide(w: int) {\n    severity = error\n    message = `too wide: ${w}`\n}\ntype Box = {\n    w: int,\n    h: int,\n    area = w * h,\n    big = area > 10,\n    assert fits: w <= 100 else error `too wide: ${w}`,\n    assert fits2: h <= 100 else wide(h)\n}\n"
+    },
+    {
+      "label": "code actions at the if chain",
+      "request": "textDocument/codeAction",
+      "params": {
+        "textDocument": {
+          "uri": {
+            "$uri": "main.decl"
+          }
+        },
+        "range": {
+          "$at": "if shape.kind"
+        },
+        "context": {
+          "diagnostics": []
+        }
+      }
+    },
+    {
+      "label": "code actions at the match",
+      "request": "textDocument/codeAction",
+      "params": {
+        "textDocument": {
+          "uri": {
+            "$uri": "main.decl"
+          }
+        },
+        "range": {
+          "$at": "match shape"
+        },
+        "context": {
+          "diagnostics": []
+        }
+      }
+    },
+    {
+      "label": "code actions at the derived member area",
+      "request": "textDocument/codeAction",
+      "params": {
+        "textDocument": {
+          "uri": {
+            "$uri": "main.decl"
+          }
+        },
+        "range": {
+          "$at": "area = w * h"
+        },
+        "context": {
+          "diagnostics": []
+        }
+      }
+    },
+    {
+      "label": "code actions at the inline else error",
+      "request": "textDocument/codeAction",
+      "params": {
+        "textDocument": {
+          "uri": {
+            "$uri": "main.decl"
+          }
+        },
+        "range": {
+          "$at": "assert fits:"
+        },
+        "context": {
+          "diagnostics": []
+        }
+      }
+    },
+    {
+      "label": "code actions at the diagnostic reference",
+      "request": "textDocument/codeAction",
+      "params": {
+        "textDocument": {
+          "uri": {
+            "$uri": "main.decl"
+          }
+        },
+        "range": {
+          "$at": "assert fits2"
+        },
+        "context": {
+          "diagnostics": []
+        }
+      }
+    },
+    {
+      "label": "shutdown",
+      "request": "shutdown",
+      "params": {}
+    },
+    {
+      "notify": "exit",
+      "params": {}
+    }
+  ]
+}

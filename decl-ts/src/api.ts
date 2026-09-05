@@ -179,7 +179,13 @@ export async function validate(
   opts: { inputs?: Record<string, InputDocument> } = {},
 ): Promise<Diagnostic[]> {
   await init();
-  const { decls, errors } = parseSource(readFileSync(path, 'utf8'));
+  let text: string;
+  try {
+    text = readFileSync(path, 'utf8');
+  } catch {
+    throw new DeclError(`${path}: cannot be read`);
+  }
+  const { decls, errors } = parseSource(text);
   if (errors.length) throw new DeclError(`${path}: ${errors.length} parse error(s)`);
   const checks = checkModule(decls).map((d) => tagged(path, d));
   if (checks.length) return checks;

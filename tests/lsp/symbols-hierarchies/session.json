@@ -1,0 +1,162 @@
+{
+  "steps": [
+    {
+      "label": "initialize",
+      "request": "initialize",
+      "params": {
+        "processId": null,
+        "rootUri": null,
+        "capabilities": {}
+      }
+    },
+    {
+      "notify": "initialized",
+      "params": {}
+    },
+    {
+      "label": "diagnostics of the main text",
+      "open": "main.decl",
+      "text": "import { Service, MAX as LIMIT, cap, Level } from \"./lib.decl\"\nconst top = LIMIT\nexport output s: Service = { name: \"a\" }\nexport output t: Service = {\n    name: \"b\"\n}\nconst first = s.name\nconst c = cap(top)\nconst d = 250ms\ntype Local = Service { extra = name, level?: Level = \"low\" }\nconst m2 = std.math.min(top, 3)\n"
+    },
+    {
+      "label": "workspace symbols",
+      "request": "workspace/symbol",
+      "params": {
+        "query": "c"
+      }
+    },
+    {
+      "label": "document symbols",
+      "request": "textDocument/documentSymbol",
+      "params": {
+        "textDocument": {
+          "uri": {
+            "$uri": "main.decl"
+          }
+        }
+      }
+    },
+    {
+      "label": "folding ranges",
+      "request": "textDocument/foldingRange",
+      "params": {
+        "textDocument": {
+          "uri": {
+            "$uri": "main.decl"
+          }
+        }
+      }
+    },
+    {
+      "label": "selection ranges",
+      "request": "textDocument/selectionRange",
+      "params": {
+        "textDocument": {
+          "uri": {
+            "$uri": "main.decl"
+          }
+        },
+        "positions": [
+          {
+            "line": 6,
+            "character": 16
+          },
+          {
+            "line": 4,
+            "character": 11
+          }
+        ]
+      }
+    },
+    {
+      "label": "semantic tokens",
+      "request": "textDocument/semanticTokens/full",
+      "params": {
+        "textDocument": {
+          "uri": {
+            "$uri": "main.decl"
+          }
+        }
+      }
+    },
+    {
+      "label": "call hierarchy: prepare cap",
+      "request": "textDocument/prepareCallHierarchy",
+      "params": {
+        "textDocument": {
+          "uri": {
+            "$uri": "main.decl"
+          }
+        },
+        "position": {
+          "line": 7,
+          "character": 11
+        }
+      }
+    },
+    {
+      "label": "call hierarchy: incoming calls of cap",
+      "request": "callHierarchy/incomingCalls",
+      "params": {
+        "item": {
+          "$answer": "call hierarchy: prepare cap",
+          "index": 0
+        }
+      }
+    },
+    {
+      "label": "call hierarchy: outgoing calls of cap",
+      "request": "callHierarchy/outgoingCalls",
+      "params": {
+        "item": {
+          "$answer": "call hierarchy: prepare cap",
+          "index": 0
+        }
+      }
+    },
+    {
+      "label": "type hierarchy: prepare Service",
+      "request": "textDocument/prepareTypeHierarchy",
+      "params": {
+        "textDocument": {
+          "uri": {
+            "$uri": "main.decl"
+          }
+        },
+        "position": {
+          "line": 2,
+          "character": 19
+        }
+      }
+    },
+    {
+      "label": "type hierarchy: supertypes of Service",
+      "request": "typeHierarchy/supertypes",
+      "params": {
+        "item": {
+          "$answer": "type hierarchy: prepare Service",
+          "index": 0
+        }
+      }
+    },
+    {
+      "label": "type hierarchy: subtypes of Service",
+      "request": "typeHierarchy/subtypes",
+      "params": {
+        "item": {
+          "$answer": "type hierarchy: prepare Service",
+          "index": 0
+        }
+      }
+    },
+    {
+      "label": "shutdown",
+      "request": "shutdown",
+      "params": {}
+    },
+    {
+      "notify": "exit",
+      "params": {}
+    }
+  ]
+}

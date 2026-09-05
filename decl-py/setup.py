@@ -1,5 +1,5 @@
 """Builds the tree-sitter grammar extension; everything else is declared
-in pyproject.toml. The grammar sources under decl/_tree_sitter/src are
+in pyproject.toml. The grammar sources under src/decl/_tree_sitter/src are
 synced from ../tree-sitter-decl/src by `npm run build` in ../decl-ts;
 inside the repository they are copied from the grammar directly when
 that sync has not run (so `pip install -e python` works from a fresh
@@ -11,7 +11,7 @@ from pathlib import Path
 from setuptools import Extension, setup
 
 _here = Path(__file__).resolve().parent
-_src = _here / "decl/_tree_sitter/src"
+_src = _here / "src/decl/_tree_sitter/src"
 _grammar = _here.parent / "tree-sitter-decl/src"
 if not (_src / "parser.c").exists() and (_grammar / "parser.c").exists():
     shutil.rmtree(_src, ignore_errors=True)
@@ -26,11 +26,11 @@ setup(
         Extension(
             "decl._tree_sitter._binding",
             sources=[
-                "decl/_tree_sitter/binding.c",
-                "decl/_tree_sitter/src/parser.c",
-                "decl/_tree_sitter/src/scanner.c",
+                "src/decl/_tree_sitter/binding.c",
+                "src/decl/_tree_sitter/src/parser.c",
+                "src/decl/_tree_sitter/src/scanner.c",
             ],
-            include_dirs=["decl/_tree_sitter/src"],
+            include_dirs=["src/decl/_tree_sitter/src"],
             extra_compile_args=["-std=c11"],
         )
     ]

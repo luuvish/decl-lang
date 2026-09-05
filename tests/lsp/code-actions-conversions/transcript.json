@@ -1,0 +1,595 @@
+[
+  [
+    "initialize",
+    {
+      "capabilities": {
+        "textDocumentSync": 1,
+        "hoverProvider": true,
+        "definitionProvider": true,
+        "typeDefinitionProvider": true,
+        "referencesProvider": true,
+        "documentHighlightProvider": true,
+        "documentSymbolProvider": true,
+        "foldingRangeProvider": true,
+        "documentFormattingProvider": true,
+        "renameProvider": {
+          "prepareProvider": true
+        },
+        "completionProvider": {
+          "triggerCharacters": [
+            ".",
+            "$",
+            ":"
+          ]
+        },
+        "codeLensProvider": {
+          "resolveProvider": false
+        },
+        "signatureHelpProvider": {
+          "triggerCharacters": [
+            "(",
+            ","
+          ]
+        },
+        "workspaceSymbolProvider": true,
+        "selectionRangeProvider": true,
+        "semanticTokensProvider": {
+          "legend": {
+            "tokenTypes": [
+              "type",
+              "property",
+              "function",
+              "variable",
+              "namespace",
+              "parameter"
+            ],
+            "tokenModifiers": [
+              "declaration",
+              "required",
+              "optional",
+              "defaulted",
+              "derived",
+              "hidden",
+              "unresolved",
+              "readonly"
+            ]
+          },
+          "full": true
+        },
+        "inlayHintProvider": true,
+        "callHierarchyProvider": true,
+        "typeHierarchyProvider": true,
+        "codeActionProvider": {
+          "codeActionKinds": [
+            "quickfix",
+            "refactor.rewrite",
+            "refactor.extract",
+            "refactor.inline"
+          ]
+        },
+        "linkedEditingRangeProvider": true,
+        "documentOnTypeFormattingProvider": {
+          "firstTriggerCharacter": "\n",
+          "moreTriggerCharacter": [
+            "}",
+            "]",
+            ")"
+          ]
+        },
+        "executeCommandProvider": {
+          "commands": [
+            "decl.evaluate",
+            "decl.validate",
+            "decl.trace",
+            "decl.showSyntaxTree",
+            "decl.reloadWorkspace"
+          ]
+        }
+      },
+      "serverInfo": {
+        "name": "decl-lsp",
+        "version": "<version>"
+      }
+    }
+  ],
+  [
+    "diagnostics of the main text",
+    []
+  ],
+  [
+    "diagnostics of the conversions text",
+    []
+  ],
+  [
+    "code actions at the if chain",
+    [
+      {
+        "title": "export area",
+        "kind": "refactor.rewrite",
+        "edit": {
+          "changes": {
+            "file://<ws>/main.decl": [
+              {
+                "range": {
+                  "start": {
+                    "line": 4,
+                    "character": 0
+                  },
+                  "end": {
+                    "line": 4,
+                    "character": 0
+                  }
+                },
+                "newText": "export "
+              }
+            ]
+          }
+        }
+      },
+      {
+        "title": "convert to match",
+        "kind": "refactor.rewrite",
+        "edit": {
+          "changes": {
+            "file://<ws>/main.decl": [
+              {
+                "range": {
+                  "start": {
+                    "line": 4,
+                    "character": 13
+                  },
+                  "end": {
+                    "line": 4,
+                    "character": 114
+                  }
+                },
+                "newText": "match shape {\n    (s: Circle) => s.r * 2\n    (s: Rect) => s.w * s.h\n    (other) => 0\n}"
+              }
+            ]
+          }
+        }
+      }
+    ]
+  ],
+  [
+    "code actions at the match",
+    [
+      {
+        "title": "annotate: int",
+        "kind": "refactor.rewrite",
+        "edit": {
+          "changes": {
+            "file://<ws>/main.decl": [
+              {
+                "range": {
+                  "start": {
+                    "line": 5,
+                    "character": 11
+                  },
+                  "end": {
+                    "line": 5,
+                    "character": 11
+                  }
+                },
+                "newText": ": int"
+              }
+            ]
+          }
+        }
+      },
+      {
+        "title": "export area2",
+        "kind": "refactor.rewrite",
+        "edit": {
+          "changes": {
+            "file://<ws>/main.decl": [
+              {
+                "range": {
+                  "start": {
+                    "line": 5,
+                    "character": 0
+                  },
+                  "end": {
+                    "line": 5,
+                    "character": 0
+                  }
+                },
+                "newText": "export "
+              }
+            ]
+          }
+        }
+      },
+      {
+        "title": "convert to if",
+        "kind": "refactor.rewrite",
+        "edit": {
+          "changes": {
+            "file://<ws>/main.decl": [
+              {
+                "range": {
+                  "start": {
+                    "line": 5,
+                    "character": 14
+                  },
+                  "end": {
+                    "line": 8,
+                    "character": 1
+                  }
+                },
+                "newText": "if shape.kind == \"circle\" then shape.r * 2 else if shape.kind == \"rect\" then shape.w * shape.h else null"
+              }
+            ]
+          }
+        }
+      }
+    ]
+  ],
+  [
+    "code actions at the derived member area",
+    [
+      {
+        "title": "annotate: int",
+        "kind": "refactor.rewrite",
+        "edit": {
+          "changes": {
+            "file://<ws>/main.decl": [
+              {
+                "range": {
+                  "start": {
+                    "line": 16,
+                    "character": 8
+                  },
+                  "end": {
+                    "line": 16,
+                    "character": 8
+                  }
+                },
+                "newText": ": int"
+              }
+            ]
+          }
+        }
+      },
+      {
+        "title": "make hidden (x$)",
+        "kind": "refactor.rewrite",
+        "edit": {
+          "changes": {
+            "file://<ws>/main.decl": [
+              {
+                "range": {
+                  "start": {
+                    "line": 16,
+                    "character": 8
+                  },
+                  "end": {
+                    "line": 16,
+                    "character": 8
+                  }
+                },
+                "newText": "$"
+              }
+            ]
+          }
+        }
+      },
+      {
+        "title": "export Box",
+        "kind": "refactor.rewrite",
+        "edit": {
+          "changes": {
+            "file://<ws>/main.decl": [
+              {
+                "range": {
+                  "start": {
+                    "line": 13,
+                    "character": 0
+                  },
+                  "end": {
+                    "line": 13,
+                    "character": 0
+                  }
+                },
+                "newText": "export "
+              }
+            ]
+          }
+        }
+      },
+      {
+        "title": "generate an output of Box",
+        "kind": "refactor.rewrite",
+        "edit": {
+          "changes": {
+            "file://<ws>/main.decl": [
+              {
+                "range": {
+                  "start": {
+                    "line": 21,
+                    "character": 0
+                  },
+                  "end": {
+                    "line": 21,
+                    "character": 0
+                  }
+                },
+                "newText": "output box: Box = { w: 0, h: 0 }\n"
+              }
+            ]
+          }
+        }
+      },
+      {
+        "title": "generate an input of Box",
+        "kind": "refactor.rewrite",
+        "edit": {
+          "changes": {
+            "file://<ws>/main.decl": [
+              {
+                "range": {
+                  "start": {
+                    "line": 21,
+                    "character": 0
+                  },
+                  "end": {
+                    "line": 21,
+                    "character": 0
+                  }
+                },
+                "newText": "input box: Box\n"
+              }
+            ]
+          }
+        }
+      },
+      {
+        "title": "inline area",
+        "kind": "refactor.inline",
+        "edit": {
+          "changes": {
+            "file://<ws>/main.decl": [
+              {
+                "range": {
+                  "start": {
+                    "line": 17,
+                    "character": 10
+                  },
+                  "end": {
+                    "line": 17,
+                    "character": 14
+                  }
+                },
+                "newText": "(w * h)"
+              },
+              {
+                "range": {
+                  "start": {
+                    "line": 16,
+                    "character": 0
+                  },
+                  "end": {
+                    "line": 17,
+                    "character": 0
+                  }
+                },
+                "newText": ""
+              }
+            ]
+          }
+        }
+      }
+    ]
+  ],
+  [
+    "code actions at the inline else error",
+    [
+      {
+        "title": "export Box",
+        "kind": "refactor.rewrite",
+        "edit": {
+          "changes": {
+            "file://<ws>/main.decl": [
+              {
+                "range": {
+                  "start": {
+                    "line": 13,
+                    "character": 0
+                  },
+                  "end": {
+                    "line": 13,
+                    "character": 0
+                  }
+                },
+                "newText": "export "
+              }
+            ]
+          }
+        }
+      },
+      {
+        "title": "generate an output of Box",
+        "kind": "refactor.rewrite",
+        "edit": {
+          "changes": {
+            "file://<ws>/main.decl": [
+              {
+                "range": {
+                  "start": {
+                    "line": 21,
+                    "character": 0
+                  },
+                  "end": {
+                    "line": 21,
+                    "character": 0
+                  }
+                },
+                "newText": "output box: Box = { w: 0, h: 0 }\n"
+              }
+            ]
+          }
+        }
+      },
+      {
+        "title": "generate an input of Box",
+        "kind": "refactor.rewrite",
+        "edit": {
+          "changes": {
+            "file://<ws>/main.decl": [
+              {
+                "range": {
+                  "start": {
+                    "line": 21,
+                    "character": 0
+                  },
+                  "end": {
+                    "line": 21,
+                    "character": 0
+                  }
+                },
+                "newText": "input box: Box\n"
+              }
+            ]
+          }
+        }
+      },
+      {
+        "title": "declare a diagnostic for fits",
+        "kind": "refactor.extract",
+        "edit": {
+          "changes": {
+            "file://<ws>/main.decl": [
+              {
+                "range": {
+                  "start": {
+                    "line": 13,
+                    "character": 0
+                  },
+                  "end": {
+                    "line": 13,
+                    "character": 0
+                  }
+                },
+                "newText": "diagnostic fits(w: int) {\n    severity = error\n    message = `too wide: ${w}`\n}\n"
+              },
+              {
+                "range": {
+                  "start": {
+                    "line": 18,
+                    "character": 26
+                  },
+                  "end": {
+                    "line": 18,
+                    "character": 53
+                  }
+                },
+                "newText": "else fits(w)"
+              }
+            ]
+          }
+        }
+      }
+    ]
+  ],
+  [
+    "code actions at the diagnostic reference",
+    [
+      {
+        "title": "export Box",
+        "kind": "refactor.rewrite",
+        "edit": {
+          "changes": {
+            "file://<ws>/main.decl": [
+              {
+                "range": {
+                  "start": {
+                    "line": 13,
+                    "character": 0
+                  },
+                  "end": {
+                    "line": 13,
+                    "character": 0
+                  }
+                },
+                "newText": "export "
+              }
+            ]
+          }
+        }
+      },
+      {
+        "title": "generate an output of Box",
+        "kind": "refactor.rewrite",
+        "edit": {
+          "changes": {
+            "file://<ws>/main.decl": [
+              {
+                "range": {
+                  "start": {
+                    "line": 21,
+                    "character": 0
+                  },
+                  "end": {
+                    "line": 21,
+                    "character": 0
+                  }
+                },
+                "newText": "output box: Box = { w: 0, h: 0 }\n"
+              }
+            ]
+          }
+        }
+      },
+      {
+        "title": "generate an input of Box",
+        "kind": "refactor.rewrite",
+        "edit": {
+          "changes": {
+            "file://<ws>/main.decl": [
+              {
+                "range": {
+                  "start": {
+                    "line": 21,
+                    "character": 0
+                  },
+                  "end": {
+                    "line": 21,
+                    "character": 0
+                  }
+                },
+                "newText": "input box: Box\n"
+              }
+            ]
+          }
+        }
+      },
+      {
+        "title": "inline the diagnostic wide",
+        "kind": "refactor.inline",
+        "edit": {
+          "changes": {
+            "file://<ws>/main.decl": [
+              {
+                "range": {
+                  "start": {
+                    "line": 19,
+                    "character": 27
+                  },
+                  "end": {
+                    "line": 19,
+                    "character": 39
+                  }
+                },
+                "newText": "else error `too wide: ${h}`"
+              }
+            ]
+          }
+        }
+      }
+    ]
+  ],
+  [
+    "shutdown",
+    null
+  ]
+]

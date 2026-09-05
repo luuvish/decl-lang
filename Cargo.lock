@@ -92,6 +92,7 @@ name = "decl-lang"
 version = "0.3.0"
 dependencies = [
  "cc",
+ "indexmap",
  "num-bigint",
  "num-integer",
  "num-traits",

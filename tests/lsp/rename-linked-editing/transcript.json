@@ -1,0 +1,491 @@
+[
+  [
+    "initialize",
+    {
+      "capabilities": {
+        "textDocumentSync": 1,
+        "hoverProvider": true,
+        "definitionProvider": true,
+        "typeDefinitionProvider": true,
+        "referencesProvider": true,
+        "documentHighlightProvider": true,
+        "documentSymbolProvider": true,
+        "foldingRangeProvider": true,
+        "documentFormattingProvider": true,
+        "renameProvider": {
+          "prepareProvider": true
+        },
+        "completionProvider": {
+          "triggerCharacters": [
+            ".",
+            "$",
+            ":"
+          ]
+        },
+        "codeLensProvider": {
+          "resolveProvider": false
+        },
+        "signatureHelpProvider": {
+          "triggerCharacters": [
+            "(",
+            ","
+          ]
+        },
+        "workspaceSymbolProvider": true,
+        "selectionRangeProvider": true,
+        "semanticTokensProvider": {
+          "legend": {
+            "tokenTypes": [
+              "type",
+              "property",
+              "function",
+              "variable",
+              "namespace",
+              "parameter"
+            ],
+            "tokenModifiers": [
+              "declaration",
+              "required",
+              "optional",
+              "defaulted",
+              "derived",
+              "hidden",
+              "unresolved",
+              "readonly"
+            ]
+          },
+          "full": true
+        },
+        "inlayHintProvider": true,
+        "callHierarchyProvider": true,
+        "typeHierarchyProvider": true,
+        "codeActionProvider": {
+          "codeActionKinds": [
+            "quickfix",
+            "refactor.rewrite",
+            "refactor.extract",
+            "refactor.inline"
+          ]
+        },
+        "linkedEditingRangeProvider": true,
+        "documentOnTypeFormattingProvider": {
+          "firstTriggerCharacter": "\n",
+          "moreTriggerCharacter": [
+            "}",
+            "]",
+            ")"
+          ]
+        },
+        "executeCommandProvider": {
+          "commands": [
+            "decl.evaluate",
+            "decl.validate",
+            "decl.trace",
+            "decl.showSyntaxTree",
+            "decl.reloadWorkspace"
+          ]
+        }
+      },
+      "serverInfo": {
+        "name": "decl-lsp",
+        "version": "<version>"
+      }
+    }
+  ],
+  [
+    "diagnostics of the main text",
+    []
+  ],
+  [
+    "prepare rename top",
+    {
+      "range": {
+        "start": {
+          "line": 1,
+          "character": 6
+        },
+        "end": {
+          "line": 1,
+          "character": 9
+        }
+      },
+      "placeholder": "top"
+    }
+  ],
+  [
+    "prepare rename a literal",
+    null
+  ],
+  [
+    "rename Service",
+    {
+      "changes": {
+        "file://<ws>/lib.decl": [
+          {
+            "range": {
+              "start": {
+                "line": 0,
+                "character": 12
+              },
+              "end": {
+                "line": 0,
+                "character": 19
+              }
+            },
+            "newText": "Svc"
+          },
+          {
+            "range": {
+              "start": {
+                "line": 3,
+                "character": 21
+              },
+              "end": {
+                "line": 3,
+                "character": 28
+              }
+            },
+            "newText": "Svc"
+          }
+        ],
+        "file://<ws>/main.decl": [
+          {
+            "range": {
+              "start": {
+                "line": 0,
+                "character": 9
+              },
+              "end": {
+                "line": 0,
+                "character": 16
+              }
+            },
+            "newText": "Svc"
+          },
+          {
+            "range": {
+              "start": {
+                "line": 2,
+                "character": 17
+              },
+              "end": {
+                "line": 2,
+                "character": 24
+              }
+            },
+            "newText": "Svc"
+          },
+          {
+            "range": {
+              "start": {
+                "line": 3,
+                "character": 17
+              },
+              "end": {
+                "line": 3,
+                "character": 24
+              }
+            },
+            "newText": "Svc"
+          },
+          {
+            "range": {
+              "start": {
+                "line": 9,
+                "character": 13
+              },
+              "end": {
+                "line": 9,
+                "character": 20
+              }
+            },
+            "newText": "Svc"
+          }
+        ]
+      }
+    }
+  ],
+  [
+    "rename top",
+    {
+      "changes": {
+        "file://<ws>/main.decl": [
+          {
+            "range": {
+              "start": {
+                "line": 1,
+                "character": 6
+              },
+              "end": {
+                "line": 1,
+                "character": 9
+              }
+            },
+            "newText": "head"
+          },
+          {
+            "range": {
+              "start": {
+                "line": 7,
+                "character": 14
+              },
+              "end": {
+                "line": 7,
+                "character": 17
+              }
+            },
+            "newText": "head"
+          },
+          {
+            "range": {
+              "start": {
+                "line": 10,
+                "character": 24
+              },
+              "end": {
+                "line": 10,
+                "character": 27
+              }
+            },
+            "newText": "head"
+          }
+        ]
+      }
+    }
+  ],
+  [
+    "diagnostics of the actions text",
+    [
+      {
+        "range": {
+          "start": {
+            "line": 18,
+            "character": 0
+          },
+          "end": {
+            "line": 18,
+            "character": 35
+          }
+        },
+        "severity": 1,
+        "source": "decl",
+        "code": "E4052",
+        "message": "`??` mixed with `&&`/`||` without parentheses"
+      },
+      {
+        "range": {
+          "start": {
+            "line": 13,
+            "character": 0
+          },
+          "end": {
+            "line": 13,
+            "character": 50
+          }
+        },
+        "severity": 1,
+        "source": "decl",
+        "code": "E4003",
+        "message": "member zz is not declared on Pair"
+      },
+      {
+        "range": {
+          "start": {
+            "line": 15,
+            "character": 10
+          },
+          "end": {
+            "line": 15,
+            "character": 13
+          }
+        },
+        "severity": 1,
+        "source": "decl",
+        "code": "E3003",
+        "message": "unknown name cap"
+      },
+      {
+        "range": {
+          "start": {
+            "line": 16,
+            "character": 11
+          },
+          "end": {
+            "line": 16,
+            "character": 19
+          }
+        },
+        "severity": 1,
+        "source": "decl",
+        "code": "E4050",
+        "message": "member access on a maybe-absent expression (use ?. or an `in` guard)"
+      },
+      {
+        "range": {
+          "start": {
+            "line": 17,
+            "character": 11
+          },
+          "end": {
+            "line": 17,
+            "character": 18
+          }
+        },
+        "severity": 1,
+        "source": "decl",
+        "code": "E4050",
+        "message": "maybe-absent expression consumed as `+` operand (use ?. / ?? or an `in` guard)"
+      },
+      {
+        "range": {
+          "start": {
+            "line": 18,
+            "character": 14
+          },
+          "end": {
+            "line": 18,
+            "character": 26
+          }
+        },
+        "severity": 1,
+        "source": "decl",
+        "code": "E4071",
+        "message": "`&&` on a non-bool operand"
+      }
+    ]
+  ],
+  [
+    "linked editing of a comprehension variable",
+    {
+      "ranges": [
+        {
+          "start": {
+            "line": 11,
+            "character": 12
+          },
+          "end": {
+            "line": 11,
+            "character": 13
+          }
+        },
+        {
+          "start": {
+            "line": 11,
+            "character": 22
+          },
+          "end": {
+            "line": 11,
+            "character": 23
+          }
+        },
+        {
+          "start": {
+            "line": 11,
+            "character": 37
+          },
+          "end": {
+            "line": 11,
+            "character": 38
+          }
+        }
+      ],
+      "wordPattern": "[A-Za-z_][A-Za-z0-9_]*"
+    }
+  ],
+  [
+    "linked editing of a lambda parameter",
+    {
+      "ranges": [
+        {
+          "start": {
+            "line": 12,
+            "character": 11
+          },
+          "end": {
+            "line": 12,
+            "character": 12
+          }
+        },
+        {
+          "start": {
+            "line": 12,
+            "character": 17
+          },
+          "end": {
+            "line": 12,
+            "character": 18
+          }
+        }
+      ],
+      "wordPattern": "[A-Za-z_][A-Za-z0-9_]*"
+    }
+  ],
+  [
+    "prepare rename of a local",
+    {
+      "range": {
+        "start": {
+          "line": 11,
+          "character": 12
+        },
+        "end": {
+          "line": 11,
+          "character": 13
+        }
+      },
+      "placeholder": "x"
+    }
+  ],
+  [
+    "rename of a local",
+    {
+      "changes": {
+        "file://<ws>/main.decl": [
+          {
+            "range": {
+              "start": {
+                "line": 11,
+                "character": 12
+              },
+              "end": {
+                "line": 11,
+                "character": 13
+              }
+            },
+            "newText": "n"
+          },
+          {
+            "range": {
+              "start": {
+                "line": 11,
+                "character": 22
+              },
+              "end": {
+                "line": 11,
+                "character": 23
+              }
+            },
+            "newText": "n"
+          },
+          {
+            "range": {
+              "start": {
+                "line": 11,
+                "character": 37
+              },
+              "end": {
+                "line": 11,
+                "character": 38
+              }
+            },
+            "newText": "n"
+          }
+        ]
+      }
+    }
+  ],
+  [
+    "shutdown",
+    null
+  ]
+]

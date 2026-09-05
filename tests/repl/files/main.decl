@@ -1,0 +1,15 @@
+/// A service configuration
+type Cfg = {
+    /// the listening port
+    port: 1..65535,
+    name: string,
+    replicas?: int = 1,
+    label = `${name}:${port}`,
+    tag$ = `${name}-${replicas}`,
+    assert sane: replicas <= 8 else error `too many replicas`,
+    ...
+}
+input deployed: Cfg = { port: 8080, name: "fallback" }
+input extra: Cfg
+export output site: Cfg = { port: 443, name: "web", replicas: 2 }
+output mirror: Cfg = site with { name: "mirror" }

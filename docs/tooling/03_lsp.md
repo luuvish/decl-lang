@@ -332,10 +332,16 @@ the syntax tree, which the extensions render on the client side.
 
 ## 18. Verification
 
-The parity harness drives a scripted session and requires the three
-servers to answer with identical messages: every request kind of §15
-with at least one position per kind of answer, every quick fix and
-assist with a before and after, every lens with its command; a session
-with an edit checks that the incremental analysis answers as a fresh
-server would. Smoke in Neovim and Helix (`extension/smoke-editors.sh`)
-and in VS Code on the three benchmark examples closes each delivery.
+The session corpus (`tests/lsp/`, one session per capability: diagnostics,
+hover and navigation, completion and signature help, symbols and
+hierarchies, rename and linked editing, formatting, the quick fixes, the
+assists, the conversions, hints, lenses, and commands, the progress
+contract) holds the answers the reference gives, reviewed; every
+implementation's suite replays every session against its transcript, and
+the parity harness replays every session over the three servers and
+requires identical answers: every request kind of §15 with at least one
+position per kind of answer, every quick fix and assist with a before
+and after, every lens with its command; a session with an edit checks
+that the incremental analysis answers as a fresh server would. Smoke in
+Neovim and Helix (`extension/smoke-editors.sh`) and in VS Code on the
+three benchmark examples closes each delivery.

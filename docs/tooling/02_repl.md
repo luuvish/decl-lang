@@ -413,6 +413,9 @@ harness and the corpus use this form; a session file is a plain text file
 of inputs, one per line, with the same continuation rule as the terminal,
 and `:history file` writes one from a live session — the durable form of
 an editing session: the log, written down.
+When standard input is not a terminal, `decl repl` without `--script`
+reads it as `--script -` would: a session piped in prints its
+transcript, the same bytes from every implementation.
 
 The exit status is 0 when every input was accepted and 1 when some
 input was refused (`error:` lines, §8): the language's diagnostics are

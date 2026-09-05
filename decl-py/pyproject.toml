@@ -29,7 +29,7 @@ dependencies = ["tree-sitter>=0.25"]
 
 [project.scripts]
 decl = "decl.cli:main"
-decl-lsp = "decl.cli:lsp_main"
+decl-lsp = "decl.lsp:main"
 
 [project.urls]
 Homepage = "https://github.com/luuvish/decl-lang"
@@ -37,9 +37,10 @@ Repository = "https://github.com/luuvish/decl-lang"
 Issues = "https://github.com/luuvish/decl-lang/issues"
 
 [tool.setuptools]
-packages = ["decl", "decl.runtime", "decl._tree_sitter"]
+package-dir = { "" = "src" }
+packages = ["decl", "decl._tree_sitter"]
 
-# _tree_sitter/src/ (grammar C sources) is synced from ../tree-sitter-decl
+# src/decl/_tree_sitter/src/ (grammar C sources) is synced from ../tree-sitter-decl
 # by `npm run build` in ../decl-ts (or by setup.py) and gitignored
 [tool.setuptools.package-data]
 "decl._tree_sitter" = ["binding.c", "_binding.pyi", "src/*.c", "src/tree_sitter/*.h"]
@@ -53,7 +54,7 @@ dev = ["ruff", "mypy", "pytest"]
 [tool.ruff]
 line-length = 100
 target-version = "py310"
-extend-exclude = ["decl/_tree_sitter/src", ".venv", "build", "dist"]
+extend-exclude = ["src/decl/_tree_sitter/src", ".venv", "build", "dist"]
 
 [tool.ruff.lint]
 select = ["E", "F", "W", "I", "UP", "B", "SIM", "RUF"]
@@ -74,7 +75,10 @@ warn_unused_ignores = true
 # the AST and the values are dict-shaped (`dict[str, Any]`, the reference's JSON-like objects),
 # so most functions hand back an Any-derived value: warning on every such return adds casts, not safety
 warn_return_any = false
-files = ["decl"]
+files = ["src/decl"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+# tests/<corpus>_test.py and tests/internal/<module>_test.py share basenames (fmt_test.py):
+# importlib mode gives each its own module name, no __init__.py or sys.path games
+addopts = "--import-mode=importlib"

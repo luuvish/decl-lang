@@ -1,0 +1,454 @@
+[
+  [
+    "initialize",
+    {
+      "capabilities": {
+        "textDocumentSync": 1,
+        "hoverProvider": true,
+        "definitionProvider": true,
+        "typeDefinitionProvider": true,
+        "referencesProvider": true,
+        "documentHighlightProvider": true,
+        "documentSymbolProvider": true,
+        "foldingRangeProvider": true,
+        "documentFormattingProvider": true,
+        "renameProvider": {
+          "prepareProvider": true
+        },
+        "completionProvider": {
+          "triggerCharacters": [
+            ".",
+            "$",
+            ":"
+          ]
+        },
+        "codeLensProvider": {
+          "resolveProvider": false
+        },
+        "signatureHelpProvider": {
+          "triggerCharacters": [
+            "(",
+            ","
+          ]
+        },
+        "workspaceSymbolProvider": true,
+        "selectionRangeProvider": true,
+        "semanticTokensProvider": {
+          "legend": {
+            "tokenTypes": [
+              "type",
+              "property",
+              "function",
+              "variable",
+              "namespace",
+              "parameter"
+            ],
+            "tokenModifiers": [
+              "declaration",
+              "required",
+              "optional",
+              "defaulted",
+              "derived",
+              "hidden",
+              "unresolved",
+              "readonly"
+            ]
+          },
+          "full": true
+        },
+        "inlayHintProvider": true,
+        "callHierarchyProvider": true,
+        "typeHierarchyProvider": true,
+        "codeActionProvider": {
+          "codeActionKinds": [
+            "quickfix",
+            "refactor.rewrite",
+            "refactor.extract",
+            "refactor.inline"
+          ]
+        },
+        "linkedEditingRangeProvider": true,
+        "documentOnTypeFormattingProvider": {
+          "firstTriggerCharacter": "\n",
+          "moreTriggerCharacter": [
+            "}",
+            "]",
+            ")"
+          ]
+        },
+        "executeCommandProvider": {
+          "commands": [
+            "decl.evaluate",
+            "decl.validate",
+            "decl.trace",
+            "decl.showSyntaxTree",
+            "decl.reloadWorkspace"
+          ]
+        }
+      },
+      "serverInfo": {
+        "name": "decl-lsp",
+        "version": "<version>"
+      }
+    }
+  ],
+  [
+    "diagnostics of the main text",
+    []
+  ],
+  [
+    "hover top",
+    {
+      "contents": {
+        "kind": "markdown",
+        "value": "```decl\nconst top = LIMIT\n```"
+      },
+      "range": {
+        "start": {
+          "line": 1,
+          "character": 0
+        },
+        "end": {
+          "line": 1,
+          "character": 17
+        }
+      }
+    }
+  ],
+  [
+    "hover LIMIT",
+    {
+      "contents": {
+        "kind": "markdown",
+        "value": "```decl\nexport const MAX = 16\n```\n\n`16`"
+      },
+      "range": {
+        "start": {
+          "line": 1,
+          "character": 12
+        },
+        "end": {
+          "line": 1,
+          "character": 17
+        }
+      }
+    }
+  ],
+  [
+    "hover Service",
+    {
+      "contents": {
+        "kind": "markdown",
+        "value": "```decl\nexport type Service = { name: string, port: 1..65535 = 8080 }\n```"
+      },
+      "range": {
+        "start": {
+          "line": 2,
+          "character": 17
+        },
+        "end": {
+          "line": 2,
+          "character": 24
+        }
+      }
+    }
+  ],
+  [
+    "hover nothing",
+    null
+  ],
+  [
+    "hover s.name",
+    {
+      "contents": {
+        "kind": "markdown",
+        "value": "```decl\nname: string\n```\n\n`string`"
+      },
+      "range": {
+        "start": {
+          "line": 6,
+          "character": 14
+        },
+        "end": {
+          "line": 6,
+          "character": 20
+        }
+      }
+    }
+  ],
+  [
+    "hover a literal",
+    {
+      "contents": {
+        "kind": "markdown",
+        "value": "`\"a\"`"
+      },
+      "range": {
+        "start": {
+          "line": 2,
+          "character": 35
+        },
+        "end": {
+          "line": 2,
+          "character": 38
+        }
+      }
+    }
+  ],
+  [
+    "definition Service",
+    {
+      "uri": "file://<ws>/lib.decl",
+      "range": {
+        "start": {
+          "line": 0,
+          "character": 12
+        },
+        "end": {
+          "line": 0,
+          "character": 19
+        }
+      }
+    }
+  ],
+  [
+    "definition LIMIT",
+    {
+      "uri": "file://<ws>/lib.decl",
+      "range": {
+        "start": {
+          "line": 1,
+          "character": 13
+        },
+        "end": {
+          "line": 1,
+          "character": 16
+        }
+      }
+    }
+  ],
+  [
+    "definition top",
+    {
+      "uri": "file://<ws>/main.decl",
+      "range": {
+        "start": {
+          "line": 1,
+          "character": 6
+        },
+        "end": {
+          "line": 1,
+          "character": 9
+        }
+      }
+    }
+  ],
+  [
+    "definition s.name",
+    {
+      "uri": "file://<ws>/lib.decl",
+      "range": {
+        "start": {
+          "line": 0,
+          "character": 24
+        },
+        "end": {
+          "line": 0,
+          "character": 28
+        }
+      }
+    }
+  ],
+  [
+    "type definition of s",
+    {
+      "uri": "file://<ws>/lib.decl",
+      "range": {
+        "start": {
+          "line": 0,
+          "character": 12
+        },
+        "end": {
+          "line": 0,
+          "character": 19
+        }
+      }
+    }
+  ],
+  [
+    "type definition on the output declaration s",
+    {
+      "uri": "file://<ws>/lib.decl",
+      "range": {
+        "start": {
+          "line": 0,
+          "character": 12
+        },
+        "end": {
+          "line": 0,
+          "character": 19
+        }
+      }
+    }
+  ],
+  [
+    "type definition on the constant top",
+    null
+  ],
+  [
+    "type definition on a member typed by a literal-union alias",
+    {
+      "uri": "file://<ws>/lib.decl",
+      "range": {
+        "start": {
+          "line": 4,
+          "character": 12
+        },
+        "end": {
+          "line": 4,
+          "character": 17
+        }
+      }
+    }
+  ],
+  [
+    "type definition on a member of a primitive type",
+    null
+  ],
+  [
+    "references of Service",
+    [
+      {
+        "uri": "file://<ws>/lib.decl",
+        "range": {
+          "start": {
+            "line": 0,
+            "character": 12
+          },
+          "end": {
+            "line": 0,
+            "character": 19
+          }
+        }
+      },
+      {
+        "uri": "file://<ws>/lib.decl",
+        "range": {
+          "start": {
+            "line": 3,
+            "character": 21
+          },
+          "end": {
+            "line": 3,
+            "character": 28
+          }
+        }
+      },
+      {
+        "uri": "file://<ws>/main.decl",
+        "range": {
+          "start": {
+            "line": 0,
+            "character": 9
+          },
+          "end": {
+            "line": 0,
+            "character": 16
+          }
+        }
+      },
+      {
+        "uri": "file://<ws>/main.decl",
+        "range": {
+          "start": {
+            "line": 2,
+            "character": 17
+          },
+          "end": {
+            "line": 2,
+            "character": 24
+          }
+        }
+      },
+      {
+        "uri": "file://<ws>/main.decl",
+        "range": {
+          "start": {
+            "line": 3,
+            "character": 17
+          },
+          "end": {
+            "line": 3,
+            "character": 24
+          }
+        }
+      },
+      {
+        "uri": "file://<ws>/main.decl",
+        "range": {
+          "start": {
+            "line": 9,
+            "character": 13
+          },
+          "end": {
+            "line": 9,
+            "character": 20
+          }
+        }
+      }
+    ]
+  ],
+  [
+    "references of s (uses only)",
+    [
+      {
+        "uri": "file://<ws>/main.decl",
+        "range": {
+          "start": {
+            "line": 6,
+            "character": 14
+          },
+          "end": {
+            "line": 6,
+            "character": 15
+          }
+        }
+      }
+    ]
+  ],
+  [
+    "highlight of s",
+    [
+      {
+        "range": {
+          "start": {
+            "line": 2,
+            "character": 14
+          },
+          "end": {
+            "line": 2,
+            "character": 15
+          }
+        },
+        "kind": 1
+      },
+      {
+        "range": {
+          "start": {
+            "line": 6,
+            "character": 14
+          },
+          "end": {
+            "line": 6,
+            "character": 15
+          }
+        },
+        "kind": 1
+      }
+    ]
+  ],
+  [
+    "shutdown",
+    null
+  ]
+]
