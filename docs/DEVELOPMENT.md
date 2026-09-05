@@ -101,7 +101,7 @@ the gate on both.
 | C toolchain | Apple clang 21.0.0 (Xcode command line tools) |
 | Package manager | Homebrew 6.0 |
 | git | 2.55 |
-| CI | GitHub-hosted runners: `ubuntu-latest`, `ubuntu-24.04-arm`, `macos-13`, `macos-latest`, `windows-latest`, `windows-11-arm` |
+| CI | GitHub-hosted runners: `ubuntu-latest`, `ubuntu-24.04-arm`, `macos-15-intel` (the last x86_64 macOS image, until 2027-08), `macos-latest`, `windows-latest`, `windows-11-arm` |
 
 ### Language toolchains
 

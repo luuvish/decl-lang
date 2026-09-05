@@ -24,7 +24,7 @@ jobs:
         include:
           - { os: ubuntu-latest,    target: x86_64-unknown-linux-musl,  suffix: linux-x86_64,   musl: true,  ext: '' }
           - { os: ubuntu-24.04-arm, target: aarch64-unknown-linux-musl, suffix: linux-arm64,    musl: true,  ext: '' }
-          - { os: macos-13,         target: x86_64-apple-darwin,        suffix: macos-x86_64,   musl: false, ext: '' }
+          - { os: macos-15-intel,   target: x86_64-apple-darwin,        suffix: macos-x86_64,   musl: false, ext: '' }
           - { os: macos-latest,     target: aarch64-apple-darwin,       suffix: macos-arm64,    musl: false, ext: '' }
           - { os: windows-latest,   target: x86_64-pc-windows-msvc,     suffix: windows-x86_64, musl: false, ext: .exe }
           - { os: windows-11-arm,   target: aarch64-pc-windows-msvc,    suffix: windows-arm64,  musl: false, ext: .exe }
@@ -71,8 +71,9 @@ jobs:
             cp "target/${{ matrix.target }}/release/$bin${{ matrix.ext }}" "assets/$bin-${{ matrix.suffix }}${{ matrix.ext }}"
           done
           if [ "${{ matrix.musl }}" = "true" ]; then
+            # x86_64 musl binaries are position-independent ("static-pie linked"); aarch64 ones "statically linked"
             for bin in decl decl-lsp; do
-              file "assets/$bin-${{ matrix.suffix }}" | grep -q "statically linked" || { echo "$bin is not static"; file "assets/$bin-${{ matrix.suffix }}"; exit 1; }
+              file "assets/$bin-${{ matrix.suffix }}" | grep -qE "statically linked|static-pie linked" || { echo "$bin is not static"; file "assets/$bin-${{ matrix.suffix }}"; exit 1; }
             done
           fi
           decl="assets/decl-${{ matrix.suffix }}${{ matrix.ext }}"
@@ -92,7 +93,7 @@ jobs:
         include:
           - { os: ubuntu-latest,    archs: x86_64 }
           - { os: ubuntu-24.04-arm, archs: aarch64 }
-          - { os: macos-13,         archs: x86_64 }
+          - { os: macos-15-intel,   archs: x86_64 }
           - { os: macos-latest,     archs: arm64 }
           - { os: windows-latest,   archs: AMD64 }
           - { os: windows-11-arm,   archs: ARM64 }
