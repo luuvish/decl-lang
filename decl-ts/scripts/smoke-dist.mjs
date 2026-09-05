@@ -60,9 +60,9 @@ check('decl binary installed', existsSync(bin));
 // 3. drive the installed CLI
 writeFileSync(
   join(dir, 't.decl'),
-  'type T = { a: int, const b = a * 2 }\nexport output t: T = { a: 21 }\n',
+  'type T = { a: int, b = a * 2 }\nexport output t: T = { a: 21 }\n',
 );
-const ev = spawnSync(bin, ['evaluate', join(dir, 't.decl'), '--root', 't'], { encoding: 'utf8' });
+const ev = spawnSync(bin, ['evaluate', join(dir, 't.decl'), '--output', 't'], { encoding: 'utf8' });
 check(
   'installed decl evaluates',
   ev.status === 0 && ev.stdout.trim() === '{"a":21,"b":42}',

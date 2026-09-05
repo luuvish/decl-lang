@@ -187,6 +187,7 @@ CI runs beside it.
 | the editors | the same smoke: Neovim, Helix, Emacs, Vim, Sublime Text (§Editors) | `brew install neovim helix emacs`, `brew install --cask sublime-text` |
 | Docker | confirming a musl binary is static, in an Alpine container | Docker Desktop |
 | VS Code, Zed | running the extensions from the tree (docs/tooling/04_extension.md) | the apps |
+| Playwright's Chromium | the web extension suite (`npm run test:web -w vscode-decl`) | `node node_modules/playwright/cli.js install chromium`; when Playwright's CDN times out, the same build from Google's Chrome for Testing bucket, unpacked into `~/Library/Caches/ms-playwright/` |
 
 The tree-sitter CLI comes with `npm ci` (`npx tree-sitter`); the
 Python venv, its tools, and the compiled grammar are made by `make`.

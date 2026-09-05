@@ -14,6 +14,7 @@ export default tseslint.config(
       '**/node_modules/**',
       '**/dist/**',
       '**/.vscode-test/**',
+      '**/.vscode-test-web/**',
       'site/**',
       'tree-sitter-decl/**',
       'decl-rs/**',
