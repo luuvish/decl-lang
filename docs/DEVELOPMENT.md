@@ -74,9 +74,10 @@ Two different questions get two different answers:
   one runtime dependency with a floor (`tree-sitter>=0.25`, the
   installed version is what the wheels are tested with).
 - **Latest is neither.** The pin is a recent stable, not "whatever is
-  current": Dependabot (`.github/dependabot.yml`) opens one grouped pull
-  request per ecosystem per month, and the gate decides. A release is
-  built from the pins; it *supports* the minimums.
+  current": Dependabot (`.github/dependabot.yml`) opens, per ecosystem
+  per month, one pull request of minor and patch updates and one of
+  majors, and the gate decides. A release is built from the pins; it
+  *supports* the minimums.
 
 Where each version lives:
 
@@ -253,9 +254,12 @@ Caches: npm through `actions/setup-node`, Cargo through
 `Swatinem/rust-cache`, mise's tools through `mise-action`.
 Secrets: `VSCE_PAT` and `OVSX_PAT` for the extension marketplaces
 (publication is skipped without them); nothing else — the GitHub
-release uses the workflow's own token. Dependabot opens one grouped
-pull request per ecosystem per month (cargo for the workspace and the
-Zed extension, npm, pip, GitHub Actions).
+release uses the workflow's own token. Dependabot opens, per ecosystem
+per month (cargo for the workspace and the Zed extension, npm, pip,
+GitHub Actions), one pull request with the minor and patch updates —
+mergeable when the gate passes — and one with the majors, which are a
+planned update: they change code, and tree-sitter moves the grammar,
+the three implementations, and the Zed API together.
 
 ## 7. Release and distribution
 
