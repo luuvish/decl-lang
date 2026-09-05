@@ -7,12 +7,13 @@ import name in Python is `decl`, and the binary is `decl` everywhere.
 
 | Channel | Package | Install | Status |
 |---|---|---|---|
+| GitHub release | `v0.3.0`: `decl` and `decl-lsp` for six platforms, the wheels, the `.vsix` | [releases/tag/v0.3.0](https://github.com/luuvish/decl-lang/releases/tag/v0.3.0) | **published 2026-09-05** by `release.yml` |
 | npm | `decl-lang` | `npm install -g decl-lang` | prepared (`decl-ts/`) |
 | PyPI | `decl-lang` | `pip install decl-lang` / `pip install 'decl-lang[node]'` | prepared (`decl-py/`) |
 | Homebrew | tap `luuvish/tap`, formula `decl-lang` | `brew install luuvish/tap/decl-lang` | prepared (`homebrew/`) |
 | crates.io | `decl-lang` (bin `decl`) | `cargo install decl-lang` | prepared (`decl-rs/`, native runtime) |
-| Visual Studio Marketplace, Open VSX | `luuvish.vscode-decl` (the VS Code extension, bundling npm `decl-lang`) | Extensions view: "Decl" | scaffolded (`extension/vscode/`, [docs/tooling/04_extension.md](../docs/tooling/04_extension.md)), unpublished |
-| Zed extension registry | `decl` (the Zed extension: grammar, queries, `decl-lsp` pointer) | Zed: extensions, "Decl" | scaffolded (`extension/zed/`, [docs/tooling/04_extension.md](../docs/tooling/04_extension.md)), unpublished; needs prebuilt `decl-lsp` binaries as GitHub release assets |
+| Visual Studio Marketplace, Open VSX | `luuvish.vscode-decl` (the VS Code extension, bundling npm `decl-lang`) | Extensions view: "Decl" | packaged: the `.vsix` is on the v0.3.0 release (`extension/vscode/`, [docs/tooling/04_extension.md](../docs/tooling/04_extension.md); the marketplaces need `VSCE_PAT` / `OVSX_PAT` |
+| Zed extension registry | `decl` (the Zed extension: grammar, queries, `decl-lsp` pointer) | Zed: extensions, "Decl" | packaged: the `decl-lsp` binaries are on the v0.3.0 release (`extension/zed/`, [docs/tooling/04_extension.md](../docs/tooling/04_extension.md); the registry and the download need a public repository |
 
 npm and Homebrew ship **the same bytes**: `decl-ts/dist/` — the esbuild
 bundles of the CLI, LSP server, and library (web-tree-sitter included,

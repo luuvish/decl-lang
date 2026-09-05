@@ -498,9 +498,12 @@ mechanism that keeps them together. The Zed extension has its own test
 module builds for Zed's target, the manifest names what Zed needs, and
 every query loads against the tree-sitter grammar and runs over the
 fixture corpus — the tests each extension can have, since Zed's
-extension API has no views or commands to test (§1). Open: the first
-release; the extension in vscode.dev with a real workspace (the suite
-covers the mechanism, not the site).
+extension API has no views or commands to test (§1). The first release
+(v0.3.0, 2026-09-05) attaches the `.vsix` and the `decl-lsp` binaries
+of six platforms; the Marketplace, Open VSX, and the Zed registry wait
+for the tokens and a public repository. Open: the extension in
+vscode.dev with a real workspace (the suite covers the mechanism, not
+the site).
 
 ## 21. Verification
 

@@ -26,7 +26,7 @@ here, and nothing was migrated from earlier work.
 | 3 | Modules & standard library | import/export, manifest + lock, `std.*` | **done — 2026-09-01** (module linking §8, packages + reproducible lock §8.6–8.7, std 1:1 with SI catalog §13) |
 | 4 | CLI & tooling | `decl` CLI, formatter, minimal LSP | **done — 2026-09-01** (check/evaluate/validate/fmt; formatter idempotent + AST-safe over the corpus; stdio LSP with diagnostics/hover/definition) |
 | 5 | Real-world validation & feedback + v0.2 cycle | 3 domain examples, v0.2 revisions adjudicated | **done — 2026-09-01** (three domain examples under `examples/`: service graph, fixture generation, and a synthetic network fabric with scale + corruption probes; the full proprietary fixture corpus — 178 documents incl. the complete real set — additionally validated locally, artifacts kept out of the repo by security policy; v0.2 candidates adjudicated 2026-09-01 → revisions v0.1.4–v0.1.8, **v0.2 declared**) |
-| 6 | REPL, language server & editors | `decl repl`, `decl-lsp` v2/v3, `vscode-decl`, `zed-decl` | **delivered — 2026-09-05**, release pending |
+| 6 | REPL, language server & editors | `decl repl`, `decl-lsp` v2/v3, `vscode-decl`, `zed-decl` | **delivered — 2026-09-05**; v0.3.0 released 2026-09-05 |
 
 ---
 
@@ -218,8 +218,9 @@ scripted REPL and editor sessions in the parity harness; each document's
 Status section records what shipped; Neovim, Helix, Emacs, Vim, and
 Sublime Text run the grammar (its queries, or a mirrored syntax) and the
 server through the configurations in `extension/`.
-Open: the first release (`git tag v0.3.0` runs
-`.github/workflows/release.yml`).
+v0.3.0 is released (2026-09-05): the GitHub release carries the six
+platforms' binaries, the wheels, and the `.vsix`; the registries follow
+`packaging/README.md`'s checklist.
 
 **Exit criteria**: scripted REPL and LSP sessions in the parity harness,
 identical bytes from the three implementations · the reference scratch
