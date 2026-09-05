@@ -96,8 +96,12 @@ complete: the tree-sitter grammar, the TypeScript reference
 implementation with its full static checker, modules and packages with
 a reproducible lock, the complete standard library, the `decl` CLI /
 formatter / LSP, and real-world validation on three domain examples
-(`examples/`). Ten test suites (`decl-ts/`, `npm test`) and the fixture
-corpus (`tests/validation`) are the conformance baseline.
+(`examples/`); Phase 6 (2026-09-05) added `decl repl`, the full
+language server, and the VS Code and Zed extensions
+(`docs/tooling/`), pending their first release. The test suites of the
+three implementations, the fixture corpus (`tests/validation`), the
+session corpus (`tests/repl`), and the parity harness are the
+conformance baseline.
 
 ## Documents
 

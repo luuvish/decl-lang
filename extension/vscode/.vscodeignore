@@ -1,5 +1,8 @@
 src/**
 scripts/**
+test/**
+dist/test/**
+**/*.map
+.vscode-test/**
 node_modules/**
-*.map
 .gitignore

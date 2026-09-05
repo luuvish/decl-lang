@@ -26,7 +26,7 @@ here, and nothing was migrated from earlier work.
 | 3 | Modules & standard library | import/export, manifest + lock, `std.*` | **done — 2026-09-01** (module linking §8, packages + reproducible lock §8.6–8.7, std 1:1 with SI catalog §13) |
 | 4 | CLI & tooling | `decl` CLI, formatter, minimal LSP | **done — 2026-09-01** (check/evaluate/validate/fmt; formatter idempotent + AST-safe over the corpus; stdio LSP with diagnostics/hover/definition) |
 | 5 | Real-world validation & feedback + v0.2 cycle | 3 domain examples, v0.2 revisions adjudicated | **done — 2026-09-01** (three domain examples under `examples/`: service graph, fixture generation, and a synthetic network fabric with scale + corruption probes; the full proprietary fixture corpus — 178 documents incl. the complete real set — additionally validated locally, artifacts kept out of the repo by security policy; v0.2 candidates adjudicated 2026-09-01 → revisions v0.1.4–v0.1.8, **v0.2 declared**) |
-| 6 | REPL, language server & editors | `decl repl`, `decl-lsp` v2/v3, `vscode-decl`, `zed-decl` | **planned — 2026-09-04** |
+| 6 | REPL, language server & editors | `decl repl`, `decl-lsp` v2/v3, `vscode-decl`, `zed-decl` | **delivered — 2026-09-05**, release pending |
 
 ---
 
@@ -234,8 +234,13 @@ recomputation over the corpus), and diagnostics ordered as §6.7 says.
 The web extension's entry and worker server (the reference core over
 a host abstraction) with a browser suite, every quick fix and assist of
 the language-server plan, on-type formatting, progress, the
-context-variable hints. Open: the first release (the tag runs the
-workflow), manual smoke in Neovim and Helix.
+context-variable hints; both extensions smoke-tested by hand in VS Code
+(the development host) and Zed (a dev extension). Open: the first
+release — `git tag v0.3.0 && git push --tags` runs
+`.github/workflows/release.yml` (the prebuilt `decl-lsp` assets, the
+`.vsix`, publication with the tokens) after the registries of
+`packaging/README.md`'s checklist — and manual smoke in Neovim and
+Helix.
 
 **Exit criteria**: scripted REPL and LSP sessions in the parity harness,
 identical bytes from the three implementations · the reference scratch
