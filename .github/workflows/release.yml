@@ -1,10 +1,10 @@
-# A release (docs/tooling/04_extension.md §18): on a version tag, the
-# prebuilt `decl-lsp` binaries the Zed extension downloads (one per OS
-# and architecture, from the Rust implementation), the VS Code
-# extension's .vsix, and — when the tokens are configured — its
-# publication to the Marketplace and Open VSX. The registries of the
-# language itself (npm, PyPI, crates.io) keep the packaging/README.md
-# checklist.
+# A release (docs/tooling/04_extension.md §18, packaging/README.md): on a
+# version tag, the prebuilt `decl` and `decl-lsp` binaries for macOS,
+# Linux, and Windows on arm64 and x86_64 — the Linux ones static against
+# musl, no glibc dependency — the VS Code extension's .vsix, the Python
+# wheels for the same platforms, and, when the tokens are configured,
+# the extension's publication. The registries of the language itself
+# (npm, PyPI, crates.io) keep the packaging/README.md checklist.
 name: release
 
 on:
@@ -16,52 +16,136 @@ permissions:
   contents: write
 
 jobs:
-  decl-lsp:
-    name: decl-lsp ${{ matrix.asset }}
+  binaries:
+    name: decl + decl-lsp ${{ matrix.suffix }}
     strategy:
       fail-fast: false
       matrix:
         include:
-          - { os: ubuntu-latest,   target: x86_64-unknown-linux-gnu,  asset: decl-lsp-linux-x86_64 }
-          - { os: ubuntu-24.04-arm, target: aarch64-unknown-linux-gnu, asset: decl-lsp-linux-arm64 }
-          - { os: macos-13,        target: x86_64-apple-darwin,       asset: decl-lsp-macos-x86_64 }
-          - { os: macos-latest,    target: aarch64-apple-darwin,      asset: decl-lsp-macos-arm64 }
-          - { os: windows-latest,  target: x86_64-pc-windows-msvc,    asset: decl-lsp-windows-x86_64.exe }
+          - { os: ubuntu-latest,    target: x86_64-unknown-linux-musl,  suffix: linux-x86_64,   musl: true,  ext: '' }
+          - { os: ubuntu-24.04-arm, target: aarch64-unknown-linux-musl, suffix: linux-arm64,    musl: true,  ext: '' }
+          - { os: macos-13,         target: x86_64-apple-darwin,        suffix: macos-x86_64,   musl: false, ext: '' }
+          - { os: macos-latest,     target: aarch64-apple-darwin,       suffix: macos-arm64,    musl: false, ext: '' }
+          - { os: windows-latest,   target: x86_64-pc-windows-msvc,     suffix: windows-x86_64, musl: false, ext: .exe }
+          - { os: windows-11-arm,   target: aarch64-pc-windows-msvc,    suffix: windows-arm64,  musl: false, ext: .exe }
     runs-on: ${{ matrix.os }}
     steps:
+      # the goldens are compared byte for byte: no CRLF conversion on Windows
+      - run: git config --global core.autocrlf false
+        shell: bash
       - uses: actions/checkout@v4
+      - id: pins
+        name: the pinned versions (mise.toml)
+        shell: bash
+        run: |
+          for t in node python; do echo "$t=$(sed -n "s/^$t = \"\(.*\)\"/\1/p" mise.toml)" >> "$GITHUB_OUTPUT"; done
+          rust=$(sed -n 's/^rust = { version = "\([^"]*\)".*/\1/p' mise.toml); echo "rust=$rust" >> "$GITHUB_OUTPUT"
+          test "$rust" = "$(sed -n 's/^channel = "\(.*\)"/\1/p' rust-toolchain.toml)" || { echo "rust-toolchain.toml does not match mise.toml"; exit 1; }
       - uses: actions/setup-node@v4
         with:
-          node-version: 24
+          node-version: ${{ steps.pins.outputs.node }}
           cache: npm
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@master
         with:
+          toolchain: ${{ steps.pins.outputs.rust }}
           targets: ${{ matrix.target }}
       - uses: Swatinem/rust-cache@v2
+      - if: matrix.musl
+        name: the musl C toolchain (the grammar and the tree-sitter runtime are C)
+        run: sudo apt-get update && sudo apt-get install -y musl-tools
       # the grammar sources the crate compiles are synced by the reference build
       - run: npm ci
       - run: npm run build -w decl-lang
-      - run: cargo build --release --target ${{ matrix.target }} -p decl-lang --bin decl-lsp
-      - name: name the asset
+      - name: build
+        env:
+          CC_x86_64_unknown_linux_musl: musl-gcc
+          CC_aarch64_unknown_linux_musl: musl-gcc
+          CARGO_TARGET_X86_64_UNKNOWN_LINUX_MUSL_LINKER: musl-gcc
+          CARGO_TARGET_AARCH64_UNKNOWN_LINUX_MUSL_LINKER: musl-gcc
+        run: cargo build --release --locked --target ${{ matrix.target }} -p decl-lang --bin decl --bin decl-lsp
+      - name: name the assets; a Linux binary must be static; the binary must evaluate an example to its golden
         shell: bash
         run: |
           mkdir -p assets
-          src="target/${{ matrix.target }}/release/decl-lsp"
-          [ -f "$src.exe" ] && src="$src.exe"
-          cp "$src" "assets/${{ matrix.asset }}"
+          for bin in decl decl-lsp; do
+            cp "target/${{ matrix.target }}/release/$bin${{ matrix.ext }}" "assets/$bin-${{ matrix.suffix }}${{ matrix.ext }}"
+          done
+          if [ "${{ matrix.musl }}" = "true" ]; then
+            for bin in decl decl-lsp; do
+              file "assets/$bin-${{ matrix.suffix }}" | grep -q "statically linked" || { echo "$bin is not static"; file "assets/$bin-${{ matrix.suffix }}"; exit 1; }
+            done
+          fi
+          decl="assets/decl-${{ matrix.suffix }}${{ matrix.ext }}"
+          "$decl" --version
+          "$decl" evaluate docs/examples/01_interconnect.decl | diff - tests/golden/docs__examples__01_interconnect.json
+          "$decl" evaluate docs/examples/02_config.decl | diff - tests/golden/docs__examples__02_config.json
       - uses: actions/upload-artifact@v4
         with:
-          name: ${{ matrix.asset }}
-          path: assets/${{ matrix.asset }}
+          name: binaries-${{ matrix.suffix }}
+          path: assets/*
+
+  wheels:
+    name: Python wheels ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { os: ubuntu-latest,    archs: x86_64 }
+          - { os: ubuntu-24.04-arm, archs: aarch64 }
+          - { os: macos-13,         archs: x86_64 }
+          - { os: macos-latest,     archs: arm64 }
+          - { os: windows-latest,   archs: AMD64 }
+          - { os: windows-11-arm,   archs: ARM64 }
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: pins
+        name: the pinned versions (mise.toml)
+        shell: bash
+        run: |
+          for t in node python; do echo "$t=$(sed -n "s/^$t = \"\(.*\)\"/\1/p" mise.toml)" >> "$GITHUB_OUTPUT"; done
+          rust=$(sed -n 's/^rust = { version = "\([^"]*\)".*/\1/p' mise.toml); echo "rust=$rust" >> "$GITHUB_OUTPUT"
+          test "$rust" = "$(sed -n 's/^channel = "\(.*\)"/\1/p' rust-toolchain.toml)" || { echo "rust-toolchain.toml does not match mise.toml"; exit 1; }
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ steps.pins.outputs.node }}
+          cache: npm
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ steps.pins.outputs.python }}
+      # the grammar sources the extension compiles are synced by the reference build
+      - run: npm ci
+      - run: npm run build -w decl-lang
+      - name: "build the wheels (Linux: manylinux and musllinux; Windows arm64 from CPython 3.11, the first with an arm64 build)"
+        env:
+          CIBW_ARCHS: ${{ matrix.archs }}
+          # the CPython versions requires-python admits (pyproject.toml) that are not end of life
+          CIBW_BUILD: 'cp310-* cp311-* cp312-* cp313-* cp314-*'
+          CIBW_SKIP: '*-win32 pp* cp310-win_arm64'
+          CIBW_TEST_COMMAND: 'decl --version'
+        run: |
+          python -m pip install cibuildwheel
+          python -m cibuildwheel decl-py --output-dir wheelhouse
+      - uses: actions/upload-artifact@v4
+        with:
+          name: wheels-${{ matrix.os }}
+          path: wheelhouse/*.whl
 
   vsix:
     name: vscode-decl .vsix
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - id: pins
+        name: the pinned versions (mise.toml)
+        shell: bash
+        run: |
+          for t in node python; do echo "$t=$(sed -n "s/^$t = \"\(.*\)\"/\1/p" mise.toml)" >> "$GITHUB_OUTPUT"; done
+          rust=$(sed -n 's/^rust = { version = "\([^"]*\)".*/\1/p' mise.toml); echo "rust=$rust" >> "$GITHUB_OUTPUT"
+          test "$rust" = "$(sed -n 's/^channel = "\(.*\)"/\1/p' rust-toolchain.toml)" || { echo "rust-toolchain.toml does not match mise.toml"; exit 1; }
       - uses: actions/setup-node@v4
         with:
-          node-version: 24
+          node-version: ${{ steps.pins.outputs.node }}
           cache: npm
       - run: npm ci
       - run: npm run build -w decl-lang
@@ -82,7 +166,7 @@ jobs:
 
   release:
     name: GitHub release
-    needs: [decl-lsp, vsix]
+    needs: [binaries, wheels, vsix]
     if: startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
     steps:

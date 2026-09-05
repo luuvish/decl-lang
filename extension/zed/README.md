@@ -3,7 +3,8 @@
 The Zed extension for [Decl](https://github.com/luuvish/decl-lang):
 the tree-sitter grammar (fetched from this repository's
 `tree-sitter-decl/` and compiled by Zed), the language definition and
-queries under `languages/decl/`, and the small module in `src/lib.rs`
+queries under `languages/decl/` (`highlights.scm` is the grammar's
+`queries/highlights.scm` verbatim; the others are Zed's own), and the small module in `src/lib.rs`
 that tells Zed where `decl-lsp` is — `lsp.decl-lsp.binary.path`, then
 `decl-lsp` on `PATH`, else the prebuilt binary of the latest GitHub
 release for your platform. The design is
