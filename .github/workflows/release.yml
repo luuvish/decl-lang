@@ -11,6 +11,11 @@ on:
   push:
     tags: ['v*']
   workflow_dispatch:
+    inputs:
+      publish_pypi:
+        description: publish the wheels and the sdist to PyPI (trusted publishing), as a tag does
+        type: boolean
+        default: false
 
 permissions:
   contents: write
@@ -132,6 +137,58 @@ jobs:
           name: wheels-${{ matrix.os }}
           path: wheelhouse/*.whl
 
+  sdist:
+    name: Python sdist
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - id: pins
+        name: the pinned versions (mise.toml)
+        shell: bash
+        run: |
+          for t in node python; do echo "$t=$(sed -n "s/^$t = \"\(.*\)\"/\1/p" mise.toml)" >> "$GITHUB_OUTPUT"; done
+      - uses: actions/setup-node@v7
+        with:
+          node-version: ${{ steps.pins.outputs.node }}
+          cache: npm
+      - uses: actions/setup-python@v7
+        with:
+          python-version: ${{ steps.pins.outputs.python }}
+      # the grammar sources the sdist carries are synced by the reference build
+      - run: npm ci
+      - run: npm run build -w decl-lang
+      - run: python -m pip install build twine
+      - run: python -m build --sdist decl-py --outdir sdist && python -m twine check sdist/*
+      - uses: actions/upload-artifact@v7
+        with:
+          name: sdist
+          path: sdist/*.tar.gz
+
+  # PyPI through trusted publishing (no token: the workflow's OIDC identity is
+  # registered on pypi.org for this repository, this file, and the `pypi`
+  # environment); on a tag, or on a dispatch that asks for it
+  publish-pypi:
+    name: PyPI
+    needs: [wheels, sdist]
+    if: startsWith(github.ref, 'refs/tags/v') || inputs.publish_pypi
+    runs-on: ubuntu-latest
+    environment: pypi
+    permissions:
+      id-token: write
+      contents: read
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          pattern: wheels-*
+          path: dist
+          merge-multiple: true
+      - uses: actions/download-artifact@v8
+        with:
+          name: sdist
+          path: dist
+      - run: ls -l dist
+      - uses: pypa/gh-action-pypi-publish@release/v1
+
   vsix:
     name: vscode-decl .vsix
     runs-on: ubuntu-latest
@@ -167,7 +224,7 @@ jobs:
 
   release:
     name: GitHub release
-    needs: [binaries, wheels, vsix]
+    needs: [binaries, wheels, sdist, vsix]
     if: startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
     steps:

@@ -282,6 +282,8 @@ tag — `git tag v0.3.0 && git push origin v0.3.0` — which runs
 |---|---|
 | `binaries` (six runners) | `decl` and `decl-lsp` per platform; a Linux binary must be statically linked (the job refuses a dynamic one); every binary evaluates two examples against their goldens on the platform it was built for |
 | `wheels` (six runners) | `cibuildwheel` for every CPython `requires-python` admits; `decl --version` in each wheel |
+| `sdist` | the source distribution, checked with twine |
+| `publish-pypi` | every wheel and the sdist to PyPI through trusted publishing (the `pypi` environment; no token), on a tag or a dispatch asking for it |
 | `vsix` | the VS Code extension; published to the Marketplace and Open VSX when the tokens exist |
 | `release` | the GitHub release with every asset, notes generated |
 

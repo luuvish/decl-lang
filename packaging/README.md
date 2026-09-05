@@ -9,7 +9,7 @@ import name in Python is `decl`, and the binary is `decl` everywhere.
 |---|---|---|---|
 | GitHub release | `v0.3.0`: `decl` and `decl-lsp` for six platforms, the wheels, the `.vsix` | [releases/tag/v0.3.0](https://github.com/luuvish/decl-lang/releases/tag/v0.3.0) | **published 2026-09-05** by `release.yml` |
 | npm | `decl-lang` | `npm install -g decl-lang` | **published 2026-09-05** (0.3.0; `decl-ts/`) |
-| PyPI | `decl-lang` | `pip install decl-lang` / `pip install 'decl-lang[node]'` | prepared (`decl-py/`) |
+| PyPI | `decl-lang` | `pip install decl-lang` | prepared (`decl-py/`): trusted publishing from `release.yml`, pending the publisher registration on pypi.org |
 | Homebrew | tap `luuvish/tap`, formula `decl-lang` | `brew install luuvish/tap/decl-lang` | **published 2026-09-05**: [luuvish/homebrew-tap](https://github.com/luuvish/homebrew-tap), the formula mirrored from `homebrew/` |
 | crates.io | `decl-lang` (bins `decl`, `decl-lsp`) | `cargo install decl-lang` | **published 2026-09-05** (0.3.0; `decl-rs/`) |
 | Visual Studio Marketplace, Open VSX | `luuvish.vscode-decl` (the VS Code extension, bundling npm `decl-lang`) | Extensions view: "Decl" | packaged: the `.vsix` is on the v0.3.0 release (`extension/vscode/`, [docs/tooling/04_extension.md](../docs/tooling/04_extension.md); the marketplaces need `VSCE_PAT` / `OVSX_PAT` |
@@ -136,7 +136,11 @@ in core as of 2026-09-02).
    (`tests/parity/differential.py`): every line `same`.
 3. `cd decl-ts && npm run smoke:dist`; `cd decl-py && python scripts/smoke.py`.
 4. `npm publish` (first time: `npm login`; the name `decl-lang` is
-   unclaimed as of 2026-09-02); `python -m twine upload dist/*`;
+   unclaimed as of 2026-09-02); PyPI is published by `release.yml`
+   through trusted publishing (the `publish-pypi` job: every wheel and
+   the sdist, on a tag or on a dispatch with `publish_pypi`), so nothing
+   to run by hand — `python -m twine upload dist/*` remains the manual
+   way;
    `cargo publish -p decl-lang --locked --allow-dirty` from the root, after
    `npm run build -w decl-lang` (the crate packages the grammar sources and
    the LICENSE that build copies into `decl-rs/`; they are ignored files,
