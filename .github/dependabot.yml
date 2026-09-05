@@ -10,6 +10,10 @@ updates:
     directory: '/'
     schedule: { interval: monthly }
     groups: { npm: { patterns: ['*'] } }
+    ignore:
+      # a TypeScript major is taken by hand, when typescript-eslint supports it
+      - dependency-name: typescript
+        update-types: ['version-update:semver-major']
   - package-ecosystem: pip
     directory: '/decl-py'
     schedule: { interval: monthly }

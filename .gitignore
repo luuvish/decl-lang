@@ -47,3 +47,4 @@ tree-sitter-decl/*.so
 .mypy_cache/
 .ruff_cache/
 .pytest_cache/
+extension/vscode/.vscode-test-web/
