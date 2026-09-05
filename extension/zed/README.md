@@ -12,8 +12,13 @@ release for your platform. The design is
 ## Install
 
 Until the extension is in the Zed registry: *Extensions → Install Dev
-Extension* and choose this directory (Zed builds the wasm module with
-its own toolchain; `rustup target add wasm32-wasip1` is needed once).
+Extension* and choose this directory. Zed compiles the Rust module with
+your toolchain (`rustup target add wasm32-wasip1` once, and `cargo` on
+the PATH Zed sees — a login-shell `~/.zprofile` with `. "$HOME/.cargo/env"`)
+and fetches the grammar with git at the commit `extension.toml` pins
+(`rev`): bump it when `tree-sitter-decl/` changes. While the repository
+is private the manifest names the ssh URL; a public registry entry
+uses https.
 
 ## Settings
 

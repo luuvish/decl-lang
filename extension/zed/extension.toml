@@ -8,10 +8,13 @@ schema_version = 1
 authors = ["luuvish <luuvish@gmail.com>"]
 repository = "https://github.com/luuvish/decl-lang"
 
+# the grammar is fetched with git at the pinned commit and compiled by Zed;
+# the repository is private for now, so the URL is the ssh one your key
+# opens — switch to https://github.com/luuvish/decl-lang when it is public
 [grammars.decl]
-repository = "https://github.com/luuvish/decl-lang"
+repository = "git@github.com:luuvish/decl-lang.git"
 path = "tree-sitter-decl"
-rev = "main"
+rev = "5ff7c1aed2914eb9c1e7266c20e678f3f718deb6"
 
 [language_servers.decl-lsp]
 name = "decl-lsp"

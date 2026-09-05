@@ -1,4 +1,5 @@
 # Cargo workspace: the Rust runtime lives in decl-rs (crate `decl-lang`).
 [workspace]
 resolver = "2"
+exclude = ["extension/zed"]   # the Zed extension builds for wasm32-wasip1 by Zed's toolchain, on its own
 members = ["decl-rs"]

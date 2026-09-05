@@ -35,3 +35,6 @@ extension/vscode/*.vsix
 extension/zed/target/
 extension/zed/grammars/
 extension/vscode/.vscode-test/
+# editor-local project settings (the Zed server path is a local absolute path)
+.zed/
+extension/zed/extension.wasm
