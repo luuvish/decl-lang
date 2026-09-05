@@ -22,9 +22,14 @@ Point an LSP client at the `decl-lsp` binary for the `decl` language
   `languageId: decl`).
 - **Neovim**: `vim.lsp.start({ name = 'decl', cmd = { 'decl-lsp' },
   root_dir = vim.fs.root(0, { 'decl.toml', '.git' }) })` from a
-  `FileType decl` autocommand.
+  `FileType decl` autocommand — `extension/neovim/init.lua`.
 - **Helix**: a `[[language]]` entry with `language-servers = ["decl-lsp"]`
-  and `[language-server.decl-lsp] command = "decl-lsp"`.
+  and `[language-server.decl-lsp] command = "decl-lsp"` —
+  `extension/helix/languages.toml`.
+- **Emacs**: eglot, registered by `extension/emacs/decl-mode.el`;
+  **Vim**: the yegappan/lsp plugin (`extension/vim/README.md`);
+  **Sublime Text**: the LSP package, registered by
+  `extension/sublime/LSP.sublime-settings`.
 
 Syntax highlighting comes from the grammar (`tree-sitter-decl/`, with
 `queries/highlights.scm`), which editors with tree-sitter support load
@@ -248,7 +253,12 @@ and delta requests.
 - `workspace/didChangeConfiguration`: the input bindings for evaluation
   diagnostics, the inlay-hint switches, the idle delay.
 - `$/progress` for loading and evaluating a large universe; a status
-  item with the universe's size and the last evaluation's time.
+  item with the universe's size and the last evaluation's time. For a
+  client that advertises `window.workDoneProgress`, an evaluation is
+  wrapped in a `window/workDoneProgress/create` request — its id an
+  integer, the form every client accepts — and `begin`/`end`
+  notifications; the client's response to that request is consumed, not
+  answered (the parity harness checks both).
 
 ## 15. Protocol summary
 
@@ -324,5 +334,5 @@ servers to answer with identical messages: every request kind of §15
 with at least one position per kind of answer, every quick fix and
 assist with a before and after, every lens with its command; a session
 with an edit checks that the incremental analysis answers as a fresh
-server would. Manual smoke in Neovim, Helix, and VS Code on the three
-benchmark examples closes each delivery.
+server would. Smoke in Neovim and Helix (`extension/smoke-editors.sh`)
+and in VS Code on the three benchmark examples closes each delivery.

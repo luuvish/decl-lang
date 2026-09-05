@@ -1,0 +1,15 @@
+# hx on a sized pseudo-terminal: open the file, wait for the server, send
+# the keys, quit; the raw screen goes to the log for the smoke to read.
+#   expect session.exp <XDG_CONFIG_HOME> <file> <keys> <log>
+set timeout 30
+set env(XDG_CONFIG_HOME) [lindex $argv 0]
+set env(TERM) xterm-256color
+set file [lindex $argv 1]
+set keys [lindex $argv 2]
+log_file -noappend [lindex $argv 3]
+spawn hx $file
+stty rows 40 cols 140 < $spawn_out(slave,name)
+sleep 5
+if {$keys ne ""} { send -- $keys; sleep 3 }
+send ":q!\r"
+expect eof

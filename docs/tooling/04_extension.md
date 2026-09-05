@@ -370,17 +370,55 @@ some of it in a terminal.
 ## 17. Other editors
 
 Any editor with an LSP client has the same server, and any editor with
-tree-sitter has the same highlighting:
+tree-sitter has the same highlighting — no extension, a configuration.
+The grammar's `queries/` are the source every editor reads:
+`highlights.scm`, `locals.scm`, `folds.scm`, `indents.scm`
+(nvim-treesitter's dialect), `textobjects.scm` (the captures Helix and
+nvim-treesitter-textobjects share), and `helix/indents.scm` for Helix's
+indent dialect; Zed's `highlights.scm` is the grammar's verbatim, and
+its Zed-only queries (brackets, indents, outline, runnables) sit with
+the extension. `extension/zed/test.sh` loads every one of these against
+the grammar and runs it over the fixture corpus.
 
-- **Neovim**: `vim.lsp.start({ name = 'decl', cmd = { 'decl-lsp' },
-  root_dir = vim.fs.root(0, { 'decl.toml', '.git' }) })` from a `FileType
-  decl` autocommand; the grammar through nvim-treesitter.
-- **Helix**: a `[[language]]` entry with `language-servers =
-  ["decl-lsp"]`, `[language-server.decl-lsp] command = "decl-lsp"`, and
-  the grammar as a `[[grammar]]` source.
-- **Emacs**: `(add-to-list 'eglot-server-programs '(decl-mode .
-  ("decl-lsp")))` with a `decl-mode` derived from `prog-mode`; the
-  grammar through `treesit`.
+- **Neovim** (0.10+, no plugins): `extension/neovim/init.lua` — the
+  parser built with `tree-sitter build -o ~/.config/nvim/parser/decl.so`,
+  the queries copied to `~/.config/nvim/queries/decl/`, the filetype,
+  `vim.treesitter.start`, folding from the folds query, and
+  `vim.lsp.start({ name = 'decl', cmd = { 'decl-lsp' } })` from a
+  `FileType decl` autocommand. With nvim-treesitter, the same queries.
+- **Helix**: `extension/helix/languages.toml` — the `[[language]]` entry
+  with `language-servers = ["decl-lsp"]`, the grammar as a `[[grammar]]`
+  source, the queries in the user runtime, `hx --grammar build`.
+- **Emacs** (29+, built in `treesit` and eglot):
+  `extension/emacs/decl-mode.el` — `decl-ts-mode` over the grammar
+  library (`libtree-sitter-decl.dylib`/`.so` in `~/.emacs.d/tree-sitter/`
+  or `treesit-extra-load-path`). `treesit` reads Lisp font-lock rules,
+  not `.scm` files, so the highlights are mirrored there; the mode's
+  smoke compiles every rule against the grammar so they cannot drift
+  silently. Eglot is registered with `:language-id "decl"` (it would
+  send `decl-ts` otherwise).
+- **Vim** (9, no tree-sitter and no built-in client):
+  `extension/vim/` — a regex `syntax/decl.vim` (an approximation of the
+  grammar's highlighting), `ftdetect`, `ftplugin`, `indent`; the server
+  through the yegappan/lsp plugin (`LspAddServer` with `filetype:
+  'decl'`), vim-lsp for Vim 8.
+- **Sublime Text**: `extension/sublime/` — a package (`Decl.sublime-syntax`,
+  a regex syntax with a Sublime syntax test file, settings, comment
+  preferences) copied to `Packages/Decl`; the server through the LSP
+  package from Package Control, which the package's
+  `LSP.sublime-settings` registers for `source.decl`.
+
+`extension/smoke-editors.sh` sets every one of these up in a scratch
+directory and checks what the user would see: every query loads, a
+keyword is highlighted, a body folds or indents, an invalid fixture's
+diagnostic appears, and hover on a type name shows its declaration.
+Neovim and Emacs run headless; Helix and Vim on a pseudo-terminal, the
+screen read back (Vim's hover popup does not render on a headless
+terminal, so its hover is checked at the protocol); Sublime has no
+headless mode, so its syntax and the test file run through syntect,
+the engine that implements Sublime's syntax format, and the LSP client
+is checked by hand in the editor. The script needs the editors
+installed and is run by hand before a release.
 
 The output preview, the trace view, and the Test Explorer are VS Code
 UI; their content is reachable everywhere through the REPL and the
@@ -402,8 +440,10 @@ each release; installable as a dev extension from the directory in the
 meantime. The registry entry needs the grammar at a pinned revision
 and, for the download path of §15, **prebuilt `decl-lsp` binaries** on
 the GitHub release: the release workflow builds the Rust `decl-lsp` for
-Linux, macOS, and Windows on x86-64 and arm64 and attaches them as
-assets — a deliverable Zed adds to the packaging.
+macOS, Linux, and Windows on arm64 and x86_64 — the Linux ones static
+against musl, no glibc dependency — and attaches them as
+`decl-lsp-<os>-<arch>` (`.exe` on Windows; the name §15's download
+composes) — a deliverable Zed adds to the packaging.
 
 `packaging/README.md` lists both channels beside npm, PyPI, crates.io,
 and Homebrew.
@@ -453,9 +493,14 @@ preview and the syntax tree; a browser suite (`test/web/`, run by
 headless Chromium) exercises it. The TextMate grammar is hand-written
 and checked against the tree-sitter grammar's keywords at build
 (`site/scripts/check-grammar.mjs`) — the check, not generation, is the
-mechanism that keeps them together. Open: the first release; the
-extension in vscode.dev with a real workspace (the suite covers the
-mechanism, not the site).
+mechanism that keeps them together. The Zed extension has its own test
+(`extension/zed/test.sh`, the `zed` job of the workflow): the wasm
+module builds for Zed's target, the manifest names what Zed needs, and
+every query loads against the tree-sitter grammar and runs over the
+fixture corpus — the tests each extension can have, since Zed's
+extension API has no views or commands to test (§1). Open: the first
+release; the extension in vscode.dev with a real workspace (the suite
+covers the mechanism, not the site).
 
 ## 21. Verification
 
@@ -472,8 +517,13 @@ mechanism, not the site).
   tree-sitter CLI (every capture resolves, every fixture parses and
   highlights) and the wasm module built with `cargo check --target
   wasm32-wasip1`.
-- **CI** runs these on Linux, macOS, and Windows; a release installs the
-  `.vsix` in a clean VS Code and the dev extension in a clean Zed and
-  opens the examples.
+- **CI** runs these on Linux; a release installs the `.vsix` in a clean
+  VS Code and the dev extension in a clean Zed and opens the examples.
 - **Manual smoke** on the three benchmark examples in VS Code and Zed
-  closes each delivery, as the roadmap's Phase 6 exit criteria say.
+  closes each delivery, as the roadmap's Phase 6 exit criteria say;
+  Neovim, Helix, Emacs, Vim, and Sublime Text through
+  `extension/smoke-editors.sh` (§17) — passed on 2026-09-05 with Neovim
+  0.12.5, Helix 25.07.1, Emacs 31.1, Vim 9.1, and Sublime Text 4200
+  (syntect 5.3 for the syntax; the LSP package seen starting the server
+  in the editor): the queries, the highlighting, folding or indentation,
+  diagnostics, and hover.

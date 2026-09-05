@@ -1,0 +1,12 @@
+// The Decl language server for the LSP package (sublimelsp/LSP): merged
+// into the package's settings when this directory is installed under
+// Packages/. `decl-lsp` must be on PATH (or give its full path here).
+{
+    "clients": {
+        "decl-lsp": {
+            "enabled": true,
+            "command": ["decl-lsp"],
+            "selector": "source.decl",
+        },
+    },
+}

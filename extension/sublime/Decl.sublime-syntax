@@ -1,0 +1,236 @@
+%YAML 1.2
+---
+# Decl for Sublime Text (docs/tooling/04_extension.md §17): the regex
+# counterpart of the grammar's tree-sitter-decl/queries/highlights.scm.
+# Standard scope names, so every colour scheme applies. Checked by
+# syntax_test_decl.decl (Build: Syntax Tests in Sublime; syntect in smoke.sh).
+name: Decl
+scope: source.decl
+version: 2
+file_extensions:
+  - decl
+
+variables:
+  ident: '[A-Za-z_][A-Za-z0-9_]*'
+  dec: '(?:0|[1-9][0-9_]*)'
+  unit: '[A-Za-z][A-Za-z0-9]*'
+
+contexts:
+  main:
+    - include: comments
+    - include: declarations
+    - include: expressions
+
+  comments:
+    - match: '(///).*$'
+      scope: comment.line.documentation.decl
+      captures:
+        1: punctuation.definition.comment.decl
+    - match: '(//).*$'
+      scope: comment.line.double-slash.decl
+      captures:
+        1: punctuation.definition.comment.decl
+    - match: '/\*'
+      scope: punctuation.definition.comment.begin.decl
+      push: block_comment
+
+  block_comment:
+    # block comments nest (the grammar's external scanner)
+    - meta_scope: comment.block.decl
+    - match: '/\*'
+      scope: punctuation.definition.comment.begin.decl
+      push: block_comment
+    - match: '\*/'
+      scope: punctuation.definition.comment.end.decl
+      pop: true
+
+  declarations:
+    - match: '\b(export)\b'
+      scope: keyword.control.export.decl
+    - match: '\b(import|from)\b'
+      scope: keyword.control.import.decl
+    - match: '\b(as)\b'
+      scope: keyword.control.import.as.decl
+    - match: '\b(type)\s+({{ident}})'
+      captures:
+        1: storage.type.decl
+        2: entity.name.type.decl
+    - match: '\b(func)\s+({{ident}})'
+      captures:
+        1: storage.type.function.decl
+        2: entity.name.function.decl
+    - match: '\b(const)\s+({{ident}})'
+      captures:
+        1: storage.type.decl
+        2: entity.name.constant.decl
+    - match: '\b(output|input)\s+({{ident}})'
+      captures:
+        1: storage.type.decl
+        2: entity.name.variable.decl
+    - match: '\b(diagnostic)\s+({{ident}})'
+      captures:
+        1: storage.type.decl
+        2: entity.name.label.decl
+    - match: '\b(dimension)\s+({{ident}})'
+      captures:
+        1: storage.type.decl
+        2: entity.name.type.dimension.decl
+    - match: '\b(unit)\s+({{ident}})'
+      captures:
+        1: storage.type.decl
+        2: entity.name.constant.unit.decl
+    - match: '\b(assert)\s+({{ident}})'
+      captures:
+        1: keyword.control.assert.decl
+        2: entity.name.label.decl
+    - match: '\b(else)\s+(error|warn|info)\b'
+      captures:
+        1: keyword.control.conditional.decl
+        2: keyword.other.severity.decl
+    # a diagnostic's severity and message keys open their lines
+    - match: '^\s*(severity)\s*(=)\s*(error|warn|info)\b'
+      captures:
+        1: variable.language.decl
+        2: keyword.operator.assignment.decl
+        3: keyword.other.severity.decl
+    - match: '^\s*(message)\s*(=)'
+      captures:
+        1: variable.language.decl
+        2: keyword.operator.assignment.decl
+    - match: '\b(if|then|else|match|for|in|matches|with|when)\b'
+      scope: keyword.control.decl
+
+  expressions:
+    - match: '\b(true|false|null)\b'
+      scope: constant.language.decl
+    - match: '\$referrers\b'
+      scope: support.function.builtin.decl
+    - match: '\$(this|parent|root|key|path)\b'
+      scope: variable.language.context.decl
+    - match: '"'
+      scope: punctuation.definition.string.begin.decl
+      push: string
+    - match: '`'
+      scope: punctuation.definition.string.begin.decl
+      push: template
+    # a pattern /.../ where an operand begins (after = : ( , [ { | & or a space); a / after an operand divides
+    - match: '(?<=[=:(,\[{|&\s])(/)(?![/*\s])((?:[^/\\\n]|\\.)+)(/)'
+      scope: string.regexp.decl
+      captures:
+        1: punctuation.definition.string.begin.decl
+        3: punctuation.definition.string.end.decl
+    - match: '\b0[xX][0-9a-fA-F][0-9a-fA-F_]*\b'
+      scope: constant.numeric.integer.hexadecimal.decl
+    - match: '\b0[oO][0-7][0-7_]*\b'
+      scope: constant.numeric.integer.octal.decl
+    - match: '\b0[bB][01][01_]*\b'
+      scope: constant.numeric.integer.binary.decl
+    - match: '\b({{dec}}\.[0-9][0-9_]*(?:[eE][+-]?[0-9]+)?|{{dec}}[eE][+-]?[0-9]+)({{unit}})?\b'
+      captures:
+        1: constant.numeric.float.decl
+        2: keyword.other.unit.decl
+    - match: '\b({{dec}})({{unit}})?\b'
+      captures:
+        1: constant.numeric.integer.decl
+        2: keyword.other.unit.decl
+    - match: '\b(int|float|string|bool|ref|quantity)\b'
+      scope: storage.type.primitive.decl
+    # a call: the name before the parenthesis, alone or as a member
+    - match: '(\.)({{ident}})(?=\s*\()'
+      captures:
+        1: punctuation.accessor.decl
+        2: variable.function.decl
+    - match: '\b({{ident}})(?=\s*\()'
+      scope: variable.function.decl
+    - match: '(\.)({{ident}}\$?)'
+      captures:
+        1: punctuation.accessor.decl
+        2: variable.other.member.decl
+    # a hidden member: the name with $ attached
+    - match: '\b{{ident}}\$'
+      scope: variable.other.member.hidden.decl
+    # a member or an entry: `name:`, `name?:`, `key: value`; a derived member `name = ...` opens its line
+    - match: '\b({{ident}})(?=\s*(?:\?\s*:|:(?!:)))'
+      scope: variable.other.member.decl
+    - match: '^\s*({{ident}})(?=\s*=(?![=>]))'
+      captures:
+        1: variable.other.member.decl
+    # named types are capitalised by convention; all-caps names are constants
+    - match: '\b[A-Z][A-Z0-9_]+\b'
+      scope: constant.other.decl
+    - match: '\b[A-Z][A-Za-z0-9_]*\b'
+      scope: support.type.decl
+    - match: '\.\.\.'
+      scope: keyword.operator.spread.decl
+    - match: '\.\.<|\.\.'
+      scope: keyword.operator.range.decl
+    - match: '==|!=|<=|>=|&&|\|\||\?\?|\|>|=>|<<|>>'
+      scope: keyword.operator.decl
+    - match: '\?\.'
+      scope: punctuation.accessor.optional.decl
+    - match: '='
+      scope: keyword.operator.assignment.decl
+    - match: '[-+*/%!~^&|<>?]'
+      scope: keyword.operator.decl
+    - match: '\{'
+      scope: punctuation.section.braces.begin.decl
+    - match: '\}'
+      scope: punctuation.section.braces.end.decl
+    - match: '\['
+      scope: punctuation.section.brackets.begin.decl
+    - match: '\]'
+      scope: punctuation.section.brackets.end.decl
+    - match: '\('
+      scope: punctuation.section.parens.begin.decl
+    - match: '\)'
+      scope: punctuation.section.parens.end.decl
+    - match: ','
+      scope: punctuation.separator.decl
+    - match: ':'
+      scope: punctuation.separator.key-value.decl
+    - match: '\.'
+      scope: punctuation.accessor.decl
+
+  string:
+    - meta_scope: string.quoted.double.decl
+    - match: '\\.'
+      scope: constant.character.escape.decl
+    - match: '"'
+      scope: punctuation.definition.string.end.decl
+      pop: true
+    - match: '$'
+      pop: true
+
+  template:
+    # a template string: `text ${expression} text`
+    - meta_scope: string.interpolated.decl
+    - match: '\\.'
+      scope: constant.character.escape.decl
+    - match: '\$\{'
+      scope: punctuation.section.interpolation.begin.decl
+      push: interpolation
+    - match: '`'
+      scope: punctuation.definition.string.end.decl
+      pop: true
+
+  interpolation:
+    - meta_scope: meta.interpolation.decl
+    - clear_scopes: 1
+    - match: '\}'
+      scope: punctuation.section.interpolation.end.decl
+      pop: true
+    - match: '\{'
+      scope: punctuation.section.braces.begin.decl
+      push: braces
+    - include: comments
+    - include: expressions
+
+  braces:
+    - match: '\}'
+      scope: punctuation.section.braces.end.decl
+      pop: true
+    - match: '\{'
+      scope: punctuation.section.braces.begin.decl
+      push: braces
+    - include: comments
+    - include: expressions

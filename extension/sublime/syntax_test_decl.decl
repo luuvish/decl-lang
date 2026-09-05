@@ -1,0 +1,166 @@
+// SYNTAX TEST "Decl.sublime-syntax"
+
+/// a documentation comment
+// <- comment.line.documentation.decl punctuation.definition.comment.decl
+// ^^^^^^^^^^^^^^^^^^^^^^^^ comment.line.documentation.decl
+// a line comment
+// <- comment.line.double-slash.decl punctuation.definition.comment.decl
+//^^^^^^^^^^^^^^^ comment.line.double-slash.decl
+/* a block /* nested */ comment */
+// <- comment.block.decl punctuation.definition.comment.begin.decl
+//^^^^^^^^^ comment.block.decl
+//         ^^ comment.block.decl punctuation.definition.comment.begin.decl
+//                   ^^ comment.block.decl punctuation.definition.comment.end.decl
+//                     ^^^^^^^^^ comment.block.decl
+//                              ^^ comment.block.decl punctuation.definition.comment.end.decl
+import { Service, MAX as LIMIT } from "./lib.decl"
+// <- keyword.control.import.decl
+//     ^ punctuation.section.braces.begin.decl
+//       ^^^^^^^ support.type.decl
+//              ^ punctuation.separator.decl
+//                ^^^ constant.other.decl
+//                    ^^ keyword.control.import.as.decl
+//                       ^^^^^ constant.other.decl
+//                             ^ punctuation.section.braces.end.decl
+//                               ^^^^ keyword.control.import.decl
+//                                    ^^^^^^^^^^^^ string.quoted.double.decl
+//                                    ^ punctuation.definition.string.begin.decl
+//                                               ^ punctuation.definition.string.end.decl
+export type LogLevel = "debug" | "info"
+// <- keyword.control.export.decl
+//     ^^^^ storage.type.decl
+//          ^^^^^^^^ entity.name.type.decl
+//                   ^ keyword.operator.assignment.decl
+//                     ^^^^^^^ string.quoted.double.decl
+//                             ^ keyword.operator.decl
+//                               ^^^^^^ string.quoted.double.decl
+export dimension Bandwidth = DataSize / Time
+//     ^^^^^^^^^ storage.type.decl
+//               ^^^^^^^^^ entity.name.type.dimension.decl
+//                           ^^^^^^^^ support.type.decl
+//                                    ^ keyword.operator.decl
+//                                      ^^^^ support.type.decl
+unit Gbps = 1e9 bps
+// <- storage.type.decl
+//   ^^^^ entity.name.constant.unit.decl
+//          ^^^ constant.numeric.float.decl
+export type Server = {
+//          ^^^^^^ entity.name.type.decl
+//                   ^ punctuation.section.braces.begin.decl
+    host?: string = "0.0.0.0"
+//  ^^^^ variable.other.member.decl
+//      ^ keyword.operator.decl
+//       ^ punctuation.separator.key-value.decl
+//         ^^^^^^ storage.type.primitive.decl
+//                ^ keyword.operator.assignment.decl
+//                  ^^^^^^^^^ string.quoted.double.decl
+    port: 1..65535 = 8080
+//  ^^^^ variable.other.member.decl
+//        ^ constant.numeric.integer.decl
+//         ^^ keyword.operator.range.decl
+//           ^^^^^ constant.numeric.integer.decl
+//                   ^^^^ constant.numeric.integer.decl
+    timeout: quantity<Time> = 250ms
+//           ^^^^^^^^ storage.type.primitive.decl
+//                   ^ keyword.operator.decl
+//                    ^^^^ support.type.decl
+//                        ^ keyword.operator.decl
+//                            ^^^ constant.numeric.integer.decl
+//                               ^^ keyword.other.unit.decl
+    speed = 1.5e3s
+//  ^^^^^ variable.other.member.decl
+//          ^^^^^ constant.numeric.float.decl
+//               ^ keyword.other.unit.decl
+    mask = 0xFF | 0o7 & 0b101
+//         ^^^^ constant.numeric.integer.hexadecimal.decl
+//                ^^^ constant.numeric.integer.octal.decl
+//                      ^^^^^ constant.numeric.integer.binary.decl
+    level: LogLevel = "info"
+//  ^^^^^ variable.other.member.decl
+//         ^^^^^^^^ support.type.decl
+    rate_limits?: { [/[a-z][a-z0-9_]*/]: int } = {}
+//                   ^^^^^^^^^^^^^^^^^ string.regexp.decl
+//                   ^ punctuation.definition.string.begin.decl
+//                                   ^ punctuation.definition.string.end.decl
+//                                       ^^^ storage.type.primitive.decl
+    secret$: string
+//  ^^^^^^^ variable.other.member.hidden.decl
+    ...
+//  ^^^ keyword.operator.spread.decl
+    insecure = !tls.enabled
+//  ^^^^^^^^ variable.other.member.decl
+//             ^ keyword.operator.decl
+//                 ^ punctuation.accessor.decl
+//                  ^^^^^^^ variable.other.member.decl
+    ratio = port / 2
+//               ^ keyword.operator.decl
+    when enabled {
+//  ^^^^ keyword.control.decl
+        assert cert_present: "cert_path" in $this
+//      ^^^^^^ keyword.control.assert.decl
+//             ^^^^^^^^^^^^ entity.name.label.decl
+//                                       ^^ keyword.control.decl
+//                                          ^^^^^ variable.language.context.decl
+            else error `tls is enabled but cert_path is missing`
+//          ^^^^ keyword.control.conditional.decl
+//               ^^^^^ keyword.other.severity.decl
+//                      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ string.interpolated.decl
+    }
+    assert sane_workers: workers <= 64
+//                               ^^ keyword.operator.decl
+        else warn `worker count ${workers} is unusually high`
+//           ^^^^ keyword.other.severity.decl
+//                 ^^^^^^^^^^^^^ string.interpolated.decl
+//                              ^^ punctuation.section.interpolation.begin.decl
+//                                ^^^^^^^ meta.interpolation.decl - string
+//                                       ^ punctuation.section.interpolation.end.decl
+//                                        ^^^^^^^^^^^^^^^^^^ string.interpolated.decl
+}
+func cap(n: int): int = std.math.min(n, MAX)
+// <- storage.type.function.decl
+//   ^^^ entity.name.function.decl
+//       ^ variable.other.member.decl
+//                      ^^^ - variable.function.decl
+//                          ^^^^ variable.other.member.decl
+//                               ^^^ variable.function.decl
+//                                      ^^^ constant.other.decl
+const first = if s.name matches /a.*/ then 1 else 0
+//    ^^^^^ entity.name.constant.decl
+//            ^^ keyword.control.decl
+//                      ^^^^^^^ keyword.control.decl
+//                              ^^^^^ string.regexp.decl
+//                                    ^^^^ keyword.control.decl
+//                                           ^^^^ keyword.control.decl
+export output prod: Server = base with { host: "api", workers: 32 }
+//     ^^^^^^ storage.type.decl
+//            ^^^^ entity.name.variable.decl
+//                  ^^^^^^ support.type.decl
+//                                ^^^^ keyword.control.decl
+//                                       ^^^^ variable.other.member.decl
+input deployed: Server
+// <- storage.type.decl
+//    ^^^^^^^^ entity.name.variable.decl
+output inbound = $referrers(Service, "upstream") |> std.array.count
+//               ^^^^^^^^^^ support.function.builtin.decl
+//                                               ^^ keyword.operator.decl
+//                                                            ^^^^^ variable.other.member.decl
+diagnostic no_cert {
+// <- storage.type.decl
+//         ^^^^^^^ entity.name.label.decl
+    severity = warn
+//  ^^^^^^^^ variable.language.decl
+//             ^^^^ keyword.other.severity.decl
+    message = `missing ${$root.name}`
+//  ^^^^^^^ variable.language.decl
+//                       ^^^^^ variable.language.context.decl
+//                            ^ punctuation.accessor.decl
+}
+const arm = match shape { Circle => 3.14, _ => null }
+//          ^^^^^ keyword.control.decl
+//                               ^^ keyword.operator.decl
+//                                  ^^^^ constant.numeric.float.decl
+//                                             ^^^^ constant.language.decl
+const opt = cfg?.tls ?? true
+//             ^^ punctuation.accessor.optional.decl
+//                   ^^ keyword.operator.decl
+//                      ^^^^ constant.language.decl

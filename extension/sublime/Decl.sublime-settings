@@ -1,0 +1,8 @@
+// Settings for files with the Decl syntax (AGENTS.md code style):
+// 4-space indentation, no tabs, 100-character lines
+{
+    "tab_size": 4,
+    "translate_tabs_to_spaces": true,
+    "rulers": [100],
+    "trim_trailing_white_space_on_save": true,
+}

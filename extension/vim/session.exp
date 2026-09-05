@@ -1,0 +1,15 @@
+# vim on a sized pseudo-terminal (docs/tooling/04_extension.md §17): open
+# the file with the given vimrc, then either let the vimrc write its result
+# on a plugin User autocommand (no keys), or send the keys given (each with
+# a short pause) to drive a command. The raw screen goes to the log.
+#   expect session.exp <vimrc> <file> <log> [key ...]
+set timeout 40
+set env(TERM) xterm-256color
+spawn vim -u [lindex $argv 0] [lindex $argv 1]
+stty rows 40 cols 140 < $spawn_out(slave,name)
+log_file -noappend [lindex $argv 2]
+sleep 5
+foreach k [lrange $argv 3 end] { send -- $k; sleep 2 }
+sleep 2
+send "\033:qa!\r"
+expect eof

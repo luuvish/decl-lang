@@ -1,0 +1,22 @@
+# Decl in Helix (docs/tooling/04_extension.md §17): the language, its
+# server, and the grammar from the repository. Append to
+# ~/.config/helix/languages.toml; DECL_ROOT is where the repository is.
+
+[language-server.decl-lsp]
+command = "decl-lsp"
+
+[[language]]
+name = "decl"
+scope = "source.decl"
+injection-regex = "^decl$"
+file-types = ["decl"]
+roots = ["decl.toml"]
+comment-token = "//"
+block-comment-tokens = { start = "/*", end = "*/" }
+indent = { tab-width = 4, unit = "    " }
+language-servers = ["decl-lsp"]
+auto-format = true
+
+[[grammar]]
+name = "decl"
+source = { path = "DECL_ROOT/tree-sitter-decl" }

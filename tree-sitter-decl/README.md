@@ -25,4 +25,8 @@ npx tree-sitter playground      # web playground at http://127.0.0.1:8000
   lookahead points of spec §11.8
 - `src/scanner.c` — NEWLINE separator + nested block comments
 - `test/corpus/` — parse-tree tests, including error-recovery smoke
-- `queries/highlights.scm` — syntax highlighting captures
+- `queries/` — the editor queries every tree-sitter editor reads:
+  `highlights.scm`, `locals.scm`, `folds.scm`, `indents.scm`
+  (nvim-treesitter's dialect), `textobjects.scm`, and
+  `helix/indents.scm` (Helix's indent dialect); checked against the
+  grammar and the fixture corpus by `extension/zed/test.sh`
