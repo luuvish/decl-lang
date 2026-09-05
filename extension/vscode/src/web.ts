@@ -14,6 +14,10 @@ let output: vscode.OutputChannel;
 const previews = new Map<string, { uri: vscode.Uri; root: string | null }>();
 const previewEmitter = new vscode.EventEmitter<vscode.Uri>();
 const cfg = () => vscode.workspace.getConfiguration('decl');
+// VS Code hands configuration objects out as read-only Proxies; the worker's
+// structured clone rejects those ("#<Object> could not be cloned"), so what
+// goes to the server is a plain copy
+const plain = <T>(value: T): T => JSON.parse(JSON.stringify(value)) as T;
 
 const base64 = (bytes: Uint8Array): string => {
   let s = '';
@@ -123,8 +127,9 @@ export async function activate(context: vscode.ExtensionContext) {
   const clientOptions: LanguageClientOptions = {
     documentSelector: [{ language: 'decl' }],
     outputChannel: output,
-    synchronize: { configurationSection: 'decl' },
-    initializationOptions: { wasm, inputs: cfg().get('inputs') ?? {} },
+    // no `synchronize`: the client would post the configuration Proxies; the
+    // change handler below sends a plain copy instead
+    initializationOptions: { wasm, inputs: plain(cfg().get('inputs') ?? {}) },
     middleware: {
       executeCommand: async (command, args, next) => {
         switch (command) {
@@ -189,6 +194,13 @@ export async function activate(context: vscode.ExtensionContext) {
     vscode.workspace.registerTextDocumentContentProvider(SYNTAX_SCHEME, new SyntaxTreeProvider()),
     vscode.commands.registerCommand('decl.openOutputPreview', () => openPreview(null)),
     vscode.commands.registerCommand('decl.showOutput', () => output.show()),
+    vscode.workspace.onDidChangeConfiguration((e) => {
+      if (!e.affectsConfiguration('decl')) return;
+      void client?.sendNotification('workspace/didChangeConfiguration', {
+        settings: { decl: plain(cfg()) },
+      });
+      refreshPreviews();
+    }),
     vscode.workspace.onDidSaveTextDocument((doc) => {
       if (doc.languageId === 'decl' && cfg().get('preview.refresh') !== 'manual') refreshPreviews();
     }),
