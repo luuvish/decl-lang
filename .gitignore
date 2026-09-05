@@ -1,22 +1,35 @@
+# What the tree does not carry (docs/DEVELOPMENT.md §1): build outputs,
+# dependencies, environments, the copies a build makes, and local state.
+
+# macOS
 .DS_Store
+
+# build outputs and dependencies, in any package
 node_modules/
 dist/
 build/
 target/
+
+# Python: bytecode, packaging metadata, the venv `make` creates, tool caches
 __pycache__/
 *.egg-info/
-# decl-ts: packed tarballs and the LICENSE copied in by the build
-decl-ts/*.tgz
-decl-ts/LICENSE
-# decl-py: grammar sources and the extension
+.venv/
+.mypy_cache/
+.ruff_cache/
+.pytest_cache/
+
+# copies a build makes: the grammar sources synced into the Rust crate and
+# the Python extension, the LICENSE carried into each package, packed tarballs
+decl-rs/grammar/
+decl-rs/LICENSE
 decl-py/decl/_tree_sitter/src/
 decl-py/decl/_tree_sitter/*.so
 decl-py/LICENSE
-decl-py/.venv/
-# decl-rs: grammar sources and LICENSE copied in by the build
-decl-rs/grammar/
-decl-rs/LICENSE
-# website: generated from docs/ and decl-ts at build time (site/scripts/sync-docs.mjs)
+decl-ts/LICENSE
+decl-ts/*.tgz
+
+# the website: generated from docs/ and the reference at build time
+# (site/scripts/sync-docs.mjs, playground.mjs)
 site/.astro/
 site/public/playground/
 site/src/content/docs/specification/
@@ -27,24 +40,21 @@ site/src/content/docs/tooling/
 site/src/content/docs/revisions.md
 site/src/content/docs/documentation.md
 site/src/samples/synced/
-# editor extensions: build outputs and packages
-extension/vscode/dist/
+
+# the editor extensions: bundles, packages, downloaded test hosts
 extension/vscode/server/
 extension/vscode/syntaxes/
 extension/vscode/*.vsix
-extension/zed/target/
-extension/zed/grammars/
 extension/vscode/.vscode-test/
-# editor-local project settings (the Zed server path is a local absolute path)
-.zed/
+extension/vscode/.vscode-test-web/
 extension/zed/extension.wasm
+extension/zed/grammars/
 
-# tree-sitter query / parse runs compile the grammar beside it
+# the grammar compiled beside itself by tree-sitter query / parse runs
 tree-sitter-decl/*.dylib
 tree-sitter-decl/*.so
 
-# lint and test caches
-.mypy_cache/
-.ruff_cache/
-.pytest_cache/
-extension/vscode/.vscode-test-web/
+# local state: editor project settings (the Zed server path is absolute
+# on this machine), the agent's session files
+.zed/
+.claude/
