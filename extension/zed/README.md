@@ -17,9 +17,8 @@ Extension* and choose this directory. Zed compiles the Rust module with
 your toolchain (`rustup target add wasm32-wasip1` once, and `cargo` on
 the PATH Zed sees — a login-shell `~/.zprofile` with `. "$HOME/.cargo/env"`)
 and fetches the grammar with git at the commit `extension.toml` pins
-(`rev`): bump it when `tree-sitter-decl/` changes. While the repository
-is private the manifest names the ssh URL; a public registry entry
-uses https.
+(`rev`): bump it when `tree-sitter-decl/` changes. The manifest names
+the public https URL of the repository.
 
 ## Settings
 

@@ -291,11 +291,10 @@ Homebrew formula is by hand:
 | `vsix` | the VS Code extension; published to the Marketplace and Open VSX when the tokens exist |
 | `release` | the GitHub release with every asset, notes generated |
 
-Two consequences of the repository being private: the Zed extension
-downloads `decl-lsp` from the release without authentication, so that
-path (and the Zed registry) needs a public repository — `PATH` or a
-setting works meanwhile; and macOS and Windows runner minutes count
-against the plan at 10× and 2×.
+The repository is public (since 2026-09-05): the Zed extension
+downloads `decl-lsp` from the release and clones the grammar without
+authentication, the Zed registry can list it, and Actions minutes are
+free.
 
 ### Release targets
 

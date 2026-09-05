@@ -13,7 +13,7 @@ import name in Python is `decl`, and the binary is `decl` everywhere.
 | Homebrew | tap `luuvish/tap`, formula `decl-lang` | `brew install luuvish/tap/decl-lang` | **published 2026-09-05**: [luuvish/homebrew-tap](https://github.com/luuvish/homebrew-tap), the formula mirrored from `homebrew/` |
 | crates.io | `decl-lang` (bins `decl`, `decl-lsp`) | `cargo install decl-lang` | **published 2026-09-05** (0.3.0, by hand; from the next tag `release.yml` through trusted publishing; `decl-rs/`) |
 | Visual Studio Marketplace, Open VSX | `luuvish.vscode-decl` (the VS Code extension, bundling npm `decl-lang`) | Extensions view: "Decl" | **published 2026-09-05** on both (`luuvish.vscode-decl` 0.3.0, by `release.yml` with `VSCE_PAT` / `OVSX_PAT`); the Open VSX namespace claim is filed |
-| Zed extension registry | `decl` (the Zed extension: grammar, queries, `decl-lsp` pointer) | Zed: extensions, "Decl" | packaged: the `decl-lsp` binaries are on the v0.3.0 release (`extension/zed/`, [docs/tooling/04_extension.md](../docs/tooling/04_extension.md); the registry and the download need a public repository |
+| Zed extension registry | `decl` (the Zed extension: grammar, queries, `decl-lsp` pointer) | Zed: extensions, "Decl" | packaged: the `decl-lsp` binaries are on the v0.3.0 release and the repository is public (`extension/zed/`, [docs/tooling/04_extension.md](../docs/tooling/04_extension.md)); the registry entry (zed-industries/extensions) is the next step |
 
 npm and Homebrew ship **the same bytes**: `decl-ts/dist/` — the esbuild
 bundles of the CLI, LSP server, and library (web-tree-sitter included,
