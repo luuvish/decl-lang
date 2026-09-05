@@ -1,0 +1,19 @@
+# Dependencies move forward deliberately (docs/DEVELOPMENT.md): one grouped
+# pull request per ecosystem per month, verified by the gate like any change.
+version: 2
+updates:
+  - package-ecosystem: cargo
+    directories: ['/', '/extension/zed']
+    schedule: { interval: monthly }
+    groups: { cargo: { patterns: ['*'] } }
+  - package-ecosystem: npm
+    directory: '/'
+    schedule: { interval: monthly }
+    groups: { npm: { patterns: ['*'] } }
+  - package-ecosystem: pip
+    directory: '/decl-py'
+    schedule: { interval: monthly }
+  - package-ecosystem: github-actions
+    directory: '/'
+    schedule: { interval: monthly }
+    groups: { actions: { patterns: ['*'] } }

@@ -1,0 +1,10 @@
+# The development environment (docs/DEVELOPMENT.md): the exact toolchain
+# versions the repository is developed, tested, and released with.
+# `mise install` gives a developer machine the same versions CI uses —
+# verify.yml installs from this file; the other workflows read the same
+# pins. rust-toolchain.toml mirrors the Rust pin for cargo without mise
+# (CI checks that the two agree).
+[tools]
+node = "24"
+python = "3.12"
+rust = { version = "1.97.1", profile = "minimal" }

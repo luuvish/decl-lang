@@ -14,13 +14,56 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      # the toolchains exactly as a developer gets them: `mise install` from mise.toml
+      - uses: jdx/mise-action@v4
         with:
-          node-version: 24
-          cache: npm
-      - uses: dtolnay/rust-toolchain@stable
+          cache: true
+      - run: mise current && test "$(sed -n 's/^rust = { version = "\([^"]*\)".*/\1/p' mise.toml)" = "$(sed -n 's/^channel = "\(.*\)"/\1/p' rust-toolchain.toml)"
       - uses: Swatinem/rust-cache@v2
-      - uses: actions/setup-python@v5
-        with:
-          python-version: '3.12'
       - run: make verify
+
+  # each language's linter, type checker, and formatter in check mode (make lint)
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: jdx/mise-action@v4
+        with:
+          cache: true
+      - uses: Swatinem/rust-cache@v2
+      - run: make lint
+
+  # the minimums the manifests declare, each checked with exactly that version:
+  # rust-version (decl-rs/Cargo.toml), engines.node (decl-ts/package.json),
+  # requires-python (decl-py/pyproject.toml)
+  minimums:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { name: rust 1.90, rust: '1.90', node: '', python: '' }
+          - { name: node 22,   rust: '',     node: '22', python: '' }
+          - { name: python 3.10, rust: '',   node: '', python: '3.10' }
+    name: minimum ${{ matrix.name }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - if: matrix.rust
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: ${{ matrix.rust }}
+      - if: matrix.rust
+        run: rm rust-toolchain.toml && cargo check --locked --all-targets -p decl-lang
+      - if: matrix.node
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+          cache: npm
+      - if: matrix.node
+        run: npm ci && npm test -w decl-lang
+      - if: matrix.python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+      - if: matrix.python
+        run: make test-python

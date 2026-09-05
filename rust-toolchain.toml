@@ -1,0 +1,7 @@
+# The Rust toolchain the repository is developed, tested, and released
+# with (docs/DEVELOPMENT.md): rustup installs it on the first cargo run,
+# and CI reads the same pin. The minimum a user of the crate needs is
+# `rust-version` in decl-rs/Cargo.toml; a `minimums` job checks it.
+[toolchain]
+channel = "1.97.1"
+profile = "minimal"
