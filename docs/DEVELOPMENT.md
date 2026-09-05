@@ -253,9 +253,10 @@ others by reading the same pins into `actions/setup-node`,
 
 Caches: npm through `actions/setup-node`, Cargo through
 `Swatinem/rust-cache`, mise's tools through `mise-action`.
-Secrets: `VSCE_PAT` and `OVSX_PAT` for the extension marketplaces
-(publication is skipped without them); nothing else — the GitHub
-release uses the workflow's own token. Dependabot opens, per ecosystem
+Secrets: `VSCE_PAT` and `OVSX_PAT` for the extension marketplaces and
+`HOMEBREW_TAP_TOKEN` (Contents: write on `luuvish/homebrew-tap`) for
+the tap — each publication is skipped without its secret; the GitHub
+release and the registries use the workflow's own identity. Dependabot opens, per ecosystem
 per month (cargo for the workspace and the Zed extension, npm, pip,
 GitHub Actions), one pull request with the minor and patch updates —
 mergeable when the gate passes — and one with the majors, which are a
@@ -284,8 +285,9 @@ smokes (`npm run smoke:dist`, `scripts/smoke.py`), then tag —
 `git tag v0.3.0 && git push origin v0.3.0` — which runs `release.yml`;
 the registries are published by the workflow itself through trusted
 publishing (no tokens: each site trusts this repository, this file, and
-an environment — `npm`, `pypi`, `crates-io`), so after the tag only the
-Homebrew formula is by hand:
+an environment — `npm`, `pypi`, `crates-io`), and the Homebrew formula
+follows the npm publication in the same run, so after the tag nothing
+is by hand but the Zed registry's version pull request:
 
 | Job | Builds |
 |---|---|
@@ -295,6 +297,7 @@ Homebrew formula is by hand:
 | `publish-pypi` | every wheel and the sdist to PyPI through trusted publishing (the `pypi` environment; no token), on a tag or a dispatch asking for it |
 | `publish-npm` | `decl-lang` to npm through trusted publishing, with provenance (`npm` environment); `prepublishOnly` builds, tests, and smokes the tarball first |
 | `publish-crates` | the crate to crates.io through trusted publishing (`crates-io` environment; `rust-lang/crates-io-auth-action` mints the one-time token) |
+| `homebrew` | after npm: the formula rendered with the registry tarball's URL and sha256, pushed to `luuvish/homebrew-tap` and committed back to `main`, then installed and tested from the tap (`HOMEBREW_TAP_TOKEN`) |
 | `vsix` | the VS Code extension; published to the Marketplace and Open VSX when the tokens exist |
 | `release` | the GitHub release with every asset, notes generated |
 

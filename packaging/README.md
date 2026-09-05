@@ -163,4 +163,11 @@ in core as of 2026-09-02).
      admits (3.10–3.14; docs/DEVELOPMENT.md);
    - the VS Code `.vsix`, published to the Marketplace and Open VSX when
      `VSCE_PAT` / `OVSX_PAT` are configured.
-6. Update `homebrew/Formula/decl-lang.rb` `url`/`sha256`, push to the tap.
+6. Homebrew follows on its own: the `homebrew` job of `release.yml`
+   waits for the npm registry, renders `url`/`sha256` into
+   `homebrew/Formula/decl-lang.rb`, pushes it to the tap
+   (`luuvish/homebrew-tap`, with the `HOMEBREW_TAP_TOKEN` secret — a
+   fine-grained token with Contents: write on that repository), commits
+   the same file back to `main`, and installs and tests the formula
+   from the public tap. Without the token the job prints the rendered
+   formula and the push is by hand.

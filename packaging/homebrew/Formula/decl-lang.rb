@@ -3,10 +3,10 @@
 # the `decl` and `decl-lsp` binaries — the standard Homebrew pattern for
 # Node-based command-line tools.
 #
-# Release procedure (see ../../README.md): publish decl-lang to npm, then
-# confirm `sha256` against the registry tarball — `npm pack` is
-# reproducible, but verify with `brew fetch --build-from-source
-# ./Formula/decl-lang.rb` before pushing the tap.
+# Release procedure (see ../../README.md): the `homebrew` job of
+# .github/workflows/release.yml renders `url` and `sha256` from the npm
+# registry after each publication and pushes this file to the tap; the
+# copy here is kept the same by that job.
 class DeclLang < Formula
   desc "Declarative language for describing, generating, and validating structured data"
   homepage "https://luuvish.github.io/decl-lang/"

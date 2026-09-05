@@ -28,6 +28,10 @@ on:
         description: publish the .vsix to the Marketplace and Open VSX (VSCE_PAT / OVSX_PAT), as a tag does
         type: boolean
         default: false
+      publish_homebrew:
+        description: point the Homebrew tap at the npm tarball of this version (HOMEBREW_TAP_TOKEN), as a tag does
+        type: boolean
+        default: false
 
 permissions:
   contents: write
@@ -281,6 +285,85 @@ jobs:
       - run: cargo publish -p decl-lang --locked --allow-dirty
         env:
           CARGO_REGISTRY_TOKEN: ${{ steps.auth.outputs.token }}
+
+  # the Homebrew formula follows the npm publication: the tap's formula (and
+  # the copy in packaging/) get the registry tarball's URL and sha256, and
+  # the formula is installed and tested from the public tap. Needs a token
+  # that can write luuvish/homebrew-tap (HOMEBREW_TAP_TOKEN); skipped without.
+  homebrew:
+    name: Homebrew tap
+    needs: [preflight, publish-npm]
+    if: always() && needs.preflight.result == 'success' && (needs.publish-npm.result == 'success' || needs.publish-npm.result == 'skipped') && (startsWith(github.ref, 'refs/tags/v') || inputs.publish_homebrew)
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    env:
+      HOMEBREW_TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+      HOMEBREW_NO_AUTO_UPDATE: 1
+      HOMEBREW_NO_INSTALL_CLEANUP: 1
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+      - id: pins
+        name: the pinned versions (mise.toml)
+        shell: bash
+        run: echo "node=$(sed -n 's/^node = "\(.*\)"/\1/p' mise.toml)" >> "$GITHUB_OUTPUT"
+      - uses: actions/setup-node@v7
+        with:
+          node-version: ${{ steps.pins.outputs.node }}
+      - name: the registry tarball of this version, and its sha256
+        id: tarball
+        shell: bash
+        run: |
+          v=$(node scripts/version.mjs | tail -1)
+          url="https://registry.npmjs.org/decl-lang/-/decl-lang-$v.tgz"
+          # the npm publication just happened: give the registry a few minutes
+          for i in $(seq 1 30); do
+            if npm view "decl-lang@$v" version >/dev/null 2>&1; then break; fi
+            [ "$i" = 30 ] && { echo "decl-lang@$v is not on the registry"; exit 1; }
+            sleep 10
+          done
+          sha=$(curl -sSL "$url" | sha256sum | cut -c1-64)
+          echo "version=$v" >> "$GITHUB_OUTPUT"; echo "url=$url" >> "$GITHUB_OUTPUT"; echo "sha256=$sha" >> "$GITHUB_OUTPUT"
+          echo "decl-lang $v: $url sha256 $sha"
+      - name: render the formula
+        shell: bash
+        run: |
+          f=packaging/homebrew/Formula/decl-lang.rb
+          sed -i "s|^  url \".*\"$|  url \"${{ steps.tarball.outputs.url }}\"|; s|^  sha256 \".*\"$|  sha256 \"${{ steps.tarball.outputs.sha256 }}\"|" "$f"
+          grep -nE '^  (url|sha256) ' "$f"
+      - name: push the formula to the tap
+        if: env.HOMEBREW_TAP_TOKEN != ''
+        shell: bash
+        run: |
+          git clone -q "https://x-access-token:${HOMEBREW_TAP_TOKEN}@github.com/luuvish/homebrew-tap.git" tap
+          mkdir -p tap/Formula && cp packaging/homebrew/Formula/decl-lang.rb tap/Formula/decl-lang.rb
+          cd tap
+          if git diff --quiet; then echo "the tap already has decl-lang ${{ steps.tarball.outputs.version }}"; exit 0; fi
+          git -c user.name=github-actions -c user.email=github-actions@github.com commit -qam "decl-lang ${{ steps.tarball.outputs.version }}"
+          git push -q origin HEAD:main
+      - name: keep the copy in packaging/ the same (on main)
+        if: env.HOMEBREW_TAP_TOKEN != ''
+        shell: bash
+        run: |
+          f=packaging/homebrew/Formula/decl-lang.rb
+          cp "$f" /tmp/decl-lang.rb
+          git fetch -q origin main && git checkout -q main
+          cp /tmp/decl-lang.rb "$f"
+          if git diff --quiet; then echo "packaging/ is already current"; exit 0; fi
+          git -c user.name=github-actions -c user.email=github-actions@github.com commit -qam "homebrew: decl-lang ${{ steps.tarball.outputs.version }} [skip ci]"
+          git push -q origin main
+      - name: install and test from the public tap
+        if: env.HOMEBREW_TAP_TOKEN != ''
+        shell: bash
+        run: |
+          brew tap luuvish/tap
+          brew install luuvish/tap/decl-lang
+          decl --version
+          brew test luuvish/tap/decl-lang
+      - if: env.HOMEBREW_TAP_TOKEN == ''
+        run: echo "HOMEBREW_TAP_TOKEN not set - the formula is rendered above; push it to luuvish/homebrew-tap by hand"
 
   vsix:
     name: vscode-decl .vsix
