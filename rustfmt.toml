@@ -1,0 +1,4 @@
+# rustfmt for the workspace (docs/ENVIRONMENT.md): the repository's line
+# width, stable options only. `cargo fmt --all --check` is part of the gate.
+edition = "2021"
+max_width = 100

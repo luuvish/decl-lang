@@ -60,33 +60,82 @@ pub struct EvaluateOptions {
 }
 
 fn tagged(file: &str, d: &Diag) -> Diagnostic {
-    Diagnostic { file: file.to_string(), code: d.code.clone(), id: d.id.clone(), severity: d.severity.clone(), message: d.message.clone(), path: d.path.clone() }
+    Diagnostic {
+        file: file.to_string(),
+        code: d.code.clone(),
+        id: d.id.clone(),
+        severity: d.severity.clone(),
+        message: d.message.clone(),
+        path: d.path.clone(),
+    }
 }
 fn fail<T>(fallback: &str, diagnostics: Vec<Diagnostic>) -> Result<T, DeclError> {
-    let message = diagnostics.first().map(|d| d.message.clone()).unwrap_or_else(|| fallback.to_string());
-    Err(DeclError { message, diagnostics })
+    let message = diagnostics
+        .first()
+        .map(|d| d.message.clone())
+        .unwrap_or_else(|| fallback.to_string());
+    Err(DeclError {
+        message,
+        diagnostics,
+    })
 }
 
 // the documents to bind, each to the module that declares its input (§10)
-fn bind_inputs(modules: &[Rc<Module>], file: &str, inputs: &[(String, Document)]) -> Result<Vec<Bind>, DeclError> {
+fn bind_inputs(
+    modules: &[Rc<Module>],
+    file: &str,
+    inputs: &[(String, Document)],
+) -> Result<Vec<Bind>, DeclError> {
     let mut binds = vec![];
     for (name, doc) in inputs {
-        let Some(module) = modules.iter().find(|m| m.env.inputs.borrow().contains_key(name)) else {
-            return Err(DeclError { message: format!("no input named {name}"), diagnostics: vec![] });
+        let Some(module) = modules
+            .iter()
+            .find(|m| m.env.inputs.borrow().contains_key(name))
+        else {
+            return Err(DeclError {
+                message: format!("no input named {name}"),
+                diagnostics: vec![],
+            });
         };
-        let e6004 = |message: String| Diagnostic { file: file.to_string(), code: Some("E6004".into()), id: None, severity: "error".into(), message, path: name.clone() };
+        let e6004 = |message: String| Diagnostic {
+            file: file.to_string(),
+            code: Some("E6004".into()),
+            id: None,
+            severity: "error".into(),
+            message,
+            path: name.clone(),
+        };
         let (text, place) = match doc {
             Document::File(p) => match std::fs::read_to_string(p) {
                 Ok(t) => (t, p.display().to_string()),
-                Err(_) => return fail("", vec![e6004(format!("bound document cannot be read: {}", p.display()))]),
+                Err(_) => {
+                    return fail(
+                        "",
+                        vec![e6004(format!(
+                            "bound document cannot be read: {}",
+                            p.display()
+                        ))],
+                    )
+                }
             },
             Document::Json(t) => (t.clone(), name.clone()),
         };
         let raw = match read_json(&text) {
             Ok(v) => v,
-            Err(_) => return fail("", vec![e6004(format!("bound document is not well-formed JSON: {place}"))]),
+            Err(_) => {
+                return fail(
+                    "",
+                    vec![e6004(format!(
+                        "bound document is not well-formed JSON: {place}"
+                    ))],
+                )
+            }
         };
-        binds.push(Bind { module: Some(module.clone()), input: name.clone(), raw });
+        binds.push(Bind {
+            module: Some(module.clone()),
+            input: name.clone(),
+            raw,
+        });
     }
     Ok(binds)
 }
@@ -96,14 +145,26 @@ fn bind_inputs(modules: &[Rc<Module>], file: &str, inputs: &[(String, Document)]
 /// the diagnostics on any error-severity outcome.
 pub fn evaluate(path: &str, opts: &EvaluateOptions) -> Result<BTreeMap<String, String>, DeclError> {
     let r = open_universe(path);
-    let Some(entry) = r.entry.clone() else { return fail(&format!("{path}: cannot be loaded"), r.diags.iter().map(|d| tagged(path, d)).collect()) };
+    let Some(entry) = r.entry.clone() else {
+        return fail(
+            &format!("{path}: cannot be loaded"),
+            r.diags.iter().map(|d| tagged(path, d)).collect(),
+        );
+    };
     if !r.diags.is_empty() {
         return fail("", r.diags.iter().map(|d| tagged(path, d)).collect());
     }
-    let checks: Vec<Diagnostic> = r.modules.iter().flat_map(|m| {
-        let tag = file_tag(path, Some(entry.path.as_path()), &m.path);
-        check_module(&m.decls, Some(m.env.clone()), None).iter().map(|d| tagged(&tag, d)).collect::<Vec<_>>()
-    }).collect();
+    let checks: Vec<Diagnostic> = r
+        .modules
+        .iter()
+        .flat_map(|m| {
+            let tag = file_tag(path, Some(entry.path.as_path()), &m.path);
+            check_module(&m.decls, Some(m.env.clone()), None)
+                .iter()
+                .map(|d| tagged(&tag, d))
+                .collect::<Vec<_>>()
+        })
+        .collect();
     if !checks.is_empty() {
         return fail("", checks);
     }
@@ -114,16 +175,26 @@ pub fn evaluate(path: &str, opts: &EvaluateOptions) -> Result<BTreeMap<String, S
         return fail("", report);
     }
     let names: Vec<String> = if opts.outputs.is_empty() {
-        entry.decls.iter().filter(|d| d.exported).filter_map(|d| match &d.body {
-            crate::ast::DeclBody::Output { name, .. } => Some(name.clone()),
-            _ => None,
-        }).collect()
+        entry
+            .decls
+            .iter()
+            .filter(|d| d.exported)
+            .filter_map(|d| match &d.body {
+                crate::ast::DeclBody::Output { name, .. } => Some(name.clone()),
+                _ => None,
+            })
+            .collect()
     } else {
         opts.outputs.clone()
     };
     let mut out = BTreeMap::new();
     for n in &names {
-        let Some(v) = entry.env.root(n) else { return Err(DeclError { message: format!("no root named {n}"), diagnostics: report }) };
+        let Some(v) = entry.env.root(n) else {
+            return Err(DeclError {
+                message: format!("no root named {n}"),
+                diagnostics: report,
+            });
+        };
         out.insert(n.clone(), eng.serialize(&v, n, false));
     }
     Ok(out)
@@ -132,33 +203,57 @@ pub fn evaluate(path: &str, opts: &EvaluateOptions) -> Result<BTreeMap<String, S
 /// Parse and statically check entry files (module-aware); empty means clean.
 pub fn check(paths: &[&str]) -> Vec<Diagnostic> {
     let owned: Vec<String> = paths.iter().map(|p| p.to_string()).collect();
-    check_files(&owned).iter().map(|(file, d)| tagged(file, d)).collect()
+    check_files(&owned)
+        .iter()
+        .map(|(file, d)| tagged(file, d))
+        .collect()
 }
 
 /// Validate a file: static checks, then evaluation with the input documents
 /// bound; returns every diagnostic (all severities). Fails when the file
 /// does not parse.
 pub fn validate(path: &str, inputs: &[(String, Document)]) -> Result<Vec<Diagnostic>, DeclError> {
-    let src = std::fs::read_to_string(path).map_err(|_| DeclError { message: format!("{path}: cannot be read"), diagnostics: vec![] })?;
+    let src = std::fs::read_to_string(path).map_err(|_| DeclError {
+        message: format!("{path}: cannot be read"),
+        diagnostics: vec![],
+    })?;
     let parsed = parse_source(&src);
     if !parsed.errors.is_empty() {
-        return Err(DeclError { message: format!("{path}: {} parse error(s)", parsed.errors.len()), diagnostics: vec![] });
+        return Err(DeclError {
+            message: format!("{path}: {} parse error(s)", parsed.errors.len()),
+            diagnostics: vec![],
+        });
     }
-    let checks: Vec<Diagnostic> = check_module(&parsed.decls, None, None).iter().map(|d| tagged(path, d)).collect();
+    let checks: Vec<Diagnostic> = check_module(&parsed.decls, None, None)
+        .iter()
+        .map(|d| tagged(path, d))
+        .collect();
     if !checks.is_empty() {
         return Ok(checks);
     }
     if !inputs.is_empty() {
         let r = open_universe(path);
-        let Some(entry) = r.entry.clone() else { return fail(&format!("{path}: cannot be loaded"), r.diags.iter().map(|d| tagged(path, d)).collect()) };
+        let Some(entry) = r.entry.clone() else {
+            return fail(
+                &format!("{path}: cannot be loaded"),
+                r.diags.iter().map(|d| tagged(path, d)).collect(),
+            );
+        };
         let binds = bind_inputs(&r.modules, path, inputs)?;
         let (_, diags) = run_universe(&r.modules, &entry, binds);
         return Ok(diags.iter().map(|d| tagged(path, d)).collect());
     }
-    Ok(run_pipeline(&parsed.decls).diags.iter().map(|d| tagged(path, d)).collect())
+    Ok(run_pipeline(&parsed.decls)
+        .diags
+        .iter()
+        .map(|d| tagged(path, d))
+        .collect())
 }
 
 /// The canonical formatting of a source text; fails when it does not parse.
 pub fn format_source(text: &str) -> Result<String, DeclError> {
-    crate::fmt::format(text).map_err(|message| DeclError { message, diagnostics: vec![] })
+    crate::fmt::format(text).map_err(|message| DeclError {
+        message,
+        diagnostics: vec![],
+    })
 }

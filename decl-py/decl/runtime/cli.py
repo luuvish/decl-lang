@@ -1,11 +1,13 @@
 """The `decl` command line: check / evaluate / validate / fmt.
 Output formats match the reference `decl` CLI byte for byte so the
 three implementations can be diffed (tests/parity/differential.py)."""
+
 from __future__ import annotations
 
 import json
 import os
 import sys
+from typing import Any
 
 from .checker import check_module
 from .conformance import judge_corpus
@@ -15,11 +17,11 @@ from .package import open_package_universe, verify_lock
 from .semantics import read_json
 
 
-def _diag_json(file: str, d: dict) -> dict:
+def _diag_json(file: str, d: dict[str, Any]) -> dict[str, Any]:
     """one diagnostic in the report's field order (§12.2): file, code, id,
     severity, message, path — absent fields omitted, so every implementation
     emits the same bytes"""
-    o: dict = {"file": file}
+    o: dict[str, Any] = {"file": file}
     if d.get("code"):
         o["code"] = d["code"]
     if d.get("id"):
@@ -30,11 +32,11 @@ def _diag_json(file: str, d: dict) -> dict:
     return o
 
 
-def _dumps(v) -> str:
+def _dumps(v: Any) -> str:
     return json.dumps(v, ensure_ascii=False, separators=(",", ":"), default=str)
 
 
-def _print_diag(file: str, d: dict, collected, json_mode: bool) -> None:
+def _print_diag(file: str, d: dict[str, Any], collected: Any, json_mode: bool) -> None:
     if json_mode:
         collected.append(_diag_json(file, d))
         return
@@ -44,7 +46,7 @@ def _print_diag(file: str, d: dict, collected, json_mode: bool) -> None:
     print(f"{file}: {d['severity']}{code}{id_}{at}: {d['message']}", file=sys.stderr)
 
 
-def open_universe(file: str) -> dict:
+def open_universe(file: str) -> dict[str, Any]:
     """The module graph of an entry file inside its package universe
     (manifest and lock diagnostics first), as the reference CLI opens it."""
     abs_ = os.path.abspath(file)
@@ -59,25 +61,29 @@ class CliError(Exception):
     process exits with `status` (2 for a usage error, 1 for a missing root);
     `diagnostics` are the ones already produced before it."""
 
-    def __init__(self, message: str, status: int, diagnostics: list | None = None):
+    def __init__(self, message: str, status: int, diagnostics: list[Any] | None = None):
         super().__init__(message)
         self.status = status
-        self.diagnostics: list = list(diagnostics or [])
+        self.diagnostics: list[Any] = list(diagnostics or [])
 
 
-def input_binds(modules: list, specs: list[str]) -> list:
+def input_binds(modules: list[Any], specs: list[str]) -> list[Any]:
     """The documents named by --input, each bound to the module that declares
     its input (§10): `name=doc.json`. A usage error (bad spec, unknown input)
     is a CliError with status 2; a document that cannot be read or is not
     well-formed JSON is a CliError carrying one E6004 diagnostic (status 1)."""
+
     def doc_error(name: str, message: str) -> CliError:
-        return CliError("", 1, [{"severity": "error", "code": "E6004", "message": message, "path": name}])
-    binds: list = []
+        return CliError(
+            "", 1, [{"severity": "error", "code": "E6004", "message": message, "path": name}]
+        )
+
+    binds: list[Any] = []
     for spec in specs:
         eq = spec.find("=")
         if eq < 0:
             raise CliError(f"--input expects name=doc.json, got {spec}", 2)
-        name, file = spec[:eq], spec[eq + 1:]
+        name, file = spec[:eq], spec[eq + 1 :]
         module = next((m for m in modules if name in m.env.inputs), None)
         if module is None:
             raise CliError(f"no input named {name}", 2)
@@ -85,16 +91,18 @@ def input_binds(modules: list, specs: list[str]) -> list:
             with open(file, encoding="utf-8") as f:
                 text = f.read()
         except OSError:
-            raise doc_error(name, f"bound document cannot be read: {file}")
+            raise doc_error(name, f"bound document cannot be read: {file}") from None
         try:
             raw = read_json(text)
         except Exception:
-            raise doc_error(name, f"bound document is not well-formed JSON: {file}")
+            raise doc_error(name, f"bound document is not well-formed JSON: {file}") from None
         binds.append({"module": module, "input": name, "raw": raw})
     return binds
 
 
-def evaluate_file(path: str, outputs: list[str] | None, input_specs: list[str] | None = None):
+def evaluate_file(
+    path: str, outputs: list[str] | None, input_specs: list[str] | None = None
+) -> Any:
     """Returns (exit_code, document_for_stdout, diagnostics, notes) — notes are
     bare stderr lines printed after the diagnostics; raises CliError for a bad
     --input or --output spec (status 2). What to emit, and where (§5.5): each
@@ -115,7 +123,11 @@ def evaluate_file(path: str, outputs: list[str] | None, input_specs: list[str] |
     if r["diags"] or r["entry"] is None:
         return 1, None, r["diags"], []
     entry = r["entry"]
-    checks = [dict(d, file=_file_tag(path, entry, m.path)) for m in r["modules"] for d in check_module(m.decls, m.env)]
+    checks = [
+        dict(d, file=_file_tag(path, entry, m.path))
+        for m in r["modules"]
+        for d in check_module(m.decls, m.env)
+    ]
     if checks:
         return 1, None, checks, []
     u = run_universe(r["modules"], entry, input_binds(r["modules"], input_specs or []))
@@ -124,12 +136,18 @@ def evaluate_file(path: str, outputs: list[str] | None, input_specs: list[str] |
     if errs:
         return 1, None, diags, []
     eng = u["eng"]
-    names = [n for n, _ in targets] if targets else [o["name"] for o in entry.env.outputs if o.get("exported")]
+    names = (
+        [n for n, _ in targets]
+        if targets
+        else [o["name"] for o in entry.env.outputs if o.get("exported")]
+    )
     notes = [f"no root named {n}" for n in names if n not in entry.env.roots]
     if notes:
         return 1, None, diags, notes
+
     def doc(n: str) -> str:
         return eng.serialize(entry.env.roots[n], n)
+
     text = None
     if not targets:
         if not names:
@@ -149,7 +167,7 @@ def evaluate_file(path: str, outputs: list[str] | None, input_specs: list[str] |
     return 0, text, diags, notes
 
 
-def validate_file(path: str, input_specs: list[str] | None = None):
+def validate_file(path: str, input_specs: list[str] | None = None) -> Any:
     """Single-file validation, module-aware like `check` and `evaluate`: load
     the universe, check every module, then evaluate with the --input documents
     bound (none bound is fine: fallbacks apply). Returns diagnostics, each
@@ -159,28 +177,34 @@ def validate_file(path: str, input_specs: list[str] | None = None):
     entry = r["entry"]
     if diags or entry is None:
         return diags
-    checks = [dict(d, file=_file_tag(path, entry, m.path)) for m in r["modules"] for d in check_module(m.decls, m.env)]
+    checks = [
+        dict(d, file=_file_tag(path, entry, m.path))
+        for m in r["modules"]
+        for d in check_module(m.decls, m.env)
+    ]
     if checks:
         return checks
     u = run_universe(r["modules"], entry, input_binds(r["modules"], input_specs or []))
     return [dict(d, file=path) for d in u["diags"]]
 
 
-def _file_tag(given: str, entry, module_path: str) -> str:
+def _file_tag(given: str, entry: Any, module_path: str) -> str:
     """the file a diagnostic is reported against: the entry module by the
     path given on the command line, any other module by its absolute path"""
     return given if entry is not None and module_path == entry.path else module_path
 
 
-def check_files(paths: list[str]) -> list:
+def check_files(paths: list[str]) -> list[Any]:
     """`decl check`: load each entry (following imports), report load
     diagnostics and every module's static findings, tagged with their file."""
-    out: list = []
+    out: list[Any] = []
     for f in paths:
         r = open_universe(f)
         out += [dict(d, file=f) for d in r["diags"]]
         for m in r["modules"]:
-            out += [dict(d, file=_file_tag(f, r["entry"], m.path)) for d in check_module(m.decls, m.env)]
+            out += [
+                dict(d, file=_file_tag(f, r["entry"], m.path)) for d in check_module(m.decls, m.env)
+            ]
     return out
 
 
@@ -207,22 +231,28 @@ def main(argv: list[str]) -> int:
     # `decl --version`: the package's version, the same string on every registry
     if cmd == "--version":
         from .. import __version__
+
         print(f"decl {__version__}")
         return 0
     # `decl repl`: its own argument syntax (docs/tooling/02_repl.md)
     if cmd == "repl":
         from .repl import run_repl
+
         return run_repl(args)
-    flags: dict = {}
-    input_flags: list = []    # --input name=doc.json, repeatable
-    output_flags: list = []   # --output name[=file], repeatable
-    pos: list = []
+    flags: dict[str, Any] = {}
+    input_flags: list[Any] = []  # --input name=doc.json, repeatable
+    output_flags: list[Any] = []  # --output name[=file], repeatable
+    pos: list[Any] = []
     i = 0
     while i < len(args):
         a = args[i]
         if a.startswith("--"):
             name = a[2:]
-            if name in ("output", "input", "expect-errors") and i + 1 < len(args) and not args[i + 1].startswith("--"):
+            if (
+                name in ("output", "input", "expect-errors")
+                and i + 1 < len(args)
+                and not args[i + 1].startswith("--")
+            ):
                 if name == "input":
                     input_flags.append(args[i + 1])
                 elif name == "output":
@@ -236,13 +266,15 @@ def main(argv: list[str]) -> int:
             pos.append(a)
         i += 1
     json_mode = bool(flags.get("json"))
-    collected: list = []
+    collected: list[Any] = []
     if cmd == "check":
         if not pos:
             return usage()
         diags = check_files(pos)
         for d in diags:
-            _print_diag(d["file"], {k: v for k, v in d.items() if k != "file"}, collected, json_mode)
+            _print_diag(
+                d["file"], {k: v for k, v in d.items() if k != "file"}, collected, json_mode
+            )
         if not diags:
             print(f"ok: {len(pos)} entry file(s) check clean", file=sys.stderr)
         if json_mode:
@@ -283,14 +315,23 @@ def main(argv: list[str]) -> int:
         except CliError as e:
             if e.status == 2:
                 print(e, file=sys.stderr)
-                return 2   # a usage error: no report
+                return 2  # a usage error: no report
             code, text, diags, notes = e.status, None, e.diagnostics, [str(e)] if str(e) else []
         for d in diags:
-            _print_diag(d.get("file", pos[0]), {k: v for k, v in d.items() if k != "file"}, collected, json_mode)
+            _print_diag(
+                d.get("file", pos[0]),
+                {k: v for k, v in d.items() if k != "file"},
+                collected,
+                json_mode,
+            )
         for n in notes:
             print(n, file=sys.stderr)
         if json_mode:
-            print(f'{{"ok":{"true" if code == 0 else "false"},"value":{text if text is not None else "null"},"diagnostics":{_dumps(collected)}}}')
+            print(
+                f'{{"ok":{"true" if code == 0 else "false"},'
+                f'"value":{text if text is not None else "null"},'
+                f'"diagnostics":{_dumps(collected)}}}'
+            )
         elif text is not None:
             print(text)
         return code
@@ -313,10 +354,15 @@ def main(argv: list[str]) -> int:
         except CliError as e:
             if e.status == 2:
                 print(e, file=sys.stderr)
-                return 2   # a usage error: no report
+                return 2  # a usage error: no report
             diags = [dict(d, file=target) for d in e.diagnostics]
         for d in diags:
-            _print_diag(d.get("file", target), {k: v for k, v in d.items() if k != "file"}, collected, json_mode)
+            _print_diag(
+                d.get("file", target),
+                {k: v for k, v in d.items() if k != "file"},
+                collected,
+                json_mode,
+            )
         if json_mode:
             print(_dumps(collected))
         err_codes = [d.get("code") or "" for d in diags if d["severity"] == "error"]

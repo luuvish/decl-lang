@@ -5,6 +5,15 @@ async function main() {
   const extensionDevelopmentPath = path.resolve(__dirname, '../..');
   const extensionTestsPath = path.resolve(__dirname, 'web/index.js');
   const folderPath = path.resolve(__dirname, '../../test/fixtures');
-  await runTests({ browserType: 'chromium', headless: true, extensionDevelopmentPath, extensionTestsPath, folderPath });
+  await runTests({
+    browserType: 'chromium',
+    headless: true,
+    extensionDevelopmentPath,
+    extensionTestsPath,
+    folderPath,
+  });
 }
-main().catch(e => { console.error(e); process.exit(1); });
+main().catch((e) => {
+  console.error(e);
+  process.exit(1);
+});

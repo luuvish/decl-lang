@@ -15,11 +15,28 @@ export { Engine } from './engine.ts';
 export { subsumes, structurallyEmpty } from './subsume.ts';
 export * from './ast.ts';
 // Phase 6: the host, the session, and the language server's core run anywhere too
-export { host, setHost, memoryHost, resolvePath, dirname, basename, join, relative, sha256Hex } from './host.ts';
+export {
+  host,
+  setHost,
+  memoryHost,
+  resolvePath,
+  dirname,
+  basename,
+  join,
+  relative,
+  sha256Hex,
+} from './host.ts';
 export type { Host } from './host.ts';
 export { loadModules, runUniverse } from './module.ts';
 export type { Module, LoadResult, PackageResolver } from './module.ts';
-export { openPackageUniverse, parseManifest, packageHash, writeLock, verifyLock, lockText } from './package.ts';
+export {
+  openPackageUniverse,
+  parseManifest,
+  packageHash,
+  writeLock,
+  verifyLock,
+  lockText,
+} from './package.ts';
 export { Session, SessionError, prettyJson, fmtDiag } from './session.ts';
 export type { Op, BindSource, Document, Run, RootInfo } from './session.ts';
 export { connect as connectLanguageServer } from './lsp-core.ts';

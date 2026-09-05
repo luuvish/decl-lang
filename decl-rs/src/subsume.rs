@@ -16,10 +16,8 @@ fn sub(env: &Rc<Env>, a: &RT, b: &RT, assume: &mut HashMap<usize, Vec<usize>>) -
         return true;
     }
     let (ia, ib) = (Rc::as_ptr(a) as usize, Rc::as_ptr(b) as usize);
-    if is_rec(a) && is_rec(b) {
-        if assume.get(&ia).map(|s| s.contains(&ib)).unwrap_or(false) {
-            return true;
-        }
+    if is_rec(a) && is_rec(b) && assume.get(&ia).map(|s| s.contains(&ib)).unwrap_or(false) {
+        return true;
     }
     if let RTk::Union(arms) = &a.k {
         return arms.iter().all(|x| sub(env, x, b, assume));
@@ -33,9 +31,16 @@ fn sub(env: &Rc<Env>, a: &RT, b: &RT, assume: &mut HashMap<usize, Vec<usize>>) -
     if let RTk::IsectN(arms) = &b.k {
         return arms.iter().all(|x| sub(env, a, x, assume));
     }
-    if let RTk::Pred { base: bb, preds: bp } = &b.k {
+    if let RTk::Pred {
+        base: bb,
+        preds: bp,
+    } = &b.k
+    {
         return match &a.k {
-            RTk::Pred { base: ab, preds: ap } => sub(env, ab, bb, assume) && bp.iter().all(|p| ap.iter().any(|q| pred_eq(p, q))),
+            RTk::Pred {
+                base: ab,
+                preds: ap,
+            } => sub(env, ab, bb, assume) && bp.iter().all(|p| ap.iter().any(|q| pred_eq(p, q))),
             RTk::Lit(v) => lit_satisfies(env, v, bb, bp),
             _ => false,
         };
@@ -54,7 +59,12 @@ fn sub(env: &Rc<Env>, a: &RT, b: &RT, assume: &mut HashMap<usize, Vec<usize>>) -
         RTk::Lit(bv) => matches!(&a.k, RTk::Lit(av) if lit_eq(av, bv)),
         RTk::Range { lo, hi, excl, base } => match &a.k {
             RTk::Lit(v) => lit_kind(v) == base && in_range(v, lo, hi, *excl),
-            RTk::Range { lo: alo, hi: ahi, excl: aexcl, base: abase } => {
+            RTk::Range {
+                lo: alo,
+                hi: ahi,
+                excl: aexcl,
+                base: abase,
+            } => {
                 if abase != base {
                     return false;
                 }
@@ -70,7 +80,11 @@ fn sub(env: &Rc<Env>, a: &RT, b: &RT, assume: &mut HashMap<usize, Vec<usize>>) -
             _ => false,
         },
         RTk::Arr { elem, lo, hi } => match &a.k {
-            RTk::Arr { elem: ae, lo: alo, hi: ahi } => {
+            RTk::Arr {
+                elem: ae,
+                lo: alo,
+                hi: ahi,
+            } => {
                 sub(env, ae, elem, assume)
                     && alo.unwrap_or(0) >= lo.unwrap_or(0)
                     && ahi.unwrap_or(i64::MAX) <= hi.unwrap_or(i64::MAX)
@@ -84,8 +98,16 @@ fn sub(env: &Rc<Env>, a: &RT, b: &RT, assume: &mut HashMap<usize, Vec<usize>>) -
         RTk::Quantity(d) => matches!(&a.k, RTk::Quantity(ad) if ad == d),
         RTk::Ref(t) => matches!(&a.k, RTk::Ref(at) if sub(env, at, t, assume)),
         RTk::Func { params, ret } => match &a.k {
-            RTk::Func { params: ap, ret: ar } => {
-                ap.len() == params.len() && params.iter().zip(ap).all(|(bp, ap)| sub(env, bp, ap, assume)) && sub(env, ar, ret, assume)
+            RTk::Func {
+                params: ap,
+                ret: ar,
+            } => {
+                ap.len() == params.len()
+                    && params
+                        .iter()
+                        .zip(ap)
+                        .all(|(bp, ap)| sub(env, bp, ap, assume))
+                    && sub(env, ar, ret, assume)
             }
             _ => false,
         },
@@ -99,9 +121,24 @@ fn sub(env: &Rc<Env>, a: &RT, b: &RT, assume: &mut HashMap<usize, Vec<usize>>) -
                     continue; // not part of the value: ⊑ never compares it (D34)
                 }
                 let sm = am.iter().find(|x| x.name == m.name);
-                let m_types: Vec<RT> = m.conj.clone().unwrap_or_else(|| m.ty.iter().cloned().collect());
-                let s_types: Vec<RT> = sm.map(|s| s.conj.clone().unwrap_or_else(|| s.ty.iter().cloned().collect())).unwrap_or_default();
-                let mut type_ok = || m_types.is_empty() || s_types.is_empty() || m_types.iter().all(|mt| s_types.iter().any(|st| sub(env, st, mt, assume)));
+                let m_types: Vec<RT> = m
+                    .conj
+                    .clone()
+                    .unwrap_or_else(|| m.ty.iter().cloned().collect());
+                let s_types: Vec<RT> = sm
+                    .map(|s| {
+                        s.conj
+                            .clone()
+                            .unwrap_or_else(|| s.ty.iter().cloned().collect())
+                    })
+                    .unwrap_or_default();
+                let mut type_ok = || {
+                    m_types.is_empty()
+                        || s_types.is_empty()
+                        || m_types
+                            .iter()
+                            .all(|mt| s_types.iter().any(|st| sub(env, st, mt, assume)))
+                };
                 let ok = match m.kind {
                     MKind::Req => sm.map(|s| s.kind != MKind::Opt).unwrap_or(false) && type_ok(),
                     MKind::Opt | MKind::Dflt => sm.is_none() || type_ok(),
@@ -170,7 +207,9 @@ fn pred_eq(a: &Rc<Expr>, b: &Rc<Expr>) -> bool {
         (Expr::Call { fun: fa, args: aa }, Expr::Call { fun: fb, args: ab }) => {
             pred_eq(fa, fb)
                 && aa.len() == ab.len()
-                && aa.iter().zip(ab).all(|(x, y)| matches!((&**x, &**y), (Expr::Lit(p), Expr::Lit(q)) if lit_eq(p, q)))
+                && aa.iter().zip(ab).all(
+                    |(x, y)| matches!((&**x, &**y), (Expr::Lit(p), Expr::Lit(q)) if lit_eq(p, q)),
+                )
         }
         _ => false,
     }
@@ -182,7 +221,9 @@ fn lit_satisfies(env: &Rc<Env>, v: &Value, base: &RT, preds: &[Rc<Expr>]) -> boo
         return false;
     }
     for p in preds {
-        let ok = eng.ev(p, &sc).and_then(|f| eng.call(&f, vec![v.clone()], &sc));
+        let ok = eng
+            .ev(p, &sc)
+            .and_then(|f| eng.call(&f, vec![v.clone()], &sc));
         if !matches!(ok, Ok(Value::Bool(true))) {
             return false;
         }
@@ -203,7 +244,11 @@ fn js_gt(a: &Value, b: &Value) -> bool {
 pub fn structurally_empty(env: &Rc<Env>, t: &RT) -> bool {
     match &t.k {
         RTk::Range { lo, hi, excl, .. } => {
-            let h = if *excl && !matches!(hi, Value::Str(_)) { dec(hi) } else { hi.clone() };
+            let h = if *excl && !matches!(hi, Value::Str(_)) {
+                dec(hi)
+            } else {
+                hi.clone()
+            };
             js_gt(lo, &h)
         }
         RTk::Arr { lo, hi, .. } => matches!((lo, hi), (Some(l), Some(h)) if l > h),
@@ -242,13 +287,28 @@ fn disjoint(env: &Rc<Env>, a: &RT, b: &RT) -> bool {
         }
     }
     match (&a.k, &b.k) {
-        (RTk::Range { lo: alo, hi: ahi, excl: aexcl, base: abase }, RTk::Range { lo: blo, hi: bhi, excl: bexcl, base: bbase }) if abase == bbase => {
+        (
+            RTk::Range {
+                lo: alo,
+                hi: ahi,
+                excl: aexcl,
+                base: abase,
+            },
+            RTk::Range {
+                lo: blo,
+                hi: bhi,
+                excl: bexcl,
+                base: bbase,
+            },
+        ) if abase == bbase => {
             let a_hi = if *aexcl { dec(ahi) } else { ahi.clone() };
             let b_hi = if *bexcl { dec(bhi) } else { bhi.clone() };
             js_gt(alo, &b_hi) || js_gt(blo, &a_hi)
         }
         (RTk::Lit(x), RTk::Lit(y)) => !lit_eq(x, y),
-        (RTk::Lit(v), RTk::Range { lo, hi, excl, base }) => !(lit_kind(v) == base && in_range(v, lo, hi, *excl)),
+        (RTk::Lit(v), RTk::Range { lo, hi, excl, base }) => {
+            !(lit_kind(v) == base && in_range(v, lo, hi, *excl))
+        }
         (RTk::Range { .. }, RTk::Lit(_)) => disjoint(env, b, a),
         _ => false,
     }

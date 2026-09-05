@@ -29,7 +29,11 @@ pub fn open_universe(file: &str) -> LoadResult {
     }
     let r = load_modules(&abs, pkg.as_ref().map(|u| &u.resolver), None);
     diags.extend(r.diags);
-    LoadResult { modules: r.modules, entry: r.entry, diags }
+    LoadResult {
+        modules: r.modules,
+        entry: r.entry,
+        diags,
+    }
 }
 
 fn print_diag(file: &str, d: &Diag, json: bool, collected: &mut Vec<String>) {
@@ -40,9 +44,16 @@ fn print_diag(file: &str, d: &Diag, json: bool, collected: &mut Vec<String>) {
     eprintln!(
         "{file}: {}{}{}{}: {}",
         d.severity,
-        d.code.as_ref().map(|c| format!(" [{c}]")).unwrap_or_default(),
+        d.code
+            .as_ref()
+            .map(|c| format!(" [{c}]"))
+            .unwrap_or_default(),
         d.id.as_ref().map(|i| format!(" {i}")).unwrap_or_default(),
-        if d.path.is_empty() { String::new() } else { format!(" at {}", d.path) },
+        if d.path.is_empty() {
+            String::new()
+        } else {
+            format!(" at {}", d.path)
+        },
         d.message
     );
 }
@@ -54,9 +65,23 @@ fn print_diag(file: &str, d: &Diag, json: bool, collected: &mut Vec<String>) {
 /// its input (§10): `name=doc.json`. A usage error (bad spec, unknown input)
 /// is printed and returned as exit 2; a document that cannot be read or is
 /// not well-formed JSON is returned as one E6004 diagnostic (exit 1)
-pub fn input_binds(modules: &[Rc<Module>], specs: &[String]) -> Result<Vec<Bind>, (i32, Option<Diag>)> {
+pub fn input_binds(
+    modules: &[Rc<Module>],
+    specs: &[String],
+) -> Result<Vec<Bind>, (i32, Option<Diag>)> {
     let doc_error = |name: &str, message: String| -> (i32, Option<Diag>) {
-        (1, Some(Diag { severity: "error".into(), id: None, message, path: name.to_string(), code: Some("E6004".into()), loc: None, by: None }))
+        (
+            1,
+            Some(Diag {
+                severity: "error".into(),
+                id: None,
+                message,
+                path: name.to_string(),
+                code: Some("E6004".into()),
+                loc: None,
+                by: None,
+            }),
+        )
     };
     let mut binds = vec![];
     for spec in specs {
@@ -64,21 +89,36 @@ pub fn input_binds(modules: &[Rc<Module>], specs: &[String]) -> Result<Vec<Bind>
             eprintln!("--input expects name=doc.json, got {spec}");
             return Err((2, None));
         };
-        let Some(module) = modules.iter().find(|m| m.env.inputs.borrow().contains_key(name)) else {
+        let Some(module) = modules
+            .iter()
+            .find(|m| m.env.inputs.borrow().contains_key(name))
+        else {
             eprintln!("no input named {name}");
             return Err((2, None));
         };
         let text = match std::fs::read_to_string(file) {
             Ok(t) => t,
-            Err(_) => return Err(doc_error(name, format!("bound document cannot be read: {file}"))),
+            Err(_) => {
+                return Err(doc_error(
+                    name,
+                    format!("bound document cannot be read: {file}"),
+                ))
+            }
         };
         let raw = match read_json(&text) {
             Ok(v) => v,
             Err(_) => {
-                return Err(doc_error(name, format!("bound document is not well-formed JSON: {file}")));
+                return Err(doc_error(
+                    name,
+                    format!("bound document is not well-formed JSON: {file}"),
+                ));
             }
         };
-        binds.push(Bind { module: Some(module.clone()), input: name.to_string(), raw });
+        binds.push(Bind {
+            module: Some(module.clone()),
+            input: name.to_string(),
+            raw,
+        });
     }
     Ok(binds)
 }
@@ -90,8 +130,14 @@ pub fn input_binds(modules: &[Rc<Module>], specs: &[String]) -> Result<Vec<Bind>
 /// through its fallback — and the file its document goes to (stdout
 /// without one); with no --output, the entry module's exported outputs, as
 /// one object keyed by name, on stdout
-pub fn evaluate(file: &str, outputs: &[String], inputs: &[String]) -> (i32, Option<String>, Vec<(String, Diag)>, Vec<String>) {
-    let tag = |ds: Vec<Diag>| -> Vec<(String, Diag)> { ds.into_iter().map(|d| (file.to_string(), d)).collect() };
+pub fn evaluate(
+    file: &str,
+    outputs: &[String],
+    inputs: &[String],
+) -> (i32, Option<String>, Vec<(String, Diag)>, Vec<String>) {
+    let tag = |ds: Vec<Diag>| -> Vec<(String, Diag)> {
+        ds.into_iter().map(|d| (file.to_string(), d)).collect()
+    };
     let mut targets: Vec<(String, Option<String>)> = vec![];
     for spec in outputs {
         let (name, dest) = match spec.split_once('=') {
@@ -109,30 +155,51 @@ pub fn evaluate(file: &str, outputs: &[String], inputs: &[String]) -> (i32, Opti
         return (2, None, vec![], vec![]);
     }
     let r = open_universe(file);
-    let Some(entry) = r.entry else { return (1, None, tag(r.diags), vec![]) };
+    let Some(entry) = r.entry else {
+        return (1, None, tag(r.diags), vec![]);
+    };
     if !r.diags.is_empty() {
         return (1, None, tag(r.diags), vec![]);
     }
-    let checks: Vec<(String, Diag)> = r.modules.iter().flat_map(|m| {
-        let path = file_tag(file, Some(entry.path.as_path()), &m.path);
-        check_module(&m.decls, Some(m.env.clone()), None).into_iter().map(move |d| (path.clone(), d)).collect::<Vec<_>>()
-    }).collect();
+    let checks: Vec<(String, Diag)> = r
+        .modules
+        .iter()
+        .flat_map(|m| {
+            let path = file_tag(file, Some(entry.path.as_path()), &m.path);
+            check_module(&m.decls, Some(m.env.clone()), None)
+                .into_iter()
+                .map(move |d| (path.clone(), d))
+                .collect::<Vec<_>>()
+        })
+        .collect();
     if !checks.is_empty() {
         return (1, None, checks, vec![]);
     }
     let binds = match input_binds(&r.modules, inputs) {
         Ok(b) => b,
-        Err((code, diag)) => return (code, None, diag.into_iter().map(|d| (file.to_string(), d)).collect(), vec![]),
+        Err((code, diag)) => {
+            return (
+                code,
+                None,
+                diag.into_iter().map(|d| (file.to_string(), d)).collect(),
+                vec![],
+            )
+        }
     };
     let (eng, diags) = run_universe(&r.modules, &entry, binds);
     if diags.iter().any(|d| d.severity == "error") {
         return (1, None, tag(diags), vec![]);
     }
     let names: Vec<String> = if targets.is_empty() {
-        entry.decls.iter().filter(|d| d.exported).filter_map(|d| match &d.body {
-            DeclBody::Output { name, .. } => Some(name.clone()),
-            _ => None,
-        }).collect()
+        entry
+            .decls
+            .iter()
+            .filter(|d| d.exported)
+            .filter_map(|d| match &d.body {
+                DeclBody::Output { name, .. } => Some(name.clone()),
+                _ => None,
+            })
+            .collect()
     } else {
         targets.iter().map(|(n, _)| n.clone()).collect()
     };
@@ -149,9 +216,18 @@ pub fn evaluate(file: &str, outputs: &[String], inputs: &[String]) -> (i32, Opti
     let mut text = None;
     if targets.is_empty() {
         if names.is_empty() {
-            notes.push(format!("{file}: exports no output; --output <name> selects a root"));
+            notes.push(format!(
+                "{file}: exports no output; --output <name> selects a root"
+            ));
         }
-        text = Some(format!("{{{}}}", names.iter().map(|n| format!("{}:{}", json_str(n), doc(n))).collect::<Vec<_>>().join(",")));
+        text = Some(format!(
+            "{{{}}}",
+            names
+                .iter()
+                .map(|n| format!("{}:{}", json_str(n), doc(n)))
+                .collect::<Vec<_>>()
+                .join(",")
+        ));
     } else {
         for (n, dest) in &targets {
             match dest {
@@ -175,15 +251,28 @@ pub fn evaluate(file: &str, outputs: &[String], inputs: &[String]) -> (i32, Opti
 /// code as a negative
 pub fn validate_file(file: &str, inputs: &[String]) -> Result<Vec<(String, Diag)>, i64> {
     let r = open_universe(file);
-    let mut diags: Vec<(String, Diag)> = r.diags.iter().map(|d| (file.to_string(), d.clone())).collect();
-    let Some(entry) = r.entry else { return Ok(diags) };
+    let mut diags: Vec<(String, Diag)> = r
+        .diags
+        .iter()
+        .map(|d| (file.to_string(), d.clone()))
+        .collect();
+    let Some(entry) = r.entry else {
+        return Ok(diags);
+    };
     if !diags.is_empty() {
         return Ok(diags);
     }
-    let checks: Vec<(String, Diag)> = r.modules.iter().flat_map(|m| {
-        let path = file_tag(file, Some(entry.path.as_path()), &m.path);
-        check_module(&m.decls, Some(m.env.clone()), None).into_iter().map(move |d| (path.clone(), d)).collect::<Vec<_>>()
-    }).collect();
+    let checks: Vec<(String, Diag)> = r
+        .modules
+        .iter()
+        .flat_map(|m| {
+            let path = file_tag(file, Some(entry.path.as_path()), &m.path);
+            check_module(&m.decls, Some(m.env.clone()), None)
+                .into_iter()
+                .map(move |d| (path.clone(), d))
+                .collect::<Vec<_>>()
+        })
+        .collect();
     if !checks.is_empty() {
         return Ok(checks);
     }
@@ -192,7 +281,12 @@ pub fn validate_file(file: &str, inputs: &[String]) -> Result<Vec<(String, Diag)
         Err((_, Some(d))) => return Ok(vec![(file.to_string(), d)]),
         Err((code, None)) => return Err(-(code as i64)),
     };
-    diags.extend(run_universe(&r.modules, &entry, binds).1.into_iter().map(|d| (file.to_string(), d)));
+    diags.extend(
+        run_universe(&r.modules, &entry, binds)
+            .1
+            .into_iter()
+            .map(|d| (file.to_string(), d)),
+    );
     Ok(diags)
 }
 
@@ -205,7 +299,11 @@ pub fn check_files(paths: &[String]) -> Vec<(String, Diag)> {
         out.extend(r.diags.into_iter().map(|d| (f.clone(), d)));
         for m in &r.modules {
             let path = file_tag(f, r.entry.as_ref().map(|e| e.path.as_path()), &m.path);
-            out.extend(check_module(&m.decls, Some(m.env.clone()), None).into_iter().map(|d| (path.clone(), d)));
+            out.extend(
+                check_module(&m.decls, Some(m.env.clone()), None)
+                    .into_iter()
+                    .map(|d| (path.clone(), d)),
+            );
         }
     }
     out
@@ -214,13 +312,18 @@ pub fn check_files(paths: &[String]) -> Vec<(String, Diag)> {
 /// the file a diagnostic is reported against: the entry module by the path
 /// given on the command line, any other module by its absolute path
 pub fn file_tag(given: &str, entry: Option<&Path>, module: &Path) -> String {
-    if entry == Some(module) { given.to_string() } else { module.display().to_string() }
+    if entry == Some(module) {
+        given.to_string()
+    } else {
+        module.display().to_string()
+    }
 }
-
 
 /// the command line: returns the process exit code
 pub fn main(args: Vec<String>) -> i32 {
-    let Some(cmd) = args.first().cloned() else { return usage() };
+    let Some(cmd) = args.first().cloned() else {
+        return usage();
+    };
     // `decl --version`: the package's version, the same string on every registry
     if cmd == "--version" {
         println!("decl {}", env!("CARGO_PKG_VERSION"));
@@ -238,7 +341,10 @@ pub fn main(args: Vec<String>) -> i32 {
     while i < args.len() {
         let a = &args[i];
         if let Some(name) = a.strip_prefix("--") {
-            if ["output", "input", "expect-errors"].contains(&name) && i + 1 < args.len() && !args[i + 1].starts_with("--") {
+            if ["output", "input", "expect-errors"].contains(&name)
+                && i + 1 < args.len()
+                && !args[i + 1].starts_with("--")
+            {
                 if name == "input" {
                     input_flags.push(args[i + 1].clone());
                 } else if name == "output" {
@@ -272,7 +378,11 @@ pub fn main(args: Vec<String>) -> i32 {
             if json {
                 println!("[{}]", collected.join(","));
             }
-            if diags.is_empty() { 0 } else { 1 }
+            if diags.is_empty() {
+                0
+            } else {
+                1
+            }
         }
         "evaluate" => {
             let Some(f) = pos.first() else { return usage() };
@@ -287,14 +397,21 @@ pub fn main(args: Vec<String>) -> i32 {
                 eprintln!("{n}");
             }
             if json {
-                println!("{{\"ok\":{},\"value\":{},\"diagnostics\":[{}]}}", code == 0, text.clone().unwrap_or_else(|| "null".into()), collected.join(","));
+                println!(
+                    "{{\"ok\":{},\"value\":{},\"diagnostics\":[{}]}}",
+                    code == 0,
+                    text.clone().unwrap_or_else(|| "null".into()),
+                    collected.join(",")
+                );
             } else if let Some(t) = text {
                 println!("{t}");
             }
             code
         }
         "validate" => {
-            let Some(target) = pos.first() else { return usage() };
+            let Some(target) = pos.first() else {
+                return usage();
+            };
             let tp = Path::new(target);
             if tp.is_dir() {
                 let abs = std::path::absolute(tp).unwrap_or_else(|_| tp.to_path_buf());
@@ -308,7 +425,11 @@ pub fn main(args: Vec<String>) -> i32 {
                     }
                 }
                 eprintln!("{ok} ok, {fail} failed");
-                if fail > 0 { 1 } else { 0 }
+                if fail > 0 {
+                    1
+                } else {
+                    0
+                }
             } else {
                 let diags = match validate_file(target, &input_flags) {
                     Ok(d) => d,
@@ -320,24 +441,59 @@ pub fn main(args: Vec<String>) -> i32 {
                 if json {
                     println!("[{}]", collected.join(","));
                 }
-                let err_codes: Vec<String> = diags.iter().filter(|(_, d)| d.severity == "error").map(|(_, d)| d.code.clone().unwrap_or_default()).collect();
+                let err_codes: Vec<String> = diags
+                    .iter()
+                    .filter(|(_, d)| d.severity == "error")
+                    .map(|(_, d)| d.code.clone().unwrap_or_default())
+                    .collect();
                 if let Some(expect) = flags.get("expect-errors") {
-                    let want: Vec<String> = expect.split(',').map(|w| w.trim().to_string()).filter(|w| !w.is_empty()).collect();
-                    let missing: Vec<&String> = want.iter().filter(|w| !err_codes.contains(w)).collect();
-                    let extra: Vec<&String> = err_codes.iter().filter(|c| !want.contains(c)).collect();
+                    let want: Vec<String> = expect
+                        .split(',')
+                        .map(|w| w.trim().to_string())
+                        .filter(|w| !w.is_empty())
+                        .collect();
+                    let missing: Vec<&String> =
+                        want.iter().filter(|w| !err_codes.contains(w)).collect();
+                    let extra: Vec<&String> =
+                        err_codes.iter().filter(|c| !want.contains(c)).collect();
                     if !missing.is_empty() || !extra.is_empty() {
                         if !missing.is_empty() {
-                            eprintln!("expected error(s) not reported: {}", missing.iter().map(|s| s.as_str()).collect::<Vec<_>>().join(", "));
+                            eprintln!(
+                                "expected error(s) not reported: {}",
+                                missing
+                                    .iter()
+                                    .map(|s| s.as_str())
+                                    .collect::<Vec<_>>()
+                                    .join(", ")
+                            );
                         }
                         if !extra.is_empty() {
-                            eprintln!("unexpected error(s): {}", extra.iter().map(|s| s.as_str()).collect::<Vec<_>>().join(", "));
+                            eprintln!(
+                                "unexpected error(s): {}",
+                                extra
+                                    .iter()
+                                    .map(|s| s.as_str())
+                                    .collect::<Vec<_>>()
+                                    .join(", ")
+                            );
                         }
                         return 1;
                     }
-                    eprintln!("ok: expected errors reported ({})", if want.is_empty() { "none".to_string() } else { want.join(", ") });
+                    eprintln!(
+                        "ok: expected errors reported ({})",
+                        if want.is_empty() {
+                            "none".to_string()
+                        } else {
+                            want.join(", ")
+                        }
+                    );
                     return 0;
                 }
-                if err_codes.is_empty() { 0 } else { 1 }
+                if err_codes.is_empty() {
+                    0
+                } else {
+                    1
+                }
             }
         }
         "fmt" => {
@@ -369,7 +525,11 @@ pub fn main(args: Vec<String>) -> i32 {
                     }
                 }
             }
-            if bad > 0 || (flags.contains_key("check") && changed > 0) { 1 } else { 0 }
+            if bad > 0 || (flags.contains_key("check") && changed > 0) {
+                1
+            } else {
+                0
+            }
         }
         _ => usage(),
     }

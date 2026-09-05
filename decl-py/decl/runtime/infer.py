@@ -4,36 +4,65 @@ S ⊑ T), the absence discipline (§4.10) with its two narrowing rules, and
 the `match` static checks (§4.7). Inference is conservative: a form whose
 type cannot be determined yields `unknown` (rt None) and suppresses
 downstream judgments rather than guessing."""
+
 from __future__ import annotations
 
-import re
 import json
-from typing import Any, Callable, Optional
+from collections.abc import Callable
+from typing import Any
 
 from .semantics import (
-    compile_pattern, is_bool, is_float, is_int, is_str, js_num_str, key_of_vec, pattern_error,
-    vec_combine, vec_of_key,
+    compile_pattern,
+    is_bool,
+    is_float,
+    is_int,
+    is_str,
+    js_num_str,
+    key_of_vec,
+    pattern_error,
+    vec_combine,
+    vec_of_key,
 )
 from .subsume import subsumes
 
 
-def PRIM(name: str) -> dict:
+def PRIM(name: str) -> dict[str, Any]:
     return {"t": "prim", "name": name}
 
 
-def TY(rt: Optional[dict], abs_: bool = False) -> dict:
+def TY(rt: dict[str, Any] | None, abs_: bool = False) -> dict[str, Any]:
     return {"rt": rt, "abs": abs_}
 
 
-UNK: dict = {"rt": None, "abs": False}
-BOOL: dict = {"rt": PRIM("bool"), "abs": False}
+UNK: dict[str, Any] = {"rt": None, "abs": False}
+BOOL: dict[str, Any] = {"rt": PRIM("bool"), "abs": False}
 
 
 class Ctx:
-    __slots__ = ("env", "report", "vars", "present", "nonnull", "const_memo", "pos", "record", "resolve_hook")
+    __slots__ = (
+        "const_memo",
+        "env",
+        "nonnull",
+        "pos",
+        "present",
+        "record",
+        "report",
+        "resolve_hook",
+        "vars",
+    )
 
-    def __init__(self, env, report, vars_: dict, present: set, nonnull: set, const_memo: dict,
-                 pos: Optional[dict] = None, record=None, resolve_hook=None) -> None:
+    def __init__(
+        self,
+        env: Any,
+        report: Any,
+        vars_: dict[str, Any],
+        present: set[Any],
+        nonnull: set[Any],
+        const_memo: dict[str, Any],
+        pos: dict[str, Any] | None = None,
+        record: Any = None,
+        resolve_hook: Any = None,
+    ) -> None:
         self.env = env
         self.report = report
         self.vars = vars_
@@ -41,20 +70,40 @@ class Ctx:
         self.nonnull = nonnull
         self.const_memo = const_memo
         # the expression under inference (shared by child contexts): what a report is anchored to
-        self.pos: dict = pos if pos is not None else {}
-        # Phase 6 foundations: every inferred node's type, and every name's resolution (the language server's tables)
+        self.pos: dict[str, Any] = pos if pos is not None else {}
+        # Phase 6 foundations: every inferred node's type, and every name's resolution (the
+        # language server's tables)
         self.record = record
         self.resolve_hook = resolve_hook
 
-    def child(self, vars_: Optional[dict] = None) -> "Ctx":
-        return Ctx(self.env, self.report, dict(self.vars) if vars_ is None else vars_,
-                   set(self.present), set(self.nonnull), self.const_memo, self.pos, self.record, self.resolve_hook)
+    def child(self, vars_: dict[str, Any] | None = None) -> Ctx:
+        return Ctx(
+            self.env,
+            self.report,
+            dict(self.vars) if vars_ is None else vars_,
+            set(self.present),
+            set(self.nonnull),
+            self.const_memo,
+            self.pos,
+            self.record,
+            self.resolve_hook,
+        )
 
-    def with_env(self, env) -> "Ctx":
-        return Ctx(env, self.report, self.vars, self.present, self.nonnull, self.const_memo, self.pos, self.record, self.resolve_hook)
+    def with_env(self, env: Any) -> Ctx:
+        return Ctx(
+            env,
+            self.report,
+            self.vars,
+            self.present,
+            self.nonnull,
+            self.const_memo,
+            self.pos,
+            self.record,
+            self.resolve_hook,
+        )
 
 
-def make_ctx(env, report: Callable[[str, str], None]) -> Ctx:
+def make_ctx(env: Any, report: Callable[[str, str], None]) -> Ctx:
     return Ctx(env, report, {}, set(), set(), {})
 
 
@@ -86,11 +135,11 @@ def js_str(v: Any) -> str:
 
 
 # ---------------- type utilities ----------------
-def _is_null_lit(t: dict) -> bool:
+def _is_null_lit(t: dict[str, Any]) -> bool:
     return (t["t"] == "lit" and t["v"] is None) or (t["t"] == "prim" and t["name"] == "null")
 
 
-def has_null(rt: Optional[dict]) -> bool:
+def has_null(rt: dict[str, Any] | None) -> bool:
     if not rt:
         return False
     if _is_null_lit(rt):
@@ -100,14 +149,14 @@ def has_null(rt: Optional[dict]) -> bool:
     return False
 
 
-def strip_null(rt: dict) -> dict:
+def strip_null(rt: dict[str, Any]) -> dict[str, Any]:
     if rt["t"] == "union":
         arms = [a for a in rt["arms"] if not _is_null_lit(a)]
         return arms[0] if len(arms) == 1 else {"t": "union", "arms": arms}
     return rt
 
 
-def _same_rt(a: dict, b: dict) -> bool:
+def _same_rt(a: dict[str, Any], b: dict[str, Any]) -> bool:
     if a is b:
         return True
     if a["t"] != b["t"]:
@@ -119,23 +168,23 @@ def _same_rt(a: dict, b: dict) -> bool:
     return False
 
 
-def mk_union(arms: list) -> Optional[dict]:
+def mk_union(arms: list[Any]) -> dict[str, Any] | None:
     if any(a is None for a in arms):
         return None
-    flat: list = []
+    flat: list[Any] = []
     for a in arms:
         if a["t"] == "union":
             flat.extend(a["arms"])
         else:
             flat.append(a)
-    uniq: list = []
+    uniq: list[Any] = []
     for a in flat:
         if not any(_same_rt(a, b) for b in uniq):
             uniq.append(a)
     return uniq[0] if len(uniq) == 1 else {"t": "union", "arms": uniq}
 
 
-def num_kind(rt: Optional[dict]) -> Optional[str]:
+def num_kind(rt: dict[str, Any] | None) -> str | None:
     if not rt:
         return None
     t = rt["t"]
@@ -166,11 +215,11 @@ def num_kind(rt: Optional[dict]) -> Optional[str]:
     return None
 
 
-def _is_boolish(rt: Optional[dict]) -> bool:
+def _is_boolish(rt: dict[str, Any] | None) -> bool:
     return not rt or num_kind(rt) == "bool"
 
 
-def _arm_of(rt: Optional[dict], t: str) -> Optional[dict]:
+def _arm_of(rt: dict[str, Any] | None, t: str) -> dict[str, Any] | None:
     """structural view: unwrap ref/pred and select the arm of an
     intersection that has the wanted shape (merged `&` members carry conj arms)"""
     if not rt:
@@ -196,7 +245,7 @@ def _arm_of(rt: Optional[dict], t: str) -> Optional[dict]:
 
 
 # ---------------- navigation paths & narrowing ----------------
-def path_key(e: dict) -> Optional[str]:
+def path_key(e: dict[str, Any]) -> str | None:
     k = e["e"]
     if k == "name":
         return e["name"]
@@ -221,8 +270,8 @@ def path_key(e: dict) -> Optional[str]:
     return None
 
 
-def guards_of(e: dict, polarity: bool) -> dict:
-    none = {"present": [], "nonnull": []}
+def guards_of(e: dict[str, Any], polarity: bool) -> dict[str, Any]:
+    none: dict[str, list[Any]] = {"present": [], "nonnull": []}
     k = e["e"]
     if k == "paren":
         return guards_of(e["x"], polarity)
@@ -244,8 +293,13 @@ def guards_of(e: dict, polarity: bool) -> dict:
             if l["e"] == "name":
                 return {"present": [f"{b}[{l['name']}]"], "nonnull": []}
             return none
-        null_side = e["r"] if (e["l"]["e"] == "lit" and e["l"]["v"] is None) else \
-            e["l"] if (e["r"]["e"] == "lit" and e["r"]["v"] is None) else None
+        null_side = (
+            e["r"]
+            if (e["l"]["e"] == "lit" and e["l"]["v"] is None)
+            else e["l"]
+            if (e["r"]["e"] == "lit" and e["r"]["v"] is None)
+            else None
+        )
         if null_side is not None:
             p = path_key(null_side)
             if p and ((op == "!=" and polarity) or (op == "==" and not polarity)):
@@ -258,15 +312,21 @@ def _name_bound(cx: Ctx, n: str) -> bool:
     """is a name already taken here? (locals or the module namespace — the
     no-shadowing rule E3019 spans both)"""
     env = cx.env
-    return n in cx.vars or n in env.consts or n in env.funcs or n in env.type_asts or n in env.inputs \
+    return (
+        n in cx.vars
+        or n in env.consts
+        or n in env.funcs
+        or n in env.type_asts
+        or n in env.inputs
         or any(o["name"] == n for o in env.outputs)
+    )
 
 
-def _merge(a: dict, b: dict) -> dict:
+def _merge(a: dict[str, Any], b: dict[str, Any]) -> dict[str, Any]:
     return {"present": a["present"] + b["present"], "nonnull": a["nonnull"] + b["nonnull"]}
 
 
-def apply_guards(cx: Ctx, g: dict) -> Ctx:
+def apply_guards(cx: Ctx, g: dict[str, Any]) -> Ctx:
     c2 = cx.child()
     c2.present.update(g["present"])
     c2.nonnull.update(g["nonnull"])
@@ -274,7 +334,7 @@ def apply_guards(cx: Ctx, g: dict) -> Ctx:
 
 
 # ---------------- stdlib signatures (arity + result) ----------------
-STD: dict = {
+STD: dict[str, Any] = {
     "array.count": (1, PRIM("int")),
     "array.all": (2, PRIM("bool")),
     "array.any": (2, PRIM("bool")),
@@ -308,7 +368,7 @@ STD: dict = {
 }
 
 
-def _std_path(e: dict) -> Optional[str]:
+def _std_path(e: dict[str, Any]) -> str | None:
     if e["e"] == "member" and not e.get("safe"):
         b = _std_path(e["x"])
         if b is None:
@@ -318,7 +378,7 @@ def _std_path(e: dict) -> Optional[str]:
 
 
 # ---------------- the judgment ----------------
-def try_resolve(env, ast: Optional[dict]) -> Optional[dict]:
+def try_resolve(env: Any, ast: dict[str, Any] | None) -> dict[str, Any] | None:
     if not ast:
         return None
     try:
@@ -327,19 +387,21 @@ def try_resolve(env, ast: Optional[dict]) -> Optional[dict]:
         return None
 
 
-def require_val(cx: Ctx, e: dict, ty: dict, what: str) -> dict:
+def require_val(cx: Ctx, e: dict[str, Any], ty: dict[str, Any], what: str) -> dict[str, Any]:
     if ty["abs"]:
         k = path_key(e)
         if not k or k not in cx.present:
-            cx.report("E4050", f"maybe-absent expression consumed {what} (use ?. / ?? or an `in` guard)")
+            cx.report(
+                "E4050", f"maybe-absent expression consumed {what} (use ?. / ?? or an `in` guard)"
+            )
     return ty
 
 
-def _named(name: str) -> dict:
+def _named(name: str) -> dict[str, Any]:
     return {"k": "named", "name": name, "args": [], "preds": None, "ext": None}
 
 
-def infer(cx: Ctx, e: dict) -> dict:
+def infer(cx: Ctx, e: dict[str, Any]) -> dict[str, Any]:
     prev = cx.pos.get("at")
     cx.pos["at"] = e
     try:
@@ -353,14 +415,14 @@ def infer(cx: Ctx, e: dict) -> dict:
         cx.pos["at"] = prev
 
 
-def resolve_name(cx: Ctx, name: str) -> Optional[dict]:
+def resolve_name(cx: Ctx, name: str) -> dict[str, Any] | None:
     """what a name denotes: the declaration behind it, imports followed to their module"""
     if name in cx.vars:
         return {"kind": "var", "env": None, "name": name}
     return resolve_in(cx.env, name)
 
 
-def resolve_in(env, name: str) -> Optional[dict]:
+def resolve_in(env: Any, name: str) -> dict[str, Any] | None:
     if name in env.consts:
         return {"kind": "const", "env": env, "name": name}
     if name in env.funcs:
@@ -371,7 +433,11 @@ def resolve_in(env, name: str) -> Optional[dict]:
         return {"kind": "input", "env": env, "name": name}
     im = env.imports.get(name)
     if im:
-        return resolve_in(im["env"], im["name"]) or {"kind": "export", "env": im["env"], "name": im["name"]}
+        return resolve_in(im["env"], im["name"]) or {
+            "kind": "export",
+            "env": im["env"],
+            "name": im["name"],
+        }
     if name in env.namespaces:
         return {"kind": "namespace", "env": env, "name": name}
     if name in env.type_asts:
@@ -381,7 +447,7 @@ def resolve_in(env, name: str) -> Optional[dict]:
     return None
 
 
-def _infer0(cx: Ctx, e: dict) -> dict:
+def _infer0(cx: Ctx, e: dict[str, Any]) -> dict[str, Any]:
     k = e["e"]
     if k == "lit":
         return TY({"t": "lit", "v": e["v"]})
@@ -437,16 +503,22 @@ def _infer0(cx: Ctx, e: dict) -> dict:
             cx.report("E4091", f"$referrers: unknown record type {e['type']}")
         elif rt["t"] != "rec":
             cx.report("E4091", f"$referrers: {e['type']} is not a record type")
-        return TY({"t": "arr", "elem": {"t": "ref", "target": rt}} if rt and rt["t"] == "rec" else None)
+        return TY(
+            {"t": "arr", "elem": {"t": "ref", "target": rt}} if rt and rt["t"] == "rec" else None
+        )
     if k == "obj":
         for en in e["entries"]:
             require_val(cx, en["val"], infer(cx, en["val"]), "as a construction member")
-        return UNK   # literals are typed by their checked position (§3.18)
+        return UNK  # literals are typed by their checked position (§3.18)
     if k == "arr":
         ts = []
         for it in e["items"]:
             t = require_val(cx, it["expr"], infer(cx, it["expr"]), "as an array element")
-            ts.append((t["rt"]["elem"] if (t["rt"] and t["rt"]["t"] == "arr") else None) if it["spread"] else t["rt"])
+            ts.append(
+                (t["rt"]["elem"] if (t["rt"] and t["rt"]["t"] == "arr") else None)
+                if it["spread"]
+                else t["rt"]
+            )
         elem = mk_union(ts)
         return TY({"t": "arr", "elem": elem} if elem else None)
     if k in ("comp", "mapcomp"):
@@ -480,10 +552,10 @@ def _infer0(cx: Ctx, e: dict) -> dict:
             if t["rt"] and num_kind(t["rt"]) != "int":
                 cx.report("E4071", "`~` on a non-int operand")
             return TY(PRIM("int"))
-        kk = num_kind(t["rt"])
-        if t["rt"] and kk != "int" and kk != "float" and kk != "quantity":
+        nk = num_kind(t["rt"])
+        if t["rt"] and nk != "int" and nk != "float" and nk != "quantity":
             cx.report("E4071", "unary `-` on a non-numeric operand")
-        return TY(PRIM(kk) if kk in ("int", "float") else None)
+        return TY(PRIM(nk) if nk in ("int", "float") else None)
     if k == "paren":
         return infer(cx, e["x"])
     if k == "if":
@@ -533,7 +605,7 @@ def _infer0(cx: Ctx, e: dict) -> dict:
     return UNK
 
 
-def _iter_var_ty(cx: Ctx, it: dict) -> dict:
+def _iter_var_ty(cx: Ctx, it: dict[str, Any]) -> dict[str, Any]:
     t = require_val(cx, it, infer(cx, it), "as an iterable")
     if it["e"] == "bin" and it["op"] in ("..", "..<"):
         lo = it["l"]["v"] if it["l"]["e"] == "lit" else None
@@ -549,11 +621,15 @@ def _iter_var_ty(cx: Ctx, it: dict) -> dict:
     as_arr = _arm_of(t["rt"], "arr")
     if as_arr:
         return TY(as_arr["elem"])
-    cx.report("E4115", f"comprehension over a non-iterable {'map (use std.map.keys/values)' if _arm_of(t['rt'], 'map') else 'value'}")
+    cx.report(
+        "E4115",
+        f"comprehension over a non-iterable "
+        f"{'map (use std.map.keys/values)' if _arm_of(t['rt'], 'map') else 'value'}",
+    )
     return UNK
 
 
-def _q_dim(rt: Optional[dict]) -> Optional[str]:
+def _q_dim(rt: dict[str, Any] | None) -> str | None:
     if rt and rt["t"] == "quantity":
         return rt["dim"]
     if rt and rt["t"] == "pred" and rt["base"]["t"] == "quantity":
@@ -561,15 +637,18 @@ def _q_dim(rt: Optional[dict]) -> Optional[str]:
     return None
 
 
-def _infer_bin(cx: Ctx, e: dict) -> dict:
+def _infer_bin(cx: Ctx, e: dict[str, Any]) -> dict[str, Any]:
     op = e["op"]
-    if op == "|>":   # first-argument insertion (§4.9)
+    if op == "|>":  # first-argument insertion (§4.9)
         r = e["r"]
-        call = {"e": "call", "fn": r["fn"], "args": [e["l"]] + r["args"]} if r["e"] == "call" \
+        call = (
+            {"e": "call", "fn": r["fn"], "args": [e["l"]] + r["args"]}
+            if r["e"] == "call"
             else {"e": "call", "fn": r, "args": [e["l"]]}
+        )
         return _infer_call(cx, call)
     if op == "??":
-        l = infer(cx, e["l"])   # absence/null on the left is the point
+        l = infer(cx, e["l"])  # absence/null on the left is the point
         r = require_val(cx, e["r"], infer(cx, e["r"]), "as `??` fallback")
         return TY(mk_union([strip_null(l["rt"]), r["rt"]]) if (l["rt"] and r["rt"]) else None)
     if op in ("&&", "||"):
@@ -596,7 +675,7 @@ def _infer_bin(cx: Ctx, e: dict) -> dict:
     if op in ("..", "..<"):
         require_val(cx, e["l"], infer(cx, e["l"]), "as a range endpoint")
         require_val(cx, e["r"], infer(cx, e["r"]), "as a range endpoint")
-        return UNK   # a range value: iterable / membership container only
+        return UNK  # a range value: iterable / membership container only
     l = require_val(cx, e["l"], infer(cx, e["l"]), f"as `{op}` operand")
     r = require_val(cx, e["r"], infer(cx, e["r"]), f"as `{op}` operand")
     if op == "matches":
@@ -613,21 +692,34 @@ def _infer_bin(cx: Ctx, e: dict) -> dict:
         if op in ("+", "-") or cmp:
             if l["rt"] and r["rt"]:
                 if lk != "quantity" or rk != "quantity":
-                    cx.report("E4071", f"`{op}` mixes quantity and {rk if lk == 'quantity' else lk}")
+                    cx.report(
+                        "E4071", f"`{op}` mixes quantity and {rk if lk == 'quantity' else lk}"
+                    )
                 else:
                     a, b = _q_dim(l["rt"]), _q_dim(r["rt"])
                     if a is not None and b is not None and a != b:
-                        cx.report("E4072", f"`{op}` on quantities of different dimensions ({a or '1'} vs {b or '1'})")
+                        cx.report(
+                            "E4072",
+                            f"`{op}` on quantities of different dimensions ({a or '1'} vs "
+                            f"{b or '1'})",
+                        )
             return BOOL if cmp else TY(l["rt"] if lk == "quantity" else r["rt"])
         if op in ("*", "/"):
             if not l["rt"] or not r["rt"]:
                 return UNK
             lv, rv = _q_dim(l["rt"]), _q_dim(r["rt"])
-            if (lv is None and lk not in ("int", "float")) or (rv is None and rk not in ("int", "float")):
+            if (lv is None and lk not in ("int", "float")) or (
+                rv is None and rk not in ("int", "float")
+            ):
                 cx.report("E4071", f"`{op}` on a non-numeric operand")
                 return UNK
-            key = key_of_vec(vec_combine(vec_of_key(lv) if lv is not None else {},
-                                         vec_of_key(rv) if rv is not None else {}, 1 if op == "*" else -1))
+            key = key_of_vec(
+                vec_combine(
+                    vec_of_key(lv) if lv is not None else {},
+                    vec_of_key(rv) if rv is not None else {},
+                    1 if op == "*" else -1,
+                )
+            )
             return TY(PRIM("float") if key == "" else {"t": "quantity", "dim": key})
         cx.report("E4071", f"`{op}` on quantity operands")
         return UNK
@@ -639,7 +731,7 @@ def _infer_bin(cx: Ctx, e: dict) -> dict:
         if (l["rt"] and lk != "int") or (r["rt"] and rk != "int"):
             cx.report("E4071", f"`{op}` on non-int operands")
         return TY(PRIM("int"))
-    if op == "|":   # bitwise on ints (type-level | never reaches expressions)
+    if op == "|":  # bitwise on ints (type-level | never reaches expressions)
         if (l["rt"] and lk != "int") or (r["rt"] and rk != "int"):
             cx.report("E4071", "`|` on non-int operands")
         return TY(PRIM("int"))
@@ -652,31 +744,38 @@ def _infer_bin(cx: Ctx, e: dict) -> dict:
         if lk == "int" and op in ("+", "-", "*"):
             # interval arithmetic keeps range-typed operands range-typed, so
             # `9000 + i` with i: 0..<3 stays assignable where 1..65535 is expected
-            a, b = _as_ival(l["rt"]), _as_ival(r["rt"])
-            if a and b:
-                cands = [a[0] + b[0], a[1] + b[1]] if op == "+" else \
-                    [a[0] - b[1], a[1] - b[0]] if op == "-" else \
-                    [a[0] * b[0], a[0] * b[1], a[1] * b[0], a[1] * b[1]]
-                return TY({"t": "range", "base": "int", "lo": min(cands), "hi": max(cands), "excl": False})
+            ia, ib = _as_ival(l["rt"]), _as_ival(r["rt"])
+            if ia and ib:
+                cands = (
+                    [ia[0] + ib[0], ia[1] + ib[1]]
+                    if op == "+"
+                    else [ia[0] - ib[1], ia[1] - ib[0]]
+                    if op == "-"
+                    else [ia[0] * ib[0], ia[0] * ib[1], ia[1] * ib[0], ia[1] * ib[1]]
+                )
+                return TY(
+                    {"t": "range", "base": "int", "lo": min(cands), "hi": max(cands), "excl": False}
+                )
         return TY(PRIM(lk) if lk in ("int", "float") else None)
     return UNK
 
 
-def _as_ival(rt: dict) -> Optional[tuple]:
+def _as_ival(rt: dict[str, Any]) -> tuple[Any, ...] | None:
     if rt["t"] == "lit" and is_int(rt["v"]):
         return (rt["v"], rt["v"])
     if rt["t"] == "range" and rt["base"] == "int" and is_int(rt["lo"]) and is_int(rt["hi"]):
         return (rt["lo"], rt["hi"] - 1 if rt["excl"] else rt["hi"])
     if rt["t"] == "union":
         ivs = [_as_ival(a) for a in rt["arms"]]
-        if ivs and all(v is not None for v in ivs):
-            return (min(v[0] for v in ivs), max(v[1] for v in ivs))
+        known = [v for v in ivs if v is not None]
+        if ivs and len(known) == len(ivs):
+            return (min(v[0] for v in known), max(v[1] for v in known))
     if rt["t"] == "pred":
         return _as_ival(rt["base"])
     return None
 
 
-def _index_core(cx: Ctx, b: dict, e: dict) -> dict:
+def _index_core(cx: Ctx, b: dict[str, Any], e: dict[str, Any]) -> dict[str, Any]:
     it = require_val(cx, e["i"], infer(cx, e["i"]), "as an index")
     if not b["rt"]:
         return UNK
@@ -690,12 +789,12 @@ def _index_core(cx: Ctx, b: dict, e: dict) -> dict:
         k = path_key(e)
         return TY(as_map["val"], not (k and k in cx.present))
     if _arm_of(b["rt"], "rec"):
-        return UNK   # dynamic member access
+        return UNK  # dynamic member access
     cx.report("E4071", "indexing a non-collection")
     return UNK
 
 
-def _imported_ty(cx: Ctx, ex: dict) -> dict:
+def _imported_ty(cx: Ctx, ex: dict[str, Any]) -> dict[str, Any]:
     """a name imported from another module, typed in that module's scope"""
     t = ex["env"]
     name = ex["name"]
@@ -707,8 +806,13 @@ def _imported_ty(cx: Ctx, ex: dict) -> dict:
         return TY(anno) if anno else infer(make_ctx(t, lambda code, msg: None), c["expr"])
     if name in t.funcs:
         f = t.funcs[name]
-        return TY({"t": "func", "params": [try_resolve(t, p.get("type")) or {"t": "any"} for p in f["params"]],
-                   "ret": try_resolve(t, f.get("ret"))})
+        return TY(
+            {
+                "t": "func",
+                "params": [try_resolve(t, p.get("type")) or {"t": "any"} for p in f["params"]],
+                "ret": try_resolve(t, f.get("ret")),
+            }
+        )
     o = next((o for o in t.outputs if o["name"] == name), None)
     if o is not None:
         return TY(try_resolve(t, o["type"]))
@@ -720,9 +824,9 @@ def _imported_ty(cx: Ctx, ex: dict) -> dict:
     return UNK
 
 
-def _infer_member(cx: Ctx, e: dict) -> dict:
+def _infer_member(cx: Ctx, e: dict[str, Any]) -> dict[str, Any]:
     if _std_path(e) is not None:
-        return UNK   # std.* namespace path (typed at the call)
+        return UNK  # std.* namespace path (typed at the call)
     x = e["x"]
     if x["e"] == "name" and x["name"] not in cx.vars and x["name"] in cx.env.namespaces:
         ex = cx.env.namespaces[x["name"]]["exports"].get(e["name"])
@@ -734,13 +838,15 @@ def _infer_member(cx: Ctx, e: dict) -> dict:
     key = path_key(x)
     if not e.get("safe"):
         if b["abs"] and not (key and key in cx.present):
-            cx.report("E4050", "member access on a maybe-absent expression (use ?. or an `in` guard)")
+            cx.report(
+                "E4050", "member access on a maybe-absent expression (use ?. or an `in` guard)"
+            )
         if has_null(b["rt"]) and not (key and key in cx.nonnull):
             cx.report("E4051", f"member .{e['name']} on a possibly-null expression without ?.")
     return _member_core(cx, b, e)
 
 
-def _member_core(cx: Ctx, b: dict, e: dict) -> dict:
+def _member_core(cx: Ctx, b: dict[str, Any], e: dict[str, Any]) -> dict[str, Any]:
     brt = strip_null(b["rt"]) if b["rt"] else None
     if brt and brt["t"] == "ref":
         brt = brt["target"]
@@ -750,15 +856,19 @@ def _member_core(cx: Ctx, b: dict, e: dict) -> dict:
         brt = _arm_of(brt, "rec") or _arm_of(brt, "map") or brt
     safe = bool(e.get("safe"))
 
-    def mk_abs(t: dict) -> dict:
+    def mk_abs(t: dict[str, Any]) -> dict[str, Any]:
         return TY(t["rt"], True) if safe else t
+
     if not brt:
         return mk_abs(UNK)
     if brt["t"] == "rec":
         m = next((m for m in brt["members"] if m["name"] == e["name"]), None)
         if m is None:
             if not brt.get("open"):
-                cx.report("E4003", f"member {e['name']} is not declared on {brt.get('name') or 'this record'}")
+                cx.report(
+                    "E4003",
+                    f"member {e['name']} is not declared on {brt.get('name') or 'this record'}",
+                )
             return mk_abs(UNK)
         rt = {"t": "isectN", "arms": m["conj"]} if m.get("conj") else m.get("type")
         k = path_key(e)
@@ -769,7 +879,11 @@ def _member_core(cx: Ctx, b: dict, e: dict) -> dict:
     if brt["t"] == "union":
         parts = []
         for a in brt["arms"]:
-            arm = next((m for m in a["members"] if m["name"] == e["name"]), None) if a["t"] == "rec" else None
+            arm = (
+                next((m for m in a["members"] if m["name"] == e["name"]), None)
+                if a["t"] == "rec"
+                else None
+            )
             parts.append(arm.get("type") if arm else None)
         return mk_abs(TY(mk_union(parts)))
     if brt["t"] == "quantity" and e["name"] in ("value", "unit"):
@@ -777,24 +891,29 @@ def _member_core(cx: Ctx, b: dict, e: dict) -> dict:
     return mk_abs(UNK)
 
 
-def _func_rt(cx: Ctx, name: str) -> dict:
+def _func_rt(cx: Ctx, name: str) -> dict[str, Any]:
     f = cx.env.funcs[name]
-    return {"t": "func", "params": [try_resolve(cx.env, p.get("type")) or {"t": "any"} for p in f["params"]],
-            "ret": try_resolve(cx.env, f.get("ret"))}
+    return {
+        "t": "func",
+        "params": [try_resolve(cx.env, p.get("type")) or {"t": "any"} for p in f["params"]],
+        "ret": try_resolve(cx.env, f.get("ret")),
+    }
 
 
-def _const_ty(cx: Ctx, name: str) -> dict:
+def _const_ty(cx: Ctx, name: str) -> dict[str, Any]:
     if name in cx.const_memo:
         return cx.const_memo[name]
-    cx.const_memo[name] = UNK   # cycle guard
+    cx.const_memo[name] = UNK  # cycle guard
     c = cx.env.consts[name]
     anno = try_resolve(cx.env, c.get("type"))
-    ty = TY(anno) if anno else infer(make_ctx(cx.env, lambda code, msg: None), c["expr"])   # silent module-scope inference
+    ty = (
+        TY(anno) if anno else infer(make_ctx(cx.env, lambda code, msg: None), c["expr"])
+    )  # silent module-scope inference
     cx.const_memo[name] = ty
     return ty
 
 
-def _infer_call(cx: Ctx, e: dict) -> dict:
+def _infer_call(cx: Ctx, e: dict[str, Any]) -> dict[str, Any]:
     sp = _std_path(e["fn"])
     if sp is not None:
         sig = STD.get(sp)
@@ -813,7 +932,11 @@ def _infer_call(cx: Ctx, e: dict) -> dict:
     if frt and len(e["args"]) != len(frt["params"]):
         cx.report("E4062", f"call expects {len(frt['params'])} argument(s), got {len(e['args'])}")
     for i, a in enumerate(e["args"]):
-        expected = frt["params"][i] if (frt and i < len(frt["params"]) and frt["params"][i]["t"] != "any") else None
+        expected = (
+            frt["params"][i]
+            if (frt and i < len(frt["params"]) and frt["params"][i]["t"] != "any")
+            else None
+        )
         if a["e"] == "lambda" and expected and expected["t"] == "func":
             _check_lambda(cx, a, expected)
             continue
@@ -821,12 +944,17 @@ def _infer_call(cx: Ctx, e: dict) -> dict:
             infer(cx, a)
             continue
         at = require_val(cx, a, infer(cx, a), "as an argument")
-        if at["rt"] and expected and not subsumes(cx.env, at["rt"], expected) and not _deferrable(at["rt"], expected):
+        if (
+            at["rt"]
+            and expected
+            and not subsumes(cx.env, at["rt"], expected)
+            and not _deferrable(at["rt"], expected)
+        ):
             cx.report("E4001", f"argument {i + 1} is not assignable to its parameter")
     return TY(frt["ret"] if frt else None)
 
 
-def _check_lambda(cx: Ctx, e: dict, expected: dict) -> None:
+def _check_lambda(cx: Ctx, e: dict[str, Any], expected: dict[str, Any]) -> None:
     if len(e["params"]) != len(expected["params"]):
         cx.report("E4062", "lambda arity differs from expected function type")
         return
@@ -836,28 +964,33 @@ def _check_lambda(cx: Ctx, e: dict, expected: dict) -> None:
             cx.report("E3019", f"lambda parameter {p} shadows an enclosing name")
         c2.vars[p] = TY(None if expected["params"][i]["t"] == "any" else expected["params"][i])
     b = require_val(c2, e["body"], infer(c2, e["body"]), "as a lambda result")
-    if b["rt"] and expected.get("ret") and not subsumes(cx.env, b["rt"], expected["ret"]) and not _deferrable(b["rt"], expected["ret"]):
+    if (
+        b["rt"]
+        and expected.get("ret")
+        and not subsumes(cx.env, b["rt"], expected["ret"])
+        and not _deferrable(b["rt"], expected["ret"])
+    ):
         cx.report("E4001", "lambda body is not assignable to the expected result type")
 
 
 # ---------------- match (§4.7) ----------------
-def _infer_match(cx: Ctx, e: dict, expected: Optional[dict]) -> dict:
+def _infer_match(cx: Ctx, e: dict[str, Any], expected: dict[str, Any] | None) -> dict[str, Any]:
     s = require_val(cx, e["subject"], infer(cx, e["subject"]), "as a match subject")
-    variants: Optional[list] = None
+    variants: list[Any] | None = None
     if s["rt"]:
         srt = strip_null(s["rt"])
         if srt["t"] == "union":
             variants = srt["arms"] + [{"t": "lit", "v": None}] if has_null(s["rt"]) else srt["arms"]
         else:
             cx.report("E4103", "`match` subject is not a discriminable union")
-    covered: set = set()
+    covered: set[Any] = set()
     catch_alls = 0
-    results: list = []
+    results: list[Any] = []
     for arm in e["arms"]:
         c2 = cx.child()
         if _name_bound(c2, arm["v"]):
             cx.report("E3019", f"match binding {arm['v']} shadows an enclosing name")
-        arm_ty: Optional[dict] = None
+        arm_ty: dict[str, Any] | None = None
         if arm.get("type"):
             arm_ty = try_resolve(cx.env, arm["type"])
             if not arm_ty:
@@ -876,7 +1009,12 @@ def _infer_match(cx: Ctx, e: dict, expected: Optional[dict]) -> dict:
                     cx.report("E4102", "match catch-all is dead (typed arms are exhaustive)")
                 arm_ty = mk_union(rest)
         c2.vars[arm["v"]] = TY(arm_ty)
-        b = require_val(c2, arm["body"], check_expr(c2, arm["body"], expected) if expected else infer(c2, arm["body"]), "as a match result")
+        b = require_val(
+            c2,
+            arm["body"],
+            check_expr(c2, arm["body"], expected) if expected else infer(c2, arm["body"]),
+            "as a match result",
+        )
         results.append(b["rt"])
     if catch_alls > 1:
         cx.report("E4100", "more than one match catch-all arm")
@@ -886,7 +1024,7 @@ def _infer_match(cx: Ctx, e: dict, expected: Optional[dict]) -> dict:
 
 
 # ---------------- bidirectional checking (§3.18) ----------------
-def _place_ty(cx: Ctx, e: dict) -> dict:
+def _place_ty(cx: Ctx, e: dict[str, Any]) -> dict[str, Any]:
     """a navigation expression in a ref<T> position denotes a place (§7.4):
     the absence discipline does not apply along the spine — whether the
     place holds a value is reference integrity (§7.5), checked at binding"""
@@ -902,7 +1040,11 @@ def _place_ty(cx: Ctx, e: dict) -> dict:
         if rec is not None and rec["t"] == "rec":
             hm = next((m for m in rec["members"] if m["name"] == e["name"]), None)
             if hm is not None and hm.get("hidden"):
-                cx.report("E4093", f"`ref` position navigates hidden member {e['name']} — not part of the value (§7.5)")
+                cx.report(
+                    "E4093",
+                    f"`ref` position navigates hidden member {e['name']} — not part of the value "
+                    f"(§7.5)",
+                )
         return _member_core(cx, base, e)
     if k == "index":
         return _index_core(cx, _place_ty(cx, e["x"]), e)
@@ -917,11 +1059,14 @@ def _place_ty(cx: Ctx, e: dict) -> dict:
         return TY(mk_union([t["rt"], f["rt"]]), t["abs"] or f["abs"])
     # the spine root must be a root-derived place, never a module const (§7.5, D32)
     if k == "name" and e["name"] not in cx.vars and e["name"] in cx.env.consts:
-        cx.report("E4093", f"`ref` position navigates module const {e['name']} — not a root-derived place (§7.5)")
+        cx.report(
+            "E4093",
+            f"`ref` position navigates module const {e['name']} — not a root-derived place (§7.5)",
+        )
     return infer(cx, e)
 
 
-def _bind_clauses(cx: Ctx, clauses: list) -> Ctx:
+def _bind_clauses(cx: Ctx, clauses: list[Any]) -> Ctx:
     c2 = cx.child()
     for cl in clauses:
         vt = _iter_var_ty(c2, cl["iter"])
@@ -934,18 +1079,18 @@ def _bind_clauses(cx: Ctx, clauses: list) -> Ctx:
     return c2
 
 
-def check_expr(cx: Ctx, e: dict, expected: Optional[dict]) -> dict:
+def check_expr(cx: Ctx, e: dict[str, Any], expected: dict[str, Any] | None) -> dict[str, Any]:
     if not expected:
         return infer(cx, e)
     if expected["t"] == "ref":
         _place_ty(cx, e)
-        return TY(expected)   # place, not value (§7.4)
+        return TY(expected)  # place, not value (§7.4)
     if expected["t"] == "pred":
         return check_expr(cx, e, expected["base"])
     k = e["e"]
     if expected["t"] == "isectN" and k in ("obj", "arr", "comp", "mapcomp"):
         for arm in expected["arms"]:
-            check_expr(cx, e, arm)   # a literal must satisfy every arm
+            check_expr(cx, e, arm)  # a literal must satisfy every arm
         return TY(expected)
     if k == "comp" and expected["t"] == "arr":
         c2 = _bind_clauses(cx, e["clauses"])
@@ -980,22 +1125,30 @@ def check_expr(cx: Ctx, e: dict, expected: Optional[dict]) -> dict:
                 m = next((m for m in expected["members"] if m["name"] == en["key"]), None)
                 if m is None:
                     if not expected.get("open"):
-                        cx.report("E4003", f"member {en['key']} is not declared on {expected.get('name') or 'the record'}")
+                        cx.report(
+                            "E4003",
+                            f"member {en['key']} is not declared on "
+                            f"{expected.get('name') or 'the record'}",
+                        )
                     require_val(cx_r, en["val"], infer(cx_r, en["val"]), "as a construction member")
                     continue
                 mt = {"t": "isectN", "arms": m["conj"]} if m.get("conj") else m.get("type")
-                require_val(cx_r, en["val"], check_expr(cx_r, en["val"], mt), "as a construction member")
+                require_val(
+                    cx_r, en["val"], check_expr(cx_r, en["val"], mt), "as a construction member"
+                )
             for m in expected["members"]:
                 if m["kind"] == "req" and not any(en["key"] == m["name"] for en in e["entries"]):
                     cx.report("E4002", f"required member {m['name']} missing in the construction")
             return TY(expected)
         if expected["t"] == "map":
             for en in e["entries"]:
-                require_val(cx, en["val"], check_expr(cx, en["val"], expected["val"]), "as a map value")
+                require_val(
+                    cx, en["val"], check_expr(cx, en["val"], expected["val"]), "as a map value"
+                )
             return TY(expected)
         if expected["t"] == "union":
             infer(cx, e)
-            return TY(expected)   # discriminated at binding
+            return TY(expected)  # discriminated at binding
         infer(cx, e)
         cx.report("E4001", f"object literal where {expected['t']} is expected")
         return TY(expected)
@@ -1004,18 +1157,24 @@ def check_expr(cx: Ctx, e: dict, expected: Optional[dict]) -> dict:
             if it["spread"]:
                 require_val(cx, it["expr"], infer(cx, it["expr"]), "as a spread")
                 continue
-            require_val(cx, it["expr"], check_expr(cx, it["expr"], expected["elem"]), "as an array element")
+            require_val(
+                cx, it["expr"], check_expr(cx, it["expr"], expected["elem"]), "as an array element"
+            )
         return TY(expected)
     if k == "lambda" and expected["t"] == "func":
         _check_lambda(cx, e, expected)
         return TY(expected)
     ty = require_val(cx, e, infer(cx, e), "as a value")
-    if ty["rt"] and not subsumes(cx.env, ty["rt"], expected) and not _deferrable(ty["rt"], expected):
+    if (
+        ty["rt"]
+        and not subsumes(cx.env, ty["rt"], expected)
+        and not _deferrable(ty["rt"], expected)
+    ):
         cx.report("E4001", "expression type does not satisfy the expected type")
     return ty
 
 
-def _deferrable(s: dict, t: dict) -> bool:
+def _deferrable(s: dict[str, Any], t: dict[str, Any]) -> bool:
     """a same-kind refinement target (pattern, range, literal set) whose
     membership the static type cannot prove is validated at binding, not
     rejected here — the corpus (guide, benchmarks) relies on this split;
@@ -1038,7 +1197,7 @@ def _deferrable(s: dict, t: dict) -> bool:
 
 
 # ---------------- type text ----------------
-def type_text(rt: Optional[dict]) -> str:
+def type_text(rt: dict[str, Any] | None) -> str:
     """the static type as inference sees it, spelled in the language's own
     type syntax where it has one (`:type` in the REPL, hover in the editor)"""
     if not rt:
@@ -1074,29 +1233,46 @@ def type_text(rt: Optional[dict]) -> str:
         return f"map<{type_text(rt['key'])}, {type_text(rt['val'])}>"
     if t == "arr":
         lo, hi = rt.get("lo"), rt.get("hi")
-        b = f"[{'' if lo is None else lo}..{'' if hi is None else hi}]" if (lo is not None or hi is not None) else "[]"
+        b = (
+            f"[{'' if lo is None else lo}..{'' if hi is None else hi}]"
+            if (lo is not None or hi is not None)
+            else "[]"
+        )
         elem = type_text(rt.get("elem"))
-        # a compound element type is parenthesized (`(1 | 2)[]`, `(1..8)[]`), as the grammar's paren_type spells it
+        # a compound element type is parenthesized (`(1 | 2)[]`, `(1..8)[]`), as the grammar's
+        # paren_type spells it
         e = rt.get("elem")
-        return f"{'(' + elem + ')' if e and e['t'] in ('union', 'func', 'pred', 'range') else elem}{b}"
+        return (
+            f"{'(' + elem + ')' if e and e['t'] in ('union', 'func', 'pred', 'range') else elem}{b}"
+        )
     if t == "union":
         arms = rt["arms"]
-        nn = [a for a in arms if not ((a["t"] == "prim" and a["name"] == "null") or (a["t"] == "lit" and a["v"] is None))]
+        nn = [
+            a
+            for a in arms
+            if not (
+                (a["t"] == "prim" and a["name"] == "null") or (a["t"] == "lit" and a["v"] is None)
+            )
+        ]
         if len(nn) == len(arms) - 1 and len(nn) == 1:
             return f"{type_text(nn[0])}?"
         return " | ".join(type_text(a) for a in arms)
     if t == "pred":
         return f"{type_text(rt['base'])} where \u2026"
     if t == "func":
-        return f"({', '.join(type_text(p) for p in (rt.get('params') or []))}) => {type_text(rt.get('ret'))}"
+        params = ", ".join(type_text(p) for p in (rt.get("params") or []))
+        return f"({params}) => {type_text(rt.get('ret'))}"
     if t == "rec":
         name = rt.get("name")
         if name and not name.startswith("{"):
             return name
         ms = []
         for m in rt.get("members") or []:
-            ms.append(f"{m['name']}{'?' if m['kind'] == 'opt' else ''}{': ' + type_text(m['type']) if m.get('type') else ''}"
-                      f"{' = \u2026' if m['kind'] in ('der', 'dflt') else ''}")
+            ms.append(
+                f"{m['name']}{'?' if m['kind'] == 'opt' else ''}"
+                f"{': ' + type_text(m['type']) if m.get('type') else ''}"
+                + (" = \u2026" if m["kind"] in ("der", "dflt") else "")
+            )
         tail = (", ..." if ms else "...") if rt.get("open") else ""
         return "{ " + ", ".join(ms) + tail + " }"
     return "?"

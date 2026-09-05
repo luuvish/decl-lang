@@ -18,7 +18,10 @@ pub struct Ty {
     pub abs: bool,
 }
 pub fn unk() -> Ty {
-    Ty { rt: None, abs: false }
+    Ty {
+        rt: None,
+        abs: false,
+    }
 }
 pub fn tyv(rt: Option<RT>) -> Ty {
     Ty { rt, abs: false }
@@ -56,12 +59,22 @@ pub struct Target {
 }
 pub fn resolve_name(cx: &Ctx, name: &str) -> Option<Target> {
     if cx.vars.contains_key(name) {
-        return Some(Target { kind: "var", env: None, name: name.to_string() });
+        return Some(Target {
+            kind: "var",
+            env: None,
+            name: name.to_string(),
+        });
     }
     resolve_in(&cx.env, name)
 }
 pub fn resolve_in(env: &Rc<Env>, name: &str) -> Option<Target> {
-    let t = |kind: &'static str| Some(Target { kind, env: Some(env.clone()), name: name.to_string() });
+    let t = |kind: &'static str| {
+        Some(Target {
+            kind,
+            env: Some(env.clone()),
+            name: name.to_string(),
+        })
+    };
     if env.consts.borrow().contains_key(name) {
         return t("const");
     }
@@ -76,7 +89,11 @@ pub fn resolve_in(env: &Rc<Env>, name: &str) -> Option<Target> {
     }
     let im = env.imports.borrow().get(name).cloned();
     if let Some(im) = im {
-        return resolve_in(&im.env, &im.name).or(Some(Target { kind: "export", env: Some(im.env.clone()), name: im.name.clone() }));
+        return resolve_in(&im.env, &im.name).or(Some(Target {
+            kind: "export",
+            env: Some(im.env.clone()),
+            name: im.name.clone(),
+        }));
     }
     if env.namespaces.borrow().contains_key(name) {
         return t("namespace");
@@ -103,7 +120,17 @@ impl Ctx {
     }
 }
 pub fn make_ctx(env: Rc<Env>, report: Report) -> Ctx {
-    Ctx { env, report, vars: HashMap::new(), present: HashSet::new(), nonnull: HashSet::new(), const_memo: Rc::new(RefCell::new(HashMap::new())), pos: Rc::new(RefCell::new(None)), record: None, resolve_hook: None }
+    Ctx {
+        env,
+        report,
+        vars: HashMap::new(),
+        present: HashSet::new(),
+        nonnull: HashSet::new(),
+        const_memo: Rc::new(RefCell::new(HashMap::new())),
+        pos: Rc::new(RefCell::new(None)),
+        record: None,
+        resolve_hook: None,
+    }
 }
 
 // ---------------- JS-faithful helpers ----------------
@@ -119,7 +146,13 @@ pub fn js_typeof(v: &Value) -> &'static str {
 pub fn js_str(v: &Value) -> String {
     match v {
         Value::Null => "null".into(),
-        Value::Bool(b) => if *b { "true".into() } else { "false".into() },
+        Value::Bool(b) => {
+            if *b {
+                "true".into()
+            } else {
+                "false".into()
+            }
+        }
         Value::Int(i) => i.to_string(),
         Value::Float(f) => js_num_str(*f),
         Value::Str(s) => s.clone(),
@@ -146,7 +179,11 @@ pub fn tag(rt: &RT) -> &'static str {
 }
 /// a function's unknown result is carried as `any`
 fn ret_of(rt: &RT) -> Option<RT> {
-    if matches!(rt.k, RTk::Any) { None } else { Some(rt.clone()) }
+    if matches!(rt.k, RTk::Any) {
+        None
+    } else {
+        Some(rt.clone())
+    }
 }
 pub fn member_ty(m: &Member) -> Option<RT> {
     match &m.conj {
@@ -165,13 +202,20 @@ fn is_null_lit(t: &RT) -> bool {
 pub fn has_null(rt: Option<&RT>) -> bool {
     match rt {
         None => false,
-        Some(t) => is_null_lit(t) || matches!(&t.k, RTk::Union(arms) if arms.iter().any(|a| has_null(Some(a)))),
+        Some(t) => {
+            is_null_lit(t)
+                || matches!(&t.k, RTk::Union(arms) if arms.iter().any(|a| has_null(Some(a))))
+        }
     }
 }
 fn strip_null(rt: &RT) -> RT {
     if let RTk::Union(arms) = &rt.k {
         let kept: Vec<RT> = arms.iter().filter(|a| !is_null_lit(a)).cloned().collect();
-        return if kept.len() == 1 { kept[0].clone() } else { ty(RTk::Union(kept)) };
+        return if kept.len() == 1 {
+            kept[0].clone()
+        } else {
+            ty(RTk::Union(kept))
+        };
     }
     rt.clone()
 }
@@ -202,12 +246,22 @@ pub fn mk_union(arms: Vec<Option<RT>>) -> Option<RT> {
             uniq.push(a);
         }
     }
-    Some(if uniq.len() == 1 { uniq[0].clone() } else { ty(RTk::Union(uniq)) })
+    Some(if uniq.len() == 1 {
+        uniq[0].clone()
+    } else {
+        ty(RTk::Union(uniq))
+    })
 }
 pub fn num_kind(rt: Option<&RT>) -> Option<String> {
     let rt = rt?;
     match &rt.k {
-        RTk::Prim(n) => if ["int", "float", "string", "bool"].contains(&n.as_str()) { Some(n.clone()) } else { None },
+        RTk::Prim(n) => {
+            if ["int", "float", "string", "bool"].contains(&n.as_str()) {
+                Some(n.clone())
+            } else {
+                None
+            }
+        }
         RTk::Lit(v) => match v {
             Value::Bool(_) => Some("bool".into()),
             Value::Int(_) => Some("int".into()),
@@ -255,8 +309,21 @@ fn arm_of(rt: Option<&RT>, t: &str) -> Option<RT> {
         let sub: Vec<RT> = arms.iter().filter_map(|x| arm_of(Some(x), t)).collect();
         if sub.len() == arms.len() && !sub.is_empty() {
             if t == "arr" {
-                let elems: Vec<RT> = sub.iter().filter_map(|a| if let RTk::Arr { elem, .. } = &a.k { Some(elem.clone()) } else { None }).collect();
-                return Some(ty(RTk::Arr { elem: ty(RTk::Union(elems)), lo: None, hi: None }));
+                let elems: Vec<RT> = sub
+                    .iter()
+                    .filter_map(|a| {
+                        if let RTk::Arr { elem, .. } = &a.k {
+                            Some(elem.clone())
+                        } else {
+                            None
+                        }
+                    })
+                    .collect();
+                return Some(ty(RTk::Arr {
+                    elem: ty(RTk::Union(elems)),
+                    lo: None,
+                    hi: None,
+                }));
             }
             return Some(sub[0].clone());
         }
@@ -300,7 +367,13 @@ fn merge(mut a: Guards, b: Guards) -> Guards {
 pub fn guards_of(e: &Expr, polarity: bool) -> Guards {
     match e {
         Expr::Paren(x) => guards_of(x, polarity),
-        Expr::Un { op, x } => if op == "!" { guards_of(x, !polarity) } else { Guards::default() },
+        Expr::Un { op, x } => {
+            if op == "!" {
+                guards_of(x, !polarity)
+            } else {
+                Guards::default()
+            }
+        }
         Expr::Bin { op, l, r } => {
             if op == "&&" && polarity {
                 return merge(guards_of(l, true), guards_of(r, true));
@@ -309,18 +382,35 @@ pub fn guards_of(e: &Expr, polarity: bool) -> Guards {
                 return merge(guards_of(l, false), guards_of(r, false));
             }
             if op == "in" && polarity {
-                let Some(b) = path_key(r) else { return Guards::default() };
+                let Some(b) = path_key(r) else {
+                    return Guards::default();
+                };
                 return match &**l {
-                    Expr::Lit(Value::Str(s)) => Guards { present: vec![format!("{b}.{s}"), format!("{b}[{s}]")], nonnull: vec![] },
-                    Expr::Name(n) => Guards { present: vec![format!("{b}[{n}]")], nonnull: vec![] },
+                    Expr::Lit(Value::Str(s)) => Guards {
+                        present: vec![format!("{b}.{s}"), format!("{b}[{s}]")],
+                        nonnull: vec![],
+                    },
+                    Expr::Name(n) => Guards {
+                        present: vec![format!("{b}[{n}]")],
+                        nonnull: vec![],
+                    },
                     _ => Guards::default(),
                 };
             }
-            let null_side = if matches!(&**l, Expr::Lit(Value::Null)) { Some(r) } else if matches!(&**r, Expr::Lit(Value::Null)) { Some(l) } else { None };
+            let null_side = if matches!(&**l, Expr::Lit(Value::Null)) {
+                Some(r)
+            } else if matches!(&**r, Expr::Lit(Value::Null)) {
+                Some(l)
+            } else {
+                None
+            };
             if let Some(side) = null_side {
                 if let Some(p) = path_key(side) {
                     if (op == "!=" && polarity) || (op == "==" && !polarity) {
-                        return Guards { present: vec![], nonnull: vec![p] };
+                        return Guards {
+                            present: vec![],
+                            nonnull: vec![p],
+                        };
                     }
                 }
             }
@@ -403,8 +493,15 @@ fn std_sig(name: &str) -> Option<(usize, Option<RT>)> {
         StdRet::Bool => Some(prim("bool")),
         StdRet::Str => Some(prim("string")),
         StdRet::Float => Some(prim("float")),
-        StdRet::ArrStr => Some(ty(RTk::Arr { elem: prim("string"), lo: None, hi: None })),
-        StdRet::PredFn => Some(ty(RTk::Func { params: vec![prim("int")], ret: prim("bool") })),
+        StdRet::ArrStr => Some(ty(RTk::Arr {
+            elem: prim("string"),
+            lo: None,
+            hi: None,
+        })),
+        StdRet::PredFn => Some(ty(RTk::Func {
+            params: vec![prim("int")],
+            ret: prim("bool"),
+        })),
     };
     Some((e.1, ret))
 }
@@ -413,30 +510,43 @@ fn std_sig(name: &str) -> Option<(usize, Option<RT>)> {
 // the static type as inference sees it, spelled in the language's own
 // type syntax where it has one (`:type` in the REPL, hover in the editor)
 pub fn type_text(rt: Option<&RT>) -> String {
-    let Some(rt) = rt else { return "unknown".into() };
+    let Some(rt) = rt else {
+        return "unknown".into();
+    };
     let lit = |v: &Value| match v {
         Value::Str(s) => crate::semantics::json_str(s),
         other => js_str(other),
     };
-    let is_null_arm = |a: &RT| matches!(&a.k, RTk::Prim(n) if n == "null") || matches!(&a.k, RTk::Lit(Value::Null));
+    let is_null_arm = |a: &RT| {
+        matches!(&a.k, RTk::Prim(n) if n == "null") || matches!(&a.k, RTk::Lit(Value::Null))
+    };
     match &rt.k {
         RTk::Any => "any".into(),
         RTk::Prim(n) => n.clone(),
         RTk::Lit(v) => lit(v),
-        RTk::Range { lo, hi, excl, .. } => format!("{}..{}{}", lit(lo), if *excl { "<" } else { "" }, lit(hi)),
+        RTk::Range { lo, hi, excl, .. } => {
+            format!("{}..{}{}", lit(lo), if *excl { "<" } else { "" }, lit(hi))
+        }
         RTk::Pattern { src, .. } => format!("/{src}/"),
         RTk::Quantity(dim) => format!("quantity<{dim}>"),
         RTk::Ref(t) => format!("ref<{}>", type_text(Some(t))),
         RTk::Map { key, val } => format!("map<{}, {}>", type_text(Some(key)), type_text(Some(val))),
         RTk::Arr { elem, lo, hi } => {
             let b = if lo.is_some() || hi.is_some() {
-                format!("[{}..{}]", lo.map(|x| x.to_string()).unwrap_or_default(), hi.map(|x| x.to_string()).unwrap_or_default())
+                format!(
+                    "[{}..{}]",
+                    lo.map(|x| x.to_string()).unwrap_or_default(),
+                    hi.map(|x| x.to_string()).unwrap_or_default()
+                )
             } else {
                 "[]".into()
             };
             let e = type_text(Some(elem));
             // a compound element type is parenthesized (`(1 | 2)[]`, `(1..8)[]`), as the grammar's paren_type spells it
-            let wrap = matches!(&elem.k, RTk::Union(_) | RTk::Func { .. } | RTk::Pred { .. } | RTk::Range { .. });
+            let wrap = matches!(
+                &elem.k,
+                RTk::Union(_) | RTk::Func { .. } | RTk::Pred { .. } | RTk::Range { .. }
+            );
             format!("{}{b}", if wrap { format!("({e})") } else { e })
         }
         RTk::Union(arms) => {
@@ -444,10 +554,21 @@ pub fn type_text(rt: Option<&RT>) -> String {
             if nn.len() + 1 == arms.len() && nn.len() == 1 {
                 return format!("{}?", type_text(Some(nn[0])));
             }
-            arms.iter().map(|a| type_text(Some(a))).collect::<Vec<_>>().join(" | ")
+            arms.iter()
+                .map(|a| type_text(Some(a)))
+                .collect::<Vec<_>>()
+                .join(" | ")
         }
         RTk::Pred { base, .. } => format!("{} where …", type_text(Some(base))),
-        RTk::Func { params, ret } => format!("({}) => {}", params.iter().map(|p| type_text(Some(p))).collect::<Vec<_>>().join(", "), type_text(Some(ret))),
+        RTk::Func { params, ret } => format!(
+            "({}) => {}",
+            params
+                .iter()
+                .map(|p| type_text(Some(p)))
+                .collect::<Vec<_>>()
+                .join(", "),
+            type_text(Some(ret))
+        ),
         RTk::Rec(r) => {
             if let Some(n) = rt.name.borrow().as_ref() {
                 if !n.starts_with('{') {
@@ -463,12 +584,26 @@ pub fn type_text(rt: Option<&RT>) -> String {
                         "{}{}{}{}",
                         m.name,
                         if m.kind == MKind::Opt { "?" } else { "" },
-                        m.ty.as_ref().map(|t| format!(": {}", type_text(Some(t)))).unwrap_or_default(),
-                        if matches!(m.kind, MKind::Der | MKind::Dflt) { " = …" } else { "" }
+                        m.ty.as_ref()
+                            .map(|t| format!(": {}", type_text(Some(t))))
+                            .unwrap_or_default(),
+                        if matches!(m.kind, MKind::Der | MKind::Dflt) {
+                            " = …"
+                        } else {
+                            ""
+                        }
                     )
                 })
                 .collect();
-            let open = if r.open.get() { if ms.is_empty() { "..." } else { ", ..." } } else { "" };
+            let open = if r.open.get() {
+                if ms.is_empty() {
+                    "..."
+                } else {
+                    ", ..."
+                }
+            } else {
+                ""
+            };
             format!("{{ {}{open} }}", ms.join(", "))
         }
         RTk::IsectN(_) => "?".into(),
@@ -476,9 +611,17 @@ pub fn type_text(rt: Option<&RT>) -> String {
 }
 pub fn std_path(e: &Expr) -> Option<String> {
     match e {
-        Expr::Member { x, name, safe: false } => {
+        Expr::Member {
+            x,
+            name,
+            safe: false,
+        } => {
             let b = std_path(x)?;
-            Some(if b.is_empty() { name.clone() } else { format!("{b}.{name}") })
+            Some(if b.is_empty() {
+                name.clone()
+            } else {
+                format!("{b}.{name}")
+            })
         }
         Expr::Name(n) if n == "std" => Some(String::new()),
         _ => None,
@@ -490,14 +633,23 @@ pub fn try_resolve(env: &Rc<Env>, ast: Option<&TypeAst>) -> Option<RT> {
     env.resolve(ast?, None).ok()
 }
 pub fn named(name: &str) -> TypeAst {
-    TypeAst::Named { name: name.to_string(), args: vec![], preds: None, ext: None, loc: None }
+    TypeAst::Named {
+        name: name.to_string(),
+        args: vec![],
+        preds: None,
+        ext: None,
+        loc: None,
+    }
 }
 
 pub fn require_val(cx: &Ctx, e: &Expr, ty: Ty, what: &str) -> Ty {
     if ty.abs {
         let k = path_key(e);
         if !k.map(|k| cx.present.contains(&k)).unwrap_or(false) {
-            cx.report("E4050", format!("maybe-absent expression consumed {what} (use ?. / ?? or an `in` guard)"));
+            cx.report(
+                "E4050",
+                format!("maybe-absent expression consumed {what} (use ?. / ?? or an `in` guard)"),
+            );
         }
     }
     ty
@@ -526,7 +678,10 @@ fn infer0(cx: &Ctx, e: &Rc<Expr>) -> Ty {
                 unk()
             }
             None => match compile_pattern(src) {
-                Ok(re) => tyv(Some(ty(RTk::Pattern { src: src.clone(), re }))),
+                Ok(re) => tyv(Some(ty(RTk::Pattern {
+                    src: src.clone(),
+                    re,
+                }))),
                 Err(_) => unk(),
             },
         },
@@ -559,7 +714,12 @@ fn infer0(cx: &Ctx, e: &Rc<Expr>) -> Ty {
             if name == "std" {
                 return unk();
             }
-            let out = env.outputs.borrow().iter().find(|(o, _, _)| o == name).map(|(_, t, _)| t.clone());
+            let out = env
+                .outputs
+                .borrow()
+                .iter()
+                .find(|(o, _, _)| o == name)
+                .map(|(_, t, _)| t.clone());
             if let Some(t) = out {
                 return tyv(try_resolve(env, Some(&t)));
             }
@@ -576,7 +736,10 @@ fn infer0(cx: &Ctx, e: &Rc<Expr>) -> Ty {
                 return unk();
             }
             if env.type_asts.borrow().contains_key(name) {
-                cx.report("E3008", format!("type/namespace name {name} used as a value"));
+                cx.report(
+                    "E3008",
+                    format!("type/namespace name {name} used as a value"),
+                );
                 return unk();
             }
             cx.report("E3003", format!("unknown name {name}"));
@@ -587,10 +750,18 @@ fn infer0(cx: &Ctx, e: &Rc<Expr>) -> Ty {
             let rt = try_resolve(&cx.env, Some(&named(tn)));
             match &rt {
                 None => cx.report("E4091", format!("$referrers: unknown record type {tn}")),
-                Some(r) if !is_rec(r) => cx.report("E4091", format!("$referrers: {tn} is not a record type")),
+                Some(r) if !is_rec(r) => {
+                    cx.report("E4091", format!("$referrers: {tn} is not a record type"))
+                }
                 _ => {}
             }
-            tyv(rt.filter(is_rec).map(|r| ty(RTk::Arr { elem: ty(RTk::Ref(r)), lo: None, hi: None })))
+            tyv(rt.filter(is_rec).map(|r| {
+                ty(RTk::Arr {
+                    elem: ty(RTk::Ref(r)),
+                    lo: None,
+                    hi: None,
+                })
+            }))
         }
         Expr::Obj(entries) => {
             for (_, v) in entries {
@@ -604,18 +775,36 @@ fn infer0(cx: &Ctx, e: &Rc<Expr>) -> Ty {
                 .map(|(spread, x)| {
                     let t = require_val(cx, x, infer(cx, x), "as an array element");
                     if *spread {
-                        t.rt.and_then(|r| if let RTk::Arr { elem, .. } = &r.k { Some(elem.clone()) } else { None })
+                        t.rt.and_then(|r| {
+                            if let RTk::Arr { elem, .. } = &r.k {
+                                Some(elem.clone())
+                            } else {
+                                None
+                            }
+                        })
                     } else {
                         t.rt
                     }
                 })
                 .collect();
-            tyv(mk_union(ts).map(|elem| ty(RTk::Arr { elem, lo: None, hi: None })))
+            tyv(mk_union(ts).map(|elem| {
+                ty(RTk::Arr {
+                    elem,
+                    lo: None,
+                    hi: None,
+                })
+            }))
         }
         Expr::Comp { head, clauses } => {
             let c2 = bind_clauses(cx, clauses);
             let h = require_val(&c2, head, infer(&c2, head), "as a comprehension element");
-            tyv(h.rt.map(|elem| ty(RTk::Arr { elem, lo: None, hi: None })))
+            tyv(h.rt.map(|elem| {
+                ty(RTk::Arr {
+                    elem,
+                    lo: None,
+                    hi: None,
+                })
+            }))
         }
         Expr::MapComp { key, val, clauses } => {
             let c2 = bind_clauses(cx, clauses);
@@ -624,7 +813,12 @@ fn infer0(cx: &Ctx, e: &Rc<Expr>) -> Ty {
                 cx.report("E4001", "map-comprehension key is not a string".into());
             }
             let v = require_val(&c2, val, infer(&c2, val), "as a map value");
-            tyv(v.rt.map(|val| ty(RTk::Map { key: prim("string"), val })))
+            tyv(v.rt.map(|val| {
+                ty(RTk::Map {
+                    key: prim("string"),
+                    val,
+                })
+            }))
         }
         Expr::Bin { .. } => infer_bin(cx, e),
         Expr::Un { op, x } => {
@@ -642,7 +836,9 @@ fn infer0(cx: &Ctx, e: &Rc<Expr>) -> Ty {
                 return tyv(Some(prim("int")));
             }
             let k = num_kind(t.rt.as_ref());
-            if t.rt.is_some() && !matches!(k.as_deref(), Some("int") | Some("float") | Some("quantity")) {
+            if t.rt.is_some()
+                && !matches!(k.as_deref(), Some("int") | Some("float") | Some("quantity"))
+            {
                 cx.report("E4071", "unary `-` on a non-numeric operand".into());
             }
             tyv(match k.as_deref() {
@@ -659,13 +855,19 @@ fn infer0(cx: &Ctx, e: &Rc<Expr>) -> Ty {
             }
             let tt = infer(&apply_guards(cx, guards_of(c, true)), t);
             let ft = infer(&apply_guards(cx, guards_of(c, false)), f);
-            Ty { rt: mk_union(vec![tt.rt, ft.rt]), abs: tt.abs || ft.abs }
+            Ty {
+                rt: mk_union(vec![tt.rt, ft.rt]),
+                abs: tt.abs || ft.abs,
+            }
         }
         Expr::Lambda { params, body } => {
             let mut c2 = cx.child();
             for p in params {
                 if name_bound(&c2, p) {
-                    cx.report("E3019", format!("lambda parameter {p} shadows an enclosing name"));
+                    cx.report(
+                        "E3019",
+                        format!("lambda parameter {p} shadows an enclosing name"),
+                    );
                 }
                 c2.vars.insert(p.clone(), unk());
             }
@@ -698,8 +900,12 @@ fn infer0(cx: &Ctx, e: &Rc<Expr>) -> Ty {
                 let members = rec.members.borrow();
                 for (k, _) in entries {
                     match find_member(&members, k) {
-                        None if !rec.open.get() => cx.report("E4080", format!("`with` updates unknown member {k}")),
-                        Some(m) if m.kind == MKind::Der => cx.report("E4080", format!("`with` updates derived member {k}")),
+                        None if !rec.open.get() => {
+                            cx.report("E4080", format!("`with` updates unknown member {k}"))
+                        }
+                        Some(m) if m.kind == MKind::Der => {
+                            cx.report("E4080", format!("`with` updates derived member {k}"))
+                        }
                         _ => {}
                     }
                 }
@@ -722,7 +928,10 @@ fn bind_clauses(cx: &Ctx, clauses: &[ForClause]) -> Ctx {
     for cl in clauses {
         let vt = iter_var_ty(&c2, &cl.iter);
         if name_bound(&c2, &cl.v) {
-            cx.report("E3019", format!("comprehension variable {} shadows an enclosing name", cl.v));
+            cx.report(
+                "E3019",
+                format!("comprehension variable {} shadows an enclosing name", cl.v),
+            );
         }
         c2.vars.insert(cl.v.clone(), vt);
         for f in &cl.filters {
@@ -737,14 +946,27 @@ fn iter_var_ty(cx: &Ctx, it: &Rc<Expr>) -> Ty {
     let t = require_val(cx, it, infer(cx, it), "as an iterable");
     if let Expr::Bin { op, l, r } = &**it {
         if op == ".." || op == "..<" {
-            let lo = if let Expr::Lit(v) = &**l { Some(v.clone()) } else { None };
-            let hi = if let Expr::Lit(v) = &**r { Some(v.clone()) } else { None };
+            let lo = if let Expr::Lit(v) = &**l {
+                Some(v.clone())
+            } else {
+                None
+            };
+            let hi = if let Expr::Lit(v) = &**r {
+                Some(v.clone())
+            } else {
+                None
+            };
             if matches!(lo, Some(Value::Float(_))) || matches!(hi, Some(Value::Float(_))) {
                 cx.report("E4115", "comprehension over a float range".into());
                 return unk();
             }
             if let (Some(lo), Some(hi)) = (lo, hi) {
-                return tyv(Some(ty(RTk::Range { lo, hi, excl: op == "..<", base: "int".into() })));
+                return tyv(Some(ty(RTk::Range {
+                    lo,
+                    hi,
+                    excl: op == "..<",
+                    base: "int".into(),
+                })));
             }
             return tyv(Some(prim("int")));
         }
@@ -755,7 +977,11 @@ fn iter_var_ty(cx: &Ctx, it: &Rc<Expr>) -> Ty {
             return tyv(Some(elem.clone()));
         }
     }
-    let what = if arm_of(Some(rt), "map").is_some() { "map (use std.map.keys/values)" } else { "value" };
+    let what = if arm_of(Some(rt), "map").is_some() {
+        "map (use std.map.keys/values)"
+    } else {
+        "value"
+    };
     cx.report("E4115", format!("comprehension over a non-iterable {what}"));
     unk()
 }
@@ -772,7 +998,9 @@ fn q_dim(rt: Option<&RT>) -> Option<String> {
 }
 
 fn infer_bin(cx: &Ctx, e: &Rc<Expr>) -> Ty {
-    let Expr::Bin { op, l, r } = &**e else { return unk() };
+    let Expr::Bin { op, l, r } = &**e else {
+        return unk();
+    };
     let op = op.as_str();
     if op == "|>" {
         // first-argument insertion (§4.9)
@@ -780,9 +1008,15 @@ fn infer_bin(cx: &Ctx, e: &Rc<Expr>) -> Ty {
             Expr::Call { fun, args } => {
                 let mut a = vec![l.clone()];
                 a.extend(args.iter().cloned());
-                Expr::Call { fun: fun.clone(), args: a }
+                Expr::Call {
+                    fun: fun.clone(),
+                    args: a,
+                }
             }
-            _ => Expr::Call { fun: r.clone(), args: vec![l.clone()] },
+            _ => Expr::Call {
+                fun: r.clone(),
+                args: vec![l.clone()],
+            },
         };
         return infer_call(cx, &Rc::new(call));
     }
@@ -817,8 +1051,14 @@ fn infer_bin(cx: &Ctx, e: &Rc<Expr>) -> Ty {
             if let RTk::Rec(rec) = &rr.k {
                 let members = rec.members.borrow();
                 match find_member(&members, key) {
-                    Some(m) if m.kind != MKind::Opt => cx.report("E4054", format!("`in` on member {key}, which is not optional")),
-                    None if !rec.open.get() => cx.report("E4054", format!("`in` on undeclared member {key} of a closed record")),
+                    Some(m) if m.kind != MKind::Opt => cx.report(
+                        "E4054",
+                        format!("`in` on member {key}, which is not optional"),
+                    ),
+                    None if !rec.open.get() => cx.report(
+                        "E4054",
+                        format!("`in` on undeclared member {key} of a closed record"),
+                    ),
                     _ => {}
                 }
             }
@@ -852,21 +1092,47 @@ fn infer_bin(cx: &Ctx, e: &Rc<Expr>) -> Ty {
             if lt.rt.is_some() && rt.rt.is_some() {
                 if lks != Some("quantity") || rks != Some("quantity") {
                     let other = if lks == Some("quantity") { rks } else { lks };
-                    cx.report("E4071", format!("`{op}` mixes quantity and {}", other.unwrap_or("null")));
+                    cx.report(
+                        "E4071",
+                        format!("`{op}` mixes quantity and {}", other.unwrap_or("null")),
+                    );
                 } else {
                     let (a, b) = (q_dim(lt.rt.as_ref()), q_dim(rt.rt.as_ref()));
                     if let (Some(a), Some(b)) = (&a, &b) {
                         if a != b {
-                            let one = |s: &str| if s.is_empty() { "1".to_string() } else { s.to_string() };
-                            cx.report("E4072", format!("`{op}` on quantities of different dimensions ({} vs {})", one(a), one(b)));
+                            let one = |s: &str| {
+                                if s.is_empty() {
+                                    "1".to_string()
+                                } else {
+                                    s.to_string()
+                                }
+                            };
+                            cx.report(
+                                "E4072",
+                                format!(
+                                    "`{op}` on quantities of different dimensions ({} vs {})",
+                                    one(a),
+                                    one(b)
+                                ),
+                            );
                         }
                     }
                 }
             }
-            return if cmp { bool_ty() } else { tyv(if lks == Some("quantity") { lt.rt.clone() } else { rt.rt.clone() }) };
+            return if cmp {
+                bool_ty()
+            } else {
+                tyv(if lks == Some("quantity") {
+                    lt.rt.clone()
+                } else {
+                    rt.rt.clone()
+                })
+            };
         }
         if op == "*" || op == "/" {
-            let (Some(_), Some(_)) = (&lt.rt, &rt.rt) else { return unk() };
+            let (Some(_), Some(_)) = (&lt.rt, &rt.rt) else {
+                return unk();
+            };
             let (lv, rv) = (q_dim(lt.rt.as_ref()), q_dim(rt.rt.as_ref()));
             let numeric = |k: Option<&str>| matches!(k, Some("int") | Some("float"));
             if (lv.is_none() && !numeric(lks)) || (rv.is_none() && !numeric(rks)) {
@@ -878,7 +1144,11 @@ fn infer_bin(cx: &Ctx, e: &Rc<Expr>) -> Ty {
                 &rv.as_deref().map(vec_of_key).unwrap_or_default(),
                 if op == "*" { 1 } else { -1 },
             ));
-            return tyv(Some(if key.is_empty() { prim("float") } else { ty(RTk::Quantity(key)) }));
+            return tyv(Some(if key.is_empty() {
+                prim("float")
+            } else {
+                ty(RTk::Quantity(key))
+            }));
         }
         cx.report("E4071", format!("`{op}` on quantity operands"));
         return unk();
@@ -923,10 +1193,19 @@ fn infer_bin(cx: &Ctx, e: &Rc<Expr>) -> Ty {
                 };
                 let lo = cands.iter().min().unwrap().clone();
                 let hi = cands.iter().max().unwrap().clone();
-                return tyv(Some(ty(RTk::Range { lo: Value::Int(lo), hi: Value::Int(hi), excl: false, base: "int".into() })));
+                return tyv(Some(ty(RTk::Range {
+                    lo: Value::Int(lo),
+                    hi: Value::Int(hi),
+                    excl: false,
+                    base: "int".into(),
+                })));
             }
         }
-        return tyv(if a == "int" || a == "float" { Some(prim(a)) } else { None });
+        return tyv(if a == "int" || a == "float" {
+            Some(prim(a))
+        } else {
+            None
+        });
     }
     unk()
 }
@@ -934,9 +1213,12 @@ fn infer_bin(cx: &Ctx, e: &Rc<Expr>) -> Ty {
 fn as_ival(rt: &RT) -> Option<(BigInt, BigInt)> {
     match &rt.k {
         RTk::Lit(Value::Int(i)) => Some((i.clone(), i.clone())),
-        RTk::Range { lo: Value::Int(lo), hi: Value::Int(hi), excl, base } if base == "int" => {
-            Some((lo.clone(), if *excl { hi - 1 } else { hi.clone() }))
-        }
+        RTk::Range {
+            lo: Value::Int(lo),
+            hi: Value::Int(hi),
+            excl,
+            base,
+        } if base == "int" => Some((lo.clone(), if *excl { hi - 1 } else { hi.clone() })),
         RTk::Union(arms) => {
             let ivs: Vec<Option<(BigInt, BigInt)>> = arms.iter().map(as_ival).collect();
             if !ivs.is_empty() && ivs.iter().all(|v| v.is_some()) {
@@ -953,7 +1235,9 @@ fn as_ival(rt: &RT) -> Option<(BigInt, BigInt)> {
 }
 
 fn index_core(cx: &Ctx, b: Ty, e: &Rc<Expr>) -> Ty {
-    let Expr::Index { i, .. } = &**e else { return unk() };
+    let Expr::Index { i, .. } = &**e else {
+        return unk();
+    };
     let it = require_val(cx, i, infer(cx, i), "as an index");
     let Some(brt) = &b.rt else { return unk() };
     if let Some(a) = arm_of(Some(brt), "arr") {
@@ -967,7 +1251,10 @@ fn index_core(cx: &Ctx, b: Ty, e: &Rc<Expr>) -> Ty {
     if let Some(m) = arm_of(Some(brt), "map") {
         let k = path_key(e);
         if let RTk::Map { val, .. } = &m.k {
-            return Ty { rt: Some(val.clone()), abs: !k.map(|k| cx.present.contains(&k)).unwrap_or(false) };
+            return Ty {
+                rt: Some(val.clone()),
+                abs: !k.map(|k| cx.present.contains(&k)).unwrap_or(false),
+            };
         }
     }
     if arm_of(Some(brt), "rec").is_some() {
@@ -994,7 +1281,12 @@ fn imported_ty(cx: &Ctx, ex: &Export) -> Ty {
     if let Some(f) = f {
         return tyv(Some(func_rt_of(t, &f)));
     }
-    let out = t.outputs.borrow().iter().find(|(o, _, _)| o == name).map(|(_, ty, _)| ty.clone());
+    let out = t
+        .outputs
+        .borrow()
+        .iter()
+        .find(|(o, _, _)| o == name)
+        .map(|(_, ty, _)| ty.clone());
     if let Some(o) = out {
         return tyv(try_resolve(t, Some(&o)));
     }
@@ -1010,7 +1302,9 @@ fn imported_ty(cx: &Ctx, ex: &Export) -> Ty {
 }
 
 fn infer_member(cx: &Ctx, e: &Rc<Expr>) -> Ty {
-    let Expr::Member { x, name, safe } = &**e else { return unk() };
+    let Expr::Member { x, name, safe } = &**e else {
+        return unk();
+    };
     if std_path(e).is_some() {
         return unk(); // std.* namespace path (typed at the call)
     }
@@ -1030,20 +1324,34 @@ fn infer_member(cx: &Ctx, e: &Rc<Expr>) -> Ty {
     let b = infer(cx, x);
     let key = path_key(x);
     if !*safe {
-        let present = key.as_ref().map(|k| cx.present.contains(k)).unwrap_or(false);
-        let nonnull = key.as_ref().map(|k| cx.nonnull.contains(k)).unwrap_or(false);
+        let present = key
+            .as_ref()
+            .map(|k| cx.present.contains(k))
+            .unwrap_or(false);
+        let nonnull = key
+            .as_ref()
+            .map(|k| cx.nonnull.contains(k))
+            .unwrap_or(false);
         if b.abs && !present {
-            cx.report("E4050", "member access on a maybe-absent expression (use ?. or an `in` guard)".into());
+            cx.report(
+                "E4050",
+                "member access on a maybe-absent expression (use ?. or an `in` guard)".into(),
+            );
         }
         if has_null(b.rt.as_ref()) && !nonnull {
-            cx.report("E4051", format!("member .{name} on a possibly-null expression without ?."));
+            cx.report(
+                "E4051",
+                format!("member .{name} on a possibly-null expression without ?."),
+            );
         }
     }
     member_core(cx, b, e)
 }
 
 fn member_core(cx: &Ctx, b: Ty, e: &Rc<Expr>) -> Ty {
-    let Expr::Member { name, safe, .. } = &**e else { return unk() };
+    let Expr::Member { name, safe, .. } = &**e else {
+        return unk();
+    };
     let mut brt = b.rt.as_ref().map(strip_null);
     if let Some(RTk::Ref(t)) = brt.as_ref().map(|r| &r.k) {
         brt = Some(t.clone());
@@ -1053,46 +1361,88 @@ fn member_core(cx: &Ctx, b: Ty, e: &Rc<Expr>) -> Ty {
     }
     if let Some(r) = &brt {
         if matches!(r.k, RTk::IsectN(_)) {
-            brt = arm_of(Some(r), "rec").or_else(|| arm_of(Some(r), "map")).or_else(|| Some(r.clone()));
+            brt = arm_of(Some(r), "rec")
+                .or_else(|| arm_of(Some(r), "map"))
+                .or_else(|| Some(r.clone()));
         }
     }
-    let mk_abs = |t: Ty| if *safe { Ty { rt: t.rt, abs: true } } else { t };
+    let mk_abs = |t: Ty| {
+        if *safe {
+            Ty {
+                rt: t.rt,
+                abs: true,
+            }
+        } else {
+            t
+        }
+    };
     let Some(brt) = brt else { return mk_abs(unk()) };
     match &brt.k {
         RTk::Rec(rec) => {
             let members = rec.members.borrow();
             let Some(m) = find_member(&members, name) else {
                 if !rec.open.get() {
-                    cx.report("E4003", format!("member {name} is not declared on {}", brt.name.borrow().clone().unwrap_or_else(|| "this record".into())));
+                    cx.report(
+                        "E4003",
+                        format!(
+                            "member {name} is not declared on {}",
+                            brt.name
+                                .borrow()
+                                .clone()
+                                .unwrap_or_else(|| "this record".into())
+                        ),
+                    );
                 }
                 return mk_abs(unk());
             };
             let rt = member_ty(m);
-            let present = path_key(e).map(|k| cx.present.contains(&k)).unwrap_or(false);
-            Ty { rt, abs: *safe || (m.kind == MKind::Opt && !present) }
+            let present = path_key(e)
+                .map(|k| cx.present.contains(&k))
+                .unwrap_or(false);
+            Ty {
+                rt,
+                abs: *safe || (m.kind == MKind::Opt && !present),
+            }
         }
         RTk::Map { val, .. } => {
-            let present = path_key(e).map(|k| cx.present.contains(&k)).unwrap_or(false);
-            Ty { rt: Some(val.clone()), abs: *safe || !present }
+            let present = path_key(e)
+                .map(|k| cx.present.contains(&k))
+                .unwrap_or(false);
+            Ty {
+                rt: Some(val.clone()),
+                abs: *safe || !present,
+            }
         }
         RTk::Union(arms) => {
             let parts: Vec<Option<RT>> = arms
                 .iter()
                 .map(|a| match &a.k {
-                    RTk::Rec(rec) => find_member(&rec.members.borrow(), name).and_then(|m| m.ty.clone()),
+                    RTk::Rec(rec) => {
+                        find_member(&rec.members.borrow(), name).and_then(|m| m.ty.clone())
+                    }
                     _ => None,
                 })
                 .collect();
             mk_abs(tyv(mk_union(parts)))
         }
-        RTk::Quantity(_) if name == "value" || name == "unit" => mk_abs(tyv(Some(prim(if name == "value" { "float" } else { "string" })))),
+        RTk::Quantity(_) if name == "value" || name == "unit" => {
+            mk_abs(tyv(Some(prim(if name == "value" {
+                "float"
+            } else {
+                "string"
+            }))))
+        }
         _ => mk_abs(unk()),
     }
 }
 
 fn func_rt_of(env: &Rc<Env>, f: &FuncEntry) -> RT {
     ty(RTk::Func {
-        params: f.params.iter().map(|p| try_resolve(env, p.ty.as_ref()).unwrap_or_else(|| ty(RTk::Any))).collect(),
+        params: f
+            .params
+            .iter()
+            .map(|p| try_resolve(env, p.ty.as_ref()).unwrap_or_else(|| ty(RTk::Any)))
+            .collect(),
         ret: try_resolve(env, f.ret.as_ref()).unwrap_or_else(|| ty(RTk::Any)),
     })
 }
@@ -1111,20 +1461,30 @@ fn const_ty(cx: &Ctx, name: &str) -> Ty {
         Some(a) => tyv(Some(a)),
         None => infer(&make_ctx(cx.env.clone(), Rc::new(|_, _| {})), &c.expr), // silent module-scope inference
     };
-    cx.const_memo.borrow_mut().insert(name.to_string(), t.clone());
+    cx.const_memo
+        .borrow_mut()
+        .insert(name.to_string(), t.clone());
     t
 }
 
 fn infer_call(cx: &Ctx, e: &Rc<Expr>) -> Ty {
-    let Expr::Call { fun, args } = &**e else { return unk() };
+    let Expr::Call { fun, args } = &**e else {
+        return unk();
+    };
     if let Some(sp) = std_path(fun) {
         let sig = std_sig(&sp);
         if sig.is_none() {
-            cx.report("E3003", format!("std.{sp} does not exist (§13.1: names not listed do not exist)"));
+            cx.report(
+                "E3003",
+                format!("std.{sp} does not exist (§13.1: names not listed do not exist)"),
+            );
         }
         if let Some((arity, _)) = &sig {
             if args.len() != *arity {
-                cx.report("E4062", format!("std.{sp} expects {arity} argument(s), got {}", args.len()));
+                cx.report(
+                    "E4062",
+                    format!("std.{sp} expects {arity} argument(s), got {}", args.len()),
+                );
             }
         }
         for a in args {
@@ -1143,10 +1503,22 @@ fn infer_call(cx: &Ctx, e: &Rc<Expr>) -> Ty {
         _ => (vec![], None),
     };
     if frt.is_some() && args.len() != params.len() {
-        cx.report("E4062", format!("call expects {} argument(s), got {}", params.len(), args.len()));
+        cx.report(
+            "E4062",
+            format!(
+                "call expects {} argument(s), got {}",
+                params.len(),
+                args.len()
+            ),
+        );
     }
     for (i, a) in args.iter().enumerate() {
-        let expected: Option<RT> = if frt.is_some() && i < params.len() && !matches!(params[i].k, RTk::Any) { Some(params[i].clone()) } else { None };
+        let expected: Option<RT> =
+            if frt.is_some() && i < params.len() && !matches!(params[i].k, RTk::Any) {
+                Some(params[i].clone())
+            } else {
+                None
+            };
         if let (Expr::Lambda { .. }, Some(ex)) = (&**a, &expected) {
             if matches!(ex.k, RTk::Func { .. }) {
                 check_lambda(cx, a, ex);
@@ -1160,7 +1532,10 @@ fn infer_call(cx: &Ctx, e: &Rc<Expr>) -> Ty {
         let at = require_val(cx, a, infer(cx, a), "as an argument");
         if let (Some(art), Some(ex)) = (&at.rt, &expected) {
             if !subsumes(&cx.env, art, ex) && !deferrable(art, ex) {
-                cx.report("E4001", format!("argument {} is not assignable to its parameter", i + 1));
+                cx.report(
+                    "E4001",
+                    format!("argument {} is not assignable to its parameter", i + 1),
+                );
             }
         }
     }
@@ -1168,29 +1543,50 @@ fn infer_call(cx: &Ctx, e: &Rc<Expr>) -> Ty {
 }
 
 fn check_lambda(cx: &Ctx, e: &Rc<Expr>, expected: &RT) {
-    let (Expr::Lambda { params, body }, RTk::Func { params: eps, ret }) = (&**e, &expected.k) else { return };
+    let (Expr::Lambda { params, body }, RTk::Func { params: eps, ret }) = (&**e, &expected.k)
+    else {
+        return;
+    };
     if params.len() != eps.len() {
-        cx.report("E4062", "lambda arity differs from expected function type".into());
+        cx.report(
+            "E4062",
+            "lambda arity differs from expected function type".into(),
+        );
         return;
     }
     let mut c2 = cx.child();
     for (i, p) in params.iter().enumerate() {
         if name_bound(&c2, p) {
-            cx.report("E3019", format!("lambda parameter {p} shadows an enclosing name"));
+            cx.report(
+                "E3019",
+                format!("lambda parameter {p} shadows an enclosing name"),
+            );
         }
-        c2.vars.insert(p.clone(), tyv(if matches!(eps[i].k, RTk::Any) { None } else { Some(eps[i].clone()) }));
+        c2.vars.insert(
+            p.clone(),
+            tyv(if matches!(eps[i].k, RTk::Any) {
+                None
+            } else {
+                Some(eps[i].clone())
+            }),
+        );
     }
     let b = require_val(&c2, body, infer(&c2, body), "as a lambda result");
     if let (Some(brt), Some(r)) = (&b.rt, ret_of(ret)) {
         if !subsumes(&cx.env, brt, &r) && !deferrable(brt, &r) {
-            cx.report("E4001", "lambda body is not assignable to the expected result type".into());
+            cx.report(
+                "E4001",
+                "lambda body is not assignable to the expected result type".into(),
+            );
         }
     }
 }
 
 // ---------------- match (§4.7) ----------------
 fn infer_match(cx: &Ctx, e: &Rc<Expr>, expected: Option<&RT>) -> Ty {
-    let Expr::Match { subject, arms } = &**e else { return unk() };
+    let Expr::Match { subject, arms } = &**e else {
+        return unk();
+    };
     let s = require_val(cx, subject, infer(cx, subject), "as a match subject");
     let mut variants: Option<Vec<RT>> = None;
     if let Some(srt0) = &s.rt {
@@ -1202,7 +1598,10 @@ fn infer_match(cx: &Ctx, e: &Rc<Expr>, expected: Option<&RT>) -> Ty {
             }
             variants = Some(v);
         } else {
-            cx.report("E4103", "`match` subject is not a discriminable union".into());
+            cx.report(
+                "E4103",
+                "`match` subject is not a discriminable union".into(),
+            );
         }
     }
     let mut covered: HashSet<usize> = HashSet::new();
@@ -1211,7 +1610,10 @@ fn infer_match(cx: &Ctx, e: &Rc<Expr>, expected: Option<&RT>) -> Ty {
     for arm in arms {
         let mut c2 = cx.child();
         if name_bound(&c2, &arm.v) {
-            cx.report("E3019", format!("match binding {} shadows an enclosing name", arm.v));
+            cx.report(
+                "E3019",
+                format!("match binding {} shadows an enclosing name", arm.v),
+            );
         }
         let mut arm_ty: Option<RT> = None;
         if let Some(t) = &arm.ty {
@@ -1232,9 +1634,17 @@ fn infer_match(cx: &Ctx, e: &Rc<Expr>, expected: Option<&RT>) -> Ty {
         } else {
             catch_alls += 1;
             if let Some(vs) = &variants {
-                let rest: Vec<Option<RT>> = vs.iter().enumerate().filter(|(i, _)| !covered.contains(i)).map(|(_, v)| Some(v.clone())).collect();
+                let rest: Vec<Option<RT>> = vs
+                    .iter()
+                    .enumerate()
+                    .filter(|(i, _)| !covered.contains(i))
+                    .map(|(_, v)| Some(v.clone()))
+                    .collect();
                 if rest.is_empty() {
-                    cx.report("E4102", "match catch-all is dead (typed arms are exhaustive)".into());
+                    cx.report(
+                        "E4102",
+                        "match catch-all is dead (typed arms are exhaustive)".into(),
+                    );
                 }
                 arm_ty = mk_union(rest);
             }
@@ -1252,7 +1662,10 @@ fn infer_match(cx: &Ctx, e: &Rc<Expr>, expected: Option<&RT>) -> Ty {
     }
     if let Some(vs) = &variants {
         if catch_alls == 0 && covered.len() < vs.len() {
-            cx.report("E4101", "`match` is not exhaustive over the subject union".into());
+            cx.report(
+                "E4101",
+                "`match` is not exhaustive over the subject union".into(),
+            );
         }
     }
     tyv(mk_union(results))
@@ -1275,7 +1688,11 @@ fn place_ty(cx: &Ctx, e: &Rc<Expr>) -> Ty {
             });
             if let Some(rec) = rec {
                 if let RTk::Rec(r) = &rec.k {
-                    if r.members.borrow().iter().any(|m| m.name == *name && m.hidden) {
+                    if r.members
+                        .borrow()
+                        .iter()
+                        .any(|m| m.name == *name && m.hidden)
+                    {
                         cx.report("E4093", format!("`ref` position navigates hidden member {name} — not part of the value (§7.5)"));
                     }
                 }
@@ -1292,11 +1709,19 @@ fn place_ty(cx: &Ctx, e: &Rc<Expr>) -> Ty {
             }
             let tt = place_ty(&apply_guards(cx, guards_of(c, true)), t);
             let ft = place_ty(&apply_guards(cx, guards_of(c, false)), f);
-            Ty { rt: mk_union(vec![tt.rt, ft.rt]), abs: tt.abs || ft.abs }
+            Ty {
+                rt: mk_union(vec![tt.rt, ft.rt]),
+                abs: tt.abs || ft.abs,
+            }
         }
         Expr::Name(n) if !cx.vars.contains_key(n) && cx.env.consts.borrow().contains_key(n) => {
             // the spine root must be a root-derived place, never a module const (§7.5, D32)
-            cx.report("E4093", format!("`ref` position navigates module const {n} — not a root-derived place (§7.5)"));
+            cx.report(
+                "E4093",
+                format!(
+                    "`ref` position navigates module const {n} — not a root-derived place (§7.5)"
+                ),
+            );
             infer(cx, e)
         }
         _ => infer(cx, e),
@@ -1304,7 +1729,9 @@ fn place_ty(cx: &Ctx, e: &Rc<Expr>) -> Ty {
 }
 
 pub fn check_expr(cx: &Ctx, e: &Rc<Expr>, expected: Option<&RT>) -> Ty {
-    let Some(expected) = expected else { return infer(cx, e) };
+    let Some(expected) = expected else {
+        return infer(cx, e);
+    };
     if let RTk::Ref(_) = &expected.k {
         place_ty(cx, e);
         return tyv(Some(expected.clone())); // place, not value (§7.4)
@@ -1313,7 +1740,10 @@ pub fn check_expr(cx: &Ctx, e: &Rc<Expr>, expected: Option<&RT>) -> Ty {
         return check_expr(cx, e, Some(base));
     }
     if let RTk::IsectN(arms) = &expected.k {
-        if matches!(&**e, Expr::Obj(_) | Expr::Arr(_) | Expr::Comp { .. } | Expr::MapComp { .. }) {
+        if matches!(
+            &**e,
+            Expr::Obj(_) | Expr::Arr(_) | Expr::Comp { .. } | Expr::MapComp { .. }
+        ) {
             for arm in arms {
                 check_expr(cx, e, Some(arm)); // a literal must satisfy every arm
             }
@@ -1351,12 +1781,28 @@ pub fn check_expr(cx: &Ctx, e: &Rc<Expr>, expected: Option<&RT>) -> Ty {
             let members = rec.members.borrow().clone();
             let mut cx_r = cx.child();
             for m in &members {
-                cx_r.vars.insert(m.name.clone(), Ty { rt: member_ty(m), abs: m.kind == MKind::Opt });
+                cx_r.vars.insert(
+                    m.name.clone(),
+                    Ty {
+                        rt: member_ty(m),
+                        abs: m.kind == MKind::Opt,
+                    },
+                );
             }
             for (k, v) in entries {
                 let Some(m) = find_member(&members, k) else {
                     if !rec.open.get() {
-                        cx.report("E4003", format!("member {k} is not declared on {}", expected.name.borrow().clone().unwrap_or_else(|| "the record".into())));
+                        cx.report(
+                            "E4003",
+                            format!(
+                                "member {k} is not declared on {}",
+                                expected
+                                    .name
+                                    .borrow()
+                                    .clone()
+                                    .unwrap_or_else(|| "the record".into())
+                            ),
+                        );
                     }
                     require_val(&cx_r, v, infer(&cx_r, v), "as a construction member");
                     continue;
@@ -1367,7 +1813,10 @@ pub fn check_expr(cx: &Ctx, e: &Rc<Expr>, expected: Option<&RT>) -> Ty {
             }
             for m in &members {
                 if m.kind == MKind::Req && !entries.iter().any(|(k, _)| *k == m.name) {
-                    cx.report("E4002", format!("required member {} missing in the construction", m.name));
+                    cx.report(
+                        "E4002",
+                        format!("required member {} missing in the construction", m.name),
+                    );
                 }
             }
             return tyv(Some(expected.clone()));
@@ -1385,7 +1834,10 @@ pub fn check_expr(cx: &Ctx, e: &Rc<Expr>, expected: Option<&RT>) -> Ty {
         }
         (Expr::Obj(_), _) => {
             infer(cx, e);
-            cx.report("E4001", format!("object literal where {} is expected", tag(expected)));
+            cx.report(
+                "E4001",
+                format!("object literal where {} is expected", tag(expected)),
+            );
             return tyv(Some(expected.clone()));
         }
         (Expr::Arr(items), RTk::Arr { elem, .. }) => {
@@ -1408,7 +1860,10 @@ pub fn check_expr(cx: &Ctx, e: &Rc<Expr>, expected: Option<&RT>) -> Ty {
     let t = require_val(cx, e, infer(cx, e), "as a value");
     if let Some(rt) = &t.rt {
         if !subsumes(&cx.env, rt, expected) && !deferrable(rt, expected) {
-            cx.report("E4001", "expression type does not satisfy the expected type".into());
+            cx.report(
+                "E4001",
+                "expression type does not satisfy the expected type".into(),
+            );
         }
     }
     t
@@ -1419,7 +1874,9 @@ pub fn check_expr(cx: &Ctx, e: &Rc<Expr>, expected: Option<&RT>) -> Ty {
 /// rejected here — the corpus (guide, benchmarks) relies on this split;
 /// kind-level mismatches still fail statically
 fn deferrable(s: &RT, t: &RT) -> bool {
-    let Some(k) = num_kind(Some(s)) else { return false };
+    let Some(k) = num_kind(Some(s)) else {
+        return false;
+    };
     match &t.k {
         RTk::Pattern { .. } => k == "string",
         RTk::Range { base, .. } => &k == base,

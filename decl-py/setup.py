@@ -4,6 +4,7 @@ synced from ../tree-sitter-decl/src by `npm run build` in ../decl-ts;
 inside the repository they are copied from the grammar directly when
 that sync has not run (so `pip install -e python` works from a fresh
 checkout)."""
+
 import shutil
 from pathlib import Path
 

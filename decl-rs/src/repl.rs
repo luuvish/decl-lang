@@ -5,45 +5,136 @@
 //! root for root. Everything it prints goes to standard output; a scripted
 //! session (`--script`) prints the transcript the terminal would show, so
 //! the three implementations can be diffed.
-use crate::session::{fmt_diag, parse_decl, parse_expr, pretty_json, BindSource, EditKind, Mode, Op, Session, SessionError};
+use crate::session::{
+    fmt_diag, parse_decl, parse_expr, pretty_json, BindSource, EditKind, Mode, Op, Session,
+    SessionError,
+};
 use regex::Regex;
 use std::io::{BufRead, Read, Write};
 
 pub const COMMANDS: &[(&str, &str, &str)] = &[
     // the universe
-    (":load file.decl", "open the universe from an entry module (a new session)", "universe"),
-    (":reload", "re-read every module of the universe from disk", "universe"),
-    (":roots", "the roots of the universe and of the session", "universe"),
+    (
+        ":load file.decl",
+        "open the universe from an entry module (a new session)",
+        "universe",
+    ),
+    (
+        ":reload",
+        "re-read every module of the universe from disk",
+        "universe",
+    ),
+    (
+        ":roots",
+        "the roots of the universe and of the session",
+        "universe",
+    ),
     // documents
-    (":bind name=doc.json", "bind a JSON file to an input", "documents"),
-    (":bind name { … }", "bind an inline JSON document", "documents"),
-    (":bind name = expr", "bind the value of an expression as the document", "documents"),
+    (
+        ":bind name=doc.json",
+        "bind a JSON file to an input",
+        "documents",
+    ),
+    (
+        ":bind name { … }",
+        "bind an inline JSON document",
+        "documents",
+    ),
+    (
+        ":bind name = expr",
+        "bind the value of an expression as the document",
+        "documents",
+    ),
     (":unbind name", "drop the binding", "documents"),
-    (":create path = expr", "add a member, entry, or element at a path of a document", "documents"),
-    (":update path = expr", "replace the value at a path of a document", "documents"),
-    (":remove path", "remove the value at a path of a document", "documents"),
-    (":diff name", "the document against what it started from", "documents"),
-    (":save name=file", "write the document of a root to a file", "documents"),
+    (
+        ":create path = expr",
+        "add a member, entry, or element at a path of a document",
+        "documents",
+    ),
+    (
+        ":update path = expr",
+        "replace the value at a path of a document",
+        "documents",
+    ),
+    (
+        ":remove path",
+        "remove the value at a path of a document",
+        "documents",
+    ),
+    (
+        ":diff name",
+        "the document against what it started from",
+        "documents",
+    ),
+    (
+        ":save name=file",
+        "write the document of a root to a file",
+        "documents",
+    ),
     // session declarations
     (":drop name", "remove a session declaration", "declarations"),
-    (":write file.decl", "write the scratch module to a file", "declarations"),
-    (":session", "the session's declarations and documents", "declarations"),
-    (":reset", "drop every binding, edit, and declaration", "declarations"),
+    (
+        ":write file.decl",
+        "write the scratch module to a file",
+        "declarations",
+    ),
+    (
+        ":session",
+        "the session's declarations and documents",
+        "declarations",
+    ),
+    (
+        ":reset",
+        "drop every binding, edit, and declaration",
+        "declarations",
+    ),
     // evaluation and validation
     (":check", "static diagnostics of every module", "evaluation"),
-    (":evaluate [root…]", "full evaluation: the documents of the roots", "evaluation"),
-    (":validate [root…]", "full validation: every diagnostic, then a verdict per root", "evaluation"),
-    (":fmt", "the scratch module, canonically formatted", "evaluation"),
+    (
+        ":evaluate [root…]",
+        "full evaluation: the documents of the roots",
+        "evaluation",
+    ),
+    (
+        ":validate [root…]",
+        "full validation: every diagnostic, then a verdict per root",
+        "evaluation",
+    ),
+    (
+        ":fmt",
+        "the scratch module, canonically formatted",
+        "evaluation",
+    ),
     // inspection
-    (":type expr", "the static type of an expression", "inspection"),
-    (":doc name", "a declaration and its documentation", "inspection"),
+    (
+        ":type expr",
+        "the static type of an expression",
+        "inspection",
+    ),
+    (
+        ":doc name",
+        "a declaration and its documentation",
+        "inspection",
+    ),
     (":path expr", "the canonical path of a place", "inspection"),
-    (":trace path", "the derivation of a place, or its root cause", "inspection"),
-    (":complete text", "the completions offered at the end of the text", "inspection"),
+    (
+        ":trace path",
+        "the derivation of a place, or its root cause",
+        "inspection",
+    ),
+    (
+        ":complete text",
+        "the completions offered at the end of the text",
+        "inspection",
+    ),
     // history
     (":undo [n]", "step the log back", "history"),
     (":redo [n]", "step forward again", "history"),
-    (":history [file]", "the log, or write it as a session file", "history"),
+    (
+        ":history [file]",
+        "the log, or write it as a session file",
+        "history",
+    ),
     // the session
     (":time", "wall time of the last evaluation", "session"),
     (":set pretty|compact", "value printing", "session"),
@@ -62,10 +153,17 @@ fn command_names() -> Vec<&'static str> {
     out
 }
 
-const KEYWORDS: &[&str] = &["if", "then", "else", "for", "in", "match", "with", "matches", "true", "false", "null", "export"];
+const KEYWORDS: &[&str] = &[
+    "if", "then", "else", "for", "in", "match", "with", "matches", "true", "false", "null",
+    "export",
+];
 
 fn is_decl_head(t: &str) -> bool {
-    Regex::new(r"^\s*(?:export\s+)?(type|const|func|output|input|diagnostic|dimension|unit|import)\b").unwrap().is_match(t)
+    Regex::new(
+        r"^\s*(?:export\s+)?(type|const|func|output|input|diagnostic|dimension|unit|import)\b",
+    )
+    .unwrap()
+    .is_match(t)
 }
 fn is_ident(s: &str) -> bool {
     Regex::new(r"^[A-Za-z_][A-Za-z0-9_]*$").unwrap().is_match(s)
@@ -136,9 +234,14 @@ pub fn needs_more(text: &str) -> bool {
     if text.trim_start().starts_with(':') {
         return false; // a command: only an open bracket continues it
     }
-    let no_comment = Regex::new(r"//[^\n]*$").unwrap().replace(text, "").to_string();
+    let no_comment = Regex::new(r"//[^\n]*$")
+        .unwrap()
+        .replace(text, "")
+        .to_string();
     let tail = no_comment.trim_end();
-    Regex::new(r"(?:[+\-*/%<>=!&|?:,]|\bthen|\belse|\bin|\bwith|=>)$").unwrap().is_match(tail)
+    Regex::new(r"(?:[+\-*/%<>=!&|?:,]|\bthen|\belse|\bin|\bwith|=>)$")
+        .unwrap()
+        .is_match(tail)
 }
 
 pub struct Repl {
@@ -152,7 +255,14 @@ pub struct Repl {
 
 impl Repl {
     pub fn new(out: Box<dyn Fn(&str)>, entry: Option<&str>) -> Repl {
-        Repl { session: Session::new(entry), compact: false, errors: 0, quit_requested: false, out, buffer: vec![] }
+        Repl {
+            session: Session::new(entry),
+            compact: false,
+            errors: 0,
+            quit_requested: false,
+            out,
+            buffer: vec![],
+        }
     }
 
     /// feed one line; returns true when the input is complete and was handled
@@ -201,7 +311,9 @@ impl Repl {
             self.command(t)
         } else if is_decl_head(t) {
             self.add_declaration(t)
-        } else if let Some((name, ty, expr)) = output_head(t).filter(|(n, _, _)| !KEYWORDS.contains(&n.as_str())) {
+        } else if let Some((name, ty, expr)) =
+            output_head(t).filter(|(n, _, _)| !KEYWORDS.contains(&n.as_str()))
+        {
             self.session_output(&name, ty, &expr)
         } else {
             self.expression(t)
@@ -220,7 +332,10 @@ impl Repl {
         match (&r.error, &r.value) {
             (Some((code, message)), _) => {
                 if !message.is_empty() {
-                    self.out(&format!("error{}: {message}", code.as_ref().map(|c| format!(" [{c}]")).unwrap_or_default()));
+                    self.out(&format!(
+                        "error{}: {message}",
+                        code.as_ref().map(|c| format!(" [{c}]")).unwrap_or_default()
+                    ));
                 }
                 self.out("(invalid)");
             }
@@ -232,29 +347,62 @@ impl Repl {
     }
     fn add_declaration(&mut self, text: &str) -> Result<(), SessionError> {
         let (_, name) = parse_decl(text)?;
-        self.session.apply(Op::Declare { name, text: text.trim().to_string() })
+        self.session.apply(Op::Declare {
+            name,
+            text: text.trim().to_string(),
+        })
     }
-    fn session_output(&mut self, name: &str, ty: Option<String>, expr: &str) -> Result<(), SessionError> {
+    fn session_output(
+        &mut self,
+        name: &str,
+        ty: Option<String>,
+        expr: &str,
+    ) -> Result<(), SessionError> {
         parse_expr(expr)?;
         if let Some(t) = &ty {
             parse_decl(&format!("output {name}: {t} = 0"))?;
         }
-        self.session.apply(Op::Output { name: name.to_string(), ty, expr: expr.to_string() })
+        self.session.apply(Op::Output {
+            name: name.to_string(),
+            ty,
+            expr: expr.to_string(),
+        })
     }
 
     fn command(&mut self, t: &str) -> Result<(), SessionError> {
         let sp = t.find(char::is_whitespace);
-        let cmd = match sp { Some(i) => &t[..i], None => t };
-        let rest = match sp { Some(i) => t[i + 1..].trim(), None => "" }.to_string();
+        let cmd = match sp {
+            Some(i) => &t[..i],
+            None => t,
+        };
+        let rest = match sp {
+            Some(i) => t[i + 1..].trim(),
+            None => "",
+        }
+        .to_string();
         let cmd = cmd.to_string();
         let no_args = |rest: &str| -> Result<(), SessionError> {
-            if !rest.is_empty() { Err(SessionError(format!("{cmd} takes no argument"))) } else { Ok(()) }
+            if !rest.is_empty() {
+                Err(SessionError(format!("{cmd} takes no argument")))
+            } else {
+                Ok(())
+            }
         };
         let one_name = |rest: &str| -> Result<String, SessionError> {
-            if !is_ident(rest) { Err(SessionError(format!("{cmd} expects a name"))) } else { Ok(rest.to_string()) }
+            if !is_ident(rest) {
+                Err(SessionError(format!("{cmd} expects a name")))
+            } else {
+                Ok(rest.to_string())
+            }
         };
         let entry_abs = self.session.entry_abs().display().to_string();
-        let in_file = |file: &str| -> Option<String> { if file == entry_abs { None } else { Some(file.to_string()) } };
+        let in_file = |file: &str| -> Option<String> {
+            if file == entry_abs {
+                None
+            } else {
+                Some(file.to_string())
+            }
+        };
         match cmd.as_str() {
             ":load" => {
                 if rest.is_empty() {
@@ -279,11 +427,25 @@ impl Repl {
                     let status = if r.session {
                         "session".to_string()
                     } else if r.kind == "output" {
-                        if r.binding == "detached" { "detached".into() } else if r.exported { "exported".into() } else { "local".into() }
+                        if r.binding == "detached" {
+                            "detached".into()
+                        } else if r.exported {
+                            "exported".into()
+                        } else {
+                            "local".into()
+                        }
                     } else {
                         r.binding.clone()
                     };
-                    let line = format!("{:<7} {:<16} {:<12} {:<16} {}{}", r.kind, r.name, status, r.module, r.detail, if r.edited { " (edited)" } else { "" });
+                    let line = format!(
+                        "{:<7} {:<16} {:<12} {:<16} {}{}",
+                        r.kind,
+                        r.name,
+                        status,
+                        r.module,
+                        r.detail,
+                        if r.edited { " (edited)" } else { "" }
+                    );
                     self.out(line.trim_end());
                 }
                 Ok(())
@@ -298,18 +460,32 @@ impl Repl {
                     if !starts_bracket && !after_name.starts_with(char::is_whitespace) {
                         // name=file (no spaces around =)
                         let file = val.trim().to_string();
-                        let text = std::fs::read_to_string(&file).map_err(|_| SessionError(format!("cannot read {file}")))?;
-                        return self.session.apply(Op::Bind { name, src: BindSource::File { file, text } });
+                        let text = std::fs::read_to_string(&file)
+                            .map_err(|_| SessionError(format!("cannot read {file}")))?;
+                        return self.session.apply(Op::Bind {
+                            name,
+                            src: BindSource::File { file, text },
+                        });
                     }
-                    return self.session.apply(Op::Bind { name, src: BindSource::Expr { text: val.trim().to_string() } });
+                    return self.session.apply(Op::Bind {
+                        name,
+                        src: BindSource::Expr {
+                            text: val.trim().to_string(),
+                        },
+                    });
                 }
                 let inline_re = Regex::new(r"^([A-Za-z_][A-Za-z0-9_]*)\s+([\[{][\s\S]*)$").unwrap();
                 if let Some(m) = inline_re.captures(&rest) {
                     let name = m.get(1).unwrap().as_str().to_string();
                     let text = m.get(2).unwrap().as_str().to_string();
-                    return self.session.apply(Op::Bind { name, src: BindSource::Inline { text } });
+                    return self.session.apply(Op::Bind {
+                        name,
+                        src: BindSource::Inline { text },
+                    });
                 }
-                Err(SessionError(":bind expects name=doc.json, name { … }, or name = expr".into()))
+                Err(SessionError(
+                    ":bind expects name=doc.json, name { … }, or name = expr".into(),
+                ))
             }
             ":unbind" => {
                 let name = one_name(&rest)?;
@@ -317,15 +493,29 @@ impl Repl {
             }
             ":create" | ":update" => {
                 let re = Regex::new(r"^(\S+)\s*=\s*([\s\S]+)$").unwrap();
-                let Some(m) = re.captures(&rest) else { return Err(SessionError(format!("{cmd} expects path = expr"))) };
-                let kind = if cmd == ":create" { EditKind::Create } else { EditKind::Update };
-                self.session.apply(Op::Edit { kind, path: m.get(1).unwrap().as_str().to_string(), expr: Some(m.get(2).unwrap().as_str().trim().to_string()) })
+                let Some(m) = re.captures(&rest) else {
+                    return Err(SessionError(format!("{cmd} expects path = expr")));
+                };
+                let kind = if cmd == ":create" {
+                    EditKind::Create
+                } else {
+                    EditKind::Update
+                };
+                self.session.apply(Op::Edit {
+                    kind,
+                    path: m.get(1).unwrap().as_str().to_string(),
+                    expr: Some(m.get(2).unwrap().as_str().trim().to_string()),
+                })
             }
             ":remove" => {
                 if rest.is_empty() || rest.contains(char::is_whitespace) {
                     return Err(SessionError(":remove expects a path".into()));
                 }
-                self.session.apply(Op::Edit { kind: EditKind::Remove, path: rest.clone(), expr: None })
+                self.session.apply(Op::Edit {
+                    kind: EditKind::Remove,
+                    path: rest.clone(),
+                    expr: None,
+                })
             }
             ":diff" => {
                 let name = one_name(&rest)?;
@@ -336,8 +526,11 @@ impl Repl {
             }
             ":save" => {
                 let re = Regex::new(r"^([A-Za-z_][A-Za-z0-9_]*)=(\S+)$").unwrap();
-                let Some(m) = re.captures(&rest) else { return Err(SessionError(":save expects name=file".into())) };
-                self.session.save(m.get(1).unwrap().as_str(), m.get(2).unwrap().as_str())
+                let Some(m) = re.captures(&rest) else {
+                    return Err(SessionError(":save expects name=file".into()));
+                };
+                self.session
+                    .save(m.get(1).unwrap().as_str(), m.get(2).unwrap().as_str())
             }
             ":drop" => {
                 let name = one_name(&rest)?;
@@ -376,7 +569,16 @@ impl Repl {
                 Ok(())
             }
             ":evaluate" => {
-                let names: Vec<String> = if rest.is_empty() { vec![] } else { Regex::new(r"[\s,]+").unwrap().split(&rest).filter(|s| !s.is_empty()).map(|s| s.to_string()).collect() };
+                let names: Vec<String> = if rest.is_empty() {
+                    vec![]
+                } else {
+                    Regex::new(r"[\s,]+")
+                        .unwrap()
+                        .split(&rest)
+                        .filter(|s| !s.is_empty())
+                        .map(|s| s.to_string())
+                        .collect()
+                };
                 let (run, docs, exported) = self.session.evaluate(&names)?;
                 for d in &run.load_diags {
                     self.diag(d, None);
@@ -402,7 +604,17 @@ impl Repl {
                         self.out("(invalid)");
                         return Ok(());
                     }
-                    let text = format!("{{{}}}", docs.iter().map(|(n, j)| format!("{}:{}", crate::semantics::json_str(n), j.clone().unwrap_or_default())).collect::<Vec<_>>().join(","));
+                    let text = format!(
+                        "{{{}}}",
+                        docs.iter()
+                            .map(|(n, j)| format!(
+                                "{}:{}",
+                                crate::semantics::json_str(n),
+                                j.clone().unwrap_or_default()
+                            ))
+                            .collect::<Vec<_>>()
+                            .join(",")
+                    );
                     self.value(&text);
                     return Ok(());
                 }
@@ -419,7 +631,16 @@ impl Repl {
                 Ok(())
             }
             ":validate" => {
-                let names: Vec<String> = if rest.is_empty() { vec![] } else { Regex::new(r"[\s,]+").unwrap().split(&rest).filter(|s| !s.is_empty()).map(|s| s.to_string()).collect() };
+                let names: Vec<String> = if rest.is_empty() {
+                    vec![]
+                } else {
+                    Regex::new(r"[\s,]+")
+                        .unwrap()
+                        .split(&rest)
+                        .filter(|s| !s.is_empty())
+                        .map(|s| s.to_string())
+                        .collect()
+                };
                 let (run, verdicts, diags) = self.session.validate(&names)?;
                 for d in &run.load_diags {
                     self.diag(d, None);
@@ -445,7 +666,21 @@ impl Repl {
                     if *errors == 0 && *warnings == 0 {
                         self.out(&format!("{name}: ok"));
                     } else {
-                        let parts: Vec<String> = [if *errors > 0 { n(*errors, "error") } else { String::new() }, if *warnings > 0 { n(*warnings, "warning") } else { String::new() }].into_iter().filter(|s| !s.is_empty()).collect();
+                        let parts: Vec<String> = [
+                            if *errors > 0 {
+                                n(*errors, "error")
+                            } else {
+                                String::new()
+                            },
+                            if *warnings > 0 {
+                                n(*warnings, "warning")
+                            } else {
+                                String::new()
+                            },
+                        ]
+                        .into_iter()
+                        .filter(|s| !s.is_empty())
+                        .collect();
                         self.out(&format!("{name}: {}", parts.join(", ")));
                     }
                 }
@@ -469,7 +704,10 @@ impl Repl {
                 for d in &diags {
                     self.diag(d, None);
                 }
-                self.out(&format!("{ty}{}", if maybe_absent { "  (maybe absent)" } else { "" }));
+                self.out(&format!(
+                    "{ty}{}",
+                    if maybe_absent { "  (maybe absent)" } else { "" }
+                ));
                 Ok(())
             }
             ":doc" => {
@@ -510,18 +748,33 @@ impl Repl {
                 Ok(())
             }
             ":undo" | ":redo" => {
-                let n = if rest.is_empty() { Some(1) } else { js_parse_int(&rest) };
-                let Some(n) = n.filter(|n| *n >= 1) else { return Err(SessionError(format!("{cmd} expects a count"))) };
-                let k = if cmd == ":undo" { self.session.undo(n as usize) } else { self.session.redo(n as usize) };
+                let n = if rest.is_empty() {
+                    Some(1)
+                } else {
+                    js_parse_int(&rest)
+                };
+                let Some(n) = n.filter(|n| *n >= 1) else {
+                    return Err(SessionError(format!("{cmd} expects a count")));
+                };
+                let k = if cmd == ":undo" {
+                    self.session.undo(n as usize)
+                } else {
+                    self.session.redo(n as usize)
+                };
                 if k == 0 {
-                    self.out(if cmd == ":undo" { "nothing to undo" } else { "nothing to redo" });
+                    self.out(if cmd == ":undo" {
+                        "nothing to undo"
+                    } else {
+                        "nothing to redo"
+                    });
                 }
                 Ok(())
             }
             ":history" => {
                 if !rest.is_empty() {
                     let text = format!("{}\n", self.session.script_lines().join("\n"));
-                    return std::fs::write(&rest, text).map_err(|_| SessionError(format!("cannot write {rest}")));
+                    return std::fs::write(&rest, text)
+                        .map_err(|_| SessionError(format!("cannot write {rest}")));
                 }
                 for l in self.session.history_lines() {
                     self.out(&l);
@@ -551,8 +804,23 @@ impl Repl {
                 Ok(())
             }
             ":help" => {
-                let want = if rest.is_empty() { None } else { Some(if rest.starts_with(':') { rest.clone() } else { format!(":{rest}") }) };
-                let rows: Vec<&(&str, &str, &str)> = COMMANDS.iter().filter(|c| want.as_ref().map(|w| c.0.split(' ').next() == Some(w.as_str())).unwrap_or(true)).collect();
+                let want = if rest.is_empty() {
+                    None
+                } else {
+                    Some(if rest.starts_with(':') {
+                        rest.clone()
+                    } else {
+                        format!(":{rest}")
+                    })
+                };
+                let rows: Vec<&(&str, &str, &str)> = COMMANDS
+                    .iter()
+                    .filter(|c| {
+                        want.as_ref()
+                            .map(|w| c.0.split(' ').next() == Some(w.as_str()))
+                            .unwrap_or(true)
+                    })
+                    .collect();
                 if rows.is_empty() {
                     return Err(SessionError(format!("unknown command {rest}")));
                 }
@@ -673,13 +941,17 @@ pub fn run_repl(args: Vec<String>) -> i32 {
     // ~/.decl_history) and completion on Tab (docs/tooling/02_repl.md §2, §7)
     let repl = std::rc::Rc::new(std::cell::RefCell::new(repl));
     // completion lists the candidates (the shell's way), not cycling through them
-    let config = rustyline::Config::builder().completion_type(rustyline::CompletionType::List).build();
-    let mut rl: rustyline::Editor<DeclHelper, rustyline::history::DefaultHistory> = match rustyline::Editor::with_config(config) {
-        Ok(e) => e,
-        Err(_) => return run_plain(repl),
-    };
+    let config = rustyline::Config::builder()
+        .completion_type(rustyline::CompletionType::List)
+        .build();
+    let mut rl: rustyline::Editor<DeclHelper, rustyline::history::DefaultHistory> =
+        match rustyline::Editor::with_config(config) {
+            Ok(e) => e,
+            Err(_) => return run_plain(repl),
+        };
     rl.set_helper(Some(DeclHelper { repl: repl.clone() }));
-    let history = std::env::var_os("HOME").map(|h| std::path::PathBuf::from(h).join(".decl_history"));
+    let history =
+        std::env::var_os("HOME").map(|h| std::path::PathBuf::from(h).join(".decl_history"));
     if let Some(h) = &history {
         let _ = rl.load_history(h);
     }
@@ -732,16 +1004,39 @@ struct DeclHelper {
 }
 impl rustyline::completion::Completer for DeclHelper {
     type Candidate = rustyline::completion::Pair;
-    fn complete(&self, line: &str, pos: usize, _ctx: &rustyline::Context<'_>) -> rustyline::Result<(usize, Vec<Self::Candidate>)> {
+    fn complete(
+        &self,
+        line: &str,
+        pos: usize,
+        _ctx: &rustyline::Context<'_>,
+    ) -> rustyline::Result<(usize, Vec<Self::Candidate>)> {
         let head = &line[..pos];
-        let candidates: Vec<String> = self.repl.borrow_mut().session.complete(head, &command_names())
-            .into_iter().map(|c| c.split("  ").next().unwrap_or("").to_string()).collect();
-        let tok_start = head.rfind(|c: char| !(c.is_alphanumeric() || "_$:.[]\"".contains(c))).map(|i| i + 1).unwrap_or(0);
+        let candidates: Vec<String> = self
+            .repl
+            .borrow_mut()
+            .session
+            .complete(head, &command_names())
+            .into_iter()
+            .map(|c| c.split("  ").next().unwrap_or("").to_string())
+            .collect();
+        let tok_start = head
+            .rfind(|c: char| !(c.is_alphanumeric() || "_$:.[]\"".contains(c)))
+            .map(|i| i + 1)
+            .unwrap_or(0);
         let tok = &head[tok_start..];
-        let tail_start = tok.rfind('.').map(|i| tok_start + i + 1).unwrap_or(tok_start);
+        let tail_start = tok
+            .rfind('.')
+            .map(|i| tok_start + i + 1)
+            .unwrap_or(tok_start);
         let tail = &head[tail_start..];
-        let pairs = candidates.into_iter().filter(|c| c.starts_with(tail))
-            .map(|c| rustyline::completion::Pair { display: c.clone(), replacement: c }).collect();
+        let pairs = candidates
+            .into_iter()
+            .filter(|c| c.starts_with(tail))
+            .map(|c| rustyline::completion::Pair {
+                display: c.clone(),
+                replacement: c,
+            })
+            .collect();
         Ok((tail_start, pairs))
     }
 }

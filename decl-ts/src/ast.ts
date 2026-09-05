@@ -23,7 +23,7 @@ type TypeAstBody =
 export type MemberAst = MemberAstBody & { loc?: Loc };
 type MemberAstBody =
   | { m: 'value'; name: string; opt: boolean; type: TypeAst; dflt?: Expr }
-  | { m: 'derived'; name: string; type?: TypeAst; expr: Expr; hidden?: boolean }   // hidden: `x$ = e` (D34)
+  | { m: 'derived'; name: string; type?: TypeAst; expr: Expr; hidden?: boolean } // hidden: `x$ = e` (D34)
   | { m: 'context'; variable: string; type: TypeAst }
   | { m: 'assert'; name: string; cond: Expr; tail?: ElseTail }
   | { m: 'when'; cond: Expr; body: MemberAst[] };
@@ -60,12 +60,30 @@ type ExprBody =
 
 export type Decl = DeclBody & { exported?: boolean; loc?: Loc };
 type DeclBody =
-  | { d: 'type'; name: string; params?: { name: string; type?: TypeAst }[]; type: TypeAst; tail?: ElseTail }
+  | {
+      d: 'type';
+      name: string;
+      params?: { name: string; type?: TypeAst }[];
+      type: TypeAst;
+      tail?: ElseTail;
+    }
   | { d: 'const'; name: string; type?: TypeAst; expr: Expr }
-  | { d: 'func'; name: string; params: { name: string; type: TypeAst }[]; ret?: TypeAst; body: Expr }
+  | {
+      d: 'func';
+      name: string;
+      params: { name: string; type: TypeAst }[];
+      ret?: TypeAst;
+      body: Expr;
+    }
   | { d: 'output'; name: string; type: TypeAst; expr: Expr }
   | { d: 'input'; name: string; type: TypeAst; fallback?: Expr }
-  | { d: 'diagnostic'; name: string; params: { name: string; type: TypeAst }[]; severity: string; template: TemplateParts }
+  | {
+      d: 'diagnostic';
+      name: string;
+      params: { name: string; type: TypeAst }[];
+      severity: string;
+      template: TemplateParts;
+    }
   | { d: 'dimension'; name: string; terms?: { name: string; exp: number }[] }
   | { d: 'unit'; name: string; dim?: string; factor?: Expr; base?: string }
   | { d: 'import'; from: string; names?: { name: string; as?: string }[]; ns?: string }

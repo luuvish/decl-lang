@@ -36,12 +36,14 @@ decl-lsp                                 # stdio language server for editors
 ```python
 import decl
 
-docs = decl.evaluate("site.decl")                       # {"site": {...}} — the exported outputs, by name
+docs = decl.evaluate("site.decl")  # {"site": {...}} — the exported outputs, by name
 site = decl.evaluate("site.decl", outputs=["site"])["site"]
 done = decl.evaluate("cfg.decl", inputs={"deployed": "doc.json"}, outputs=["deployed"])["deployed"]
-problems = decl.check("schema.decl")                    # [] when clean
-report = decl.validate("cfg.decl", inputs={"deployed": {"host": "h"}})   # a document may be a value, not a file
-text = decl.format_source("const x=1+2\n")             # 'const x = 1 + 2\n'
+problems = decl.check("schema.decl")  # [] when clean
+report = decl.validate(
+    "cfg.decl", inputs={"deployed": {"host": "h"}}
+)  # a document may be a value, not a file
+text = decl.format_source("const x=1+2\n")  # 'const x = 1 + 2\n'
 ```
 
 The functions are the `decl` command line in its own vocabulary:

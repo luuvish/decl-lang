@@ -2,17 +2,56 @@
 the reference implementation's engine.ts. Semantics are the spec's:
 lazy slots with cycle detection, taint / root-cause diagnostics,
 $referrers universe ordering, canonical JSON output."""
+
 from __future__ import annotations
 
+import contextlib
 import math
-import re
-from typing import Any, Optional
+from typing import Any
 
 from .semantics import (
-    ABSENT, ArrV, Closure, DeferSig, Env, EvalErr, JObj, MapV, NatFn, NsRef, Pattern,
-    PreArr, PreObj, PreVal, Quantity, RangeV, RecInst, Ref, Scope, Segs, Slot, StdRef, Taint,
-    cmp_path, compile_pattern, is_bool, is_float, is_int, is_str, js_num_str, json_str, key_of_vec,
-    mentions_referrers, parse_path, path_str, pattern_error, value_eq, vec_combine, vec_of_key, Key, seg_text, dot_spellable,
+    ABSENT,
+    ArrV,
+    Closure,
+    DeferSig,
+    Env,
+    EvalErr,
+    JObj,
+    Key,
+    MapV,
+    NatFn,
+    NsRef,
+    Pattern,
+    PreArr,
+    PreObj,
+    PreVal,
+    Quantity,
+    RangeV,
+    RecInst,
+    Ref,
+    Scope,
+    Segs,
+    Slot,
+    StdRef,
+    Taint,
+    cmp_path,
+    compile_pattern,
+    dot_spellable,
+    is_bool,
+    is_float,
+    is_int,
+    is_str,
+    js_num_str,
+    json_str,
+    key_of_vec,
+    mentions_referrers,
+    parse_path,
+    path_str,
+    pattern_error,
+    seg_text,
+    value_eq,
+    vec_combine,
+    vec_of_key,
 )
 
 
@@ -23,19 +62,20 @@ def _is_num(v: Any) -> bool:
 class Engine:
     def __init__(self, env: Env) -> None:
         self.env = env
-        self.deferred_slots: list = []
+        self.deferred_slots: list[Any] = []
         self.no_reg = 0
         self.phase = 1
-        self.failed_inputs: set = set()
-        self.deferred_roots: list = []   # (name, raw, rt, sc, via_expr): roots that deferred through $referrers in phase 1
+        self.failed_inputs: set[Any] = set()
+        # (name, raw, rt, sc, via_expr): roots that deferred through $referrers in phase 1
+        self.deferred_roots: list[Any] = []
         # ---- dependency tracking (Phase 6 foundations; docs/tooling/02_repl.md §6) ----
         # every evaluation step — a slot being computed (`path.member`), a root
         # being bound (`root:name`), an instance's asserts (`assert:path`) —
         # records what it read: slots, roots, and `$referrers` queries by type
         # (`referrers:Type`); diagnostics carry the step that produced them
-        self.reads: dict = {}
-        self.computing: list = []
-        self.slots_by_key: dict = {}
+        self.reads: dict[str, Any] = {}
+        self.computing: list[Any] = []
+        self.slots_by_key: dict[str, Any] = {}
         env.tagger = lambda: self.computing[-1] if self.computing else None
         env.const_eval = lambda name: self.force_const_in(env, name, "")
         env.expr_eval = lambda e: self.ev(e, Scope(None, {}, ""))
@@ -48,7 +88,7 @@ class Engine:
         if self.computing:
             self.reads[self.computing[-1]].add(read)
 
-    def step(self, key: str, f):
+    def step(self, key: str, f: Any) -> Any:
         self.computing.append(key)
         self.reads[key] = set()
         try:
@@ -57,7 +97,7 @@ class Engine:
             self.computing.pop()
 
     # ---------- expression evaluation ----------
-    def ev(self, e: dict, sc: Scope) -> Any:
+    def ev(self, e: dict[str, Any], sc: Scope) -> Any:
         k = e["e"]
         if k == "lit":
             return e["v"]
@@ -67,14 +107,14 @@ class Engine:
             try:
                 u = self.env.unit_info(e["unit"])
             except RuntimeError as err:
-                raise EvalErr(str(err))
+                raise EvalErr(str(err)) from err
             return Quantity(u["key"], e["num"] * u["to_base"])
         if k == "paren":
             return self.ev(e["x"], sc)
         if k == "mapcomp":
-            entries: list = []
+            entries: list[Any] = []
 
-            def rec(ci: int, locals_: dict) -> None:
+            def rec(ci: int, locals_: dict[str, Any]) -> None:
                 if ci == len(e["clauses"]):
                     key = self.ev(e["key"], sc.with_locals(locals_))
                     if not is_str(key):
@@ -89,6 +129,7 @@ class Engine:
                     l2[cl["v"]] = el
                     if all(self.truthy(self.ev(f, sc.with_locals(l2))) for f in cl["filters"]):
                         rec(ci + 1, l2)
+
             rec(0, sc.locals)
             return PreObj(entries)
         if k == "template":
@@ -136,7 +177,11 @@ class Engine:
                 # the key or index under which $this sits in its parent's
                 # collection: the last path segment, present only when the
                 # instance is a collection element (not a direct member)
-                if inst is None or inst.parent is None or len(inst.path) < len(inst.parent.path) + 2:
+                if (
+                    inst is None
+                    or inst.parent is None
+                    or len(inst.path) < len(inst.parent.path) + 2
+                ):
                     raise EvalErr("$key: the instance is not a collection element", "E4090")
                 return seg_text(inst.path[-1])
             if n == "$path":
@@ -151,9 +196,9 @@ class Engine:
         if k == "arr":
             return PreArr([(it["spread"], PreVal(it["expr"], sc)) for it in e["items"]])
         if k == "comp":
-            items: list = []
+            items: list[Any] = []
 
-            def rec2(ci: int, locals_: dict) -> None:
+            def rec2(ci: int, locals_: dict[str, Any]) -> None:
                 if ci == len(e["clauses"]):
                     items.append((False, PreVal(e["head"], sc.with_locals(locals_))))
                     return
@@ -163,6 +208,7 @@ class Engine:
                     l2[cl["v"]] = el
                     if all(self.truthy(self.ev(f, sc.with_locals(l2))) for f in cl["filters"]):
                         rec2(ci + 1, l2)
+
             rec2(0, sc.locals)
             return PreArr(items)
         if k == "if":
@@ -170,10 +216,11 @@ class Engine:
         if k == "match":
             subj = self.deref(self.ev(e["subject"], sc))
 
-            def run(arm: dict) -> Any:
+            def run(arm: dict[str, Any]) -> Any:
                 l2 = dict(sc.locals)
                 l2[arm["v"]] = subj
                 return self.ev(arm["body"], sc.with_locals(l2))
+
             catch_all = None
             for arm in e["arms"]:
                 if arm.get("type") is None:
@@ -203,8 +250,11 @@ class Engine:
         if k == "bin":
             if e["op"] == "|>":
                 r = e["r"]
-                call = {"e": "call", "fn": r["fn"], "args": [e["l"]] + r["args"]} if r["e"] == "call" \
+                call = (
+                    {"e": "call", "fn": r["fn"], "args": [e["l"]] + r["args"]}
+                    if r["e"] == "call"
                     else {"e": "call", "fn": r, "args": [e["l"]]}
+                )
                 return self.ev(call, sc)
             return self.binop(e["op"], e["l"], e["r"], sc)
         if k == "member":
@@ -223,7 +273,7 @@ class Engine:
                     raise EvalErr(f"index {n} out of bounds", "E5005")
                 return x.items[n]
             if isinstance(x, MapV):
-                return x.entries[i] if i in x.entries else ABSENT
+                return x.entries.get(i, ABSENT)
             if isinstance(x, RecInst):
                 return self.access(x, i)
             raise EvalErr("index on non-collection")
@@ -256,8 +306,12 @@ class Engine:
                     continue
                 entries.append((n, self.force_slot(base, n)))
             for m in base.rt["members"]:
-                if m["kind"] == "dflt" and not any(k_ == m["name"] for k_, _ in entries) \
-                        and base.slots.get(m["name"]) is not None and base.slots[m["name"]].state != "absent":
+                if (
+                    m["kind"] == "dflt"
+                    and not any(k_ == m["name"] for k_, _ in entries)
+                    and base.slots.get(m["name"]) is not None
+                    and base.slots[m["name"]].state != "absent"
+                ):
                     entries.append((m["name"], self.force_slot(base, m["name"])))
             for pk, pv in patch.entries:
                 idx = next((j for j, (n, _) in enumerate(entries) if n == pk), -1)
@@ -268,8 +322,9 @@ class Engine:
             return PreObj(entries)
         raise EvalErr(f"ev: unhandled {k}")
 
-    def member_of(self, v: Any, rt: dict, sc: Scope) -> bool:
+    def member_of(self, v: Any, rt: dict[str, Any], sc: Scope) -> bool:
         from .subsume import subsumes
+
         if isinstance(v, RecInst):
             return subsumes(self.env, v.rt, rt)
         mark = len(self.env.diagnostics)
@@ -283,11 +338,11 @@ class Engine:
             self.no_reg -= 1
             del self.env.diagnostics[mark:]
 
-    def ev_callee(self, e: dict, sc: Scope) -> Any:
+    def ev_callee(self, e: dict[str, Any], sc: Scope) -> Any:
         if e["e"] == "member":
             x = self.ev_callee(e["x"], sc)
             if isinstance(x, StdRef):
-                return StdRef(x.path + [e["name"]])
+                return StdRef([*x.path, e["name"]])
             if isinstance(x, NsRef):
                 return self.ns_value(x, e["name"], sc)
             return self.access(self.deref(x), e["name"])
@@ -298,7 +353,9 @@ class Engine:
             return self.force_const_in(menv, name, root_name)
         if name in menv.funcs:
             f = menv.funcs[name]
-            return Closure([p["name"] for p in f["params"]], f["body"], Scope(None, {}, root_name, menv))
+            return Closure(
+                [p["name"] for p in f["params"]], f["body"], Scope(None, {}, root_name, menv)
+            )
         im = menv.imports.get(name)
         if im is not None:
             v = self.module_value(im["env"], im["name"], root_name)
@@ -306,7 +363,7 @@ class Engine:
                 return v
             if im["name"] in self.env.roots:
                 self.record(f"root:{im['name']}")
-                return self.env.roots[im["name"]]   # imported output/input root
+                return self.env.roots[im["name"]]  # imported output/input root
             return self.demand_input(im["env"], im["name"])
         ns = menv.namespaces.get(name)
         if ns is not None:
@@ -345,7 +402,12 @@ class Engine:
             raise EvalErr(f"input {name} is not bound", "E5006")
         sc = Scope(None, {}, name, menv)
         try:
-            v = self.step(f"root:{name}", lambda: self.bind(self.ev(decl["fallback"], sc), menv.resolve(decl["type"]), [name], None, sc))
+            v = self.step(
+                f"root:{name}",
+                lambda: self.bind(
+                    self.ev(decl["fallback"], sc), menv.resolve(decl["type"]), [name], None, sc
+                ),
+            )
             self.env.roots[name] = v
             return v
         except Taint:
@@ -355,9 +417,16 @@ class Engine:
     # bind an evaluation root (an output's expression, or an input's
     # document / fallback): a failing root is reported at its own path and
     # left unset — its demanders are tainted, nothing else is
-    def bind_root(self, name: str, raw: Any, rt: dict, sc: Scope, via_expr: bool) -> None:
+    def bind_root(self, name: str, raw: Any, rt: dict[str, Any], sc: Scope, via_expr: bool) -> None:
         try:
-            v = self.step(f"root:{name}", lambda: self.bind(self.ev(raw, sc), rt, [name], None, sc) if via_expr else self.bind(raw, rt, [name], None, sc))
+            v = self.step(
+                f"root:{name}",
+                lambda: (
+                    self.bind(self.ev(raw, sc), rt, [name], None, sc)
+                    if via_expr
+                    else self.bind(raw, rt, [name], None, sc)
+                ),
+            )
             self.env.roots[name] = v
         except EvalErr as e:
             self.env.report({"severity": "error", "message": e.msg, "path": name, "code": e.code})
@@ -383,22 +452,27 @@ class Engine:
         if op in ("<", "<=", ">", ">="):
             if not isinstance(l, Quantity) or not isinstance(r, Quantity) or l.dim != r.dim:
                 raise EvalErr("quantity dimension mismatch in comparison")
-            return {"<": l.value < r.value, "<=": l.value <= r.value, ">": l.value > r.value}.get(op, l.value >= r.value)
+            return {"<": l.value < r.value, "<=": l.value <= r.value, ">": l.value > r.value}.get(
+                op, l.value >= r.value
+            )
         lm = l.value if isinstance(l, Quantity) else (float(l) if _is_num(l) else None)
         rm = r.value if isinstance(r, Quantity) else (float(r) if _is_num(r) else None)
         if lm is None or rm is None:
             raise EvalErr(f"bad operands for {op}")
         if op == "/" and rm == 0:
             raise EvalErr("division by zero", "E5001")
-        vec = vec_combine(vec_of_key(l.dim) if isinstance(l, Quantity) else {},
-                          vec_of_key(r.dim) if isinstance(r, Quantity) else {}, 1 if op == "*" else -1)
+        vec = vec_combine(
+            vec_of_key(l.dim) if isinstance(l, Quantity) else {},
+            vec_of_key(r.dim) if isinstance(r, Quantity) else {},
+            1 if op == "*" else -1,
+        )
         value = lm * rm if op == "*" else lm / rm
         if not math.isfinite(value):
             raise EvalErr("non-finite", "E5002")
         key = key_of_vec(vec)
         return value if key == "" else Quantity(key, value)
 
-    def iterate(self, v: Any) -> list:
+    def iterate(self, v: Any) -> list[Any]:
         if isinstance(v, (PreArr, PreObj)):
             return self.mat_arr(v)
         if isinstance(v, ArrV):
@@ -413,7 +487,7 @@ class Engine:
             return v
         raise EvalErr("non-bool condition")
 
-    def binop(self, op: str, le: dict, re_: dict, sc: Scope) -> Any:
+    def binop(self, op: str, le: dict[str, Any], re_: dict[str, Any], sc: Scope) -> Any:
         if op == "&&":
             return self.truthy(self.ev(re_, sc)) if self.truthy(self.ev(le, sc)) else False
         if op == "||":
@@ -437,7 +511,9 @@ class Engine:
             return not value_eq(l, r)
         if op == "in":
             if isinstance(r, Ref):
-                r = self.deref(r)   # the container may be reached through a reference ($this, $parent)
+                r = self.deref(
+                    r
+                )  # the container may be reached through a reference ($this, $parent)
             if isinstance(r, RangeV):
                 return l >= r.lo and (l < r.hi if r.excl else l <= r.hi)
             if isinstance(r, (PreArr, PreObj)):
@@ -451,7 +527,16 @@ class Engine:
             raise EvalErr("in: bad container")
         if l is ABSENT or r is ABSENT:
             raise EvalErr("absent consumed")
-        if (isinstance(l, Quantity) or isinstance(r, Quantity)) and op in ("+", "-", "*", "/", "<", "<=", ">", ">="):
+        if (isinstance(l, Quantity) or isinstance(r, Quantity)) and op in (
+            "+",
+            "-",
+            "*",
+            "/",
+            "<",
+            "<=",
+            ">",
+            ">=",
+        ):
             return self.q_arith(op, l, r)
         both_i = is_int(l) and is_int(r)
         both_f = is_float(l) and is_float(r)
@@ -501,11 +586,10 @@ class Engine:
                 if r < 0:
                     raise EvalErr("negative shift count", "E5003")
                 return l << r
-        elif op == ">>":
-            if both_i:
-                if r < 0:
-                    raise EvalErr("negative shift count", "E5003")
-                return l >> r
+        elif op == ">>" and both_i:
+            if r < 0:
+                raise EvalErr("negative shift count", "E5003")
+            return l >> r
         raise EvalErr(f"bad operands for {op}")
 
     def to_str(self, v: Any) -> str:
@@ -530,7 +614,7 @@ class Engine:
     # the value at a place; _UNDEF when there is none (an absent optional
     # member counts as none — §7.5). Lenient about segment kinds: engine-built
     # paths are canonical by construction
-    def resolve_segs(self, segs: list) -> Any:
+    def resolve_segs(self, segs: list[Any]) -> Any:
         cur = self.env.roots.get(segs[0], _UNDEF)
         for s0 in segs[1:]:
             if cur is _UNDEF:
@@ -554,7 +638,7 @@ class Engine:
     # bracketed, a record member dotted when the dot can spell it and
     # bracketed otherwise, an array index numeric — any other spelling does
     # not resolve
-    def resolve_canonical(self, segs: list) -> Any:
+    def resolve_canonical(self, segs: list[Any]) -> Any:
         cur = self.env.roots.get(segs[0], _UNDEF)
         for s in segs[1:]:
             if cur is _UNDEF:
@@ -608,10 +692,10 @@ class Engine:
             cur = cur.parent
         return _UNDEF
 
-    def call(self, fn: Any, args: list, sc: Scope) -> Any:
+    def call(self, fn: Any, args: list[Any], sc: Scope) -> Any:
         if isinstance(fn, Closure):
             locals_ = dict(fn.scope.locals)
-            for p, a in zip(fn.params, args):
+            for p, a in zip(fn.params, args, strict=False):
                 locals_[p] = a
             return self.ev(fn.body, fn.scope.with_locals(locals_))
         if isinstance(fn, NatFn):
@@ -620,9 +704,10 @@ class Engine:
             return self.std(".".join(fn.path), args, sc)
         raise EvalErr("call of non-function")
 
-    def std(self, name: str, a: list, sc: Scope) -> Any:
-        def domain(msg: str):
+    def std(self, name: str, a: list[Any], sc: Scope) -> Any:
+        def domain(msg: str) -> None:
             raise EvalErr(f"std.{name}: {msg}", "E5008")
+
         if name == "array.count":
             return len(self.mat_arr(a[0]))
         if name == "array.all":
@@ -630,7 +715,9 @@ class Engine:
         if name == "array.any":
             return any(self.truthy(self.call(a[1], [x], sc)) for x in self.mat_arr(a[0]))
         if name == "array.filter":
-            return ArrV([x for x in self.mat_arr(a[0]) if self.truthy(self.call(a[1], [x], sc))], [])
+            return ArrV(
+                [x for x in self.mat_arr(a[0]) if self.truthy(self.call(a[1], [x], sc))], []
+            )
         if name == "array.all_distinct":
             items = self.mat_arr(a[0])
             for i in range(len(items)):
@@ -737,7 +824,8 @@ class Engine:
             if self.force_state(r, n) == "absent":
                 return _UNDEF
             return self.force_slot(r, n)
-        names: list = []
+
+        names: list[Any] = []
         for n in base.entry_order:
             if n not in names:
                 names.append(n)
@@ -750,13 +838,18 @@ class Engine:
         for m in patch.rt["members"]:
             if m["kind"] == "dflt" and m["name"] not in names:
                 names.append(m["name"])
-        entries: list = []
+        entries: list[Any] = []
         for n in names:
             bs, ps = base.slots.get(n), patch.slots.get(n)
             if (bs is not None and bs.kind == "der") or (ps is not None and ps.kind == "der"):
                 continue
             bv, pv = val(base, n), val(patch, n)
-            if bv is not _UNDEF and pv is not _UNDEF and isinstance(self.deref(bv), RecInst) and isinstance(self.deref(pv), RecInst):
+            if (
+                bv is not _UNDEF
+                and pv is not _UNDEF
+                and isinstance(self.deref(bv), RecInst)
+                and isinstance(self.deref(pv), RecInst)
+            ):
                 entries.append((n, self.deep_merge(bv, pv)))
             elif pv is not _UNDEF:
                 entries.append((n, pv))
@@ -772,7 +865,7 @@ class Engine:
             return d
         raise EvalErr("std.object.merge: expected records", "E5008")
 
-    def mat_arr(self, v: Any) -> list:
+    def mat_arr(self, v: Any) -> list[Any]:
         d = self.deref(v)
         if isinstance(d, (PreArr, PreObj)):
             d = self.materialize(d, [], None, None)
@@ -794,7 +887,7 @@ class Engine:
             raise DeferSig()
         self.record(f"referrers:{type_name}")
         self_inst = sc.inst
-        out: list = []
+        out: list[Any] = []
         for cand in self.env.registry:
             if cand.type_name != type_name:
                 continue
@@ -809,7 +902,7 @@ class Engine:
         out.sort(key=_path_key)
         return ArrV([Ref(c.path) for c in out], [])
 
-    def contains_ref_to(self, v: Any, target: list) -> bool:
+    def contains_ref_to(self, v: Any, target: list[Any]) -> bool:
         if isinstance(v, Ref):
             return cmp_path(v.segs, target) == 0
         if isinstance(v, ArrV):
@@ -819,7 +912,9 @@ class Engine:
         return False
 
     # ---------- binding / checking ----------
-    def bind(self, raw: Any, rt: dict, path: list, parent: Optional[RecInst], sc: Scope) -> Any:
+    def bind(
+        self, raw: Any, rt: dict[str, Any], path: list[Any], parent: RecInst | None, sc: Scope
+    ) -> Any:
         if isinstance(raw, PreVal):
             sc2 = raw.scope.with_inst(parent if parent is not None else raw.scope.inst)
             if rt["t"] == "ref":
@@ -828,20 +923,39 @@ class Engine:
                     raise EvalErr("not a place in ref position")
                 # reference integrity (§7.5): the place must hold a value
                 if self.resolve_segs(place) is _UNDEF:
-                    self.env.report({"severity": "error", "message": f"dangling reference {path_str(place)}",
-                                     "path": path_str(path), "code": "E6002"})
+                    self.env.report(
+                        {
+                            "severity": "error",
+                            "message": f"dangling reference {path_str(place)}",
+                            "path": path_str(path),
+                            "code": "E6002",
+                        }
+                    )
                     raise Taint()
                 return Ref(place)
             return self.bind(self.ev(raw.expr, sc2), rt, path, parent, sc)
 
-        def fail(msg: str, code: Optional[str] = None):
+        def fail(msg: str, code: str | None = None) -> None:
             tail = rt.get("tail")
             if tail is not None and tail["t"] == "inline":
-                self.env.report({"severity": "error", "id": rt.get("name"),
-                                 "message": "".join(p for p in tail["template"] if is_str(p)),
-                                 "path": path_str(path), "code": "E4001"})
+                self.env.report(
+                    {
+                        "severity": "error",
+                        "id": rt.get("name"),
+                        "message": "".join(p for p in tail["template"] if is_str(p)),
+                        "path": path_str(path),
+                        "code": "E4001",
+                    }
+                )
             else:
-                self.env.report({"severity": "error", "message": msg, "path": path_str(path), "code": code or "E4001"})
+                self.env.report(
+                    {
+                        "severity": "error",
+                        "message": msg,
+                        "path": path_str(path),
+                        "code": code or "E4001",
+                    }
+                )
             raise Taint()
 
         t = rt["t"]
@@ -923,37 +1037,44 @@ class Engine:
             arr = ArrV([], path)
             for i, it in enumerate(items):
                 try:
-                    arr.items.append(self.bind(it, rt["elem"], path + [i], parent, sc))
+                    arr.items.append(self.bind(it, rt["elem"], [*path, i], parent, sc))
                 except Taint:
                     arr.items.append(ABSENT)
             return arr
         if t == "map":
-            if isinstance(raw, JObj):
-                es = raw.entries
-            elif isinstance(raw, PreObj):
-                es = raw.entries
+            if isinstance(raw, (JObj, PreObj)):
+                pairs = raw.entries
             elif isinstance(raw, MapV):
-                es = list(raw.entries.items())
+                pairs = list(raw.entries.items())
             else:
                 fail("expected map")
             m = MapV({}, path)
-            for k_, v in es:
+            for k_, v in pairs:
                 try:
                     self.bind(k_, rt["key"], path, parent, sc)
                 except Taint:
                     continue
-                try:
-                    m.entries[k_] = self.bind(v, rt["val"], path + [Key(k_)], parent, sc)
-                except Taint:
-                    pass
+                with contextlib.suppress(Taint):
+                    m.entries[k_] = self.bind(v, rt["val"], [*path, Key(k_)], parent, sc)
             return m
         if t == "union":
             rec_arms = [a for a in rt["arms"] if a["t"] == "rec"]
             if isinstance(raw, (JObj, PreObj, RecInst)) and rec_arms:
-                disc_names = [m["name"] for m in rec_arms[0]["members"]
-                              if m.get("type") is not None and m["type"]["t"] == "lit"
-                              and all(any(x["name"] == m["name"] and x.get("type") is not None and x["type"]["t"] == "lit"
-                                          for x in a["members"]) for a in rec_arms)]
+                disc_names = [
+                    m["name"]
+                    for m in rec_arms[0]["members"]
+                    if m.get("type") is not None
+                    and m["type"]["t"] == "lit"
+                    and all(
+                        any(
+                            x["name"] == m["name"]
+                            and x.get("type") is not None
+                            and x["type"]["t"] == "lit"
+                            for x in a["members"]
+                        )
+                        for a in rec_arms
+                    )
+                ]
                 for arm in rec_arms:
                     ok = True
                     for dn in disc_names:
@@ -1004,12 +1125,17 @@ class Engine:
     def raw_lit(self, v: Any) -> Any:
         return self.ev(v.expr, v.scope) if isinstance(v, PreVal) else v
 
-    def kind_matches(self, raw: Any, rt: dict) -> bool:
+    def kind_matches(self, raw: Any, rt: dict[str, Any]) -> bool:
         t = rt["t"]
         if t == "prim":
             n = rt["name"]
-            return (n == "int" and is_int(raw)) or (n == "float" and is_float(raw)) or \
-                (n == "bool" and is_bool(raw)) or (n == "string" and is_str(raw)) or (n == "null" and raw is None)
+            return (
+                (n == "int" and is_int(raw))
+                or (n == "float" and is_float(raw))
+                or (n == "bool" and is_bool(raw))
+                or (n == "string" and is_str(raw))
+                or (n == "null" and raw is None)
+            )
         if t == "lit":
             return value_eq(self.raw_lit(raw), rt["v"])
         if t == "range":
@@ -1020,21 +1146,25 @@ class Engine:
             return isinstance(raw, (list, PreArr, ArrV))
         return True
 
-    def eval_place(self, e: dict, sc: Scope) -> Optional[list]:
+    def eval_place(self, e: dict[str, Any], sc: Scope) -> list[Any] | None:
         v = self.ev_nav(e, sc)
         if isinstance(v, Segs):
             return v.segs
         if isinstance(v, Ref):
-            return v.segs   # $this / $parent / $root, or a reference read through
+            return v.segs  # $this / $parent / $root, or a reference read through
         if isinstance(v, (RecInst, ArrV, MapV)):
             return v.path
         return None
 
-    def ev_nav(self, e: dict, sc: Scope) -> Any:
+    def ev_nav(self, e: dict[str, Any], sc: Scope) -> Any:
         # a conditional in a ref position chooses between places (§7.4):
         # only the taken branch is navigated
         if e["e"] == "if":
-            return self.ev_nav(e["t"], sc) if self.truthy(self.ev(e["c"], sc)) else self.ev_nav(e["f"], sc)
+            return (
+                self.ev_nav(e["t"], sc)
+                if self.truthy(self.ev(e["c"], sc))
+                else self.ev_nav(e["f"], sc)
+            )
         if e["e"] == "paren":
             return self.ev_nav(e["x"], sc)
         # a step past a missing place (an absent optional member, a key or
@@ -1045,11 +1175,11 @@ class Engine:
         if e["e"] == "member":
             x0 = self.ev_nav(e["x"], sc)
             if isinstance(x0, Segs):
-                return Segs(x0.segs + [e["name"]])
+                return Segs([*x0.segs, e["name"]])
             x = self.deref(x0)
             v = self.access(x, e["name"])
             if v is ABSENT and isinstance(x, RecInst):
-                return Segs(x.path + [e["name"]])
+                return Segs([*x.path, e["name"]])
             return v
         if e["e"] == "index":
             x0 = self.ev_nav(e["x"], sc)
@@ -1057,27 +1187,38 @@ class Engine:
             if isinstance(x0, Segs):
                 # past a missing place a string index can only be a map key (bracket
                 # access to a dot-spellable member is a compile error, §4.3)
-                return Segs(x0.segs + [int(i) if is_int(i) else Key(i)])
+                return Segs([*x0.segs, int(i) if is_int(i) else Key(i)])
             x = self.deref(x0)
             if isinstance(x, ArrV):
                 n = int(i)
-                return x.items[n] if 0 <= n < len(x.items) else Segs(x.path + [n])
+                return x.items[n] if 0 <= n < len(x.items) else Segs([*x.path, n])
             if isinstance(x, MapV):
-                return x.entries[i] if i in x.entries else Segs(x.path + [Key(i)])
+                return x.entries[i] if i in x.entries else Segs([*x.path, Key(i)])
             if isinstance(x, RecInst):
                 v = self.access(x, i)
-                return Segs(x.path + [i]) if v is ABSENT else v
+                return Segs([*x.path, i]) if v is ABSENT else v
         return self.ev(e, sc)
 
-    def bind_record(self, raw: Any, rt: dict, path: list, parent: Optional[RecInst], sc: Scope) -> RecInst:
+    def bind_record(
+        self, raw: Any, rt: dict[str, Any], path: list[Any], parent: RecInst | None, sc: Scope
+    ) -> RecInst:
         if isinstance(raw, (JObj, PreObj)):
             entries = list(raw.entries)
         elif isinstance(raw, RecInst):
-            entries = [(n, raw.extras[n] if n in raw.extras else self.force_slot(raw, n))
-                       for n in raw.entry_order
-                       if n not in raw.slots or raw.slots[n].kind != "der"]
+            entries = [
+                (n, raw.extras[n] if n in raw.extras else self.force_slot(raw, n))
+                for n in raw.entry_order
+                if n not in raw.slots or raw.slots[n].kind != "der"
+            ]
         else:
-            self.env.report({"severity": "error", "message": "expected record", "path": path_str(path), "code": "E4001"})
+            self.env.report(
+                {
+                    "severity": "error",
+                    "message": "expected record",
+                    "path": path_str(path),
+                    "code": "E4001",
+                }
+            )
             raise Taint()
         inst = RecInst(rt.get("name"), rt, path, parent)
         inst.entry_order = [k_ for k_, _ in entries]
@@ -1095,27 +1236,52 @@ class Engine:
                 # a hidden member (D34) is never part of the value: a document or
                 # literal that supplies it is in error — there is nothing to restate
                 if has and m.get("hidden"):
-                    self.env.report({"severity": "error", "message": f"hidden member {name} supplied",
-                                     "path": path_str(path + [name]), "code": "E4006"})
+                    self.env.report(
+                        {
+                            "severity": "error",
+                            "message": f"hidden member {name} supplied",
+                            "path": path_str([*path, name]),
+                            "code": "E4006",
+                        }
+                    )
                     inst.slots[name] = Slot("der", "invalid", False, hidden=True)
                     continue
-                inst.slots[name] = Slot("der", "unforced", mentions_referrers(m["expr"]),
-                                        self._mk_derived(m, inst, path, isc, has, supplied.get(name)),
-                                        hidden=bool(m.get("hidden")))
+                inst.slots[name] = Slot(
+                    "der",
+                    "unforced",
+                    mentions_referrers(m["expr"]),
+                    self._mk_derived(m, inst, path, isc, has, supplied.get(name)),
+                    hidden=bool(m.get("hidden")),
+                )
                 if inst.slots[name].deferred:
                     self.deferred_slots.append((inst, name))
                 continue
             if has:
-                inst.slots[name] = Slot(m["kind"], "unforced", False, self._mk_check(supplied[name], types, m, inst, path, isc))
+                inst.slots[name] = Slot(
+                    m["kind"],
+                    "unforced",
+                    False,
+                    self._mk_check(supplied[name], types, m, inst, path, isc),
+                )
             elif m["kind"] == "dflt":
-                inst.slots[name] = Slot("dflt", "unforced", mentions_referrers(m["dflt"]),
-                                        self._mk_default(m, types, inst, path, isc))
+                inst.slots[name] = Slot(
+                    "dflt",
+                    "unforced",
+                    mentions_referrers(m["dflt"]),
+                    self._mk_default(m, types, inst, path, isc),
+                )
             elif m["kind"] == "opt":
                 inst.slots[name] = Slot("opt", "absent")
             else:
                 inst.slots[name] = Slot("req", "invalid")
-                self.env.report({"severity": "error", "message": f"required member {name} missing",
-                                 "path": path_str(path + [name]), "code": "E4002"})
+                self.env.report(
+                    {
+                        "severity": "error",
+                        "message": f"required member {name} missing",
+                        "path": path_str([*path, name]),
+                        "code": "E4002",
+                    }
+                )
         for k_, v in entries:
             if any(m["name"] == k_ for m in rt["members"]):
                 continue
@@ -1123,68 +1289,92 @@ class Engine:
                 inst.extras[k_] = v
             else:
                 nm = f" {rt['name']}" if rt.get("name") else ""
-                self.env.report({"severity": "error", "message": f"undeclared member {k_} on closed record{nm}",
-                                 "path": path_str(path + [k_]), "code": "E4003"})
+                self.env.report(
+                    {
+                        "severity": "error",
+                        "message": f"undeclared member {k_} on closed record{nm}",
+                        "path": path_str([*path, k_]),
+                        "code": "E4003",
+                    }
+                )
         return inst
 
-    def _mk_check(self, raw_v, types, m, inst, path, isc):
-        def compute():
+    def _mk_check(self, raw_v: Any, types: Any, m: Any, inst: Any, path: Any, isc: Any) -> Any:
+        def compute() -> Any:
             v = None
             for ty in types:
-                v = self.bind(raw_v, ty, path + [m["name"]], inst, isc)
+                v = self.bind(raw_v, ty, [*path, m["name"]], inst, isc)
             return v
+
         return compute
 
-    def _mk_default(self, m, types, inst, path, isc):
-        def compute():
+    def _mk_default(self, m: Any, types: Any, inst: Any, path: Any, isc: Any) -> Any:
+        def compute() -> Any:
             if m.get("type") is not None and m["type"]["t"] == "ref" and not m.get("conj"):
-                return self.bind(PreVal(m["dflt"], isc), m["type"], path + [m["name"]], inst, isc)
+                return self.bind(PreVal(m["dflt"], isc), m["type"], [*path, m["name"]], inst, isc)
             v = self.ev(m["dflt"], isc)
             out = None
             for ty in types:
-                out = self.bind(v, ty, path + [m["name"]], inst, isc)
+                out = self.bind(v, ty, [*path, m["name"]], inst, isc)
             return out
+
         return compute
 
-    def _mk_derived(self, m, inst, path, isc, has, supplied_v):
-        def compute():
-            # a member declared `ref<T>` holds a navigation (§7.4): the
+    def _mk_derived(self, m: Any, inst: Any, path: Any, isc: Any, has: Any, supplied_v: Any) -> Any:
+        def compute() -> Any:
+            # a member declared `ref<T>` holds a navigation (§7.4) -> Any: the
             # expression names a place, and is bound as one
             if m.get("type") is not None and m["type"]["t"] == "ref":
-                v = self.bind(PreVal(m["expr"], isc), m["type"], path + [m["name"]], inst, isc)
+                v = self.bind(PreVal(m["expr"], isc), m["type"], [*path, m["name"]], inst, isc)
             else:
                 v = self.ev(m["expr"], isc)
                 if m.get("type") is not None:
-                    v = self.bind(v, m["type"], path + [m["name"]], inst, isc)
+                    v = self.bind(v, m["type"], [*path, m["name"]], inst, isc)
                 elif isinstance(v, (PreObj, PreArr, JObj)):
-                    v = self.materialize(v, path + [m["name"]], inst, isc)
+                    v = self.materialize(v, [*path, m["name"]], inst, isc)
             if has:
                 self.no_reg += 1
                 try:
-                    restated = self.bind(supplied_v, m["type"] if m.get("type") is not None else _structural_of(v),
-                                         path + [m["name"]], inst, isc)
+                    restated = self.bind(
+                        supplied_v,
+                        m["type"] if m.get("type") is not None else _structural_of(v),
+                        [*path, m["name"]],
+                        inst,
+                        isc,
+                    )
                 finally:
                     self.no_reg -= 1
                 if not value_eq(v, restated):
-                    self.env.report({"severity": "error",
-                                     "message": f"derived member {m['name']} restated with a differing value",
-                                     "path": path_str(path + [m["name"]]), "code": "E4005"})
+                    self.env.report(
+                        {
+                            "severity": "error",
+                            "message": f"derived member {m['name']} restated with a differing "
+                            "value",
+                            "path": path_str([*path, m["name"]]),
+                            "code": "E4005",
+                        }
+                    )
                     raise Taint()
             return v
+
         return compute
 
-    def materialize(self, v: Any, path: list, parent: Optional[RecInst], sc: Optional[Scope]) -> Any:
+    def materialize(self, v: Any, path: list[Any], parent: RecInst | None, sc: Scope | None) -> Any:
         if isinstance(v, PreArr):
             arr = ArrV([], path)
-            for i, (spread, it) in enumerate(v.items):
+            for i, (_spread, it) in enumerate(v.items):
                 x = self.ev(it.expr, it.scope) if isinstance(it, PreVal) else it
-                arr.items.append(self.materialize(x, path + [i], parent, sc))
+                arr.items.append(self.materialize(x, [*path, i], parent, sc))
             return arr
         if isinstance(v, PreObj):
             m = MapV({}, path)
             for k_, pv in v.entries:
-                m.entries[k_] = self.materialize(self.ev(pv.expr, pv.scope) if isinstance(pv, PreVal) else pv,
-                                                 path + [Key(k_)], parent, sc)
+                m.entries[k_] = self.materialize(
+                    self.ev(pv.expr, pv.scope) if isinstance(pv, PreVal) else pv,
+                    [*path, Key(k_)],
+                    parent,
+                    sc,
+                )
             return m
         return v
 
@@ -1193,10 +1383,8 @@ class Engine:
         return inst.slots[name].state
 
     def force_slot_safe(self, inst: RecInst, name: str) -> None:
-        try:
+        with contextlib.suppress(Taint, DeferSig):
             self.force_slot(inst, name)
-        except (Taint, DeferSig):
-            pass
 
     def force_slot(self, inst: RecInst, name: str) -> Any:
         s = inst.slots.get(name)
@@ -1211,8 +1399,14 @@ class Engine:
         if s.state == "invalid":
             raise Taint()
         if s.state == "forcing":
-            self.env.report({"severity": "error", "message": f"dependency cycle at {name}",
-                             "path": path_str(inst.path + [name]), "code": "E5007"})
+            self.env.report(
+                {
+                    "severity": "error",
+                    "message": f"dependency cycle at {name}",
+                    "path": path_str([*inst.path, name]),
+                    "code": "E5007",
+                }
+            )
             s.state = "invalid"
             raise Taint()
         s.state = "forcing"
@@ -1228,8 +1422,15 @@ class Engine:
         except EvalErr as e:
             if s.state == "forcing":
                 s.state = "invalid"
-            self.env.report({"severity": "error", "message": e.msg, "path": path_str(inst.path + [name]), "code": e.code})
-            raise Taint()
+            self.env.report(
+                {
+                    "severity": "error",
+                    "message": e.msg,
+                    "path": path_str([*inst.path, name]),
+                    "code": e.code,
+                }
+            )
+            raise Taint() from None
         except Exception:
             if s.state == "forcing":
                 s.state = "invalid"
@@ -1284,7 +1485,10 @@ class Engine:
             self.validate_inst(inst, root_name)
 
     def validate_inst(self, inst: RecInst, root_name: str) -> None:
-        self.step(f"assert:{path_str(inst.path)}", lambda: self.run_asserts(inst, inst.rt["asserts"], root_name))
+        self.step(
+            f"assert:{path_str(inst.path)}",
+            lambda: self.run_asserts(inst, inst.rt["asserts"], root_name),
+        )
 
     def reset_slot(self, key: str) -> bool:
         """reset a computed slot so that it is computed again (dependency tracking)"""
@@ -1297,7 +1501,7 @@ class Engine:
             slot.value = None
         return True
 
-    def run_asserts(self, inst: RecInst, asserts: list, root_name: str) -> None:
+    def run_asserts(self, inst: RecInst, asserts: list[Any], root_name: str) -> None:
         sc0 = Scope(inst, {}, root_name, inst.menv)
         for a in asserts:
             sc = sc0.with_menv(a["menv"]) if a.get("menv") is not None else sc0
@@ -1307,10 +1511,26 @@ class Engine:
                 except (Taint, EvalErr):
                     continue
                 if cond is True:
-                    inner = [{"kind": "assert", "name": b["name"], "cond": b["cond"], "tail": b.get("tail"), "origin": a.get("origin"), "menv": a.get("menv")}
-                             if b["m"] == "assert" else
-                             {"kind": "when", "cond": b["cond"], "body": b["body"], "origin": a.get("origin"), "menv": a.get("menv")}
-                             for b in a["body"] if b["m"] in ("assert", "when")]
+                    inner = [
+                        {
+                            "kind": "assert",
+                            "name": b["name"],
+                            "cond": b["cond"],
+                            "tail": b.get("tail"),
+                            "origin": a.get("origin"),
+                            "menv": a.get("menv"),
+                        }
+                        if b["m"] == "assert"
+                        else {
+                            "kind": "when",
+                            "cond": b["cond"],
+                            "body": b["body"],
+                            "origin": a.get("origin"),
+                            "menv": a.get("menv"),
+                        }
+                        for b in a["body"]
+                        if b["m"] in ("assert", "when")
+                    ]
                     self.run_asserts(inst, inner, root_name)
                 continue
             try:
@@ -1318,28 +1538,71 @@ class Engine:
             except Taint:
                 continue
             except EvalErr as e:
-                self.env.report({"severity": "error", "message": f"{a['name']}: {e.msg}", "path": path_str(inst.path), "code": e.code})
+                self.env.report(
+                    {
+                        "severity": "error",
+                        "message": f"{a['name']}: {e.msg}",
+                        "path": path_str(inst.path),
+                        "code": e.code,
+                    }
+                )
                 continue
             if ok is True:
                 continue
             id_ = f"{a.get('origin') or inst.type_name}.{a['name']}"
             tail = a.get("tail")
             if tail is None:
-                self.env.report({"severity": "error", "id": id_, "message": f"assert {a['name']} failed",
-                                 "path": path_str(inst.path), "code": "E6001"})
+                self.env.report(
+                    {
+                        "severity": "error",
+                        "id": id_,
+                        "message": f"assert {a['name']} failed",
+                        "path": path_str(inst.path),
+                        "code": "E6001",
+                    }
+                )
                 continue
             if tail["t"] == "inline":
-                msg = "".join(p if is_str(p) else self.to_str(self.ev(p, sc)) for p in tail["template"])
+                msg = "".join(
+                    p if is_str(p) else self.to_str(self.ev(p, sc)) for p in tail["template"]
+                )
                 sev = tail["severity"]
-                self.env.report({"severity": sev, "id": id_, "message": msg, "path": path_str(inst.path),
-                                 "code": "E6001" if sev == "error" else "W6001" if sev == "warn" else "I6001"})
+                self.env.report(
+                    {
+                        "severity": sev,
+                        "id": id_,
+                        "message": msg,
+                        "path": path_str(inst.path),
+                        "code": "E6001"
+                        if sev == "error"
+                        else "W6001"
+                        if sev == "warn"
+                        else "I6001",
+                    }
+                )
             else:
-                d = (inst.menv.diags.get(tail["name"]) if inst.menv is not None else None) or self.env.diags[tail["name"]]
+                d = (
+                    inst.menv.diags.get(tail["name"]) if inst.menv is not None else None
+                ) or self.env.diags[tail["name"]]
                 args = [self.ev(x, sc) for x in tail["args"]]
-                psc = Scope(None, {p["name"]: args[i] for i, p in enumerate(d["params"])}, root_name, inst.menv)
-                msg = "".join(p if is_str(p) else self.to_str(self.ev(p, psc)) for p in d["template"])
-                self.env.report({"severity": d["severity"], "id": id_, "message": msg, "path": path_str(inst.path),
-                                 "code": "E6001" if d["severity"] == "error" else "W6001"})
+                psc = Scope(
+                    None,
+                    {p["name"]: args[i] for i, p in enumerate(d["params"])},
+                    root_name,
+                    inst.menv,
+                )
+                msg = "".join(
+                    p if is_str(p) else self.to_str(self.ev(p, psc)) for p in d["template"]
+                )
+                self.env.report(
+                    {
+                        "severity": d["severity"],
+                        "id": id_,
+                        "message": msg,
+                        "path": path_str(inst.path),
+                        "code": "E6001" if d["severity"] == "error" else "W6001",
+                    }
+                )
 
     # ---------- serialization ----------
     # canonical JSON of a value (§10.4, D29): derived members included,
@@ -1351,7 +1614,7 @@ class Engine:
             s = js_num_str(n)
             return s if ("." in s or "e" in s or "E" in s) else s + ".0"
 
-        def go(x: Any) -> Optional[str]:
+        def go(x: Any) -> str | None:
             if x is ABSENT or isinstance(x, (Closure, NatFn, StdRef)):
                 return None
             if x is None:
@@ -1365,7 +1628,8 @@ class Engine:
             if is_str(x):
                 return json_str(x)
             if isinstance(x, Quantity):
-                return f'{{"value":{fmt_f(x.value)},"unit":{json_str(self.env.base_unit_of.get(x.dim, x.dim))}}}'
+                unit = json_str(self.env.base_unit_of.get(x.dim, x.dim))
+                return f'{{"value":{fmt_f(x.value)},"unit":{unit}}}'
             if isinstance(x, Ref):
                 return json_str(path_str(x.segs, root_name))
             if isinstance(x, ArrV):
@@ -1379,7 +1643,7 @@ class Engine:
                 return "{" + ",".join(parts) + "}"
             if isinstance(x, RecInst):
                 parts = []
-                done: set = set()
+                done: set[Any] = set()
                 for n in x.entry_order:
                     done.add(n)
                     if n in x.extras:
@@ -1404,6 +1668,7 @@ class Engine:
                         parts.append(f"{json_str(m['name'])}:{g}")
                 return "{" + ",".join(parts) + "}"
             raise RuntimeError("serialize: unexpected value")
+
         return go(v) or ""
 
 
@@ -1417,7 +1682,7 @@ class _Undef:
 _UNDEF = _Undef()
 
 
-def _path_key(inst: RecInst):
+def _path_key(inst: RecInst) -> Any:
     return [(0, s) if is_int(s) else (1, str(s)) for s in inst.path]
 
 
@@ -1460,7 +1725,7 @@ def _expr_name(e: Any) -> str:
     return "<predicate>"
 
 
-def _structural_of(v: Any) -> dict:
+def _structural_of(v: Any) -> dict[str, Any]:
     if is_bool(v):
         return {"t": "prim", "name": "bool"}
     if is_int(v):

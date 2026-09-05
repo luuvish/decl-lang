@@ -5,16 +5,19 @@ documents bound and edited with exact undo, and the command-line verbs
 root for root. Everything it prints goes to standard output; a scripted
 session (`--script`) prints the transcript the terminal would show, so
 the three implementations can be diffed."""
+
 from __future__ import annotations
 
+import contextlib
 import os
 import re
 import sys
-from typing import Callable, Optional
+from collections.abc import Callable
+from typing import Any
 
 from .session import Session, SessionError, fmt_diag, parse_decl, parse_expr, pretty_json
 
-COMMANDS: list = [
+COMMANDS: list[Any] = [
     # the universe
     (":load file.decl", "open the universe from an entry module (a new session)", "universe"),
     (":reload", "re-read every module of the universe from disk", "universe"),
@@ -37,7 +40,11 @@ COMMANDS: list = [
     # evaluation and validation
     (":check", "static diagnostics of every module", "evaluation"),
     (":evaluate [root…]", "full evaluation: the documents of the roots", "evaluation"),
-    (":validate [root…]", "full validation: every diagnostic, then a verdict per root", "evaluation"),
+    (
+        ":validate [root…]",
+        "full validation: every diagnostic, then a verdict per root",
+        "evaluation",
+    ),
     (":fmt", "the scratch module, canonically formatted", "evaluation"),
     # inspection
     (":type expr", "the static type of an expression", "inspection"),
@@ -55,18 +62,33 @@ COMMANDS: list = [
     (":help [command]", "these commands", "session"),
     (":quit", "end the session", "session"),
 ]
-COMMAND_NAMES: list = list(dict.fromkeys(c[0].split(" ")[0] for c in COMMANDS))
+COMMAND_NAMES: list[Any] = list(dict.fromkeys(c[0].split(" ")[0] for c in COMMANDS))
 
-_DECL_HEAD = re.compile(r"^\s*(?:export\s+)?(type|const|func|output|input|diagnostic|dimension|unit|import)\b")
+_DECL_HEAD = re.compile(
+    r"^\s*(?:export\s+)?(type|const|func|output|input|diagnostic|dimension|unit|import)\b"
+)
 _OUTPUT_HEAD = re.compile(r"^\s*([A-Za-z_][A-Za-z0-9_]*)\s*(?::\s*([^=]+?))?\s*=(?!=)\s*([\s\S]+)$")
-_KEYWORDS = {"if", "then", "else", "for", "in", "match", "with", "matches", "true", "false", "null", "export"}
+_KEYWORDS = {
+    "if",
+    "then",
+    "else",
+    "for",
+    "in",
+    "match",
+    "with",
+    "matches",
+    "true",
+    "false",
+    "null",
+    "export",
+}
 _NAME = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 
 
 def needs_more(text: str) -> bool:
     """does the input so far leave an expression open (§2.9)?"""
     depth = 0
-    in_str: Optional[str] = None
+    in_str: str | None = None
     i = 0
     n = len(text)
     while i < n:
@@ -80,7 +102,7 @@ def needs_more(text: str) -> bool:
             continue
         if c in ('"', "`"):
             in_str = c
-        elif c == "/" and text[i + 1:i + 2] == "/":
+        elif c == "/" and text[i + 1 : i + 2] == "/":
             nl = text.find("\n", i)
             if nl < 0:
                 break
@@ -93,18 +115,18 @@ def needs_more(text: str) -> bool:
     if depth > 0 or in_str == "`":
         return True
     if text.lstrip().startswith(":"):
-        return False      # a command: only an open bracket continues it
+        return False  # a command: only an open bracket continues it
     tail = re.sub(r"//[^\n]*$", "", text, count=1).rstrip()
     return re.search(r"(?:[+\-*/%<>=!&|?:,]|\bthen|\belse|\bin|\bwith|=>)$", tail) is not None
 
 
 class Repl:
-    def __init__(self, out: Callable[[str], None], entry: Optional[str] = None):
+    def __init__(self, out: Callable[[str], None], entry: str | None = None):
         self._out = out
         self.session = Session(entry)
         self.compact = False
         self.errors = 0
-        self._buffer: list = []
+        self._buffer: list[Any] = []
         self.quit_requested = False
 
     def line(self, text: str) -> bool:
@@ -124,7 +146,7 @@ class Repl:
         self.errors += 1
         self._out(f"error: {msg}")
 
-    def _diag(self, d: dict, in_file: Optional[str] = None) -> None:
+    def _diag(self, d: dict[str, Any], in_file: str | None = None) -> None:
         self._out(fmt_diag(d, in_file))
 
     def _value(self, json_text: str) -> None:
@@ -142,7 +164,9 @@ class Repl:
             else:
                 m = _OUTPUT_HEAD.match(t)
                 if m and m.group(1) not in _KEYWORDS:
-                    self._session_output(m.group(1), m.group(2).strip() if m.group(2) else None, m.group(3).strip())
+                    self._session_output(
+                        m.group(1), m.group(2).strip() if m.group(2) else None, m.group(3).strip()
+                    )
                 else:
                     self._expression(t)
         except SessionError as e:
@@ -156,7 +180,9 @@ class Repl:
         err = r["error"]
         if err is not None:
             if err["message"]:
-                self._out(f"error{' [' + err['code'] + ']' if err.get('code') else ''}: {err['message']}")
+                self._out(
+                    f"error{' [' + err['code'] + ']' if err.get('code') else ''}: {err['message']}"
+                )
             self._out("(invalid)")
         else:
             self._value(r["value"])
@@ -166,7 +192,7 @@ class Repl:
         r = parse_decl(text)
         self.session.apply({"op": "declare", "name": r["name"], "text": text.strip()})
 
-    def _session_output(self, name: str, type_: Optional[str], expr: str) -> None:
+    def _session_output(self, name: str, type_: str | None, expr: str) -> None:
         parse_expr(expr)
         if type_:
             parse_decl(f"output {name}: {type_} = 0")
@@ -176,7 +202,7 @@ class Repl:
         m0 = re.search(r"\s", t)
         sp = m0.start() if m0 else -1
         cmd = t if sp < 0 else t[:sp]
-        rest = "" if sp < 0 else t[sp + 1:].strip()
+        rest = "" if sp < 0 else t[sp + 1 :].strip()
         s = self.session
 
         def no_args() -> None:
@@ -207,29 +233,60 @@ class Repl:
                 if r.session:
                     status = "session"
                 elif r.kind == "output":
-                    status = "detached" if r.binding == "detached" else "exported" if r.exported else "local"
+                    status = (
+                        "detached"
+                        if r.binding == "detached"
+                        else "exported"
+                        if r.exported
+                        else "local"
+                    )
                 else:
                     status = r.binding
-                self._out(f"{r.kind:<7} {r.name:<16} {status:<12} {r.module:<16} {r.detail}{' (edited)' if r.edited else ''}".rstrip())
+                self._out(
+                    f"{r.kind:<7} {r.name:<16} {status:<12} {r.module:<16} {r.detail}"
+                    f"{' (edited)' if r.edited else ''}".rstrip()
+                )
             return
         if cmd == ":bind":
             m = re.match(r"^([A-Za-z_][A-Za-z0-9_]*)\s*=\s*([\s\S]+)$", rest)
-            if m and not re.match(r"^[\[{]", m.group(2).strip()) and not re.match(r"^\s", rest[len(m.group(1)):]):
+            if (
+                m
+                and not re.match(r"^[\[{]", m.group(2).strip())
+                and not re.match(r"^\s", rest[len(m.group(1)) :])
+            ):
                 # name=file (no spaces around =)
                 file = m.group(2).strip()
                 try:
                     with open(file, encoding="utf-8") as f:
                         text = f.read()
                 except OSError:
-                    raise SessionError(f"cannot read {file}")
-                s.apply({"op": "bind", "name": m.group(1), "src": {"kind": "file", "file": file, "text": text}})
+                    raise SessionError(f"cannot read {file}") from None
+                s.apply(
+                    {
+                        "op": "bind",
+                        "name": m.group(1),
+                        "src": {"kind": "file", "file": file, "text": text},
+                    }
+                )
                 return
             if m:
-                s.apply({"op": "bind", "name": m.group(1), "src": {"kind": "expr", "text": m.group(2).strip()}})
+                s.apply(
+                    {
+                        "op": "bind",
+                        "name": m.group(1),
+                        "src": {"kind": "expr", "text": m.group(2).strip()},
+                    }
+                )
                 return
             m = re.match(r"^([A-Za-z_][A-Za-z0-9_]*)\s+([\[{][\s\S]*)$", rest)
             if m:
-                s.apply({"op": "bind", "name": m.group(1), "src": {"kind": "inline", "text": m.group(2)}})
+                s.apply(
+                    {
+                        "op": "bind",
+                        "name": m.group(1),
+                        "src": {"kind": "inline", "text": m.group(2)},
+                    }
+                )
                 return
             raise SessionError(":bind expects name=doc.json, name { … }, or name = expr")
         if cmd == ":unbind":
@@ -306,7 +363,10 @@ class Repl:
                     self._out("(invalid)")
                     return
                 from .semantics import json_str
-                self._value("{" + ",".join(f"{json_str(d['name'])}:{d['json']}" for d in docs) + "}")
+
+                self._value(
+                    "{" + ",".join(f"{json_str(d['name'])}:{d['json']}" for d in docs) + "}"
+                )
                 return
             for d in docs:
                 if len(docs) > 1:
@@ -334,12 +394,17 @@ class Repl:
             if not verdicts:
                 self._out("(no roots)")
             for v in verdicts:
+
                 def n(k: int, w: str) -> str:
                     return f"{k} {w}{'' if k == 1 else 's'}"
+
                 if v["errors"] == 0 and v["warnings"] == 0:
                     self._out(f"{v['name']}: ok")
                 else:
-                    parts = [n(v["errors"], "error") if v["errors"] else "", n(v["warnings"], "warning") if v["warnings"] else ""]
+                    parts = [
+                        n(v["errors"], "error") if v["errors"] else "",
+                        n(v["warnings"], "warning") if v["warnings"] else "",
+                    ]
                     self._out(f"{v['name']}: {', '.join(p for p in parts if p)}")
             return
         if cmd == ":fmt":
@@ -399,22 +464,28 @@ class Repl:
                     with open(rest, "w", encoding="utf-8") as f:
                         f.write("\n".join(s.script_lines()) + "\n")
                 except OSError:
-                    raise SessionError(f"cannot write {rest}")
+                    raise SessionError(f"cannot write {rest}") from None
                 return
             for l in s.history_lines():
                 self._out(l)
             return
         if cmd == ":time":
             no_args()
-            t = s.last_timing
-            if t is None:
+            tm = s.last_timing
+            if tm is None:
                 self._out("nothing evaluated yet")
                 return
 
             def ms(x: float) -> str:
                 return f"{x:.1f} ms"
-            step = f", recomputed {t['recomputed']} of {t['slots']} slots" if "recomputed" in t else ""
-            self._out(f"total {ms(t['total'])} (load {ms(t['load'])}, check {ms(t['check'])}, bind {ms(t['bind'])}, evaluate {ms(t['evaluate'])}){step}")
+
+            step = ""
+            if "recomputed" in tm:
+                step = f", recomputed {tm['recomputed']} of {tm['slots']} slots"
+            self._out(
+                f"total {ms(tm['total'])} (load {ms(tm['load'])}, check {ms(tm['check'])}, bind "
+                f"{ms(tm['bind'])}, evaluate {ms(tm['evaluate'])}){step}"
+            )
             return
         if cmd == ":set":
             if rest == "pretty":
@@ -447,18 +518,16 @@ class Repl:
 
 
 # ---------------- the command ----------------
-def _save_history(readline, path: str) -> None:
-    try:
+def _save_history(readline: Any, path: str) -> None:
+    with contextlib.suppress(OSError):
         readline.write_history_file(path)
-    except OSError:
-        pass
 
 
-def run_repl(args: list) -> int:
-    entry: Optional[str] = None
-    script: Optional[str] = None
+def run_repl(args: list[Any]) -> int:
+    entry: str | None = None
+    script: str | None = None
     compact = False
-    inputs: list = []
+    inputs: list[Any] = []
     i = 0
     while i < len(args):
         a = args[i]
@@ -517,16 +586,18 @@ def run_repl(args: list) -> int:
 
     # interactive: the line editor, with history and completion
     try:
-        import readline  # noqa: F401
+        import readline
 
-        def completer(text: str, state: int):
-            # readline replaces the word from the last delimiter (`site.la`):
+        def completer(text: str, state: int) -> Any:
+            # readline replaces the word from the last delimiter (`site.la`) -> Any:
             # the candidates keep the token's head, the session completes its tail
             line = readline.get_line_buffer()
             cs = [c.split("  ")[0] for c in repl.session.complete(line, COMMAND_NAMES)]
             m = re.search(r"([A-Za-z_$:][A-Za-z0-9_$.\[\]\"]*)$", line)
             tok = m.group(1) if m else ""
-            head, tail = (tok[: tok.rfind(".") + 1], tok[tok.rfind(".") + 1:]) if "." in tok else ("", tok)
+            head, tail = (
+                (tok[: tok.rfind(".") + 1], tok[tok.rfind(".") + 1 :]) if "." in tok else ("", tok)
+            )
             matches = [head + c for c in cs if c.startswith(tail)]
             return matches[state] if state < len(matches) else None
 
@@ -538,12 +609,11 @@ def run_repl(args: list) -> int:
         readline.parse_and_bind("bind ^I rl_complete" if libedit else "tab: complete")
         # the history is kept across sessions
         history = os.path.join(os.path.expanduser("~"), ".decl_history")
-        try:
+        with contextlib.suppress(OSError):
             readline.read_history_file(history)
-        except OSError:
-            pass
         readline.set_history_length(1000)
         import atexit
+
         atexit.register(lambda: _save_history(readline, history))
     except ImportError:
         pass

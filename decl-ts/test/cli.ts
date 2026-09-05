@@ -8,10 +8,16 @@ import { tmpdir } from 'node:os';
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '../..');
 const cli = join(root, 'decl-ts/src/cli.ts');
-let pass = 0, fail = 0;
+let pass = 0,
+  fail = 0;
 const check = (name: string, cond: boolean, detail = '') => {
-  if (cond) { pass++; console.log(`  ok   ${name}`); }
-  else { fail++; console.log(`  FAIL ${name} ${detail}`); }
+  if (cond) {
+    pass++;
+    console.log(`  ok   ${name}`);
+  } else {
+    fail++;
+    console.log(`  FAIL ${name} ${detail}`);
+  }
 };
 const run = (...args: string[]) => {
   const r = spawnSync('node', [cli, ...args], { encoding: 'utf8' });
@@ -34,21 +40,41 @@ console.log('== decl evaluate ==');
   const f = join(dir, 'demo.decl');
   writeFileSync(f, 'type T = { a: int, b = a * 2 }\nexport output demo: T = { a: 21 }\n');
   const r = run('evaluate', f, '--output', 'demo');
-  check('evaluate prints canonical JSON', r.code === 0 && r.out.trim() === '{"a":21,"b":42}', JSON.stringify(r));
+  check(
+    'evaluate prints canonical JSON',
+    r.code === 0 && r.out.trim() === '{"a":21,"b":42}',
+    JSON.stringify(r),
+  );
   const all = run('evaluate', join(root, 'tests/modules/basic/main.decl'));
-  check('evaluate emits the entry module\'s exported outputs', all.code === 0 && all.out.includes('"capped":16') && all.out.includes('"net":'), all.out.slice(0, 120));
+  check(
+    "evaluate emits the entry module's exported outputs",
+    all.code === 0 && all.out.includes('"capped":16') && all.out.includes('"net":'),
+    all.out.slice(0, 120),
+  );
   const dir2 = mkdtempSync(join(tmpdir(), 'decl-cli-'));
   const to = join(dir2, 'demo.json');
   const w = run('evaluate', f, '--output', `demo=${to}`);
-  check('--output name=file writes the document', w.code === 0 && w.out === '' && readFileSync(to, 'utf8') === '{"a":21,"b":42}\n', JSON.stringify(w));
+  check(
+    '--output name=file writes the document',
+    w.code === 0 && w.out === '' && readFileSync(to, 'utf8') === '{"a":21,"b":42}\n',
+    JSON.stringify(w),
+  );
   const two = run('evaluate', f, '--output', 'demo', '--output', 'demo');
-  check('two documents cannot share stdout', two.code === 2 && two.err.includes('at most one document can go to stdout'), JSON.stringify(two));
+  check(
+    'two documents cannot share stdout',
+    two.code === 2 && two.err.includes('at most one document can go to stdout'),
+    JSON.stringify(two),
+  );
 }
 
 console.log('== decl validate ==');
 {
   const corpus = run('validate', join(root, 'tests/validation'));
-  check('full corpus judged clean', corpus.code === 0 && / ok, 0 failed/.test(corpus.err), corpus.err.slice(-200));
+  check(
+    'full corpus judged clean',
+    corpus.code === 0 && / ok, 0 failed/.test(corpus.err),
+    corpus.err.slice(-200),
+  );
 
   const dir = mkdtempSync(join(tmpdir(), 'decl-cli-'));
   const mod = join(dir, 'cfg.decl');
@@ -62,9 +88,17 @@ console.log('== decl validate ==');
   const imports = run('validate', join(root, 'tests/modules/basic/main.decl'));
   check('validate <file> follows imports', imports.code === 0 && imports.err === '', imports.err);
   const missing = run('validate', join(dir, 'missing.decl'));
-  check('validate of a missing file is E3004', missing.code === 1 && missing.err.includes('[E3004]'), missing.err);
+  check(
+    'validate of a missing file is E3004',
+    missing.code === 1 && missing.err.includes('[E3004]'),
+    missing.err,
+  );
   const ver = run('--version');
-  check('--version prints the package version', ver.code === 0 && /^decl \d+\.\d+\.\d+\n$/.test(ver.out), ver.out + ver.err);
+  check(
+    '--version prints the package version',
+    ver.code === 0 && /^decl \d+\.\d+\.\d+\n$/.test(ver.out),
+    ver.out + ver.err,
+  );
 }
 
 console.log('== decl fmt ==');
@@ -73,11 +107,24 @@ console.log('== decl fmt ==');
   const f = join(dir, 'messy.decl');
   writeFileSync(f, 'const x=1+2\ntype T = {a: int,b?: string}\n');
   const chk = run('fmt', f, '--check');
-  check('--check flags drift, leaves the file', chk.code === 1 && readFileSync(f, 'utf8').includes('x=1'), chk.err);
+  check(
+    '--check flags drift, leaves the file',
+    chk.code === 1 && readFileSync(f, 'utf8').includes('x=1'),
+    chk.err,
+  );
   const unreadable = run('fmt', join(dir, 'missing.decl'));
-  check('fmt reports an unreadable file', unreadable.code === 1 && unreadable.err.includes('cannot be read'), unreadable.err);
+  check(
+    'fmt reports an unreadable file',
+    unreadable.code === 1 && unreadable.err.includes('cannot be read'),
+    unreadable.err,
+  );
   const w = run('fmt', f);
-  check('fmt rewrites in place', w.code === 0 && readFileSync(f, 'utf8') === 'const x = 1 + 2\ntype T = { a: int, b?: string }\n', readFileSync(f, 'utf8'));
+  check(
+    'fmt rewrites in place',
+    w.code === 0 &&
+      readFileSync(f, 'utf8') === 'const x = 1 + 2\ntype T = { a: int, b?: string }\n',
+    readFileSync(f, 'utf8'),
+  );
   const again = run('fmt', f, '--check');
   check('formatted file passes --check', again.code === 0, again.err);
 }

@@ -1,10 +1,11 @@
 """Module loading, linking, and universe evaluation — port of module.ts
-(§8.1–8.5, §8.8): files are modules, the import graph is acyclic, exports
-are explicit; packages (§8.6–8.7) plug in through the resolver hook."""
+(§8.1—8.5, §8.8): files are modules, the import graph is acyclic, exports
+are explicit; packages (§8.6—8.7) plug in through the resolver hook."""
+
 from __future__ import annotations
 
 import os
-from typing import Any, Optional
+from typing import Any
 
 from .engine import Engine
 from .parse import parse_source
@@ -12,28 +13,30 @@ from .semantics import Env, Scope, sort_diags
 
 
 class Module:
-    __slots__ = ("path", "decls", "env", "exports")
+    __slots__ = ("decls", "env", "exports", "path")
 
-    def __init__(self, path: str, decls: list, env: Env):
+    def __init__(self, path: str, decls: list[Any], env: Env):
         self.path, self.decls, self.env = path, decls, env
-        self.exports: dict = {}
+        self.exports: dict[str, Any] = {}
 
 
-def load_modules(entry_path: str, source_override: Optional[dict] = None, resolve_package=None) -> dict:
+def load_modules(
+    entry_path: str, source_override: dict[str, Any] | None = None, resolve_package: Any = None
+) -> dict[str, Any]:
     """Load the module graph from `entry_path`. `source_override` maps
     absolute paths to buffer contents (editors); `resolve_package(spec,
     from_dir)` maps a package specifier to a path or to a `{code, message}`
     diagnostic (packages, §8.6)."""
-    diags: list = []
+    diags: list[Any] = []
 
     def report(code: str, message: str) -> None:
         diags.append({"severity": "error", "code": code, "message": message, "path": ""})
 
-    modules: dict = {}
-    order: list = []
-    visiting: list = []
+    modules: dict[str, Any] = {}
+    order: list[Any] = []
+    visiting: list[Any] = []
 
-    def resolve_spec(spec: str, from_dir: str) -> Optional[str]:
+    def resolve_spec(spec: str, from_dir: str) -> str | None:
         if spec.startswith("./") or spec.startswith("../"):
             return os.path.normpath(os.path.join(from_dir, spec))
         if resolve_package is None:
@@ -45,13 +48,13 @@ def load_modules(entry_path: str, source_override: Optional[dict] = None, resolv
         report(r["code"], r["message"])
         return None
 
-    def load(path: str) -> Optional[Module]:
+    def load(path: str) -> Module | None:
         abs_ = os.path.abspath(path)
         if abs_ in modules:
             return modules[abs_]
         if abs_ in visiting:
             ci = visiting.index(abs_)
-            report("E3007", "module import cycle: " + " -> ".join(visiting[ci:] + [abs_]))
+            report("E3007", "module import cycle: " + " -> ".join([*visiting[ci:], abs_]))
             return None
         if source_override and abs_ in source_override:
             src = source_override[abs_]
@@ -73,7 +76,7 @@ def load_modules(entry_path: str, source_override: Optional[dict] = None, resolv
             report("E3001", f"duplicate name {n} in {abs_}")
         mod = Module(abs_, decls, env)
         visiting.append(abs_)
-        targets: dict = {}
+        targets: dict[str, Any] = {}
         for d in decls:
             if d["d"] not in ("import", "re_export"):
                 continue
@@ -88,8 +91,16 @@ def load_modules(entry_path: str, source_override: Optional[dict] = None, resolv
 
         def taken(n: str) -> bool:
             e = mod.env
-            return n in e.type_asts or n in e.consts or n in e.funcs or n in e.diags or n in e.inputs \
-                or any(o["name"] == n for o in e.outputs) or n in e.imports or n in e.namespaces
+            return (
+                n in e.type_asts
+                or n in e.consts
+                or n in e.funcs
+                or n in e.diags
+                or n in e.inputs
+                or any(o["name"] == n for o in e.outputs)
+                or n in e.imports
+                or n in e.namespaces
+            )
 
         for d in decls:
             if d["d"] == "import":
@@ -98,7 +109,9 @@ def load_modules(entry_path: str, source_override: Optional[dict] = None, resolv
                     continue
                 if d.get("ns") is not None:
                     if taken(d["ns"]):
-                        report("E3006", f"import {d['ns']} collides with an existing binding in {abs_}")
+                        report(
+                            "E3006", f"import {d['ns']} collides with an existing binding in {abs_}"
+                        )
                         continue
                     mod.env.namespaces[d["ns"]] = {"env": tm.env, "exports": tm.exports}
                     continue
@@ -109,7 +122,9 @@ def load_modules(entry_path: str, source_override: Optional[dict] = None, resolv
                         report("E3005", f"{tm.path} does not export {it['name']}")
                         continue
                     if taken(local):
-                        report("E3006", f"import {local} collides with an existing binding in {abs_}")
+                        report(
+                            "E3006", f"import {local} collides with an existing binding in {abs_}"
+                        )
                         continue
                     mod.env.imports[local] = ex
             elif d["d"] == "re_export":
@@ -138,8 +153,8 @@ def load_modules(entry_path: str, source_override: Optional[dict] = None, resolv
     return {"modules": order, "entry": entry, "diags": diags}
 
 
-def _link_universe(mods: list, entry: Module, report) -> None:
-    root_owners: dict = {}
+def _link_universe(mods: list[Any], entry: Module, report: Any) -> None:
+    root_owners: dict[str, Any] = {}
     for m in mods:
         for d in m.decls:
             if d["d"] in ("output", "input"):
@@ -155,7 +170,9 @@ def _link_universe(mods: list, entry: Module, report) -> None:
                 for m2 in mods:
                     if m2 is m:
                         continue
-                    if d["name"] in m2.env.dim_decls and not any(x["d"] == "dimension" and x["name"] == d["name"] for x in m2.decls):
+                    if d["name"] in m2.env.dim_decls and not any(
+                        x["d"] == "dimension" and x["name"] == d["name"] for x in m2.decls
+                    ):
                         continue
                     if d["name"] in m2.env.dim_decls:
                         report("E3001", f"dimension {d['name']} redeclared across modules")
@@ -165,12 +182,18 @@ def _link_universe(mods: list, entry: Module, report) -> None:
                 for m2 in mods:
                     if m2 is m:
                         continue
-                    if d["name"] in m2.env.unit_decls and not any(x["d"] == "unit" and x["name"] == d["name"] for x in m2.decls):
+                    if d["name"] in m2.env.unit_decls and not any(
+                        x["d"] == "unit" and x["name"] == d["name"] for x in m2.decls
+                    ):
                         continue
                     if d["name"] in m2.env.unit_decls:
                         report("E4073", f"unit {d['name']} redeclared across modules")
                     else:
-                        m2.env.unit_decls[d["name"]] = {"dim": d.get("dim"), "factor": d.get("factor"), "base": d.get("base")}
+                        m2.env.unit_decls[d["name"]] = {
+                            "dim": d.get("dim"),
+                            "factor": d.get("factor"),
+                            "base": d.get("base"),
+                        }
     for m in mods:
         if m is entry:
             continue
@@ -179,16 +202,16 @@ def _link_universe(mods: list, entry: Module, report) -> None:
         m.env.diagnostics = entry.env.diagnostics
 
 
-def run_universe(mods: list, entry: Module, binds: Optional[list] = None) -> dict:
+def run_universe(mods: list[Any], entry: Module, binds: list[Any] | None = None) -> dict[str, Any]:
     eng = Engine(entry.env)
     for m in mods:
         menv = m.env
-        menv.const_eval = (lambda e_: (lambda n: eng.force_const_in(e_, n, "")))(menv)
-        menv.expr_eval = (lambda e_: (lambda x: eng.ev(x, Scope(None, {}, "", e_))))(menv)
+        menv.const_eval = (lambda e_: lambda n: eng.force_const_in(e_, n, ""))(menv)
+        menv.expr_eval = (lambda e_: lambda x: eng.ev(x, Scope(None, {}, "", e_)))(menv)
     # bound documents first: an output may read an input (§5.5), and a
     # bound input is a root of the universe (§9.2); unbound inputs with a
     # fallback bind on first demand (§9.4)
-    for b in (binds or []):
+    for b in binds or []:
         m = b.get("module") or entry
         decl = m.env.inputs[b["input"]]
         sc = Scope(None, {}, b["input"], m.env)

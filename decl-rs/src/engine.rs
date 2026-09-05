@@ -86,7 +86,13 @@ fn num_s(v: &Value) -> String {
 
 fn lit_display(v: &Value) -> String {
     match v {
-        Value::Bool(b) => if *b { "true".into() } else { "false".into() },
+        Value::Bool(b) => {
+            if *b {
+                "true".into()
+            } else {
+                "false".into()
+            }
+        }
         Value::Null => "null".into(),
         other => num_s(other),
     }
@@ -116,7 +122,9 @@ fn path_key_cmp(a: &[Seg], b: &[Seg]) -> Ordering {
 }
 
 fn arg<'a>(a: &'a [Value], i: usize, name: &str) -> R<&'a Value> {
-    a.get(i).ok_or(()).or_else(|_| err(format!("std.{name}: missing argument {i}")))
+    a.get(i)
+        .ok_or(())
+        .or_else(|_| err(format!("std.{name}: missing argument {i}")))
 }
 
 fn add_num(a: &Value, b: &Value) -> R<Value> {
@@ -138,8 +146,17 @@ fn structural_of(v: &Value) -> RT {
         Value::Null => ty(RTk::Prim("null".into())),
         Value::Ref(_) => ty(RTk::Ref(ty(RTk::Any))),
         Value::Arr(a) => {
-            let elem = a.borrow().items.first().map(structural_of).unwrap_or_else(|| ty(RTk::Any));
-            ty(RTk::Arr { elem, lo: None, hi: None })
+            let elem = a
+                .borrow()
+                .items
+                .first()
+                .map(structural_of)
+                .unwrap_or_else(|| ty(RTk::Any));
+            ty(RTk::Arr {
+                elem,
+                lo: None,
+                hi: None,
+            })
         }
         Value::Q { dim, .. } => ty(RTk::Quantity(dim.clone())),
         _ => ty(RTk::Any),
@@ -170,7 +187,10 @@ impl Engine {
             deferred_roots: RefCell::new(vec![]),
         });
         let w = Rc::downgrade(&eng);
-        *env.tagger.borrow_mut() = Some(Rc::new(move || w.upgrade().and_then(|e| e.computing.borrow().last().cloned())));
+        *env.tagger.borrow_mut() = Some(Rc::new(move || {
+            w.upgrade()
+                .and_then(|e| e.computing.borrow().last().cloned())
+        }));
         eng
     }
     pub fn slot_key(inst: &Inst, name: &str) -> String {
@@ -184,7 +204,9 @@ impl Engine {
     }
     pub fn step<T>(&self, key: &str, f: impl FnOnce() -> T) -> T {
         self.computing.borrow_mut().push(key.to_string());
-        self.reads.borrow_mut().insert(key.to_string(), HashSet::new());
+        self.reads
+            .borrow_mut()
+            .insert(key.to_string(), HashSet::new());
         let r = f();
         self.computing.borrow_mut().pop();
         r
@@ -201,14 +223,18 @@ impl Engine {
     pub fn install_hooks(self: &Rc<Self>, env: &Rc<Env>, with_menv: bool) {
         let w = Rc::downgrade(self);
         let we: Weak<Env> = Rc::downgrade(env);
-        *env.const_eval.borrow_mut() = Some(Rc::new(move |n: &str| match (w.upgrade(), we.upgrade()) {
-            (Some(eng), Some(e)) => eng.force_const_in(&e, n, ""),
-            _ => Ok(Value::Null),
-        }));
+        *env.const_eval.borrow_mut() =
+            Some(Rc::new(move |n: &str| match (w.upgrade(), we.upgrade()) {
+                (Some(eng), Some(e)) => eng.force_const_in(&e, n, ""),
+                _ => Ok(Value::Null),
+            }));
         let w2 = Rc::downgrade(self);
         let we2: Weak<Env> = Rc::downgrade(env);
         *env.expr_eval.borrow_mut() = Some(Rc::new(move |x: &Rc<Expr>| match w2.upgrade() {
-            Some(eng) => eng.ev(x, &Scope::new("", if with_menv { we2.upgrade() } else { None })),
+            Some(eng) => eng.ev(
+                x,
+                &Scope::new("", if with_menv { we2.upgrade() } else { None }),
+            ),
             None => Ok(Value::Null),
         }));
     }
@@ -220,7 +246,10 @@ impl Engine {
             Expr::Pattern(s) => Ok(Value::Pat(s.clone())),
             Expr::UnitLit { num, unit } => {
                 let (key, to_base) = self.env.unit_info(unit).or_else(err)?;
-                Ok(Value::Q { dim: key, value: num * to_base })
+                Ok(Value::Q {
+                    dim: key,
+                    value: num * to_base,
+                })
             }
             Expr::Paren(x) => self.ev(x, sc),
             Expr::MapComp { key, val, clauses } => {
@@ -278,11 +307,24 @@ impl Engine {
                         // the key or index under which $this sits in its parent's
                         // collection: the last path segment, present only when the
                         // instance is a collection element (not a direct member)
-                        let Some(i) = inst else { return err_code("$key: the instance is not a collection element", "E4090") };
+                        let Some(i) = inst else {
+                            return err_code(
+                                "$key: the instance is not a collection element",
+                                "E4090",
+                            );
+                        };
                         let b = i.borrow();
-                        let Some(parent) = &b.parent else { return err_code("$key: the instance is not a collection element", "E4090") };
+                        let Some(parent) = &b.parent else {
+                            return err_code(
+                                "$key: the instance is not a collection element",
+                                "E4090",
+                            );
+                        };
                         if b.path.len() < parent.borrow().path.len() + 2 {
-                            return err_code("$key: the instance is not a collection element", "E4090");
+                            return err_code(
+                                "$key: the instance is not a collection element",
+                                "E4090",
+                            );
                         }
                         Ok(match b.path.last() {
                             Some(Seg::Idx(k)) => Value::Int(BigInt::from(*k)),
@@ -299,10 +341,32 @@ impl Engine {
             }
             Expr::Referrers { ty, member } => self.referrers(ty, member, sc),
             Expr::Obj(entries) => Ok(Value::PreObj(Rc::new(
-                entries.iter().map(|(k, v)| (k.clone(), Value::PreVal(Rc::new(PreValV { expr: v.clone(), scope: sc.clone() })))).collect(),
+                entries
+                    .iter()
+                    .map(|(k, v)| {
+                        (
+                            k.clone(),
+                            Value::PreVal(Rc::new(PreValV {
+                                expr: v.clone(),
+                                scope: sc.clone(),
+                            })),
+                        )
+                    })
+                    .collect(),
             ))),
             Expr::Arr(items) => Ok(Value::PreArr(Rc::new(
-                items.iter().map(|(sp, v)| (*sp, Value::PreVal(Rc::new(PreValV { expr: v.clone(), scope: sc.clone() })))).collect(),
+                items
+                    .iter()
+                    .map(|(sp, v)| {
+                        (
+                            *sp,
+                            Value::PreVal(Rc::new(PreValV {
+                                expr: v.clone(),
+                                scope: sc.clone(),
+                            })),
+                        )
+                    })
+                    .collect(),
             ))),
             Expr::Comp { head, clauses } => {
                 let mut items = vec![];
@@ -340,7 +404,11 @@ impl Engine {
                 }
                 err("match: no arm matched")
             }
-            Expr::Lambda { params, body } => Ok(Value::Clo(Rc::new(Closure { params: params.clone(), body: body.clone(), scope: sc.clone() }))),
+            Expr::Lambda { params, body } => Ok(Value::Clo(Rc::new(Closure {
+                params: params.clone(),
+                body: body.clone(),
+                scope: sc.clone(),
+            }))),
             Expr::Un { op, x } => {
                 let x = self.ev(x, sc)?;
                 match op.as_str() {
@@ -365,9 +433,15 @@ impl Engine {
                         Expr::Call { fun, args } => {
                             let mut a = vec![l.clone()];
                             a.extend(args.iter().cloned());
-                            Expr::Call { fun: fun.clone(), args: a }
+                            Expr::Call {
+                                fun: fun.clone(),
+                                args: a,
+                            }
                         }
-                        _ => Expr::Call { fun: r.clone(), args: vec![l.clone()] },
+                        _ => Expr::Call {
+                            fun: r.clone(),
+                            args: vec![l.clone()],
+                        },
                     };
                     return self.ev(&Rc::new(call), sc);
                 }
@@ -430,9 +504,23 @@ impl Engine {
         Ok(s)
     }
 
-    fn comp(&self, head: &Rc<Expr>, clauses: &[ForClause], ci: usize, locals: HashMap<String, Value>, sc: &Scope, out: &mut Vec<(bool, Value)>) -> R<()> {
+    fn comp(
+        &self,
+        head: &Rc<Expr>,
+        clauses: &[ForClause],
+        ci: usize,
+        locals: HashMap<String, Value>,
+        sc: &Scope,
+        out: &mut Vec<(bool, Value)>,
+    ) -> R<()> {
         if ci == clauses.len() {
-            out.push((false, Value::PreVal(Rc::new(PreValV { expr: head.clone(), scope: sc.with_locals(locals) }))));
+            out.push((
+                false,
+                Value::PreVal(Rc::new(PreValV {
+                    expr: head.clone(),
+                    scope: sc.with_locals(locals),
+                })),
+            ));
             return Ok(());
         }
         let cl = &clauses[ci];
@@ -455,10 +543,21 @@ impl Engine {
         Ok(())
     }
 
-    fn map_comp(&self, key: &Rc<Expr>, val: &Rc<Expr>, clauses: &[ForClause], ci: usize, locals: HashMap<String, Value>, sc: &Scope, out: &mut Vec<(String, Value)>) -> R<()> {
+    fn map_comp(
+        &self,
+        key: &Rc<Expr>,
+        val: &Rc<Expr>,
+        clauses: &[ForClause],
+        ci: usize,
+        locals: HashMap<String, Value>,
+        sc: &Scope,
+        out: &mut Vec<(String, Value)>,
+    ) -> R<()> {
         if ci == clauses.len() {
             let sc2 = sc.with_locals(locals);
-            let Value::Str(k) = self.ev(key, &sc2)? else { return err("map key must be string") };
+            let Value::Str(k) = self.ev(key, &sc2)? else {
+                return err("map key must be string");
+            };
             if out.iter().any(|(kk, _)| *kk == k) {
                 return err_code(format!("duplicate key {k}"), "E5004");
             }
@@ -493,7 +592,9 @@ impl Engine {
         }
         let mark = self.env.diag_len();
         self.no_reg.set(self.no_reg.get() + 1);
-        let ok = self.bind(v.clone(), rt, &[Seg::Name("<match>".into())], None, sc).is_ok();
+        let ok = self
+            .bind(v.clone(), rt, &[Seg::Name("<match>".into())], None, sc)
+            .is_ok();
         self.no_reg.set(self.no_reg.get() - 1);
         self.env.diag_truncate(mark);
         ok
@@ -550,7 +651,9 @@ impl Engine {
 
     fn ns_value(&self, ns: &NsRefV, name: &str, sc: &Scope) -> R<Value> {
         let ex = ns.exports.borrow().get(name).cloned();
-        let Some(ex) = ex else { return err(format!("namespace has no export {name}")) };
+        let Some(ex) = ex else {
+            return err(format!("namespace has no export {name}"));
+        };
         if let Some(v) = self.module_value(&ex.env, &ex.name, &sc.root_name)? {
             return Ok(v);
         }
@@ -569,7 +672,9 @@ impl Engine {
     // demanding path. Returns None when `name` is not an input.
     pub fn demand_input(&self, menv: &Rc<Env>, name: &str) -> R<Option<Value>> {
         let decl = menv.inputs.borrow().get(name).cloned();
-        let Some((ty_ast, fallback)) = decl else { return Ok(None) };
+        let Some((ty_ast, fallback)) = decl else {
+            return Ok(None);
+        };
         self.record(format!("root:{name}"));
         if let Some(v) = self.env.root(name) {
             return Ok(Some(v));
@@ -577,7 +682,9 @@ impl Engine {
         if self.failed_inputs.borrow().contains(name) {
             return Err(Fail::Taint);
         }
-        let Some(fallback) = fallback else { return err_code(format!("input {name} is not bound"), "E5006") };
+        let Some(fallback) = fallback else {
+            return err_code(format!("input {name} is not bound"), "E5006");
+        };
         let sc = Scope::new(name, Some(menv.clone()));
         let bound = self.step(&format!("root:{name}"), || -> R<Value> {
             let v = self.ev(&fallback, &sc)?;
@@ -614,10 +721,23 @@ impl Engine {
         });
         match bound {
             Ok(v) => self.env.set_root(name, v),
-            Err(Fail::Eval(e)) => self.env.report(Diag { severity: "error".into(), id: None, message: e.msg, path: name.to_string(), code: e.code, loc: None, by: None }),
+            Err(Fail::Eval(e)) => self.env.report(Diag {
+                severity: "error".into(),
+                id: None,
+                message: e.msg,
+                path: name.to_string(),
+                code: e.code,
+                loc: None,
+                by: None,
+            }),
             Err(Fail::Defer) => {
                 if self.phase.get() < 2 {
-                    self.deferred_roots.borrow_mut().push(DeferredRoot { name: name.to_string(), src: keep, rt: rt.clone(), sc: sc.clone() });
+                    self.deferred_roots.borrow_mut().push(DeferredRoot {
+                        name: name.to_string(),
+                        src: keep,
+                        rt: rt.clone(),
+                        sc: sc.clone(),
+                    });
                 }
             }
             Err(Fail::Taint) => {}
@@ -629,25 +749,42 @@ impl Engine {
         for d in pending {
             match &d.src {
                 OwnedRootSrc::Expr(e) => self.bind_root(&d.name, RootSrc::Expr(e), &d.rt, &d.sc),
-                OwnedRootSrc::Doc(v) => self.bind_root(&d.name, RootSrc::Doc(v.clone()), &d.rt, &d.sc),
+                OwnedRootSrc::Doc(v) => {
+                    self.bind_root(&d.name, RootSrc::Doc(v.clone()), &d.rt, &d.sc)
+                }
             }
         }
     }
 
     fn q_arith(&self, op: &str, l: &Value, r: &Value) -> R<Value> {
-        let dim_or_1 = |d: &str| if d.is_empty() { "1".to_string() } else { d.to_string() };
+        let dim_or_1 = |d: &str| {
+            if d.is_empty() {
+                "1".to_string()
+            } else {
+                d.to_string()
+            }
+        };
         match op {
             "+" | "-" => {
-                let (Value::Q { dim: ld, value: lv }, Value::Q { dim: rd, value: rv }) = (l, r) else {
+                let (Value::Q { dim: ld, value: lv }, Value::Q { dim: rd, value: rv }) = (l, r)
+                else {
                     return err(format!("`{op}` mixes quantity and plain number"));
                 };
                 if ld != rd {
-                    return err(format!("quantity dimension mismatch: {} vs {}", dim_or_1(ld), dim_or_1(rd)));
+                    return err(format!(
+                        "quantity dimension mismatch: {} vs {}",
+                        dim_or_1(ld),
+                        dim_or_1(rd)
+                    ));
                 }
-                Ok(Value::Q { dim: ld.clone(), value: if op == "+" { lv + rv } else { lv - rv } })
+                Ok(Value::Q {
+                    dim: ld.clone(),
+                    value: if op == "+" { lv + rv } else { lv - rv },
+                })
             }
             "<" | "<=" | ">" | ">=" => {
-                let (Value::Q { dim: ld, value: lv }, Value::Q { dim: rd, value: rv }) = (l, r) else {
+                let (Value::Q { dim: ld, value: lv }, Value::Q { dim: rd, value: rv }) = (l, r)
+                else {
                     return err("quantity dimension mismatch in comparison");
                 };
                 if ld != rd {
@@ -669,7 +806,9 @@ impl Engine {
                         _ => None,
                     }
                 };
-                let (Some(lm), Some(rm)) = (mag(l), mag(r)) else { return err(format!("bad operands for {op}")) };
+                let (Some(lm), Some(rm)) = (mag(l), mag(r)) else {
+                    return err(format!("bad operands for {op}"));
+                };
                 if op == "/" && rm == 0.0 {
                     return err_code("division by zero", "E5001");
                 }
@@ -683,7 +822,11 @@ impl Engine {
                     return err_code("non-finite", "E5002");
                 }
                 let key = key_of_vec(&vec);
-                Ok(if key.is_empty() { Value::Float(value) } else { Value::Q { dim: key, value } })
+                Ok(if key.is_empty() {
+                    Value::Float(value)
+                } else {
+                    Value::Q { dim: key, value }
+                })
             }
         }
     }
@@ -693,7 +836,9 @@ impl Engine {
             Value::PreArr(_) | Value::PreObj(_) => self.mat_arr(v),
             Value::Arr(a) => Ok(a.borrow().items.clone()),
             Value::Range { lo, hi, excl } => {
-                let (Value::Int(lo), Value::Int(hi)) = (&**lo, &**hi) else { return err("range bounds must be integers") };
+                let (Value::Int(lo), Value::Int(hi)) = (&**lo, &**hi) else {
+                    return err("range bounds must be integers");
+                };
                 let hi = if *excl { hi.clone() } else { hi + 1 };
                 let mut out = vec![];
                 let mut i = lo.clone();
@@ -717,27 +862,47 @@ impl Engine {
     fn binop(&self, op: &str, le: &Rc<Expr>, re: &Rc<Expr>, sc: &Scope) -> R<Value> {
         match op {
             "&&" => {
-                return if self.truthy(&self.ev(le, sc)?)? { Ok(Value::Bool(self.truthy(&self.ev(re, sc)?)?)) } else { Ok(Value::Bool(false)) };
+                return if self.truthy(&self.ev(le, sc)?)? {
+                    Ok(Value::Bool(self.truthy(&self.ev(re, sc)?)?))
+                } else {
+                    Ok(Value::Bool(false))
+                };
             }
             "||" => {
-                return if self.truthy(&self.ev(le, sc)?)? { Ok(Value::Bool(true)) } else { Ok(Value::Bool(self.truthy(&self.ev(re, sc)?)?)) };
+                return if self.truthy(&self.ev(le, sc)?)? {
+                    Ok(Value::Bool(true))
+                } else {
+                    Ok(Value::Bool(self.truthy(&self.ev(re, sc)?)?))
+                };
             }
             "??" => {
                 let l = self.ev(le, sc)?;
-                return if matches!(l, Value::Absent | Value::Null) { self.ev(re, sc) } else { Ok(l) };
+                return if matches!(l, Value::Absent | Value::Null) {
+                    self.ev(re, sc)
+                } else {
+                    Ok(l)
+                };
             }
             _ => {}
         }
         let l = self.ev(le, sc)?;
         let mut r = self.ev(re, sc)?;
         match op {
-            ".." | "..<" => return Ok(Value::Range { lo: Box::new(l), hi: Box::new(r), excl: op == "..<" }),
+            ".." | "..<" => {
+                return Ok(Value::Range {
+                    lo: Box::new(l),
+                    hi: Box::new(r),
+                    excl: op == "..<",
+                })
+            }
             "matches" => {
-                let (Value::Str(s), Value::Pat(p)) = (&l, &r) else { return err("matches needs a string and a pattern") };
+                let (Value::Str(s), Value::Pat(p)) = (&l, &r) else {
+                    return err("matches needs a string and a pattern");
+                };
                 if let Some(bad) = pattern_error(p) {
                     return err_code(format!("malformed pattern /{p}/: {bad}"), "E4119");
                 }
-                let re = compile_pattern(p).or_else(|e| err(e))?;
+                let re = compile_pattern(p).or_else(err)?;
                 return Ok(Value::Bool(re.is_match(s)));
             }
             "==" => return Ok(Value::Bool(value_eq(&l, &r))),
@@ -749,19 +914,33 @@ impl Engine {
                 return match &r {
                     Value::Range { lo, hi, excl } => {
                         let ge = matches!(num_cmp(&l, lo), Some(Greater | Equal));
-                        let hi_ok = if *excl { num_cmp(&l, hi) == Some(Less) } else { matches!(num_cmp(&l, hi), Some(Less | Equal)) };
+                        let hi_ok = if *excl {
+                            num_cmp(&l, hi) == Some(Less)
+                        } else {
+                            matches!(num_cmp(&l, hi), Some(Less | Equal))
+                        };
                         Ok(Value::Bool(ge && hi_ok))
                     }
-                    Value::PreArr(_) | Value::PreObj(_) => Ok(Value::Bool(self.mat_arr(&r)?.iter().any(|x| value_eq(&l, x)))),
-                    Value::Arr(a) => Ok(Value::Bool(a.borrow().items.iter().any(|x| value_eq(&l, x)))),
+                    Value::PreArr(_) | Value::PreObj(_) => Ok(Value::Bool(
+                        self.mat_arr(&r)?.iter().any(|x| value_eq(&l, x)),
+                    )),
+                    Value::Arr(a) => Ok(Value::Bool(
+                        a.borrow().items.iter().any(|x| value_eq(&l, x)),
+                    )),
                     Value::Map(m) => {
-                        let Value::Str(k) = &l else { return Ok(Value::Bool(false)) };
+                        let Value::Str(k) = &l else {
+                            return Ok(Value::Bool(false));
+                        };
                         Ok(Value::Bool(m.borrow().has(k)))
                     }
                     Value::Rec(rec) => {
-                        let Value::Str(k) = &l else { return Ok(Value::Bool(false)) };
+                        let Value::Str(k) = &l else {
+                            return Ok(Value::Bool(false));
+                        };
                         let has = rec.borrow().has_slot(k);
-                        Ok(Value::Bool(has && self.force_state(rec, k) != SlotState::Absent))
+                        Ok(Value::Bool(
+                            has && self.force_state(rec, k) != SlotState::Absent,
+                        ))
                     }
                     _ => err("in: bad container"),
                 };
@@ -771,7 +950,9 @@ impl Engine {
         if l.is_absent() || r.is_absent() {
             return err("absent consumed");
         }
-        if (matches!(l, Value::Q { .. }) || matches!(r, Value::Q { .. })) && ["+", "-", "*", "/", "<", "<=", ">", ">="].contains(&op) {
+        if (matches!(l, Value::Q { .. }) || matches!(r, Value::Q { .. }))
+            && ["+", "-", "*", "/", "<", "<=", ">", ">="].contains(&op)
+        {
             return self.q_arith(op, &l, &r);
         }
         let both_i = matches!((&l, &r), (Value::Int(_), Value::Int(_)));
@@ -809,7 +990,13 @@ impl Engine {
             }
             ("<" | "<=" | ">" | ">=", _, _) if both_i || both_f || both_s => {
                 let o = num_cmp(&l, &r);
-                Ok(Value::Bool(matches!((op, o), ("<", Some(Less)) | ("<=", Some(Less | Equal)) | (">", Some(Greater)) | (">=", Some(Greater | Equal)))))
+                Ok(Value::Bool(matches!(
+                    (op, o),
+                    ("<", Some(Less))
+                        | ("<=", Some(Less | Equal))
+                        | (">", Some(Greater))
+                        | (">=", Some(Greater | Equal))
+                )))
             }
             ("&", Value::Int(a), Value::Int(b)) => Ok(Value::Int(a.clone() & b.clone())),
             ("|", Value::Int(a), Value::Int(b)) => Ok(Value::Int(a.clone() | b.clone())),
@@ -818,8 +1005,15 @@ impl Engine {
                 if b.is_negative() {
                     return err_code("negative shift count", "E5003");
                 }
-                let n = b.to_usize().ok_or(()).or_else(|_| err("shift count too large"))?;
-                Ok(Value::Int(if op == "<<" { a.clone() << n } else { a.clone() >> n }))
+                let n = b
+                    .to_usize()
+                    .ok_or(())
+                    .or_else(|_| err("shift count too large"))?;
+                Ok(Value::Int(if op == "<<" {
+                    a.clone() << n
+                } else {
+                    a.clone() >> n
+                }))
             }
             _ => err(format!("bad operands for {op}")),
         }
@@ -860,10 +1054,18 @@ impl Engine {
             }
             cur = match (&cur, s) {
                 (Value::Rec(r), Seg::Name(n) | Seg::Key(n)) => {
-                    if r.borrow().slot(n).is_some() { self.force_slot(r, n)? } else { Value::Undef }
+                    if r.borrow().slot(n).is_some() {
+                        self.force_slot(r, n)?
+                    } else {
+                        Value::Undef
+                    }
                 }
-                (Value::Arr(a), Seg::Idx(i)) => a.borrow().items.get(*i).cloned().unwrap_or(Value::Undef),
-                (Value::Map(m), Seg::Name(n) | Seg::Key(n)) => m.borrow().get(n).cloned().unwrap_or(Value::Undef),
+                (Value::Arr(a), Seg::Idx(i)) => {
+                    a.borrow().items.get(*i).cloned().unwrap_or(Value::Undef)
+                }
+                (Value::Map(m), Seg::Name(n) | Seg::Key(n)) => {
+                    m.borrow().get(n).cloned().unwrap_or(Value::Undef)
+                }
                 _ => Value::Undef,
             };
             if cur.is_absent() {
@@ -890,12 +1092,22 @@ impl Engine {
             }
             cur = match (&cur, s) {
                 (Value::Rec(r), Seg::Name(n)) if dot_spellable(n) => {
-                    if r.borrow().slot(n).is_some() { self.force_slot(r, n)? } else { Value::Undef }
+                    if r.borrow().slot(n).is_some() {
+                        self.force_slot(r, n)?
+                    } else {
+                        Value::Undef
+                    }
                 }
                 (Value::Rec(r), Seg::Key(n)) if !dot_spellable(n) => {
-                    if r.borrow().slot(n).is_some() { self.force_slot(r, n)? } else { Value::Undef }
+                    if r.borrow().slot(n).is_some() {
+                        self.force_slot(r, n)?
+                    } else {
+                        Value::Undef
+                    }
                 }
-                (Value::Arr(a), Seg::Idx(i)) => a.borrow().items.get(*i).cloned().unwrap_or(Value::Undef),
+                (Value::Arr(a), Seg::Idx(i)) => {
+                    a.borrow().items.get(*i).cloned().unwrap_or(Value::Undef)
+                }
                 (Value::Map(m), Seg::Key(n)) => m.borrow().get(n).cloned().unwrap_or(Value::Undef),
                 _ => Value::Undef,
             };
@@ -974,8 +1186,18 @@ impl Engine {
     }
 
     fn std(&self, name: &str, a: Vec<Value>, sc: &Scope) -> R<Value> {
-        let domain = |msg: String| -> Fail { Fail::Eval(EvalErr { msg: format!("std.{name}: {msg}"), code: Some("E5008".into()) }) };
-        let arr = |path: Vec<Value>| Value::Arr(Rc::new(RefCell::new(ArrV { items: path, path: vec![] })));
+        let domain = |msg: String| -> Fail {
+            Fail::Eval(EvalErr {
+                msg: format!("std.{name}: {msg}"),
+                code: Some("E5008".into()),
+            })
+        };
+        let arr = |path: Vec<Value>| {
+            Value::Arr(Rc::new(RefCell::new(ArrV {
+                items: path,
+                path: vec![],
+            })))
+        };
         let s = |v: &Value| -> R<String> {
             match v {
                 Value::Str(s) => Ok(s.clone()),
@@ -983,7 +1205,9 @@ impl Engine {
             }
         };
         match name {
-            "array.count" => Ok(Value::Int(BigInt::from(self.mat_arr(arg(&a, 0, name)?)?.len()))),
+            "array.count" => Ok(Value::Int(BigInt::from(
+                self.mat_arr(arg(&a, 0, name)?)?.len(),
+            ))),
             "array.all" => {
                 for x in self.mat_arr(arg(&a, 0, name)?)? {
                     if !self.truthy(&self.call(arg(&a, 1, name)?, vec![x], sc)?)? {
@@ -1022,8 +1246,14 @@ impl Engine {
             }
             "array.sum" => {
                 let items = self.mat_arr(arg(&a, 0, name)?)?;
-                let Some(first) = items.first() else { return Ok(Value::Int(BigInt::zero())) };
-                let mut acc = if matches!(first, Value::Float(_)) { Value::Float(0.0) } else { Value::Int(BigInt::zero()) };
+                let Some(first) = items.first() else {
+                    return Ok(Value::Int(BigInt::zero()));
+                };
+                let mut acc = if matches!(first, Value::Float(_)) {
+                    Value::Float(0.0)
+                } else {
+                    Value::Int(BigInt::zero())
+                };
                 for x in &items {
                     acc = add_num(&acc, x)?;
                 }
@@ -1036,32 +1266,63 @@ impl Engine {
                 }
                 Ok(acc)
             }
-            "map.keys" => Ok(arr(self.mat_map(arg(&a, 0, name)?)?.borrow().entries.iter().map(|(k, _)| Value::Str(k.clone())).collect())),
-            "map.values" => Ok(arr(self.mat_map(arg(&a, 0, name)?)?.borrow().entries.iter().map(|(_, v)| v.clone()).collect())),
-            "map.entries" => Ok(arr(
-                self.mat_map(arg(&a, 0, name)?)?
-                    .borrow()
-                    .entries
-                    .iter()
-                    .map(|(k, v)| Value::PreObj(Rc::new(vec![("key".into(), Value::Str(k.clone())), ("value".into(), v.clone())])))
-                    .collect(),
-            )),
-            "string.length" => Ok(Value::Int(BigInt::from(s(arg(&a, 0, name)?)?.chars().count()))),
+            "map.keys" => Ok(arr(self
+                .mat_map(arg(&a, 0, name)?)?
+                .borrow()
+                .entries
+                .iter()
+                .map(|(k, _)| Value::Str(k.clone()))
+                .collect())),
+            "map.values" => Ok(arr(self
+                .mat_map(arg(&a, 0, name)?)?
+                .borrow()
+                .entries
+                .iter()
+                .map(|(_, v)| v.clone())
+                .collect())),
+            "map.entries" => Ok(arr(self
+                .mat_map(arg(&a, 0, name)?)?
+                .borrow()
+                .entries
+                .iter()
+                .map(|(k, v)| {
+                    Value::PreObj(Rc::new(vec![
+                        ("key".into(), Value::Str(k.clone())),
+                        ("value".into(), v.clone()),
+                    ]))
+                })
+                .collect())),
+            "string.length" => Ok(Value::Int(BigInt::from(
+                s(arg(&a, 0, name)?)?.chars().count(),
+            ))),
             "string.of" => Ok(Value::Str(self.to_str(arg(&a, 0, name)?)?)),
             "string.join" => {
                 let sep = s(arg(&a, 1, name)?)?;
-                let parts: Vec<String> = self.mat_arr(arg(&a, 0, name)?)?.iter().map(s).collect::<R<_>>()?;
+                let parts: Vec<String> = self
+                    .mat_arr(arg(&a, 0, name)?)?
+                    .iter()
+                    .map(s)
+                    .collect::<R<_>>()?;
                 Ok(Value::Str(parts.join(&sep)))
             }
-            "string.starts_with" => Ok(Value::Bool(s(arg(&a, 0, name)?)?.starts_with(&s(arg(&a, 1, name)?)?))),
-            "string.ends_with" => Ok(Value::Bool(s(arg(&a, 0, name)?)?.ends_with(&s(arg(&a, 1, name)?)?))),
-            "string.contains" => Ok(Value::Bool(s(arg(&a, 0, name)?)?.contains(&s(arg(&a, 1, name)?)?))),
+            "string.starts_with" => Ok(Value::Bool(
+                s(arg(&a, 0, name)?)?.starts_with(&s(arg(&a, 1, name)?)?),
+            )),
+            "string.ends_with" => Ok(Value::Bool(
+                s(arg(&a, 0, name)?)?.ends_with(&s(arg(&a, 1, name)?)?),
+            )),
+            "string.contains" => Ok(Value::Bool(
+                s(arg(&a, 0, name)?)?.contains(&s(arg(&a, 1, name)?)?),
+            )),
             "string.split" => {
                 let sep = s(arg(&a, 1, name)?)?;
                 if sep.is_empty() {
                     return Err(domain("separator must be non-empty".into()));
                 }
-                Ok(arr(s(arg(&a, 0, name)?)?.split(&sep).map(|p| Value::Str(p.to_string())).collect()))
+                Ok(arr(s(arg(&a, 0, name)?)?
+                    .split(&sep)
+                    .map(|p| Value::Str(p.to_string()))
+                    .collect()))
             }
             "ref.path" => match arg(&a, 0, name)? {
                 Value::Ref(p) => Ok(Value::Str(path_str(p, None))),
@@ -1074,13 +1335,21 @@ impl Engine {
             },
             "math.min" | "math.max" => {
                 let (x, y) = (arg(&a, 0, name)?, arg(&a, 1, name)?);
-                let Some(o) = num_cmp(x, y) else { return err(format!("std.{name}: bad operands")) };
-                let pick_x = if name == "math.min" { o == Less } else { o == Greater };
+                let Some(o) = num_cmp(x, y) else {
+                    return err(format!("std.{name}: bad operands"));
+                };
+                let pick_x = if name == "math.min" {
+                    o == Less
+                } else {
+                    o == Greater
+                };
                 Ok(if pick_x { x.clone() } else { y.clone() })
             }
             "math.clog2" => {
                 let n = arg(&a, 0, name)?;
-                let Value::Int(i) = n else { return Err(domain(format!("n >= 1 required, got {}", num_s(n)))) };
+                let Value::Int(i) = n else {
+                    return Err(domain(format!("n >= 1 required, got {}", num_s(n))));
+                };
                 if i < &BigInt::from(1) {
                     return Err(domain(format!("n >= 1 required, got {i}")));
                 }
@@ -1088,8 +1357,15 @@ impl Engine {
             }
             "math.floor" | "math.ceil" => match arg(&a, 0, name)? {
                 Value::Float(f) => {
-                    let r = if name == "math.floor" { f.floor() } else { f.ceil() };
-                    BigInt::from_f64(r).map(Value::Int).ok_or(()).or_else(|_| err(format!("std.{name}: non-finite")))
+                    let r = if name == "math.floor" {
+                        f.floor()
+                    } else {
+                        f.ceil()
+                    };
+                    BigInt::from_f64(r)
+                        .map(Value::Int)
+                        .ok_or(())
+                        .or_else(|_| err(format!("std.{name}: non-finite")))
                 }
                 Value::Int(i) => Ok(Value::Int(i.clone())),
                 _ => err(format!("std.{name}: bad operand")),
@@ -1100,27 +1376,35 @@ impl Engine {
                     let frac = x - f;
                     let r = if frac > 0.5 {
                         f + 1.0
-                    } else if frac < 0.5 {
-                        f
-                    } else if f % 2.0 == 0.0 {
+                    } else if frac < 0.5 || f % 2.0 == 0.0 {
                         f
                     } else {
                         f + 1.0
                     };
-                    BigInt::from_f64(r).map(Value::Int).ok_or(()).or_else(|_| err("std.math.round: non-finite"))
+                    BigInt::from_f64(r)
+                        .map(Value::Int)
+                        .ok_or(())
+                        .or_else(|_| err("std.math.round: non-finite"))
                 }
                 Value::Int(i) => Ok(Value::Int(i.clone())),
                 _ => err("std.math.round: bad operand"),
             },
             "int.of" => match arg(&a, 0, name)? {
-                Value::Float(x) if x.fract() == 0.0 && x.is_finite() => Ok(Value::Int(BigInt::from_f64(*x).unwrap())),
-                other => Err(domain(format!("no fractional part allowed, got {}", num_s(other)))),
+                Value::Float(x) if x.fract() == 0.0 && x.is_finite() => {
+                    Ok(Value::Int(BigInt::from_f64(*x).unwrap()))
+                }
+                other => Err(domain(format!(
+                    "no fractional part allowed, got {}",
+                    num_s(other)
+                ))),
             },
             "int.at_least" | "int.at_most" => {
                 let n = arg(&a, 0, name)?.clone();
                 let least = name == "int.at_least";
                 let f: NatFn = Rc::new(move |args: &[Value]| {
-                    let Some(x) = args.first() else { return err("missing argument") };
+                    let Some(x) = args.first() else {
+                        return err("missing argument");
+                    };
                     match num_cmp(x, &n) {
                         Some(o) => Ok(Value::Bool(if least { o != Less } else { o != Greater })),
                         None => err("bad operands"),
@@ -1132,7 +1416,9 @@ impl Engine {
                 let v = match arg(&a, 0, name)? {
                     Value::Int(i) => i.to_f64().unwrap_or(f64::INFINITY),
                     Value::Float(f) => *f,
-                    Value::Str(s) => s.parse::<f64>().or_else(|_| err("std.float.of: bad operand"))?,
+                    Value::Str(s) => s
+                        .parse::<f64>()
+                        .or_else(|_| err("std.float.of: bad operand"))?,
                     _ => return err("std.float.of: bad operand"),
                 };
                 if !v.is_finite() {
@@ -1184,7 +1470,12 @@ impl Engine {
         }
         let mut entries = vec![];
         for n in &names {
-            let is_der = |r: &Inst| r.borrow().slot(n).map(|s| s.kind == MKind::Der).unwrap_or(false);
+            let is_der = |r: &Inst| {
+                r.borrow()
+                    .slot(n)
+                    .map(|s| s.kind == MKind::Der)
+                    .unwrap_or(false)
+            };
             if is_der(&base) || is_der(&patch) {
                 continue;
             }
@@ -1245,7 +1536,9 @@ impl Engine {
             return Err(Fail::Defer);
         }
         self.record(format!("referrers:{type_name}"));
-        let Some(self_inst) = &sc.inst else { return err("$referrers outside a record") };
+        let Some(self_inst) = &sc.inst else {
+            return err("$referrers outside a record");
+        };
         let target = self_inst.borrow().path.clone();
         let mut out: Vec<Inst> = vec![];
         for cand in self.env.registry_snapshot() {
@@ -1256,27 +1549,50 @@ impl Engine {
             if tn.as_deref() != Some(type_name) || !has {
                 continue;
             }
-            let Ok(v) = self.force_slot(&cand, member) else { continue };
+            let Ok(v) = self.force_slot(&cand, member) else {
+                continue;
+            };
             if self.contains_ref_to(&v, &target) {
                 out.push(cand);
             }
         }
         out.sort_by(|a, b| path_key_cmp(&a.borrow().path, &b.borrow().path));
-        let items = out.iter().map(|c| Value::Ref(Rc::new(c.borrow().path.clone()))).collect();
-        Ok(Value::Arr(Rc::new(RefCell::new(ArrV { items, path: vec![] }))))
+        let items = out
+            .iter()
+            .map(|c| Value::Ref(Rc::new(c.borrow().path.clone())))
+            .collect();
+        Ok(Value::Arr(Rc::new(RefCell::new(ArrV {
+            items,
+            path: vec![],
+        }))))
     }
 
     fn contains_ref_to(&self, v: &Value, target: &[Seg]) -> bool {
         match v {
             Value::Ref(p) => cmp_path(p, target) == Equal,
-            Value::Arr(a) => a.borrow().items.iter().any(|x| self.contains_ref_to(x, target)),
-            Value::Map(m) => m.borrow().entries.iter().any(|(_, x)| self.contains_ref_to(x, target)),
+            Value::Arr(a) => a
+                .borrow()
+                .items
+                .iter()
+                .any(|x| self.contains_ref_to(x, target)),
+            Value::Map(m) => m
+                .borrow()
+                .entries
+                .iter()
+                .any(|(_, x)| self.contains_ref_to(x, target)),
             _ => false,
         }
     }
 
     // ---------- binding / checking ----------
-    pub fn bind(&self, raw: Value, rt: &RT, path: &[Seg], parent: Option<&Inst>, sc: &Scope) -> R<Value> {
+    pub fn bind(
+        &self,
+        raw: Value,
+        rt: &RT,
+        path: &[Seg],
+        parent: Option<&Inst>,
+        sc: &Scope,
+    ) -> R<Value> {
         if let Value::PreVal(pv) = &raw {
             let inst = parent.cloned().or_else(|| pv.scope.inst.clone());
             let sc2 = pv.scope.with_inst(inst);
@@ -1285,7 +1601,11 @@ impl Engine {
                     Some(p) => {
                         // reference integrity (§7.5): the place must hold a value
                         if self.resolve_segs(&p)?.is_undef() {
-                            self.env.report(Diag::error(format!("dangling reference {}", path_str(&p, None)), path_str(path, None), Some("E6002")));
+                            self.env.report(Diag::error(
+                                format!("dangling reference {}", path_str(&p, None)),
+                                path_str(path, None),
+                                Some("E6002"),
+                            ));
                             return Err(Fail::Taint);
                         }
                         Ok(Value::Ref(Rc::new(p)))
@@ -1300,16 +1620,41 @@ impl Engine {
             let tail = rt.tail.borrow();
             match &*tail {
                 Some(Tail::Inline { template, .. }) => {
-                    let text: String = template.iter().filter_map(|p| if let TPart::Text(t) = p { Some(t.as_str()) } else { None }).collect();
-                    self.env.report(Diag { severity: "error".into(), id: rt.name.borrow().clone(), message: text, path: path_str(path, None), code: Some("E4001".into()), loc: None, by: None });
+                    let text: String = template
+                        .iter()
+                        .filter_map(|p| {
+                            if let TPart::Text(t) = p {
+                                Some(t.as_str())
+                            } else {
+                                None
+                            }
+                        })
+                        .collect();
+                    self.env.report(Diag {
+                        severity: "error".into(),
+                        id: rt.name.borrow().clone(),
+                        message: text,
+                        path: path_str(path, None),
+                        code: Some("E4001".into()),
+                        loc: None,
+                        by: None,
+                    });
                 }
-                _ => self.env.report(Diag::error(msg, path_str(path, None), Some(code.unwrap_or("E4001")))),
+                _ => self.env.report(Diag::error(
+                    msg,
+                    path_str(path, None),
+                    Some(code.unwrap_or("E4001")),
+                )),
             }
             Fail::Taint
         };
         match &rt.k {
             RTk::Prim(n) => match (n.as_str(), &raw) {
-                ("int", Value::Int(_)) | ("float", Value::Float(_)) | ("bool", Value::Bool(_)) | ("string", Value::Str(_)) | ("null", Value::Null) => Ok(raw),
+                ("int", Value::Int(_))
+                | ("float", Value::Float(_))
+                | ("bool", Value::Bool(_))
+                | ("string", Value::Str(_))
+                | ("null", Value::Null) => Ok(raw),
                 ("float", Value::Int(i)) => match exact_float(i) {
                     Some(f) => Ok(Value::Float(f)),
                     None => Err(fail(format!("expected {n}"), None)),
@@ -1320,7 +1665,10 @@ impl Engine {
                 if value_eq(&raw, v) {
                     Ok(raw)
                 } else {
-                    Err(fail(format!("expected {}", json_str(&lit_display(v))), None))
+                    Err(fail(
+                        format!("expected {}", json_str(&lit_display(v))),
+                        None,
+                    ))
                 }
             }
             RTk::Range { lo, hi, excl, base } => {
@@ -1331,15 +1679,31 @@ impl Engine {
                     },
                     _ => raw,
                 };
-                let ok = if base == "int" { matches!(raw, Value::Int(_)) } else { matches!(raw, Value::Float(_)) };
+                let ok = if base == "int" {
+                    matches!(raw, Value::Int(_))
+                } else {
+                    matches!(raw, Value::Float(_))
+                };
                 if !ok {
                     return Err(fail(format!("expected {base} in range"), None));
                 }
-                let hi_ok = if *excl { num_cmp(&raw, hi) == Some(Less) } else { matches!(num_cmp(&raw, hi), Some(Less | Equal)) };
+                let hi_ok = if *excl {
+                    num_cmp(&raw, hi) == Some(Less)
+                } else {
+                    matches!(num_cmp(&raw, hi), Some(Less | Equal))
+                };
                 if matches!(num_cmp(&raw, lo), Some(Greater | Equal)) && hi_ok {
                     return Ok(raw);
                 }
-                Err(fail(format!("out of range {}..{}{}", num_s(lo), if *excl { "<" } else { "" }, num_s(hi)), None))
+                Err(fail(
+                    format!(
+                        "out of range {}..{}{}",
+                        num_s(lo),
+                        if *excl { "<" } else { "" },
+                        num_s(hi)
+                    ),
+                    None,
+                ))
             }
             RTk::Pattern { src, re } => match &raw {
                 Value::Str(s) if re.is_match(s) => Ok(raw),
@@ -1367,7 +1731,10 @@ impl Engine {
                                 Value::Float(f) => *f,
                                 _ => return Err(fail("expected quantity".into(), None)),
                             };
-                            return Ok(Value::Q { dim: dim.clone(), value: f * to_base });
+                            return Ok(Value::Q {
+                                dim: dim.clone(),
+                                value: f * to_base,
+                            });
                         }
                     }
                 }
@@ -1382,7 +1749,9 @@ impl Engine {
                     }
                     Ok(Value::Ref(Rc::new(segs)))
                 }
-                Value::Rec(_) | Value::Arr(_) | Value::Map(_) => Ok(Value::Ref(Rc::new(raw.place().unwrap()))),
+                Value::Rec(_) | Value::Arr(_) | Value::Map(_) => {
+                    Ok(Value::Ref(Rc::new(raw.place().unwrap())))
+                }
                 _ => Err(fail("expected reference path".into(), None)),
             },
             RTk::Arr { elem, lo, hi } => {
@@ -1392,7 +1761,9 @@ impl Engine {
                         for (spread, v) in pa.iter() {
                             if *spread {
                                 let s = match v {
-                                    Value::PreVal(pv) => self.deref(self.ev(&pv.expr, &pv.scope)?)?,
+                                    Value::PreVal(pv) => {
+                                        self.deref(self.ev(&pv.expr, &pv.scope)?)?
+                                    }
                                     other => self.deref(other.clone())?,
                                 };
                                 items.extend(self.mat_arr(&s)?);
@@ -1413,7 +1784,10 @@ impl Engine {
                         return Err(fail(format!("array size {n} outside {lo}..{h}"), None));
                     }
                 }
-                let arr = Rc::new(RefCell::new(ArrV { items: vec![], path: path.to_vec() }));
+                let arr = Rc::new(RefCell::new(ArrV {
+                    items: vec![],
+                    path: path.to_vec(),
+                }));
                 for (i, it) in items.into_iter().enumerate() {
                     let mut p = path.to_vec();
                     p.push(Seg::Idx(i));
@@ -1431,7 +1805,10 @@ impl Engine {
                     Value::Map(m) => m.borrow().entries.clone(),
                     _ => return Err(fail("expected map".into(), None)),
                 };
-                let m = Rc::new(RefCell::new(MapV { entries: vec![], path: path.to_vec() }));
+                let m = Rc::new(RefCell::new(MapV {
+                    entries: vec![],
+                    path: path.to_vec(),
+                }));
                 for (k, v) in es {
                     match self.bind(Value::Str(k.clone()), key, path, parent, sc) {
                         Ok(_) => {}
@@ -1450,19 +1827,38 @@ impl Engine {
             }
             RTk::Union(arms) => {
                 let rec_arms: Vec<&RT> = arms.iter().filter(|a| is_rec(a)).collect();
-                if matches!(raw, Value::JObj(_) | Value::PreObj(_) | Value::Rec(_)) && !rec_arms.is_empty() {
-                    let is_lit = |m: &Member| matches!(m.ty.as_ref().map(|t| &t.k), Some(RTk::Lit(_)));
+                if matches!(raw, Value::JObj(_) | Value::PreObj(_) | Value::Rec(_))
+                    && !rec_arms.is_empty()
+                {
+                    let is_lit =
+                        |m: &Member| matches!(m.ty.as_ref().map(|t| &t.k), Some(RTk::Lit(_)));
                     let first = rec_members(rec_arms[0]);
                     let disc_names: Vec<String> = first
                         .iter()
-                        .filter(|m| is_lit(m) && rec_arms.iter().all(|a| rec_members(a).iter().any(|x| x.name == m.name && is_lit(x))))
+                        .filter(|m| {
+                            is_lit(m)
+                                && rec_arms.iter().all(|a| {
+                                    rec_members(a).iter().any(|x| x.name == m.name && is_lit(x))
+                                })
+                        })
                         .map(|m| m.name.clone())
                         .collect();
                     for arm in &rec_arms {
                         let members = rec_members(arm);
                         let mut ok = true;
                         for dn in &disc_names {
-                            let lit = members.iter().find(|x| &x.name == dn).and_then(|x| x.ty.clone()).and_then(|t| if let RTk::Lit(v) = &t.k { Some(v.clone()) } else { None }).unwrap_or(Value::Undef);
+                            let lit = members
+                                .iter()
+                                .find(|x| &x.name == dn)
+                                .and_then(|x| x.ty.clone())
+                                .and_then(|t| {
+                                    if let RTk::Lit(v) = &t.k {
+                                        Some(v.clone())
+                                    } else {
+                                        None
+                                    }
+                                })
+                                .unwrap_or(Value::Undef);
                             match self.raw_entry(&raw, dn)? {
                                 Some(mv) => {
                                     if !value_eq(&self.raw_lit(&mv)?, &lit) {
@@ -1496,7 +1892,10 @@ impl Engine {
                     let f = self.ev(p, &Scope::new(&sc.root_name, sc.menv.clone()))?;
                     let ok = matches!(self.call(&f, vec![v.clone()], sc), Ok(Value::Bool(true)));
                     if !ok {
-                        return Err(fail(format!("predicate {} not satisfied", json_str(&expr_name(p))), None));
+                        return Err(fail(
+                            format!("predicate {} not satisfied", json_str(&expr_name(p))),
+                            None,
+                        ));
                     }
                 }
                 Ok(v)
@@ -1518,7 +1917,9 @@ impl Engine {
 
     fn raw_entry(&self, raw: &Value, name: &str) -> R<Option<Value>> {
         match raw {
-            Value::JObj(es) | Value::PreObj(es) => Ok(es.iter().find(|(k, _)| k == name).map(|(_, v)| v.clone())),
+            Value::JObj(es) | Value::PreObj(es) => {
+                Ok(es.iter().find(|(k, _)| k == name).map(|(_, v)| v.clone()))
+            }
             Value::Rec(r) => {
                 if r.borrow().has_slot(name) {
                     Ok(Some(self.force_slot(r, name)?))
@@ -1541,7 +1942,11 @@ impl Engine {
         Ok(match &rt.k {
             RTk::Prim(n) => matches!(
                 (n.as_str(), raw),
-                ("int", Value::Int(_)) | ("float", Value::Float(_)) | ("bool", Value::Bool(_)) | ("string", Value::Str(_)) | ("null", Value::Null)
+                ("int", Value::Int(_))
+                    | ("float", Value::Float(_))
+                    | ("bool", Value::Bool(_))
+                    | ("string", Value::Str(_))
+                    | ("null", Value::Null)
             ),
             RTk::Lit(v) => value_eq(&self.raw_lit(raw)?, v),
             RTk::Range { base, .. } => {
@@ -1629,7 +2034,9 @@ impl Engine {
                         }
                     }
                     Value::Map(m) => {
-                        let Value::Str(k) = &i else { return err("map index needs a string") };
+                        let Value::Str(k) = &i else {
+                            return err("map index needs a string");
+                        };
                         let b = m.borrow();
                         match b.get(k) {
                             Some(v) => Ok(v.clone()),
@@ -1641,7 +2048,9 @@ impl Engine {
                         }
                     }
                     Value::Rec(r) => {
-                        let Value::Str(k) = &i else { return err("index on record needs a string") };
+                        let Value::Str(k) = &i else {
+                            return err("index on record needs a string");
+                        };
                         let v = self.access(&x, k)?;
                         if v.is_absent() {
                             let mut p = r.borrow().path.clone();
@@ -1658,14 +2067,31 @@ impl Engine {
         }
     }
 
-    fn bind_record(&self, raw: Value, rt: &RT, path: &[Seg], parent: Option<&Inst>, sc: &Scope) -> R<Value> {
-        let RTk::Rec(rec) = &rt.k else { return err("bind_record on non-record type") };
+    fn bind_record(
+        &self,
+        raw: Value,
+        rt: &RT,
+        path: &[Seg],
+        parent: Option<&Inst>,
+        sc: &Scope,
+    ) -> R<Value> {
+        let RTk::Rec(rec) = &rt.k else {
+            return err("bind_record on non-record type");
+        };
         let entries: Vec<(String, Value)> = match &raw {
             Value::JObj(e) | Value::PreObj(e) => (**e).clone(),
             Value::Rec(r) => {
                 let (order, extras, ders) = {
                     let b = r.borrow();
-                    (b.entry_order.clone(), b.extras.clone(), b.slots.iter().filter(|(_, s)| s.kind == MKind::Der).map(|(n, _)| n.clone()).collect::<Vec<_>>())
+                    (
+                        b.entry_order.clone(),
+                        b.extras.clone(),
+                        b.slots
+                            .iter()
+                            .filter(|(_, s)| s.kind == MKind::Der)
+                            .map(|(n, _)| n.clone())
+                            .collect::<Vec<_>>(),
+                    )
                 };
                 let mut out = vec![];
                 for n in order {
@@ -1682,7 +2108,11 @@ impl Engine {
                 out
             }
             _ => {
-                self.env.report(Diag::error("expected record", path_str(path, None), Some("E4001")));
+                self.env.report(Diag::error(
+                    "expected record",
+                    path_str(path, None),
+                    Some("E4001"),
+                ));
                 return Err(Fail::Taint);
             }
         };
@@ -1706,7 +2136,10 @@ impl Engine {
         }
         for m in &members {
             let name = m.name.clone();
-            let types: Vec<RT> = m.conj.clone().unwrap_or_else(|| m.ty.iter().cloned().collect());
+            let types: Vec<RT> = m
+                .conj
+                .clone()
+                .unwrap_or_else(|| m.ty.iter().cloned().collect());
             let menv = m.menv.clone().or_else(|| sc.menv.clone());
             let root_name = sc.root_name.clone();
             let has = supplied.get(&name).cloned();
@@ -1716,28 +2149,100 @@ impl Engine {
             if m.kind == MKind::Der && m.hidden && has.is_some() {
                 let mut p = path.to_vec();
                 p.push(Seg::Name(name.clone()));
-                self.env.report(Diag::error(format!("hidden member {name} supplied"), path_str(&p, None), Some("E4006")));
-                inst.borrow_mut().slots.push((name.clone(), Slot { kind: MKind::Der, hidden: true, state: SlotState::Invalid, value: Value::Undef, compute: None }));
+                self.env.report(Diag::error(
+                    format!("hidden member {name} supplied"),
+                    path_str(&p, None),
+                    Some("E4006"),
+                ));
+                inst.borrow_mut().slots.push((
+                    name.clone(),
+                    Slot {
+                        kind: MKind::Der,
+                        hidden: true,
+                        state: SlotState::Invalid,
+                        value: Value::Undef,
+                        compute: None,
+                    },
+                ));
                 continue;
             }
             let slot = match (m.kind, has) {
                 (MKind::Der, has) => {
-                    let expr = m.expr.clone().unwrap_or_else(|| Rc::new(Expr::Lit(Value::Null)));
+                    let expr = m
+                        .expr
+                        .clone()
+                        .unwrap_or_else(|| Rc::new(Expr::Lit(Value::Null)));
                     // $referrers needs the whole universe: schedule for phase 2 up front
                     push_deferred = mentions_referrers(&expr);
-                    Slot { kind: MKind::Der, hidden: m.hidden, state: SlotState::Unforced, value: Value::Undef, compute: Some(Compute::Derived { expr, ty: m.ty.clone(), supplied: has, name: name.clone(), root_name, menv }) }
+                    Slot {
+                        kind: MKind::Der,
+                        hidden: m.hidden,
+                        state: SlotState::Unforced,
+                        value: Value::Undef,
+                        compute: Some(Compute::Derived {
+                            expr,
+                            ty: m.ty.clone(),
+                            supplied: has,
+                            name: name.clone(),
+                            root_name,
+                            menv,
+                        }),
+                    }
                 }
-                (kind, Some(raw_v)) => Slot { kind, hidden: false, state: SlotState::Unforced, value: Value::Undef, compute: Some(Compute::Check { raw: raw_v, types, name: name.clone(), root_name, menv }) },
+                (kind, Some(raw_v)) => Slot {
+                    kind,
+                    hidden: false,
+                    state: SlotState::Unforced,
+                    value: Value::Undef,
+                    compute: Some(Compute::Check {
+                        raw: raw_v,
+                        types,
+                        name: name.clone(),
+                        root_name,
+                        menv,
+                    }),
+                },
                 (MKind::Dflt, None) => {
-                    let expr = m.dflt.clone().unwrap_or_else(|| Rc::new(Expr::Lit(Value::Null)));
-                    Slot { kind: MKind::Dflt, hidden: false, state: SlotState::Unforced, value: Value::Undef, compute: Some(Compute::Default { expr, types, name: name.clone(), root_name, menv }) }
+                    let expr = m
+                        .dflt
+                        .clone()
+                        .unwrap_or_else(|| Rc::new(Expr::Lit(Value::Null)));
+                    Slot {
+                        kind: MKind::Dflt,
+                        hidden: false,
+                        state: SlotState::Unforced,
+                        value: Value::Undef,
+                        compute: Some(Compute::Default {
+                            expr,
+                            types,
+                            name: name.clone(),
+                            root_name,
+                            menv,
+                        }),
+                    }
                 }
-                (MKind::Opt, None) => Slot { kind: MKind::Opt, hidden: false, state: SlotState::Absent, value: Value::Undef, compute: None },
+                (MKind::Opt, None) => Slot {
+                    kind: MKind::Opt,
+                    hidden: false,
+                    state: SlotState::Absent,
+                    value: Value::Undef,
+                    compute: None,
+                },
                 (MKind::Req, None) => {
                     let mut p = path.to_vec();
                     p.push(Seg::Name(name.clone()));
-                    self.env.report(Diag::error(format!("required member {name} missing"), path_str(&p, None), Some("E4002")));
-                    Slot { kind: MKind::Req, hidden: false, state: SlotState::Invalid, value: Value::Undef, compute: None }
+                    self.env.report(Diag::error(
+                        format!("required member {name} missing"),
+                        path_str(&p, None),
+                        Some("E4002"),
+                    ));
+                    Slot {
+                        kind: MKind::Req,
+                        hidden: false,
+                        state: SlotState::Invalid,
+                        value: Value::Undef,
+                        compute: None,
+                    }
                 }
             };
             inst.borrow_mut().slots.push((name.clone(), slot));
@@ -1752,10 +2257,19 @@ impl Engine {
             if rec.open.get() {
                 inst.borrow_mut().set_extra(k, v.clone());
             } else {
-                let nm = rt.name.borrow().as_ref().map(|n| format!(" {n}")).unwrap_or_default();
+                let nm = rt
+                    .name
+                    .borrow()
+                    .as_ref()
+                    .map(|n| format!(" {n}"))
+                    .unwrap_or_default();
                 let mut p = path.to_vec();
                 p.push(Seg::Name(k.clone()));
-                self.env.report(Diag::error(format!("undeclared member {k} on closed record{nm}"), path_str(&p, None), Some("E4003")));
+                self.env.report(Diag::error(
+                    format!("undeclared member {k} on closed record{nm}"),
+                    path_str(&p, None),
+                    Some("E4003"),
+                ));
             }
         }
         Ok(Value::Rec(inst))
@@ -1763,14 +2277,25 @@ impl Engine {
 
     fn run_compute(&self, inst: &Inst, c: &Compute) -> R<Value> {
         let path = inst.borrow().path.clone();
-        let scope_for = |root_name: &str, menv: &Option<Rc<Env>>| Scope { inst: Some(inst.clone()), locals: Rc::new(HashMap::new()), root_name: root_name.to_string(), menv: menv.clone() };
+        let scope_for = |root_name: &str, menv: &Option<Rc<Env>>| Scope {
+            inst: Some(inst.clone()),
+            locals: Rc::new(HashMap::new()),
+            root_name: root_name.to_string(),
+            menv: menv.clone(),
+        };
         let member_path = |name: &str| {
             let mut p = path.clone();
             p.push(Seg::Name(name.to_string()));
             p
         };
         match c {
-            Compute::Check { raw, types, name, root_name, menv } => {
+            Compute::Check {
+                raw,
+                types,
+                name,
+                root_name,
+                menv,
+            } => {
                 let isc = scope_for(root_name, menv);
                 let mp = member_path(name);
                 let mut v = Value::Null;
@@ -1779,11 +2304,20 @@ impl Engine {
                 }
                 Ok(v)
             }
-            Compute::Default { expr, types, name, root_name, menv } => {
+            Compute::Default {
+                expr,
+                types,
+                name,
+                root_name,
+                menv,
+            } => {
                 let isc = scope_for(root_name, menv);
                 let mp = member_path(name);
                 if types.len() == 1 && matches!(types[0].k, RTk::Ref(_)) {
-                    let pv = Value::PreVal(Rc::new(PreValV { expr: expr.clone(), scope: isc.clone() }));
+                    let pv = Value::PreVal(Rc::new(PreValV {
+                        expr: expr.clone(),
+                        scope: isc.clone(),
+                    }));
                     return self.bind(pv, &types[0], &mp, Some(inst), &isc);
                 }
                 let v = self.ev(expr, &isc)?;
@@ -1793,14 +2327,24 @@ impl Engine {
                 }
                 Ok(out)
             }
-            Compute::Derived { expr, ty: t, supplied, name, root_name, menv } => {
+            Compute::Derived {
+                expr,
+                ty: t,
+                supplied,
+                name,
+                root_name,
+                menv,
+            } => {
                 let isc = scope_for(root_name, menv);
                 let mp = member_path(name);
                 // a member declared `ref<T>` holds a navigation (§7.4): the
                 // expression names a place, and is bound as one
                 let mut v = match t {
                     Some(t) if matches!(t.k, RTk::Ref(_)) => {
-                        let pv = Value::PreVal(Rc::new(PreValV { expr: expr.clone(), scope: isc.clone() }));
+                        let pv = Value::PreVal(Rc::new(PreValV {
+                            expr: expr.clone(),
+                            scope: isc.clone(),
+                        }));
                         self.bind(pv, t, &mp, Some(inst), &isc)?
                     }
                     _ => self.ev(expr, &isc)?,
@@ -1819,7 +2363,11 @@ impl Engine {
                     self.no_reg.set(self.no_reg.get() - 1);
                     let restated = restated?;
                     if !value_eq(&v, &restated) {
-                        self.env.report(Diag::error(format!("derived member {name} restated with a differing value"), path_str(&mp, None), Some("E4005")));
+                        self.env.report(Diag::error(
+                            format!("derived member {name} restated with a differing value"),
+                            path_str(&mp, None),
+                            Some("E4005"),
+                        ));
                         return Err(Fail::Taint);
                     }
                 }
@@ -1831,7 +2379,10 @@ impl Engine {
     pub fn materialize(&self, v: Value, path: &[Seg]) -> R<Value> {
         match v {
             Value::PreArr(items) => {
-                let arr = Rc::new(RefCell::new(ArrV { items: vec![], path: path.to_vec() }));
+                let arr = Rc::new(RefCell::new(ArrV {
+                    items: vec![],
+                    path: path.to_vec(),
+                }));
                 for (i, (_, it)) in items.iter().enumerate() {
                     let x = match it {
                         Value::PreVal(pv) => self.ev(&pv.expr, &pv.scope)?,
@@ -1845,7 +2396,10 @@ impl Engine {
                 Ok(Value::Arr(arr))
             }
             Value::PreObj(entries) => {
-                let m = Rc::new(RefCell::new(MapV { entries: vec![], path: path.to_vec() }));
+                let m = Rc::new(RefCell::new(MapV {
+                    entries: vec![],
+                    path: path.to_vec(),
+                }));
                 for (k, pv) in entries.iter() {
                     let x = match pv {
                         Value::PreVal(pv) => self.ev(&pv.expr, &pv.scope)?,
@@ -1865,7 +2419,9 @@ impl Engine {
     fn with_expr(&self, base: &Rc<Expr>, patch: &Rc<Expr>, sc: &Scope) -> R<Value> {
         let base = self.deref(self.ev(base, sc)?)?;
         let merge = |entries: &mut Vec<(String, Value)>, patch: Value| -> R<()> {
-            let Value::PreObj(pes) = patch else { return err("with: patch must be an object") };
+            let Value::PreObj(pes) = patch else {
+                return err("with: patch must be an object");
+            };
             for (pk, pv) in pes.iter() {
                 if let Some(e) = entries.iter_mut().find(|(n, _)| n == pk) {
                     e.1 = pv.clone();
@@ -1881,7 +2437,9 @@ impl Engine {
             merge(&mut entries, p)?;
             return Ok(Value::PreObj(Rc::new(entries)));
         }
-        let Value::Rec(r) = &base else { return err("with on non-record") };
+        let Value::Rec(r) = &base else {
+            return err("with on non-record");
+        };
         let p = self.ev(patch, sc)?;
         let (order, members) = {
             let b = r.borrow();
@@ -1893,7 +2451,12 @@ impl Engine {
                 let b = r.borrow();
                 match b.extra(&n) {
                     Some(v) => (Some(v.clone()), false),
-                    None => (None, b.slot(&n).map(|s| s.kind == MKind::Der || s.state == SlotState::Absent).unwrap_or(true)),
+                    None => (
+                        None,
+                        b.slot(&n)
+                            .map(|s| s.kind == MKind::Der || s.state == SlotState::Absent)
+                            .unwrap_or(true),
+                    ),
                 }
             };
             if let Some(v) = extra {
@@ -1910,7 +2473,11 @@ impl Engine {
             if m.kind != MKind::Dflt || entries.iter().any(|(k, _)| *k == m.name) {
                 continue;
             }
-            let present = r.borrow().slot(&m.name).map(|s| s.state != SlotState::Absent).unwrap_or(false);
+            let present = r
+                .borrow()
+                .slot(&m.name)
+                .map(|s| s.state != SlotState::Absent)
+                .unwrap_or(false);
             if present {
                 let v = self.force_slot(r, &m.name)?;
                 entries.push((m.name.clone(), v));
@@ -1923,7 +2490,10 @@ impl Engine {
     // ---------- slots ----------
     pub fn force_state(&self, inst: &Inst, name: &str) -> SlotState {
         self.force_slot_safe(inst, name);
-        inst.borrow().slot(name).map(|s| s.state).unwrap_or(SlotState::Invalid)
+        inst.borrow()
+            .slot(name)
+            .map(|s| s.state)
+            .unwrap_or(SlotState::Invalid)
     }
 
     pub fn force_slot_safe(&self, inst: &Inst, name: &str) {
@@ -1933,7 +2503,9 @@ impl Engine {
     pub fn force_slot(&self, inst: &Inst, name: &str) -> R<Value> {
         let (state, compute) = {
             let b = inst.borrow();
-            let Some(s) = b.slot(name) else { return err(format!("no member {name}")) };
+            let Some(s) = b.slot(name) else {
+                return err(format!("no member {name}"));
+            };
             (s.state, s.compute.clone())
         };
         let key = Engine::slot_key(inst, name);
@@ -1947,12 +2519,18 @@ impl Engine {
         let mut mp = inst.borrow().path.clone();
         mp.push(Seg::Name(name.to_string()));
         if state == SlotState::Forcing {
-            self.env.report(Diag::error(format!("dependency cycle at {name}"), path_str(&mp, None), Some("E5007")));
+            self.env.report(Diag::error(
+                format!("dependency cycle at {name}"),
+                path_str(&mp, None),
+                Some("E5007"),
+            ));
             inst.borrow_mut().slot_mut(name).unwrap().state = SlotState::Invalid;
             return Err(Fail::Taint);
         }
         inst.borrow_mut().slot_mut(name).unwrap().state = SlotState::Forcing;
-        self.slots_by_key.borrow_mut().insert(key.clone(), (inst.clone(), name.to_string()));
+        self.slots_by_key
+            .borrow_mut()
+            .insert(key.clone(), (inst.clone(), name.to_string()));
         let res = match &compute {
             Some(c) => self.step(&key, || self.run_compute(inst, c)),
             None => Ok(Value::Null),
@@ -1967,7 +2545,9 @@ impl Engine {
             }
             Err(Fail::Defer) => {
                 inst.borrow_mut().slot_mut(name).unwrap().state = SlotState::Unforced;
-                self.deferred_slots.borrow_mut().push((inst.clone(), name.to_string()));
+                self.deferred_slots
+                    .borrow_mut()
+                    .push((inst.clone(), name.to_string()));
                 Err(Fail::Defer)
             }
             Err(Fail::Eval(e)) => {
@@ -1978,7 +2558,15 @@ impl Engine {
                         s.state = SlotState::Invalid;
                     }
                 }
-                self.env.report(Diag { severity: "error".into(), id: None, message: e.msg, path: path_str(&mp, None), code: e.code, loc: None, by: None });
+                self.env.report(Diag {
+                    severity: "error".into(),
+                    id: None,
+                    message: e.msg,
+                    path: path_str(&mp, None),
+                    code: e.code,
+                    loc: None,
+                    by: None,
+                });
                 Err(Fail::Taint)
             }
             Err(Fail::Taint) => {
@@ -1994,7 +2582,9 @@ impl Engine {
 
     pub fn force_const_in(&self, env: &Rc<Env>, name: &str, root_name: &str) -> R<Value> {
         let c = env.consts.borrow().get(name).cloned();
-        let Some(c) = c else { return err(format!("unknown constant {name}")) };
+        let Some(c) = c else {
+            return err(format!("unknown constant {name}"));
+        };
         if c.state.get() {
             return Ok(c.value.borrow().clone());
         }
@@ -2023,7 +2613,9 @@ impl Engine {
                     self.force_slot_safe(r, &n);
                     let child = {
                         let b = r.borrow();
-                        b.slot(&n).filter(|s| s.state == SlotState::Ok).map(|s| s.value.clone())
+                        b.slot(&n)
+                            .filter(|s| s.state == SlotState::Ok)
+                            .map(|s| s.value.clone())
                     };
                     if let Some(c) = child {
                         self.force_all(&c);
@@ -2107,9 +2699,13 @@ impl Engine {
     /// reset a computed slot so that it is computed again (dependency tracking)
     pub fn reset_slot(&self, key: &str) -> bool {
         let entry = self.slots_by_key.borrow().get(key).cloned();
-        let Some((inst, name)) = entry else { return false };
+        let Some((inst, name)) = entry else {
+            return false;
+        };
         let mut b = inst.borrow_mut();
-        let Some(s) = b.slot_mut(&name) else { return false };
+        let Some(s) = b.slot_mut(&name) else {
+            return false;
+        };
         if s.compute.is_none() {
             return false;
         }
@@ -2125,18 +2721,47 @@ impl Engine {
             let b = inst.borrow();
             (b.menv.clone(), path_str(&b.path, None), b.type_name.clone())
         };
-        let sc0 = Scope { inst: Some(inst.clone()), locals: Rc::new(HashMap::new()), root_name: root_name.to_string(), menv: menv0.clone() };
+        let sc0 = Scope {
+            inst: Some(inst.clone()),
+            locals: Rc::new(HashMap::new()),
+            root_name: root_name.to_string(),
+            menv: menv0.clone(),
+        };
         for a in asserts {
-            let sc = if a.menv.is_some() { sc0.with_menv(a.menv.clone()) } else { sc0.clone() };
+            let sc = if a.menv.is_some() {
+                sc0.with_menv(a.menv.clone())
+            } else {
+                sc0.clone()
+            };
             if a.when {
-                let Ok(cond) = self.ev(&a.cond, &sc) else { continue };
+                let Ok(cond) = self.ev(&a.cond, &sc) else {
+                    continue;
+                };
                 if matches!(cond, Value::Bool(true)) {
                     let inner: Vec<AssertItem> = a
                         .body
                         .iter()
                         .filter_map(|b| match b {
-                            MemberAst::Assert { name, cond, tail, .. } => Some(AssertItem { when: false, name: name.clone(), cond: cond.clone(), tail: tail.clone(), body: vec![], origin: a.origin.clone(), menv: a.menv.clone() }),
-                            MemberAst::When { cond, body, .. } => Some(AssertItem { when: true, name: String::new(), cond: cond.clone(), tail: None, body: body.clone(), origin: a.origin.clone(), menv: a.menv.clone() }),
+                            MemberAst::Assert {
+                                name, cond, tail, ..
+                            } => Some(AssertItem {
+                                when: false,
+                                name: name.clone(),
+                                cond: cond.clone(),
+                                tail: tail.clone(),
+                                body: vec![],
+                                origin: a.origin.clone(),
+                                menv: a.menv.clone(),
+                            }),
+                            MemberAst::When { cond, body, .. } => Some(AssertItem {
+                                when: true,
+                                name: String::new(),
+                                cond: cond.clone(),
+                                tail: None,
+                                body: body.clone(),
+                                origin: a.origin.clone(),
+                                menv: a.menv.clone(),
+                            }),
                             _ => None,
                         })
                         .collect();
@@ -2147,7 +2772,15 @@ impl Engine {
             let ok = match self.ev(&a.cond, &sc) {
                 Ok(v) => v,
                 Err(Fail::Eval(e)) => {
-                    self.env.report(Diag { severity: "error".into(), id: None, message: format!("{}: {}", a.name, e.msg), path: ipath.clone(), code: e.code, loc: None, by: None });
+                    self.env.report(Diag {
+                        severity: "error".into(),
+                        id: None,
+                        message: format!("{}: {}", a.name, e.msg),
+                        path: ipath.clone(),
+                        code: e.code,
+                        loc: None,
+                        by: None,
+                    });
                     continue;
                 }
                 Err(_) => continue,
@@ -2155,9 +2788,24 @@ impl Engine {
             if matches!(ok, Value::Bool(true)) {
                 continue;
             }
-            let id = format!("{}.{}", a.origin.clone().or_else(|| type_name.clone()).unwrap_or_default(), a.name);
+            let id = format!(
+                "{}.{}",
+                a.origin
+                    .clone()
+                    .or_else(|| type_name.clone())
+                    .unwrap_or_default(),
+                a.name
+            );
             match &a.tail {
-                None => self.env.report(Diag { severity: "error".into(), id: Some(id), message: format!("assert {} failed", a.name), path: ipath.clone(), code: Some("E6001".into()), loc: None, by: None }),
+                None => self.env.report(Diag {
+                    severity: "error".into(),
+                    id: Some(id),
+                    message: format!("assert {} failed", a.name),
+                    path: ipath.clone(),
+                    code: Some("E6001".into()),
+                    loc: None,
+                    by: None,
+                }),
                 Some(Tail::Inline { severity, template }) => {
                     let msg = self.render_lenient(template, &sc);
                     let code = match severity.as_str() {
@@ -2165,23 +2813,61 @@ impl Engine {
                         "warn" => "W6001",
                         _ => "I6001",
                     };
-                    self.env.report(Diag { severity: severity.clone(), id: Some(id), message: msg, path: ipath.clone(), code: Some(code.into()), loc: None, by: None });
+                    self.env.report(Diag {
+                        severity: severity.clone(),
+                        id: Some(id),
+                        message: msg,
+                        path: ipath.clone(),
+                        code: Some(code.into()),
+                        loc: None,
+                        by: None,
+                    });
                 }
                 Some(Tail::Ref { name, args }) => {
-                    let d = menv0.as_ref().and_then(|e| e.diags.borrow().get(name).cloned()).or_else(|| self.env.diags.borrow().get(name).cloned());
+                    let d = menv0
+                        .as_ref()
+                        .and_then(|e| e.diags.borrow().get(name).cloned())
+                        .or_else(|| self.env.diags.borrow().get(name).cloned());
                     let Some(d) = d else {
-                        self.env.report(Diag::error(format!("unknown diagnostic {name}"), ipath.clone(), None));
+                        self.env.report(Diag::error(
+                            format!("unknown diagnostic {name}"),
+                            ipath.clone(),
+                            None,
+                        ));
                         continue;
                     };
-                    let argv: Vec<Value> = args.iter().map(|x| self.ev(x, &sc).unwrap_or(Value::Absent)).collect();
+                    let argv: Vec<Value> = args
+                        .iter()
+                        .map(|x| self.ev(x, &sc).unwrap_or(Value::Absent))
+                        .collect();
                     let mut locals = HashMap::new();
                     for (i, p) in d.params.iter().enumerate() {
-                        locals.insert(p.name.clone(), argv.get(i).cloned().unwrap_or(Value::Absent));
+                        locals.insert(
+                            p.name.clone(),
+                            argv.get(i).cloned().unwrap_or(Value::Absent),
+                        );
                     }
-                    let psc = Scope { inst: None, locals: Rc::new(locals), root_name: root_name.to_string(), menv: menv0.clone() };
+                    let psc = Scope {
+                        inst: None,
+                        locals: Rc::new(locals),
+                        root_name: root_name.to_string(),
+                        menv: menv0.clone(),
+                    };
                     let msg = self.render_lenient(&d.template, &psc);
-                    let code = if d.severity == "error" { "E6001" } else { "W6001" };
-                    self.env.report(Diag { severity: d.severity.clone(), id: Some(id), message: msg, path: ipath.clone(), code: Some(code.into()), loc: None, by: None });
+                    let code = if d.severity == "error" {
+                        "E6001"
+                    } else {
+                        "W6001"
+                    };
+                    self.env.report(Diag {
+                        severity: d.severity.clone(),
+                        id: Some(id),
+                        message: msg,
+                        path: ipath.clone(),
+                        code: Some(code.into()),
+                        loc: None,
+                        by: None,
+                    });
                 }
             }
         }
@@ -2217,19 +2903,50 @@ impl Engine {
         Some(match x {
             Value::Absent | Value::Undef => return None,
             Value::Null => "null".into(),
-            Value::Bool(b) => if *b { "true".into() } else { "false".into() },
+            Value::Bool(b) => {
+                if *b {
+                    "true".into()
+                } else {
+                    "false".into()
+                }
+            }
             Value::Int(i) => i.to_string(),
             Value::Float(f) => fmt_f(*f),
             Value::Str(s) => json_str(s),
             Value::Q { dim, value } => {
-                let unit = self.env.base_unit_of.borrow().get(dim).cloned().unwrap_or_else(|| dim.clone());
-                format!("{{\"value\":{},\"unit\":{}}}", fmt_f(*value), json_str(&unit))
+                let unit = self
+                    .env
+                    .base_unit_of
+                    .borrow()
+                    .get(dim)
+                    .cloned()
+                    .unwrap_or_else(|| dim.clone());
+                format!(
+                    "{{\"value\":{},\"unit\":{}}}",
+                    fmt_f(*value),
+                    json_str(&unit)
+                )
             }
             Value::Ref(p) => json_str(&path_str(p, Some(root))),
-            Value::Arr(a) => format!("[{}]", a.borrow().items.iter().filter_map(|i| self.go(i, root, settable_only)).collect::<Vec<_>>().join(",")),
+            Value::Arr(a) => format!(
+                "[{}]",
+                a.borrow()
+                    .items
+                    .iter()
+                    .filter_map(|i| self.go(i, root, settable_only))
+                    .collect::<Vec<_>>()
+                    .join(",")
+            ),
             Value::Map(m) => format!(
                 "{{{}}}",
-                m.borrow().entries.iter().filter_map(|(k, v)| self.go(v, root, settable_only).map(|g| format!("{}:{g}", json_str(k)))).collect::<Vec<_>>().join(",")
+                m.borrow()
+                    .entries
+                    .iter()
+                    .filter_map(|(k, v)| self
+                        .go(v, root, settable_only)
+                        .map(|g| format!("{}:{g}", json_str(k))))
+                    .collect::<Vec<_>>()
+                    .join(",")
             ),
             Value::Rec(r) => {
                 let b = r.borrow();
@@ -2242,7 +2959,9 @@ impl Engine {
                         continue;
                     }
                     let Some(s) = b.slot(n) else { continue };
-                    if matches!(s.state, SlotState::Invalid | SlotState::Absent) || s.kind == MKind::Der {
+                    if matches!(s.state, SlotState::Invalid | SlotState::Absent)
+                        || s.kind == MKind::Der
+                    {
                         continue;
                     }
                     if let Some(g) = self.go(&s.value, root, settable_only) {
@@ -2257,7 +2976,12 @@ impl Engine {
                         continue;
                     }
                     let Some(s) = b.slot(&m.name) else { continue };
-                    if s.hidden || matches!(s.state, SlotState::Invalid | SlotState::Absent | SlotState::Unforced) {
+                    if s.hidden
+                        || matches!(
+                            s.state,
+                            SlotState::Invalid | SlotState::Absent | SlotState::Unforced
+                        )
+                    {
                         continue;
                     }
                     if let Some(g) = self.go(&s.value, root, settable_only) {
@@ -2274,12 +2998,31 @@ impl Engine {
     fn raw_json(&self, v: &Value, root: &str) -> String {
         match v {
             Value::Null => "null".into(),
-            Value::Bool(b) => if *b { "true".into() } else { "false".into() },
+            Value::Bool(b) => {
+                if *b {
+                    "true".into()
+                } else {
+                    "false".into()
+                }
+            }
             Value::Int(i) => i.to_string(),
             Value::Float(f) => fmt_f(*f),
             Value::Str(s) => json_str(s),
-            Value::JArr(items) => format!("[{}]", items.iter().map(|x| self.raw_json(x, root)).collect::<Vec<_>>().join(",")),
-            Value::JObj(es) => format!("{{{}}}", es.iter().map(|(k, x)| format!("{}:{}", json_str(k), self.raw_json(x, root))).collect::<Vec<_>>().join(",")),
+            Value::JArr(items) => format!(
+                "[{}]",
+                items
+                    .iter()
+                    .map(|x| self.raw_json(x, root))
+                    .collect::<Vec<_>>()
+                    .join(",")
+            ),
+            Value::JObj(es) => format!(
+                "{{{}}}",
+                es.iter()
+                    .map(|(k, x)| format!("{}:{}", json_str(k), self.raw_json(x, root)))
+                    .collect::<Vec<_>>()
+                    .join(",")
+            ),
             Value::PreVal(pv) => match self.ev(&pv.expr, &pv.scope) {
                 Ok(v) => self.go(&v, root, false).unwrap_or_else(|| "null".into()),
                 Err(_) => "null".into(),

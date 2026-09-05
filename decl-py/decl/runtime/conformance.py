@@ -4,12 +4,14 @@ conformance.ts: judges fixtures by their declared phase.
   invalid @expect-phase: parsing   -> must fail to parse
   invalid @expect-phase: checking  -> parses; static checks report @expect-error
   invalid @expect-phase: binding   -> parses; the pipeline reports @expect-error"""
+
 from __future__ import annotations
 
 import json
 import os
 import re
-from typing import Iterator
+from collections.abc import Iterator
+from typing import Any
 
 from .checker import check_module
 from .parse import parse_source
@@ -25,7 +27,7 @@ def walk_decl(dir_: str) -> Iterator[str]:
             yield p
 
 
-def judge_fixture(file: str, is_valid: bool) -> dict:
+def judge_fixture(file: str, is_valid: bool) -> dict[str, Any]:
     with open(file, encoding="utf-8") as f:
         src = f.read()
     meta = dict(m for m in re.findall(r"// @([a-z-]+):\s*(.+)", src))
@@ -37,23 +39,38 @@ def judge_fixture(file: str, is_valid: bool) -> dict:
         # a valid fixture must parse, check clean, AND evaluate its outputs
         # without error-severity diagnostics
         checks = check_module(parsed["decls"]) if not parsed["errors"] else []
-        eval_errs = [d for d in run_pipeline(parsed["decls"])["diags"] if d["severity"] == "error"] \
-            if (not parsed["errors"] and not checks) else []
+        eval_errs = (
+            [d for d in run_pipeline(parsed["decls"])["diags"] if d["severity"] == "error"]
+            if (not parsed["errors"] and not checks)
+            else []
+        )
         ok = not parsed["errors"] and not checks and not eval_errs
-        detail = f"{len(parsed['errors'])} parse errors" if parsed["errors"] else json.dumps(checks + eval_errs, default=str)
+        detail = (
+            f"{len(parsed['errors'])} parse errors"
+            if parsed["errors"]
+            else json.dumps(checks + eval_errs, default=str)
+        )
         return {"file": file, "ok": ok, "detail": detail}
     if phase == "parsing":
-        return {"file": file, "ok": bool(parsed["errors"]), "detail": "expected parse errors, got none"}
+        return {
+            "file": file,
+            "ok": bool(parsed["errors"]),
+            "detail": "expected parse errors, got none",
+        }
     if phase == "checking":
         checks = check_module(parsed["decls"]) if not parsed["errors"] else []
-        ok = any(d.get("code") == want for d in checks) and (not want_msg or any(want_msg in d["message"] for d in checks))
+        ok = any(d.get("code") == want for d in checks) and (
+            not want_msg or any(want_msg in d["message"] for d in checks)
+        )
         return {"file": file, "ok": ok, "detail": json.dumps(checks, default=str)}
     if phase == "binding":
         diags = run_pipeline(parsed["decls"])["diags"] if not parsed["errors"] else []
-        ok = any(d.get("code") == want for d in diags) and (not want_msg or any(want_msg in d["message"] for d in diags))
+        ok = any(d.get("code") == want for d in diags) and (
+            not want_msg or any(want_msg in d["message"] for d in diags)
+        )
         return {"file": file, "ok": ok, "detail": json.dumps(diags, default=str)}
     return {"file": file, "ok": False, "detail": f"unknown phase {phase}"}
 
 
-def judge_corpus(dir_: str) -> list:
+def judge_corpus(dir_: str) -> list[Any]:
     return [judge_fixture(f, "/valid/" in f) for f in walk_decl(dir_)]

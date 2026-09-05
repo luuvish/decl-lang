@@ -58,20 +58,61 @@ pub struct Report {
 /// parse, check, and evaluate one module given as source text
 pub fn evaluate_source(source: &str) -> Report {
     let parsed = parse_source(source);
-    let inputs: Vec<String> = parsed.decls.iter().filter_map(|d| if let DeclBody::Input { name, .. } = &d.body { Some(name.clone()) } else { None }).collect();
+    let inputs: Vec<String> = parsed
+        .decls
+        .iter()
+        .filter_map(|d| {
+            if let DeclBody::Input { name, .. } = &d.body {
+                Some(name.clone())
+            } else {
+                None
+            }
+        })
+        .collect();
     if !parsed.errors.is_empty() {
-        return Report { phase: Phase::Parse, ok: false, parse_errors: parsed.errors, checks: vec![], diagnostics: vec![], outputs: vec![], inputs };
+        return Report {
+            phase: Phase::Parse,
+            ok: false,
+            parse_errors: parsed.errors,
+            checks: vec![],
+            diagnostics: vec![],
+            outputs: vec![],
+            inputs,
+        };
     }
     let checks = check_module(&parsed.decls, None, None);
     if checks.iter().any(|d| d.severity == "error") {
-        return Report { phase: Phase::Check, ok: false, parse_errors: vec![], checks, diagnostics: vec![], outputs: vec![], inputs };
+        return Report {
+            phase: Phase::Check,
+            ok: false,
+            parse_errors: vec![],
+            checks,
+            diagnostics: vec![],
+            outputs: vec![],
+            inputs,
+        };
     }
     let Pipeline { env, eng, diags } = run_pipeline(&parsed.decls);
     let ok = !diags.iter().any(|d| d.severity == "error");
     let outputs = if ok {
-        env.outputs.borrow().iter().filter_map(|(n, _, _)| env.root(n).map(|v| (n.clone(), eng.serialize(&v, n, false)))).collect()
+        env.outputs
+            .borrow()
+            .iter()
+            .filter_map(|(n, _, _)| {
+                env.root(n)
+                    .map(|v| (n.clone(), eng.serialize(&v, n, false)))
+            })
+            .collect()
     } else {
         vec![]
     };
-    Report { phase: Phase::Evaluate, ok, parse_errors: vec![], checks, diagnostics: diags, outputs, inputs }
+    Report {
+        phase: Phase::Evaluate,
+        ok,
+        parse_errors: vec![],
+        checks,
+        diagnostics: diags,
+        outputs,
+        inputs,
+    }
 }

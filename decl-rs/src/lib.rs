@@ -21,4 +21,7 @@ pub mod session;
 pub mod subsume;
 
 // the high-level API, in the command line's vocabulary
-pub use api::{check, evaluate, evaluate_source, format_source, validate, DeclError, Diagnostic, Document, EvaluateOptions, Report};
+pub use api::{
+    check, evaluate, evaluate_source, format_source, validate, DeclError, Diagnostic, Document,
+    EvaluateOptions, Report,
+};

@@ -1,0 +1,30 @@
+# Prettier covers the TypeScript workspace (decl-ts, extension/vscode) and
+# the root configuration; everything else has its own tooling or is data:
+# the grammar and its generated parser, the site (Astro), the other
+# implementations, the corpora and goldens, the documents, build output.
+node_modules/
+**/dist/
+**/.vscode-test/
+site/
+tree-sitter-decl/
+decl-rs/
+decl-py/
+extension/zed/
+extension/neovim/
+extension/helix/
+extension/emacs/
+extension/vim/
+extension/sublime/
+extension/vscode/server/
+extension/vscode/syntaxes/
+tests/
+docs/
+examples/
+packaging/
+target/
+*.md
+package-lock.json
+spike/
+.github/
+.claude/
+.vscode/

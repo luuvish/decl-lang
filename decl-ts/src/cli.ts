@@ -16,7 +16,7 @@ import type { Diag } from './semantics.ts';
 import { checkModule } from './checker.ts';
 import { loadModules, runUniverse } from './module.ts';
 import { openPackageUniverse, verifyLock } from './package.ts';
-import { judgeCorpus, judgeFixture } from './conformance.ts';
+import { judgeCorpus } from './conformance.ts';
 import { format, initFormatter } from './fmt.ts';
 import { runRepl } from './repl.ts';
 
@@ -37,13 +37,17 @@ if (cmd === 'repl') {
 }
 
 const flags = new Map<string, string | boolean>();
-const inputFlags: string[] = [];    // --input name=doc.json, repeatable
-const outputFlags: string[] = [];   // --output name[=file], repeatable
+const inputFlags: string[] = []; // --input name=doc.json, repeatable
+const outputFlags: string[] = []; // --output name[=file], repeatable
 const positional: string[] = [];
 for (let i = 0; i < args.length; i++) {
   if (args[i].startsWith('--')) {
     const name = args[i].slice(2);
-    if (i + 1 < args.length && !args[i + 1].startsWith('--') && ['output', 'input', 'expect-errors'].includes(name)) {
+    if (
+      i + 1 < args.length &&
+      !args[i + 1].startsWith('--') &&
+      ['output', 'input', 'expect-errors'].includes(name)
+    ) {
       if (name === 'input') inputFlags.push(args[++i]);
       else if (name === 'output') outputFlags.push(args[++i]);
       else flags.set(name, args[++i]);
@@ -55,20 +59,48 @@ for (let i = 0; i < args.length; i++) {
 // its input (§10): `name=doc.json`. A usage error (bad spec, unknown input)
 // exits 2 at once; a document that cannot be read or is not well-formed
 // JSON is one E6004 diagnostic against the entry file (null: exit 1)
-function inputBinds(modules: { env: any }[], entryFile: string): { module?: any; input: string; raw: any }[] | null {
+function inputBinds(
+  modules: { env: any }[],
+  entryFile: string,
+): { module?: any; input: string; raw: any }[] | null {
   const binds: { module?: any; input: string; raw: any }[] = [];
   for (const spec of inputFlags) {
     const eq = spec.indexOf('=');
-    if (eq < 0) { console.error(`--input expects name=doc.json, got ${spec}`); process.exit(2); }
-    const name = spec.slice(0, eq), file = spec.slice(eq + 1);
-    const module = modules.find(m => m.env.inputs.has(name));
-    if (!module) { console.error(`no input named ${name}`); process.exit(2); }
+    if (eq < 0) {
+      console.error(`--input expects name=doc.json, got ${spec}`);
+      process.exit(2);
+    }
+    const name = spec.slice(0, eq),
+      file = spec.slice(eq + 1);
+    const module = modules.find((m) => m.env.inputs.has(name));
+    if (!module) {
+      console.error(`no input named ${name}`);
+      process.exit(2);
+    }
     let text: string;
-    try { text = readFileSync(file, 'utf8'); }
-    catch { printDiag(entryFile, { severity: 'error', code: 'E6004', message: `bound document cannot be read: ${file}`, path: name }); return null; }
+    try {
+      text = readFileSync(file, 'utf8');
+    } catch {
+      printDiag(entryFile, {
+        severity: 'error',
+        code: 'E6004',
+        message: `bound document cannot be read: ${file}`,
+        path: name,
+      });
+      return null;
+    }
     let raw: any;
-    try { raw = readJson(text); }
-    catch { printDiag(entryFile, { severity: 'error', code: 'E6004', message: `bound document is not well-formed JSON: ${file}`, path: name }); return null; }
+    try {
+      raw = readJson(text);
+    } catch {
+      printDiag(entryFile, {
+        severity: 'error',
+        code: 'E6004',
+        message: `bound document is not well-formed JSON: ${file}`,
+        path: name,
+      });
+      return null;
+    }
     binds.push({ module, input: name, raw });
   }
   return binds;
@@ -78,7 +110,7 @@ function inputBinds(modules: { env: any }[], entryFile: string): { module?: any;
 // stdout at exit (the §12 machine-readable report), instead of lines
 const jsonMode = !!flags.get('json');
 const collected: Record<string, string>[] = [];
-let evalOut: string | null = null;   // evaluate's canonical JSON, captured in --json mode
+let evalOut: string | null = null; // evaluate's canonical JSON, captured in --json mode
 // one diagnostic, in the report's field order (§12.2): file, code, id,
 // severity, message, path — absent fields omitted, so every implementation
 // emits the same bytes
@@ -92,8 +124,13 @@ const diagJson = (file: string, d: Diag): Record<string, string> => {
   return o;
 };
 const printDiag = (file: string, d: Diag) => {
-  if (jsonMode) { collected.push(diagJson(file, d)); return; }
-  console.error(`${file}: ${d.severity}${d.code ? ` [${d.code}]` : ''}${d.id ? ` ${d.id}` : ''}${d.path ? ` at ${d.path}` : ''}: ${d.message}`);
+  if (jsonMode) {
+    collected.push(diagJson(file, d));
+    return;
+  }
+  console.error(
+    `${file}: ${d.severity}${d.code ? ` [${d.code}]` : ''}${d.id ? ` ${d.id}` : ''}${d.path ? ` at ${d.path}` : ''}: ${d.message}`,
+  );
 };
 // the file a diagnostic is reported against: the entry module by the path
 // given on the command line, any other module by its absolute path
@@ -116,9 +153,15 @@ async function main(): Promise<number> {
       let bad = 0;
       for (const f of positional) {
         const { modules, entry, diags } = openUniverse(f);
-        for (const d of diags) { printDiag(f, d); bad++; }
+        for (const d of diags) {
+          printDiag(f, d);
+          bad++;
+        }
         for (const m of modules) {
-          for (const d of checkModule(m.decls, m.env)) { printDiag(fileTag(f, entry?.path, m.path), d); bad++; }
+          for (const d of checkModule(m.decls, m.env)) {
+            printDiag(fileTag(f, entry?.path, m.path), d);
+            bad++;
+          }
         }
       }
       if (bad === 0) console.error(`ok: ${positional.length} entry file(s) check clean`);
@@ -135,51 +178,82 @@ async function main(): Promise<number> {
       const targets: { name: string; file?: string }[] = [];
       for (const spec of outputFlags) {
         const eq = spec.indexOf('=');
-        const name = eq < 0 ? spec : spec.slice(0, eq), file = eq < 0 ? undefined : spec.slice(eq + 1);
-        if (!name || file === '') { console.error(`--output expects name or name=file, got ${spec}`); return 2; }
+        const name = eq < 0 ? spec : spec.slice(0, eq),
+          file = eq < 0 ? undefined : spec.slice(eq + 1);
+        if (!name || file === '') {
+          console.error(`--output expects name or name=file, got ${spec}`);
+          return 2;
+        }
         targets.push({ name, file });
       }
-      if (targets.filter(t => t.file === undefined).length > 1) { console.error('--output: at most one document can go to stdout'); return 2; }
+      if (targets.filter((t) => t.file === undefined).length > 1) {
+        console.error('--output: at most one document can go to stdout');
+        return 2;
+      }
       const { modules, entry, diags } = openUniverse(f);
-      if (diags.length || !entry) { diags.forEach(d => printDiag(f, d)); return 1; }
+      if (diags.length || !entry) {
+        diags.forEach((d) => printDiag(f, d));
+        return 1;
+      }
       let bad = 0;
       for (const m of modules)
-        for (const d of checkModule(m.decls, m.env)) { printDiag(fileTag(f, entry.path, m.path), d); bad++; }
+        for (const d of checkModule(m.decls, m.env)) {
+          printDiag(fileTag(f, entry.path, m.path), d);
+          bad++;
+        }
       if (bad) return 1;
       const binds = inputBinds(modules, f);
       if (!binds) return 1;
       const { eng, diags: ed } = runUniverse(modules, entry, binds);
-      const errs = ed.filter(d => d.severity === 'error');
-      ed.forEach(d => printDiag(f, d));
+      const errs = ed.filter((d) => d.severity === 'error');
+      ed.forEach((d) => printDiag(f, d));
       if (errs.length) return 1;
-      const names = targets.length ? targets.map(t => t.name)
+      const names = targets.length
+        ? targets.map((t) => t.name)
         : entry.env.outputs.filter((o: any) => o.exported).map((o: any) => o.name);
       let missing = 0;
-      for (const n of names) if (!entry.env.roots.has(n)) { console.error(`no root named ${n}`); missing++; }
+      for (const n of names)
+        if (!entry.env.roots.has(n)) {
+          console.error(`no root named ${n}`);
+          missing++;
+        }
       if (missing) return 1;
       const doc = (n: string) => eng.serialize(entry.env.roots.get(n), n);
       let text: string | null = null;
       if (targets.length === 0) {
-        if (names.length === 0) console.error(`${f}: exports no output; --output <name> selects a root`);
-        text = `{${names.map(n => `${JSON.stringify(n)}:${doc(n)}`).join(',')}}`;
+        if (names.length === 0)
+          console.error(`${f}: exports no output; --output <name> selects a root`);
+        text = `{${names.map((n) => `${JSON.stringify(n)}:${doc(n)}`).join(',')}}`;
       } else {
         for (const t of targets) {
-          if (t.file === undefined) { text = doc(t.name); continue; }
-          try { writeFileSync(t.file, doc(t.name) + '\n'); }
-          catch { console.error(`cannot write ${t.file}`); return 1; }
+          if (t.file === undefined) {
+            text = doc(t.name);
+            continue;
+          }
+          try {
+            writeFileSync(t.file, doc(t.name) + '\n');
+          } catch {
+            console.error(`cannot write ${t.file}`);
+            return 1;
+          }
         }
       }
-      if (jsonMode) evalOut = text; else if (text !== null) console.log(text);
+      if (jsonMode) evalOut = text;
+      else if (text !== null) console.log(text);
       return 0;
     }
     case 'validate': {
       const target = positional[0];
       if (!target) return usage();
       if (existsSync(target) && statSync(target).isDirectory()) {
-        let ok = 0, fail = 0;
+        let ok = 0,
+          fail = 0;
         for (const v of judgeCorpus(absPath(target))) {
           if (v.ok) ok++;
-          else { fail++; console.error(`FAIL ${v.file} ${v.detail}`); }
+          else {
+            fail++;
+            console.error(`FAIL ${v.file} ${v.detail}`);
+          }
         }
         console.error(`${ok} ok, ${fail} failed`);
         return fail ? 1 : 0;
@@ -188,29 +262,36 @@ async function main(): Promise<number> {
       // load the universe, check every module, then evaluate with the
       // --input documents bound (none bound is fine: fallbacks apply)
       const { modules, entry, diags: loadDiags } = openUniverse(target);
-      loadDiags.forEach(d => printDiag(target, d));
+      loadDiags.forEach((d) => printDiag(target, d));
       let diags: Diag[] = [...loadDiags];
       if (!loadDiags.length && entry) {
         const checks: Diag[] = [];
         for (const m of modules)
-          for (const d of checkModule(m.decls, m.env)) { printDiag(fileTag(target, entry.path, m.path), d); checks.push(d); }
+          for (const d of checkModule(m.decls, m.env)) {
+            printDiag(fileTag(target, entry.path, m.path), d);
+            checks.push(d);
+          }
         diags = checks;
         if (!checks.length) {
           const binds = inputBinds(modules, target);
           if (!binds) return 1;
           const { diags: ed } = runUniverse(modules, entry, binds);
           diags = ed;
-          ed.forEach(d => printDiag(target, d));
+          ed.forEach((d) => printDiag(target, d));
         }
       }
       const expect = flags.get('expect-errors');
-      const errCodes = diags.filter(d => d.severity === 'error').map(d => d.code ?? '');
+      const errCodes = diags.filter((d) => d.severity === 'error').map((d) => d.code ?? '');
       if (typeof expect === 'string') {
-        const want = expect.split(',').map(s => s.trim()).filter(Boolean);
-        const missing = want.filter(w => !errCodes.includes(w));
-        const extra = errCodes.filter(c => !want.includes(c));
+        const want = expect
+          .split(',')
+          .map((s) => s.trim())
+          .filter(Boolean);
+        const missing = want.filter((w) => !errCodes.includes(w));
+        const extra = errCodes.filter((c) => !want.includes(c));
         if (missing.length || extra.length) {
-          if (missing.length) console.error(`expected error(s) not reported: ${missing.join(', ')}`);
+          if (missing.length)
+            console.error(`expected error(s) not reported: ${missing.join(', ')}`);
           if (extra.length) console.error(`unexpected error(s): ${extra.join(', ')}`);
           return 1;
         }
@@ -222,23 +303,38 @@ async function main(): Promise<number> {
     case 'fmt': {
       if (!positional.length) return usage();
       await initFormatter();
-      let changed = 0, bad = 0;
+      let changed = 0,
+        bad = 0;
       for (const f of positional) {
         let src: string;
-        try { src = readFileSync(f, 'utf8'); }
-        catch { console.error(`${f}: cannot be read`); bad++; continue; }
+        try {
+          src = readFileSync(f, 'utf8');
+        } catch {
+          console.error(`${f}: cannot be read`);
+          bad++;
+          continue;
+        }
         let out: string;
-        try { out = format(src); }
-        catch (e: any) { console.error(`${f}: ${e.message}`); bad++; continue; }
+        try {
+          out = format(src);
+        } catch (e: any) {
+          console.error(`${f}: ${e.message}`);
+          bad++;
+          continue;
+        }
         if (out !== src) {
           changed++;
           if (flags.get('check')) console.error(`would reformat ${f}`);
-          else { writeFileSync(f, out); console.error(`reformatted ${f}`); }
+          else {
+            writeFileSync(f, out);
+            console.error(`reformatted ${f}`);
+          }
         }
       }
       return bad || (flags.get('check') && changed) ? 1 : 0;
     }
-    default: return usage();
+    default:
+      return usage();
   }
 }
 
@@ -257,7 +353,9 @@ function usage(): number {
 
 process.exitCode = await main();
 if (jsonMode) {
-  console.log(cmd === 'evaluate'
-    ? `{"ok":${process.exitCode === 0},"value":${evalOut ?? 'null'},"diagnostics":${JSON.stringify(collected)}}`
-    : JSON.stringify(collected));
+  console.log(
+    cmd === 'evaluate'
+      ? `{"ok":${process.exitCode === 0},"value":${evalOut ?? 'null'},"diagnostics":${JSON.stringify(collected)}}`
+      : JSON.stringify(collected),
+  );
 }

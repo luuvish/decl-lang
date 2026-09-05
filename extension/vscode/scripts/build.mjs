@@ -11,7 +11,10 @@ const here = dirname(fileURLToPath(import.meta.url));
 const root = join(here, '..');
 await build({
   entryPoints: [join(root, 'src/extension.ts')],
-  bundle: true, platform: 'node', format: 'cjs', target: 'node18',
+  bundle: true,
+  platform: 'node',
+  format: 'cjs',
+  target: 'node18',
   external: ['vscode'],
   outfile: join(root, 'dist/extension.js'),
   sourcemap: true,
@@ -19,7 +22,10 @@ await build({
 // the browser entry (vscode.dev / github.dev): the worker server beside it
 await build({
   entryPoints: [join(root, 'src/web.ts')],
-  bundle: true, platform: 'browser', format: 'cjs', target: 'es2022',
+  bundle: true,
+  platform: 'browser',
+  format: 'cjs',
+  target: 'es2022',
   external: ['vscode'],
   outfile: join(root, 'dist/web.js'),
   sourcemap: true,
@@ -28,11 +34,20 @@ await build({
 const { checkGrammar } = await import(join(root, '../../site/scripts/check-grammar.mjs'));
 console.log(`grammar check: ${checkGrammar()} keywords agree`);
 mkdirSync(join(root, 'syntaxes'), { recursive: true });
-copyFileSync(join(root, '../../site/grammars/decl.tmLanguage.json'), join(root, 'syntaxes/decl.tmLanguage.json'));
+copyFileSync(
+  join(root, '../../site/grammars/decl.tmLanguage.json'),
+  join(root, 'syntaxes/decl.tmLanguage.json'),
+);
 mkdirSync(join(root, 'server'), { recursive: true });
 // the bundles are ES modules: they keep that as .mjs inside this
 // CommonJS package (the client forks the server with node)
-for (const [f, to] of [['lsp.js', 'lsp.mjs'], ['cli.js', 'cli.mjs'], ['lsp-web.js', 'lsp-web.mjs'], ['tree-sitter-decl.wasm', 'tree-sitter-decl.wasm'], ['tree-sitter.wasm', 'tree-sitter.wasm']]) {
+for (const [f, to] of [
+  ['lsp.js', 'lsp.mjs'],
+  ['cli.js', 'cli.mjs'],
+  ['lsp-web.js', 'lsp-web.mjs'],
+  ['tree-sitter-decl.wasm', 'tree-sitter-decl.wasm'],
+  ['tree-sitter.wasm', 'tree-sitter.wasm'],
+]) {
   const src = join(root, '../../decl-ts/dist', f);
   if (!existsSync(src)) throw new Error(`${src} missing: run \`npm run build -w decl-lang\` first`);
   copyFileSync(src, join(root, 'server', to));

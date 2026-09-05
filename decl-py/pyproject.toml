@@ -9,13 +9,18 @@ description = "Decl — a declarative language for describing, generating, and v
 readme = "README.md"
 license = "MIT"
 license-files = ["LICENSE"]
-requires-python = ">=3.9"
+requires-python = ">=3.10"
 authors = [{ name = "luuvish" }]
 keywords = ["decl", "declarative", "schema", "validation", "configuration", "json", "language", "lsp"]
 classifiers = [
     "Development Status :: 4 - Beta",
     "Intended Audience :: Developers",
     "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
     "Programming Language :: C",
     "Topic :: Software Development :: Compilers",
     "Topic :: Software Development :: Quality Assurance",
@@ -37,4 +42,39 @@ packages = ["decl", "decl.runtime", "decl._tree_sitter"]
 # _tree_sitter/src/ (grammar C sources) is synced from ../tree-sitter-decl
 # by `npm run build` in ../decl-ts (or by setup.py) and gitignored
 [tool.setuptools.package-data]
-"decl._tree_sitter" = ["binding.c", "src/*.c", "src/tree_sitter/*.h"]
+"decl._tree_sitter" = ["binding.c", "_binding.pyi", "src/*.c", "src/tree_sitter/*.h"]
+
+# ---------------------------------------------------------------- development tooling
+# `pip install -e '.[dev]'`; ruff (lint + format), mypy, pytest — see the
+# Makefile's test-python target and docs/ENVIRONMENT.md
+[project.optional-dependencies]
+dev = ["ruff", "mypy", "pytest"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+extend-exclude = ["decl/_tree_sitter/src", ".venv", "build", "dist"]
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "UP", "B", "SIM", "RUF"]
+# E741: the port keeps the reference implementation's names (AGENTS.md), `l` included
+ignore = ["E741"]
+
+[tool.ruff.lint.per-file-ignores]
+# the corpus drivers: sections import as they go, and the Decl sources they feed are kept whole
+"scripts/*.py" = ["E402", "E501"]
+
+[tool.ruff.lint.isort]
+known-first-party = ["decl"]
+
+[tool.mypy]
+python_version = "3.10"
+strict = true
+warn_unused_ignores = true
+# the AST and the values are dict-shaped (`dict[str, Any]`, the reference's JSON-like objects),
+# so most functions hand back an Any-derived value: warning on every such return adds casts, not safety
+warn_return_any = false
+files = ["decl"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

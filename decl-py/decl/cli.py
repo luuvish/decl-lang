@@ -1,5 +1,6 @@
 """Console-script entry points: ``decl`` (check / evaluate / validate /
 fmt) and ``decl-lsp`` — the native Python implementation, no Node.js."""
+
 from __future__ import annotations
 
 import sys
@@ -7,11 +8,13 @@ import sys
 
 def main(argv: list[str] | None = None) -> int:
     from .runtime.cli import main as run
+
     return run(sys.argv[1:] if argv is None else argv)
 
 
 def lsp_main(argv: list[str] | None = None) -> int:
     from .runtime.lsp import main as run
+
     return run(sys.argv[1:] if argv is None else argv)
 
 

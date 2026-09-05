@@ -14,15 +14,33 @@ import type { Host } from './host.ts';
 // are POSIX strings in the core; backslashes are translated on the way in)
 const posix = (p: string) => p.replace(/\\/g, '/');
 export const nodeHost: Host = {
-  readFile: p => { try { return readFileSync(p, 'utf8'); } catch { return null; } },
-  readDir: p => { try { return readdirSync(p); } catch { return []; } },
-  isDir: p => { try { return statSync(p).isDirectory(); } catch { return false; } },
-  exists: p => existsSync(p),
+  readFile: (p) => {
+    try {
+      return readFileSync(p, 'utf8');
+    } catch {
+      return null;
+    }
+  },
+  readDir: (p) => {
+    try {
+      return readdirSync(p);
+    } catch {
+      return [];
+    }
+  },
+  isDir: (p) => {
+    try {
+      return statSync(p).isDirectory();
+    } catch {
+      return false;
+    }
+  },
+  exists: (p) => existsSync(p),
   writeFile: (p, text) => writeFileSync(p, text),
   cwd: () => posix(process.cwd()),
-  pathOf: uri => posix(fileURLToPath(uri)),
-  uriOf: p => pathToFileURL(p).toString(),
-  env: name => process.env[name],
+  pathOf: (uri) => posix(fileURLToPath(uri)),
+  uriOf: (p) => pathToFileURL(p).toString(),
+  env: (name) => process.env[name],
 };
 setHost(nodeHost);
 
@@ -30,8 +48,12 @@ const here = dirname(fileURLToPath(import.meta.url));
 
 /** the grammar wasm's path on this machine */
 export function grammarPath(): string {
-  return [join(here, 'tree-sitter-decl.wasm'), join(here, '../../tree-sitter-decl/tree-sitter-decl.wasm')]
-    .find(p => existsSync(p)) ?? join(here, 'tree-sitter-decl.wasm');
+  return (
+    [
+      join(here, 'tree-sitter-decl.wasm'),
+      join(here, '../../tree-sitter-decl/tree-sitter-decl.wasm'),
+    ].find((p) => existsSync(p)) ?? join(here, 'tree-sitter-decl.wasm')
+  );
 }
 
 /** initialize the parser from disk; options override the located files */
@@ -39,5 +61,8 @@ export async function initParser(opts: Partial<ParserOptions> = {}): Promise<voi
   // web-tree-sitter's runtime (tree-sitter.wasm) is shipped beside the
   // bundled files; in the source tree it resolves from node_modules
   const local = join(here, 'tree-sitter.wasm');
-  await initCore({ grammar: opts.grammar ?? grammarPath(), runtime: opts.runtime ?? (existsSync(local) ? local : undefined) });
+  await initCore({
+    grammar: opts.grammar ?? grammarPath(),
+    runtime: opts.runtime ?? (existsSync(local) ? local : undefined),
+  });
 }

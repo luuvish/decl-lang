@@ -1,0 +1,21 @@
+{
+  // Type-checking only: esbuild bundles src/ (scripts/build.mjs) and the
+  // tests (scripts/build-tests.mjs); `npm run typecheck` at the root.
+  // esbuild resolves like a bundler; the sources are ESM, the bundles CommonJS.
+  "compilerOptions": {
+    "target": "ES2022",
+    "lib": ["ES2022", "DOM"],
+    "module": "ESNext",
+    "moduleResolution": "Bundler",
+    "types": ["node", "mocha"],
+    "strict": true,
+    "noEmit": true,
+    "allowImportingTsExtensions": true,
+    "erasableSyntaxOnly": true,
+    "verbatimModuleSyntax": true,
+    "skipLibCheck": true,
+    "esModuleInterop": true,
+    "resolveJsonModule": true
+  },
+  "include": ["src", "test"]
+}

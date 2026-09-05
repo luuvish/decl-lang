@@ -6,7 +6,7 @@ import { initParser } from './node.ts';
 import { connect, drained } from './lsp-core.ts';
 
 const feed = connect({
-  send: msg => {
+  send: (msg) => {
     const body = JSON.stringify(msg);
     process.stdout.write(`Content-Length: ${Buffer.byteLength(body)}\r\n\r\n${body}`);
   },
@@ -15,14 +15,17 @@ const feed = connect({
 });
 
 let buffer = Buffer.alloc(0);
-process.stdin.on('data', chunk => {
+process.stdin.on('data', (chunk: Buffer) => {
   buffer = Buffer.concat([buffer, chunk]);
-  for (; ;) {
+  for (;;) {
     const headerEnd = buffer.indexOf('\r\n\r\n');
     if (headerEnd < 0) return;
     const header = buffer.subarray(0, headerEnd).toString();
     const m = /Content-Length: (\d+)/i.exec(header);
-    if (!m) { buffer = buffer.subarray(headerEnd + 4); continue; }
+    if (!m) {
+      buffer = buffer.subarray(headerEnd + 4);
+      continue;
+    }
     const len = parseInt(m[1], 10);
     if (buffer.length < headerEnd + 4 + len) return;
     const body = buffer.subarray(headerEnd + 4, headerEnd + 4 + len).toString();
@@ -30,4 +33,6 @@ process.stdin.on('data', chunk => {
     feed(JSON.parse(body));
   }
 });
-process.stdin.on('end', () => { drained().then(() => process.exit(0)); });
+process.stdin.on('end', () => {
+  void drained().then(() => process.exit(0));
+});

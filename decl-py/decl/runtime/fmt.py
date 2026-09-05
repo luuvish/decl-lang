@@ -4,40 +4,162 @@ intra-line spacing. The original line structure is preserved — §2.9
 makes newlines separators, so where a construct breaks lines is the
 author's statement — and the formatter re-derives indentation and token
 spacing deterministically, which makes it idempotent by construction."""
+
 from __future__ import annotations
 
 import re
-from typing import Optional
+from typing import Any
 
 from tree_sitter import Node, Parser
 
 from .._tree_sitter import LANGUAGE
 
-_parser: Optional[Parser] = None
+_parser: Parser | None = None
 
 
 class Leaf:
-    __slots__ = ("text", "type", "parent", "row", "end_row", "col")
+    __slots__ = ("col", "end_row", "parent", "row", "text", "type")
 
-    def __init__(self, text: str, type_: str, parent: str, row: int, end_row: int, col: int) -> None:
-        self.text, self.type, self.parent, self.row, self.end_row, self.col = text, type_, parent, row, end_row, col
+    def __init__(
+        self, text: str, type_: str, parent: str, row: int, end_row: int, col: int
+    ) -> None:
+        self.text, self.type, self.parent, self.row, self.end_row, self.col = (
+            text,
+            type_,
+            parent,
+            row,
+            end_row,
+            col,
+        )
 
 
 # atoms: leaves kept verbatim, including their internal whitespace
-ATOMS = {"string", "template_string", "pattern", "unit_literal", "doc_comment", "line_comment", "block_comment"}
-KEYWORDY = re.compile(r"^[A-Za-z_$][A-Za-z0-9_]*\$?$")   # a hidden member's name `x$` is name-like too (D34)
-BIN_OPS = {"=", "==", "!=", "<=", ">=", "+", "*", "/", "%", "&&", "||", "??",
-           "|>", "=>", "<<", ">>", "in", "matches", "with", "then", "else", "for", "if", "as", "from"}
-CONT_STARTERS = {"else", "=", "for", "if", "&&", "||", "|>", "??", ".", "?.",
-                 "+", "-", "*", "/", "==", "!=", "<=", ">=", "<", ">", "=>", "then"}
+ATOMS = {
+    "string",
+    "template_string",
+    "pattern",
+    "unit_literal",
+    "doc_comment",
+    "line_comment",
+    "block_comment",
+}
+KEYWORDY = re.compile(
+    r"^[A-Za-z_$][A-Za-z0-9_]*\$?$"
+)  # a hidden member's name `x$` is name-like too (D34)
+BIN_OPS = {
+    "=",
+    "==",
+    "!=",
+    "<=",
+    ">=",
+    "+",
+    "*",
+    "/",
+    "%",
+    "&&",
+    "||",
+    "??",
+    "|>",
+    "=>",
+    "<<",
+    ">>",
+    "in",
+    "matches",
+    "with",
+    "then",
+    "else",
+    "for",
+    "if",
+    "as",
+    "from",
+}
+CONT_STARTERS = {
+    "else",
+    "=",
+    "for",
+    "if",
+    "&&",
+    "||",
+    "|>",
+    "??",
+    ".",
+    "?.",
+    "+",
+    "-",
+    "*",
+    "/",
+    "==",
+    "!=",
+    "<=",
+    ">=",
+    "<",
+    ">",
+    "=>",
+    "then",
+}
 # a line whose last token leaves an expression open (`=`, `=>`, a binary
 # operator, `then`/`else`) makes the next line a continuation too
-CONT_ENDERS = {"=", "=>", "&&", "||", "|>", "??", "+", "-", "*", "/", "%",
-               "==", "!=", "<=", ">=", "<", ">", "&", "|", "^", "<<", ">>", "..", "..<",
-               "then", "else", "in", "with", "matches"}
-KEYWORDS = {"type", "const", "func", "output", "input", "export", "import",
-            "diagnostic", "dimension", "unit", "assert", "when", "if", "then", "else", "match", "for",
-            "in", "with", "as", "from", "true", "false", "null", "error", "warn", "info", "matches"}
+CONT_ENDERS = {
+    "=",
+    "=>",
+    "&&",
+    "||",
+    "|>",
+    "??",
+    "+",
+    "-",
+    "*",
+    "/",
+    "%",
+    "==",
+    "!=",
+    "<=",
+    ">=",
+    "<",
+    ">",
+    "&",
+    "|",
+    "^",
+    "<<",
+    ">>",
+    "..",
+    "..<",
+    "then",
+    "else",
+    "in",
+    "with",
+    "matches",
+}
+KEYWORDS = {
+    "type",
+    "const",
+    "func",
+    "output",
+    "input",
+    "export",
+    "import",
+    "diagnostic",
+    "dimension",
+    "unit",
+    "assert",
+    "when",
+    "if",
+    "then",
+    "else",
+    "match",
+    "for",
+    "in",
+    "with",
+    "as",
+    "from",
+    "true",
+    "false",
+    "null",
+    "error",
+    "warn",
+    "info",
+    "matches",
+}
 
 
 def u16(s: str) -> int:
@@ -45,13 +167,17 @@ def u16(s: str) -> int:
     return len(s.encode("utf-16-le")) // 2
 
 
-def _collect(n: Node, lines: list, out: list) -> None:
+def _collect(n: Node, lines: list[Any], out: list[Any]) -> None:
     if n.type in ATOMS or n.child_count == 0:
-        text = n.text.decode("utf-8")
+        text = (n.text or b"").decode("utf-8")
         if not text:
-            return   # zero-width externals (NEWLINE)
+            return  # zero-width externals (NEWLINE)
         row = n.start_point[0]
-        col = u16(lines[row][:n.start_point[1]].decode("utf-8", "replace")) if row < len(lines) else 0
+        col = (
+            u16(lines[row][: n.start_point[1]].decode("utf-8", "replace"))
+            if row < len(lines)
+            else 0
+        )
         out.append(Leaf(text, n.type, n.parent.type if n.parent else "", row, n.end_point[0], col))
         return
     for c in n.children:
@@ -66,23 +192,22 @@ def _is_keyword(t: str) -> bool:
     return t in KEYWORDS
 
 
-def _spaced(a: Leaf, b: Leaf, prev: Optional[Leaf]) -> bool:
+def _spaced(a: Leaf, b: Leaf, prev: Leaf | None) -> bool:
     """spacing decision: does a space go between a and b on one line?"""
     at, bt = a.text, b.text
     # comments keep at least one space before them (handled by caller)
     if b.type.endswith("comment"):
         return True
-    if _is_type_angle(a):
-        if at == "<":
-            return False   # '>' falls through
+    if _is_type_angle(a) and at == "<":
+        return False  # '>' falls through
     if _is_type_angle(b):
-        return False   # Vec<...>, no space before either angle
+        return False  # Vec<...>, no space before either angle
     if at in ("(", "["):
         return False
     if bt in (")", "]", ",", ":"):
         return False
     if bt == "?" or at == "?":
-        return False   # int?, name?:
+        return False  # int?, name?:
     if at in (".", "?.") or bt in (".", "?."):
         return False
     if bt == ";":
@@ -91,22 +216,38 @@ def _spaced(a: Leaf, b: Leaf, prev: Optional[Leaf]) -> bool:
         return False
     if bt == "(":
         # call/parameter parens attach to a name or closing bracket; grouping parens do not
-        return not (KEYWORDY.match(at) and not _is_keyword(at)) and at != ")" and at != "]" and not _is_type_angle(a)
+        return (
+            not (KEYWORDY.match(at) and not _is_keyword(at))
+            and at != ")"
+            and at != "]"
+            and not _is_type_angle(a)
+        )
     if bt == "[":
-        # index/size brackets attach (also after a record type or literal: `{...}[]`); array literals
+        # index/size brackets attach (also after a record type or literal: `{...}[]`); array
+        # literals
         # stand off, and a keyword before a literal array (`in [1, 2]`) does not attach
-        return not ((KEYWORDY.match(at) and not _is_keyword(at)) or at == ")" or at == "]" or at == "}" or _is_type_angle(a))
+        return not (
+            (KEYWORDY.match(at) and not _is_keyword(at))
+            or at == ")"
+            or at == "]"
+            or at == "}"
+            or _is_type_angle(a)
+        )
     if at == "{" or bt == "}":
-        return True   # { a: 1 }
+        return True  # { a: 1 }
     if bt == "{" or at == "}":
         return True
     if at in ("!", "~"):
-        return False   # unary
+        return False  # unary
     if at in ("-", "+"):
         # unary sign: previous token is an operator, opener, or keyword
         p = prev.text if prev else None
-        unary = p is None or p in BIN_OPS or p in ("(", "[", "{", ",", ":", "<", "..", "..<", "-", "+", "!", "~") \
+        unary = (
+            p is None
+            or p in BIN_OPS
+            or p in ("(", "[", "{", ",", ":", "<", "..", "..<", "-", "+", "!", "~")
             or (bool(KEYWORDY.match(p)) and _is_keyword(p))
+        )
         if unary:
             return False
     return True
@@ -121,12 +262,12 @@ def format_source(src: str) -> str:
     if tree.root_node.has_error:
         raise ValueError("cannot format: file has parse errors")
     lines_b = data.split(b"\n")
-    leaves: list = []
+    leaves: list[Any] = []
     _collect(tree.root_node, lines_b, leaves)
 
     # group leaves by their original starting row
-    lines: list = []
-    row_of: dict = {}
+    lines: list[Any] = []
+    row_of: dict[str, Any] = {}
     for l in leaves:
         bucket = row_of.get(l.row)
         if bucket is None:
@@ -135,14 +276,14 @@ def format_source(src: str) -> str:
             lines.append(bucket)
         bucket.append(l)
 
-    out: list = []
+    out: list[Any] = []
     depth = 0
-    last_row_end = -1   # last original row consumed (multiline atoms span rows)
-    last_code: Optional[Leaf] = None   # the previous line's last non-comment token
+    last_row_end = -1  # last original row consumed (multiline atoms span rows)
+    last_code: Leaf | None = None  # the previous line's last non-comment token
     for line in lines:
         first = line[0]
         if first.row <= last_row_end:
-            continue   # inside a multiline atom
+            continue  # inside a multiline atom
         # one blank line max between constructs
         if out and first.row > last_row_end + 1:
             out.append("")
@@ -156,13 +297,19 @@ def format_source(src: str) -> str:
         indent = max(0, depth - closers)
         # a line starting with a continuation token, or following a line that
         # left an expression open, hangs one level deeper
-        if closers == 0 and (first.text in CONT_STARTERS
-                             or (last_code is not None and last_code.type not in ATOMS and last_code.text in CONT_ENDERS
-                                 and not _is_type_angle(last_code))):   # `ref<...>` closes a type, it opens nothing
+        if closers == 0 and (
+            first.text in CONT_STARTERS
+            or (
+                last_code is not None
+                and last_code.type not in ATOMS
+                and last_code.text in CONT_ENDERS
+                and not _is_type_angle(last_code)
+            )
+        ):  # `ref<...>` closes a type, it opens nothing
             indent = depth + 1
         text = "    " * indent
-        prev: Optional[Leaf] = None
-        prev2: Optional[Leaf] = None
+        prev: Leaf | None = None
+        prev2: Leaf | None = None
         for l in line:
             if prev is not None:
                 if l.type.endswith("comment"):

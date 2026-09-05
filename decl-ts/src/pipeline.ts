@@ -21,11 +21,12 @@ export function runPipeline(decls: Decl[]): Pipeline {
   }
   for (const v of env.roots.values()) eng.forceAll(v, false);
   eng.phase = 2;
-  for (let i = 0; i < eng.deferredSlots.length; i++) eng.forceSlotSafe(eng.deferredSlots[i].inst, eng.deferredSlots[i].name);
+  for (let i = 0; i < eng.deferredSlots.length; i++)
+    eng.forceSlotSafe(eng.deferredSlots[i].inst, eng.deferredSlots[i].name);
   eng.bindDeferredRoots();
   for (const v of env.roots.values()) eng.forceAll(v, true);
   eng.validateAll('');
-  env.diagnostics.splice(0, env.diagnostics.length, ...sortDiags(env.diagnostics));   // §6.7
+  env.diagnostics.splice(0, env.diagnostics.length, ...sortDiags(env.diagnostics)); // §6.7
   return { env, eng, diags: env.diagnostics };
 }
 
@@ -48,15 +49,34 @@ export type Report = {
 export function evaluateSource(source: string): Report {
   const { decls, errors } = parseSource(source);
   const inputs = decls.filter((d: any) => d.d === 'input').map((d: any) => d.name as string);
-  if (errors.length) return { phase: 'parse', ok: false, parseErrors: errors, checks: [], diagnostics: [], outputs: [], inputs };
+  if (errors.length)
+    return {
+      phase: 'parse',
+      ok: false,
+      parseErrors: errors,
+      checks: [],
+      diagnostics: [],
+      outputs: [],
+      inputs,
+    };
   const checks = checkModule(decls);
-  if (checks.some(d => d.severity === 'error')) {
-    return { phase: 'check', ok: false, parseErrors: [], checks, diagnostics: [], outputs: [], inputs };
+  if (checks.some((d) => d.severity === 'error')) {
+    return {
+      phase: 'check',
+      ok: false,
+      parseErrors: [],
+      checks,
+      diagnostics: [],
+      outputs: [],
+      inputs,
+    };
   }
   const { env, eng, diags } = runPipeline(decls);
-  const ok = !diags.some(d => d.severity === 'error');
+  const ok = !diags.some((d) => d.severity === 'error');
   const outputs = ok
-    ? env.outputs.filter(o => env.roots.has(o.name)).map(o => ({ name: o.name, json: eng.serialize(env.roots.get(o.name), o.name) }))
+    ? env.outputs
+        .filter((o) => env.roots.has(o.name))
+        .map((o) => ({ name: o.name, json: eng.serialize(env.roots.get(o.name), o.name) }))
     : [];
   return { phase: 'evaluate', ok, parseErrors: [], checks, diagnostics: diags, outputs, inputs };
 }

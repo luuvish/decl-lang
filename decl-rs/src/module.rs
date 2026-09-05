@@ -35,14 +35,18 @@ struct Loader {
 
 impl Loader {
     fn report(&mut self, code: &str, message: String) {
-        self.diags.push(Diag::error(message, String::new(), Some(code)));
+        self.diags
+            .push(Diag::error(message, String::new(), Some(code)));
     }
     fn resolve_spec(&mut self, spec: &str, from_dir: &Path) -> Option<PathBuf> {
         if spec.starts_with("./") || spec.starts_with("../") {
             return Some(normalize(&from_dir.join(spec)));
         }
         let Some(resolver) = self.resolver.clone() else {
-            self.report("E3010", format!("package import \"{spec}\" outside a package (no manifest)"));
+            self.report(
+                "E3010",
+                format!("package import \"{spec}\" outside a package (no manifest)"),
+            );
             return None;
         };
         match resolver(spec, from_dir) {
@@ -59,8 +63,15 @@ impl Loader {
             return Some(m.clone());
         }
         if let Some(ci) = self.visiting.iter().position(|p| *p == abs) {
-            let cycle: Vec<String> = self.visiting[ci..].iter().chain(std::iter::once(&abs)).map(|p| p.display().to_string()).collect();
-            self.report("E3007", format!("module import cycle: {}", cycle.join(" -> ")));
+            let cycle: Vec<String> = self.visiting[ci..]
+                .iter()
+                .chain(std::iter::once(&abs))
+                .map(|p| p.display().to_string())
+                .collect();
+            self.report(
+                "E3007",
+                format!("module import cycle: {}", cycle.join(" -> ")),
+            );
             return None;
         }
         let src = match self.overrides.get(&abs) {
@@ -75,15 +86,27 @@ impl Loader {
         };
         let parsed = parse_source(&src);
         if !parsed.errors.is_empty() {
-            self.report("E2001", format!("{}: {} parse error(s)", abs.display(), parsed.errors.len()));
+            self.report(
+                "E2001",
+                format!("{}: {} parse error(s)", abs.display(), parsed.errors.len()),
+            );
             return None;
         }
         let env = Env::new();
         env.load(&parsed.decls);
         for n in env.duplicates.borrow().iter() {
-            self.diags.push(Diag::error(format!("duplicate name {n} in {}", abs.display()), String::new(), Some("E3001")));
+            self.diags.push(Diag::error(
+                format!("duplicate name {n} in {}", abs.display()),
+                String::new(),
+                Some("E3001"),
+            ));
         }
-        let m = Rc::new(Module { path: abs.clone(), decls: parsed.decls, env, exports: Rc::new(RefCell::new(HashMap::new())) });
+        let m = Rc::new(Module {
+            path: abs.clone(),
+            decls: parsed.decls,
+            env,
+            exports: Rc::new(RefCell::new(HashMap::new())),
+        });
         self.visiting.push(abs.clone());
         let mut targets: HashMap<String, Rc<Module>> = HashMap::new();
         let from_dir = abs.parent().map(|p| p.to_path_buf()).unwrap_or_default();
@@ -115,38 +138,66 @@ impl Loader {
         for d in &m.decls {
             match &d.body {
                 DeclBody::Import { from, names, ns } => {
-                    let Some(tm) = targets.get(from) else { continue };
+                    let Some(tm) = targets.get(from) else {
+                        continue;
+                    };
                     if let Some(ns) = ns {
                         if taken(ns) {
-                            self.report("E3006", format!("import {ns} collides with an existing binding in {}", abs.display()));
+                            self.report(
+                                "E3006",
+                                format!(
+                                    "import {ns} collides with an existing binding in {}",
+                                    abs.display()
+                                ),
+                            );
                             continue;
                         }
-                        m.env.namespaces.borrow_mut().insert(ns.clone(), (tm.env.clone(), tm.exports.clone()));
+                        m.env
+                            .namespaces
+                            .borrow_mut()
+                            .insert(ns.clone(), (tm.env.clone(), tm.exports.clone()));
                         continue;
                     }
                     for it in names.iter().flatten() {
                         let local = it.alias.clone().unwrap_or_else(|| it.name.clone());
                         let ex = tm.exports.borrow().get(&it.name).cloned();
                         let Some(ex) = ex else {
-                            self.report("E3005", format!("{} does not export {}", tm.path.display(), it.name));
+                            self.report(
+                                "E3005",
+                                format!("{} does not export {}", tm.path.display(), it.name),
+                            );
                             continue;
                         };
                         if taken(&local) {
-                            self.report("E3006", format!("import {local} collides with an existing binding in {}", abs.display()));
+                            self.report(
+                                "E3006",
+                                format!(
+                                    "import {local} collides with an existing binding in {}",
+                                    abs.display()
+                                ),
+                            );
                             continue;
                         }
                         m.env.imports.borrow_mut().insert(local, ex);
                     }
                 }
                 DeclBody::ReExport { from, names } => {
-                    let Some(tm) = targets.get(from) else { continue };
+                    let Some(tm) = targets.get(from) else {
+                        continue;
+                    };
                     for it in names {
                         let ex = tm.exports.borrow().get(&it.name).cloned();
                         match ex {
                             Some(ex) => {
-                                m.exports.borrow_mut().insert(it.alias.clone().unwrap_or_else(|| it.name.clone()), ex);
+                                m.exports.borrow_mut().insert(
+                                    it.alias.clone().unwrap_or_else(|| it.name.clone()),
+                                    ex,
+                                );
                             }
-                            None => self.report("E3005", format!("{} does not export {}", tm.path.display(), it.name)),
+                            None => self.report(
+                                "E3005",
+                                format!("{} does not export {}", tm.path.display(), it.name),
+                            ),
                         }
                     }
                 }
@@ -157,11 +208,23 @@ impl Loader {
             if !d.exported {
                 continue;
             }
-            if matches!(d.body, DeclBody::Unit { .. } | DeclBody::Dimension { .. } | DeclBody::Import { .. } | DeclBody::ReExport { .. }) {
+            if matches!(
+                d.body,
+                DeclBody::Unit { .. }
+                    | DeclBody::Dimension { .. }
+                    | DeclBody::Import { .. }
+                    | DeclBody::ReExport { .. }
+            ) {
                 continue;
             }
             if let Some(n) = d.name() {
-                m.exports.borrow_mut().insert(n.to_string(), Export { env: m.env.clone(), name: n.to_string() });
+                m.exports.borrow_mut().insert(
+                    n.to_string(),
+                    Export {
+                        env: m.env.clone(),
+                        name: n.to_string(),
+                    },
+                );
             }
         }
         self.order.push(m.clone());
@@ -185,7 +248,11 @@ fn normalize(p: &Path) -> PathBuf {
 
 /// `resolver` maps package specifiers to paths (packages, §8.6);
 /// `overrides` maps absolute paths to buffer contents (editors)
-pub fn load_modules(entry: &Path, resolver: Option<&Resolver>, overrides: Option<&HashMap<PathBuf, String>>) -> LoadResult {
+pub fn load_modules(
+    entry: &Path,
+    resolver: Option<&Resolver>,
+    overrides: Option<&HashMap<PathBuf, String>>,
+) -> LoadResult {
     let mut ld = Loader {
         modules: HashMap::new(),
         order: vec![],
@@ -198,7 +265,11 @@ pub fn load_modules(entry: &Path, resolver: Option<&Resolver>, overrides: Option
     if let Some(e) = &entry_m {
         link_universe(&ld.order, e, &mut ld.diags);
     }
-    LoadResult { modules: ld.order, entry: entry_m, diags: ld.diags }
+    LoadResult {
+        modules: ld.order,
+        entry: entry_m,
+        diags: ld.diags,
+    }
 }
 
 fn link_universe(mods: &[Rc<Module>], entry: &Rc<Module>, diags: &mut Vec<Diag>) {
@@ -208,7 +279,15 @@ fn link_universe(mods: &[Rc<Module>], entry: &Rc<Module>, diags: &mut Vec<Diag>)
             if let DeclBody::Output { name, .. } | DeclBody::Input { name, .. } = &d.body {
                 if let Some(prev) = owners.get(name) {
                     if *prev != m.path {
-                        diags.push(Diag::error(format!("root {name} declared in both {} and {}", prev.display(), m.path.display()), String::new(), Some("E3018")));
+                        diags.push(Diag::error(
+                            format!(
+                                "root {name} declared in both {} and {}",
+                                prev.display(),
+                                m.path.display()
+                            ),
+                            String::new(),
+                            Some("E3018"),
+                        ));
                     }
                 }
                 owners.insert(name.clone(), m.path.clone());
@@ -226,32 +305,59 @@ fn link_universe(mods: &[Rc<Module>], entry: &Rc<Module>, diags: &mut Vec<Diag>)
                         if Rc::ptr_eq(m2, m) {
                             continue;
                         }
-                        let own = m2.decls.iter().any(|x| matches!(&x.body, DeclBody::Dimension { name: n, .. } if n == name));
+                        let own = m2.decls.iter().any(
+                            |x| matches!(&x.body, DeclBody::Dimension { name: n, .. } if n == name),
+                        );
                         let has = m2.env.dim_decls.borrow().contains_key(name);
                         if has && !own {
                             continue;
                         }
                         if has {
-                            diags.push(Diag::error(format!("dimension {name} redeclared across modules"), String::new(), Some("E3001")));
+                            diags.push(Diag::error(
+                                format!("dimension {name} redeclared across modules"),
+                                String::new(),
+                                Some("E3001"),
+                            ));
                         } else {
-                            m2.env.dim_decls.borrow_mut().insert(name.clone(), terms.clone());
+                            m2.env
+                                .dim_decls
+                                .borrow_mut()
+                                .insert(name.clone(), terms.clone());
                         }
                     }
                 }
-                DeclBody::Unit { name, dim, factor, base } => {
+                DeclBody::Unit {
+                    name,
+                    dim,
+                    factor,
+                    base,
+                } => {
                     for m2 in mods {
                         if Rc::ptr_eq(m2, m) {
                             continue;
                         }
-                        let own = m2.decls.iter().any(|x| matches!(&x.body, DeclBody::Unit { name: n, .. } if n == name));
+                        let own = m2.decls.iter().any(
+                            |x| matches!(&x.body, DeclBody::Unit { name: n, .. } if n == name),
+                        );
                         let has = m2.env.unit_decls.borrow().contains_key(name);
                         if has && !own {
                             continue;
                         }
                         if has {
-                            diags.push(Diag::error(format!("unit {name} redeclared across modules"), String::new(), Some("E4073")));
+                            diags.push(Diag::error(
+                                format!("unit {name} redeclared across modules"),
+                                String::new(),
+                                Some("E4073"),
+                            ));
                         } else {
-                            m2.env.unit_decls.borrow_mut().insert(name.clone(), UnitDecl { dim: dim.clone(), factor: factor.clone(), base: base.clone() });
+                            m2.env.unit_decls.borrow_mut().insert(
+                                name.clone(),
+                                UnitDecl {
+                                    dim: dim.clone(),
+                                    factor: factor.clone(),
+                                    base: base.clone(),
+                                },
+                            );
                         }
                     }
                 }
@@ -277,7 +383,11 @@ pub struct Bind {
     pub raw: Value,
 }
 
-pub fn run_universe(mods: &[Rc<Module>], entry: &Rc<Module>, binds: Vec<Bind>) -> (Rc<Engine>, Vec<Diag>) {
+pub fn run_universe(
+    mods: &[Rc<Module>],
+    entry: &Rc<Module>,
+    binds: Vec<Bind>,
+) -> (Rc<Engine>, Vec<Diag>) {
     let eng = Engine::new(entry.env.clone());
     for m in mods {
         eng.install_hooks(&m.env, true);
@@ -311,4 +421,3 @@ pub fn run_universe(mods: &[Rc<Module>], entry: &Rc<Module>, binds: Vec<Bind>) -
     entry.env.diag_set(diags.clone());
     (eng, diags)
 }
-

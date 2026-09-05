@@ -1,5 +1,5 @@
 """Static checks over the AST + resolved types — a port of the reference
-implementation's checker.ts (chapters 3–4). Implemented:
+implementation's checker.ts (chapters 3—4). Implemented:
   E3001 duplicate module name         E3003 unknown type name
   E4010 mixed range endpoints         E4011 empty range / array size
   E4012 structurally empty intersection
@@ -10,41 +10,61 @@ implementation's checker.ts (chapters 3–4). Implemented:
   E4052 ?? mixed with &&/|| unparenthesized
   E4094 context variable without / with an invalid context declaration
 plus the expression pass of infer.py (inference, assignability, absence)."""
+
 from __future__ import annotations
 
 import json
 import re
-from typing import Any, Optional
+from typing import Any
 
 from .engine import Engine
 from .infer import (
-    Ctx, TY, apply_guards, check_expr, guards_of, infer, js_str, js_typeof, make_ctx, require_val, try_resolve,
+    TY,
+    Ctx,
+    apply_guards,
+    check_expr,
+    guards_of,
+    infer,
+    js_str,
+    js_typeof,
+    make_ctx,
+    require_val,
+    try_resolve,
 )
 from .semantics import Env, is_bool, is_str
 from .subsume import structurally_empty, subsumes
 
 
-def _named(name: str) -> dict:
+def _named(name: str) -> dict[str, Any]:
     return {"k": "named", "name": name, "args": [], "preds": None, "ext": None}
 
 
-def _str_shaped(k: dict) -> bool:
+def _str_shaped(k: dict[str, Any]) -> bool:
     t = k["t"]
-    return (t == "prim" and k["name"] == "string") or t == "pattern" \
-        or (t == "lit" and is_str(k["v"])) \
-        or (t == "union" and all(_str_shaped(a) for a in k["arms"])) \
+    return (
+        (t == "prim" and k["name"] == "string")
+        or t == "pattern"
+        or (t == "lit" and is_str(k["v"]))
+        or (t == "union" and all(_str_shaped(a) for a in k["arms"]))
         or (t == "pred" and _str_shaped(k["base"]))
+    )
 
 
-def check_module(decls: list, linked: Optional[Env] = None, hooks: Optional[dict] = None) -> list:
-    out: list = []
-    cur: dict = {"decl": None}                        # the declaration being checked
-    cx0 = make_ctx(None, lambda code, msg: None)    # the inference context (env set below); its `pos` anchors reports
+def check_module(
+    decls: list[Any], linked: Env | None = None, hooks: dict[str, Any] | None = None
+) -> list[Any]:
+    out: list[Any] = []
+    cur: dict[str, Any] = {"decl": None}  # the declaration being checked
+    cx0 = make_ctx(
+        None, lambda code, msg: None
+    )  # the inference context (env set below); its `pos` anchors reports
 
     def report(code: str, message: str) -> None:
         at = cx0.pos.get("at")
-        loc = (at.get("loc") if at is not None else None) or (cur["decl"].get("loc") if cur["decl"] is not None else None)
-        d: dict = {"code": code, "message": message, "severity": "error", "path": ""}
+        loc = (at.get("loc") if at is not None else None) or (
+            cur["decl"].get("loc") if cur["decl"] is not None else None
+        )
+        d: dict[str, Any] = {"code": code, "message": message, "severity": "error", "path": ""}
         if loc:
             d["loc"] = loc
         out.append(d)
@@ -53,14 +73,14 @@ def check_module(decls: list, linked: Optional[Env] = None, hooks: Optional[dict
     if linked is None:
         env.load(decls)
     if env.const_eval is None:
-        Engine(env)   # installs env.const_eval / env.expr_eval (§4.13, §3.16)
-    env.on_const_diag = lambda d: out.append(d)   # constant-evaluation errors surface here
+        Engine(env)  # installs env.const_eval / env.expr_eval (§4.13, §3.16)
+    env.on_const_diag = lambda d: out.append(d)  # constant-evaluation errors surface here
     for n in env.duplicates:
         report("E3001", f"duplicate name {n} in module")
-    out.extend(env.finalize_unit_space())   # §3.16 unit/dimension spaces
+    out.extend(env.finalize_unit_space())  # §3.16 unit/dimension spaces
 
     # ---------- §4.13: constant positions ----------
-    state = {"tparams": set()}
+    state: dict[str, Any] = {"tparams": set()}
 
     def check_endpoint(v: Any, where: str) -> None:
         if not is_str(v) or v in state["tparams"] or "." in v:
@@ -70,7 +90,7 @@ def check_module(decls: list, linked: Optional[Env] = None, hooks: Optional[dict
         elif v not in env.consts:
             report("E3003", f"unknown name {v} in a {where}")
 
-    def const_violation(e: Any) -> Optional[str]:
+    def const_violation(e: Any) -> str | None:
         if isinstance(e, list):
             for x in e:
                 r = const_violation(x)
@@ -96,7 +116,7 @@ def check_module(decls: list, linked: Optional[Env] = None, hooks: Optional[dict
         return None
 
     # ---------- AST-level walks ----------
-    def walk_type(t: Optional[dict], depth: int, decl_name: Optional[str] = None) -> None:
+    def walk_type(t: dict[str, Any] | None, depth: int, decl_name: str | None = None) -> None:
         if not t:
             return
         k = t["k"]
@@ -136,7 +156,7 @@ def check_module(decls: list, linked: Optional[Env] = None, hooks: Optional[dict
                     report("E4021", f"non-constant predicate argument: {bad} (§4.13)")
                 walk_expr(p)
 
-    def walk_member(m: dict, depth: int, decl_name: Optional[str]) -> None:
+    def walk_member(m: dict[str, Any], depth: int, decl_name: str | None) -> None:
         k = m["m"]
         if k == "value":
             walk_type(m["type"], depth + 1, decl_name)
@@ -171,8 +191,8 @@ def check_module(decls: list, linked: Optional[Env] = None, hooks: Optional[dict
                 walk_expr(v)
 
     # ---------- D30: context obligations ----------
-    def ctx_uses(m: dict) -> dict:
-        used: dict = {}
+    def ctx_uses(m: dict[str, Any]) -> dict[str, Any]:
+        used: dict[str, Any] = {}
 
         def scan(e: Any) -> None:
             if isinstance(e, list):
@@ -184,10 +204,9 @@ def check_module(decls: list, linked: Optional[Env] = None, hooks: Optional[dict
             if e.get("e") == "ctx" and e["name"] in ("$parent", "$root", "$key"):
                 used[e["name"]] = True
             for v in e.values():
-                if isinstance(v, list):
+                if isinstance(v, list) or (isinstance(v, dict) and not v.get("k")):
                     scan(v)
-                elif isinstance(v, dict) and not v.get("k"):
-                    scan(v)
+
         k = m["m"]
         if k == "value" and m.get("dflt"):
             scan(m["dflt"])
@@ -201,30 +220,37 @@ def check_module(decls: list, linked: Optional[Env] = None, hooks: Optional[dict
                 used.update(ctx_uses(b))
         return used
 
-    def check_record_ctx(rec: dict, depth: int, decl_name: Optional[str]) -> None:
+    def check_record_ctx(rec: dict[str, Any], depth: int, decl_name: str | None) -> None:
         declared = {m["variable"]: m["type"] for m in rec["members"] if m["m"] == "context"}
         for v, ty in declared.items():
             if v in ("$parent", "$root"):
                 is_ref = ty["k"] == "named" and ty["name"] == "ref"
                 if not is_ref:
-                    report("E4094", f"{v} declaration must be ref<...> ({decl_name or 'anonymous'})")
+                    report(
+                        "E4094", f"{v} declaration must be ref<...> ({decl_name or 'anonymous'})"
+                    )
             if v == "$key" and ty["k"] == "named" and ty["name"] == "ref":
                 report("E4094", "$key declares a plain value type, not ref<...>")
         if depth > 1:
-            return   # lexically nested: parent evident, no declaration required
-        used: dict = {}
+            return  # lexically nested: parent evident, no declaration required
+        used: dict[str, Any] = {}
         for m in rec["members"]:
             used.update(ctx_uses(m))
         for u in used:
             if u not in declared:
-                report("E4094", f"{u} used without a context declaration in {decl_name or 'anonymous type'}")
+                report(
+                    "E4094",
+                    f"{u} used without a context declaration in {decl_name or 'anonymous type'}",
+                )
 
     # ---------- inheritance (extension) ----------
-    def check_extension(t: dict, decl_name: Optional[str]) -> None:
+    def check_extension(t: dict[str, Any], decl_name: str | None) -> None:
         try:
-            base = env.resolve({"k": "named", "name": t["name"], "args": t["args"], "preds": None, "ext": None})
+            base = env.resolve(
+                {"k": "named", "name": t["name"], "args": t["args"], "preds": None, "ext": None}
+            )
         except Exception:
-            return   # unknown base reported by the resolution pass
+            return  # unknown base reported by the resolution pass
         if base["t"] != "rec":
             report("E4031", f"extending non-record type {t['name']}")
             return
@@ -233,34 +259,51 @@ def check_module(decls: list, linked: Optional[Env] = None, hooks: Optional[dict
                 continue
             bm = next((x for x in base["members"] if x["name"] == om["name"]), None)
             if bm is None:
-                continue   # addition
-            o_kind = (("hidden" if om.get("hidden") else "der") if om["m"] == "derived"
-                      else "dflt" if om.get("dflt") else "opt" if om.get("opt") else "req")
+                continue  # addition
+            o_kind = (
+                ("hidden" if om.get("hidden") else "der")
+                if om["m"] == "derived"
+                else "dflt"
+                if om.get("dflt")
+                else "opt"
+                if om.get("opt")
+                else "req"
+            )
             b_kind = "hidden" if bm["kind"] == "der" and bm.get("hidden") else bm["kind"]
             # §5.9: overriding narrows; a hidden member stays hidden, a visible one visible
-            allowed = {"req": ["req", "dflt", "der"], "opt": ["req", "opt", "dflt", "der"],
-                       "dflt": ["req", "dflt", "der"], "der": ["der"], "hidden": ["hidden"]}
+            allowed = {
+                "req": ["req", "dflt", "der"],
+                "opt": ["req", "opt", "dflt", "der"],
+                "dflt": ["req", "dflt", "der"],
+                "der": ["der"],
+                "hidden": ["hidden"],
+            }
             if o_kind not in allowed.get(b_kind, []):
-                report("E4032", f"illegal member-kind transition for {om['name']}: {b_kind} -> {o_kind} ({decl_name or t['name']})")
+                report(
+                    "E4032",
+                    f"illegal member-kind transition for {om['name']}: {b_kind} -> {o_kind} "
+                    f"({decl_name or t['name']})",
+                )
                 continue
             o_type = try_resolve(env, om["type"]) if om.get("type") else None
             if o_type and bm.get("type") and not subsumes(env, o_type, bm["type"]):
-                report("E4030", f"override widens inherited member {om['name']} ({decl_name or t['name']})")
+                report(
+                    "E4030",
+                    f"override widens inherited member {om['name']} ({decl_name or t['name']})",
+                )
 
     # ---------- resolution-level checks ----------
-    resolve_reported: set = set()
+    resolve_reported: set[Any] = set()
 
     def map_resolve_err(msg: str, where: str) -> None:
         key = f"{msg}|{where}"
         if key in resolve_reported:
-            return   # one resolution failure, one report
+            return  # one resolution failure, one report
         resolve_reported.add(key)
         if re.search(r"unknown dimension|circular dimension", msg):
             report("E3003", f"{msg} (in {where})")
         elif re.search(r"unknown unit", msg):
             report("E4073", f"{msg} (in {where})")
-        elif re.search(r"pattern interpolation of .*: unknown type", msg):
-            report("E3003", f"{msg} (in {where})")
         elif re.search(r"unknown type", msg):
             report("E3003", f"{msg} (in {where})")
         elif re.search(r"generic arity", msg):
@@ -274,9 +317,9 @@ def check_module(decls: list, linked: Optional[Env] = None, hooks: Optional[dict
         elif re.search(r"malformed pattern", msg):
             report("E4119", f"{msg} (in {where})")
         else:
-            report("E4001", f"{msg} (in {where})")   # never drop a resolution failure silently
+            report("E4001", f"{msg} (in {where})")  # never drop a resolution failure silently
 
-    def resolve_or_report(t: Optional[dict], where: str) -> Optional[dict]:
+    def resolve_or_report(t: dict[str, Any] | None, where: str) -> dict[str, Any] | None:
         if not t:
             return None
         try:
@@ -285,7 +328,7 @@ def check_module(decls: list, linked: Optional[Env] = None, hooks: Optional[dict
             map_resolve_err(str(e), where)
             return None
 
-    def check_resolved(rt: Optional[dict], name: str, seen: set) -> None:
+    def check_resolved(rt: dict[str, Any] | None, name: str, seen: set[Any]) -> None:
         if not rt or id(rt) in seen:
             return
         seen.add(id(rt))
@@ -312,12 +355,33 @@ def check_module(decls: list, linked: Optional[Env] = None, hooks: Optional[dict
         elif t == "union":
             recs = [a for a in rt["arms"] if a["t"] == "rec"]
             if len(recs) >= 2:
-                disc = [m for m in recs[0]["members"]
-                        if m.get("type") and m["type"]["t"] == "lit"
-                        and all(any(x["name"] == m["name"] and x.get("type") and x["type"]["t"] == "lit" for x in r["members"]) for r in recs)]
+                disc = [
+                    m
+                    for m in recs[0]["members"]
+                    if m.get("type")
+                    and m["type"]["t"] == "lit"
+                    and all(
+                        any(
+                            x["name"] == m["name"] and x.get("type") and x["type"]["t"] == "lit"
+                            for x in r["members"]
+                        )
+                        for r in recs
+                    )
+                ]
                 tuples = set()
                 for r in recs:
-                    tuples.add(json.dumps([js_str(next(x for x in r["members"] if x["name"] == d["name"])["type"]["v"]) for d in disc]))
+                    tuples.add(
+                        json.dumps(
+                            [
+                                js_str(
+                                    next(x for x in r["members"] if x["name"] == d["name"])["type"][
+                                        "v"
+                                    ]
+                                )
+                                for d in disc
+                            ]
+                        )
+                    )
                 if not disc or len(tuples) != len(recs):
                     report("E4013", f"record union arms not discriminable in {name}")
             non_rec_obj = [a for a in rt["arms"] if a["t"] in ("map", "quantity")]
@@ -336,7 +400,7 @@ def check_module(decls: list, linked: Optional[Env] = None, hooks: Optional[dict
 
     for name, decl in list(env.type_asts.items()):
         if decl.get("params"):
-            continue   # generic declarations check at instantiation (§3.15)
+            continue  # generic declarations check at instantiation (§3.15)
         try:
             rt = env.resolve(_named(name))
         except Exception as e:
@@ -347,7 +411,9 @@ def check_module(decls: list, linked: Optional[Env] = None, hooks: Optional[dict
     # AST walks over all declarations
     for d in decls:
         cur["decl"] = d
-        state["tparams"] = set(p["name"] for p in (d.get("params") or [])) if d["d"] == "type" else set()
+        state["tparams"] = (
+            set(p["name"] for p in (d.get("params") or [])) if d["d"] == "type" else set()
+        )
         k = d["d"]
         if k == "type":
             walk_type(d["type"], 1, d["name"])
@@ -374,11 +440,15 @@ def check_module(decls: list, linked: Optional[Env] = None, hooks: Optional[dict
         cx0.record = hooks.get("record")
         cx0.resolve_hook = hooks.get("resolve_hook")
 
-    def is_bool_ty(t: dict) -> bool:
+    def is_bool_ty(t: dict[str, Any]) -> bool:
         rt = t["rt"]
-        return not rt or (rt["t"] == "prim" and rt["name"] == "bool") or (rt["t"] == "lit" and is_bool(rt["v"]))
+        return (
+            not rt
+            or (rt["t"] == "prim" and rt["name"] == "bool")
+            or (rt["t"] == "lit" and is_bool(rt["v"]))
+        )
 
-    def rec_ctx(cx: Ctx, rt: dict, ast: Optional[dict]) -> Ctx:
+    def rec_ctx(cx: Ctx, rt: dict[str, Any], ast: dict[str, Any] | None) -> Ctx:
         vars_ = dict(cx.vars)
         for m in rt["members"]:
             mt = {"t": "isectN", "arms": m["conj"]} if m.get("conj") else m.get("type")
@@ -393,14 +463,16 @@ def check_module(decls: list, linked: Optional[Env] = None, hooks: Optional[dict
         # shared anchor and the recording hooks kept (the reference's child(cx, vars))
         return cx.child(vars_)
 
-    def check_member_ast(cx: Ctx, m: dict) -> None:
+    def check_member_ast(cx: Ctx, m: dict[str, Any]) -> None:
         k = m["m"]
         if k == "value" and m.get("dflt"):
             check_expr(cx, m["dflt"], try_resolve(env, m["type"]))
         elif k == "derived":
             check_expr(cx, m["expr"], try_resolve(env, m.get("type")))
         elif k == "assert":
-            if not is_bool_ty(require_val(cx, m["cond"], infer(cx, m["cond"]), "as an assert condition")):
+            if not is_bool_ty(
+                require_val(cx, m["cond"], infer(cx, m["cond"]), "as an assert condition")
+            ):
                 report("E4001", "assert condition is not bool")
             tail = m.get("tail")
             if tail and tail["t"] == "inline":
@@ -411,15 +483,17 @@ def check_module(decls: list, linked: Optional[Env] = None, hooks: Optional[dict
                 for a in tail["args"]:
                     require_val(cx, a, infer(cx, a), "as a diagnostic argument")
         elif k == "when":
-            if not is_bool_ty(require_val(cx, m["cond"], infer(cx, m["cond"]), "as a when condition")):
+            if not is_bool_ty(
+                require_val(cx, m["cond"], infer(cx, m["cond"]), "as a when condition")
+            ):
                 report("E4001", "when condition is not bool")
             c2 = apply_guards(cx, guards_of(m["cond"], True))
             for b in m["body"]:
                 check_member_ast(c2, b)
 
-    seen_recs: set = set()
+    seen_recs: set[Any] = set()
 
-    def check_record_exprs(rt: dict, cx: Ctx, ast: Optional[dict] = None) -> None:
+    def check_record_exprs(rt: dict[str, Any], cx: Ctx, ast: dict[str, Any] | None = None) -> None:
         if rt["t"] != "rec" or id(rt) in seen_recs:
             return
         seen_recs.add(id(rt))
@@ -427,23 +501,33 @@ def check_module(decls: list, linked: Optional[Env] = None, hooks: Optional[dict
 
         # member expressions and asserts check in their declaring module's
         # scope (§8.3) — same rule the engine follows at evaluation
-        def cx_for(menv) -> Ctx:
+        def cx_for(menv: Any) -> Ctx:
             return cx_r.with_env(menv) if (menv is not None and menv is not cx_r.env) else cx_r
 
         # D30/E4090: an embedded type's declared bounds must hold at this
         # site — the container is the parent, the collection's key or index
         # type is what $key ranges over (none for a direct member)
-        def check_embedding(member_rt: dict, member_name: str, key_rt: Optional[dict]) -> None:
+        def check_embedding(
+            member_rt: dict[str, Any], member_name: str, key_rt: dict[str, Any] | None
+        ) -> None:
             site = f"{rt.get('name') or 'record'}.{member_name}"
             who = member_rt.get("name") or "the member type"
             for cd in member_rt.get("ctx_decls") or []:
                 if cd["variable"] == "$parent":
-                    bound = cd["type"]["target"] if (cd.get("type") and cd["type"]["t"] == "ref") else None
+                    bound = (
+                        cd["type"]["target"]
+                        if (cd.get("type") and cd["type"]["t"] == "ref")
+                        else None
+                    )
                     if bound and not subsumes(env, rt, bound):
                         report("E4090", f"embedding site {site} fails {who}'s $parent bound (§7.3)")
                 elif cd["variable"] == "$key":
                     if not key_rt:
-                        report("E4090", f"embedding site {site} gives $key no meaning: {who} is a direct member, not a collection element (§7.3)")
+                        report(
+                            "E4090",
+                            f"embedding site {site} gives $key no meaning: {who} is a direct "
+                            f"member, not a collection element (§7.3)",
+                        )
                     elif not subsumes(env, key_rt, cd["type"]):
                         report("E4090", f"embedding site {site} fails {who}'s $key bound (§7.3)")
 
@@ -465,9 +549,14 @@ def check_module(decls: list, linked: Optional[Env] = None, hooks: Optional[dict
                 check_record_exprs(mt["val"], cx_for(m.get("menv")))
         for a in rt["asserts"]:
             if a["kind"] == "assert":
-                check_member_ast(cx_for(a.get("menv")), {"m": "assert", "name": a["name"], "cond": a["cond"], "tail": a.get("tail")})
+                check_member_ast(
+                    cx_for(a.get("menv")),
+                    {"m": "assert", "name": a["name"], "cond": a["cond"], "tail": a.get("tail")},
+                )
             elif a["kind"] == "when":
-                check_member_ast(cx_for(a.get("menv")), {"m": "when", "cond": a["cond"], "body": a["body"]})
+                check_member_ast(
+                    cx_for(a.get("menv")), {"m": "when", "cond": a["cond"], "body": a["body"]}
+                )
 
     for name, decl in list(env.type_asts.items()):
         if decl.get("params"):
@@ -481,10 +570,10 @@ def check_module(decls: list, linked: Optional[Env] = None, hooks: Optional[dict
     # D30/E4090 for $root: every record type owned (transitively) by an
     # evaluation root must have its declared $root bound met by the root's
     # own type — checked once per root declaration
-    def check_root_bounds(root_name: str, root_rt: dict) -> None:
-        seen: set = set()
+    def check_root_bounds(root_name: str, root_rt: dict[str, Any]) -> None:
+        seen: set[Any] = set()
 
-        def walk(t: Optional[dict]) -> None:
+        def walk(t: dict[str, Any] | None) -> None:
             if not t or id(t) in seen:
                 return
             seen.add(id(t))
@@ -493,9 +582,17 @@ def check_module(decls: list, linked: Optional[Env] = None, hooks: Optional[dict
                 for cd in t.get("ctx_decls") or []:
                     if cd["variable"] != "$root":
                         continue
-                    bound = cd["type"]["target"] if (cd.get("type") and cd["type"]["t"] == "ref") else None
+                    bound = (
+                        cd["type"]["target"]
+                        if (cd.get("type") and cd["type"]["t"] == "ref")
+                        else None
+                    )
                     if bound and not subsumes(env, root_rt, bound):
-                        report("E4090", f"root {root_name} fails {t.get('name') or 'a member type'}'s $root bound (§7.3)")
+                        report(
+                            "E4090",
+                            f"root {root_name} fails {t.get('name') or 'a member type'}'s $root "
+                            f"bound (§7.3)",
+                        )
                 for m in t["members"]:
                     walk(m.get("type"))
             elif k == "arr":
@@ -507,12 +604,13 @@ def check_module(decls: list, linked: Optional[Env] = None, hooks: Optional[dict
                     walk(a)
             elif k == "pred":
                 walk(t.get("base"))
+
         walk(root_rt)
 
     # §7.3: the root's own type gives $parent and $key no meaning — the root
     # has no owner and sits under no key — so a declaration of either on it
     # (directly, or on a union arm) is an error at the root
-    def check_root_type(root_name: str, root_rt: dict) -> None:
+    def check_root_type(root_name: str, root_rt: dict[str, Any]) -> None:
         arms = root_rt["arms"] if root_rt["t"] == "union" else [root_rt]
         for t in arms:
             if t["t"] != "rec":
@@ -520,28 +618,44 @@ def check_module(decls: list, linked: Optional[Env] = None, hooks: Optional[dict
             who = t.get("name") or "its type"
             for cd in t.get("ctx_decls") or []:
                 if cd["variable"] == "$parent":
-                    report("E4090", f"root {root_name} gives $parent no meaning: {who} is the evaluation root's own type (§7.3)")
+                    report(
+                        "E4090",
+                        f"root {root_name} gives $parent no meaning: {who} is the evaluation "
+                        f"root's own type (§7.3)",
+                    )
                 elif cd["variable"] == "$key":
-                    report("E4090", f"root {root_name} gives $key no meaning: {who} is the evaluation root's own type, not a collection element (§7.3)")
+                    report(
+                        "E4090",
+                        f"root {root_name} gives $key no meaning: {who} is the evaluation root's "
+                        f"own type, not a collection element (§7.3)",
+                    )
 
     for d in decls:
         cur["decl"] = d
         if d["d"] not in ("output", "input"):
             continue
-        rt = try_resolve(env, d["type"])
-        if rt:
-            check_root_type(d["name"], rt)
-            check_root_bounds(d["name"], rt)
+        root_rt = try_resolve(env, d["type"])
+        if root_rt:
+            check_root_type(d["name"], root_rt)
+            check_root_bounds(d["name"], root_rt)
     for d in decls:
         cur["decl"] = d
         k = d["d"]
         if k == "const":
-            check_expr(cx0, d["expr"], resolve_or_report(d["type"], f"const {d['name']}") if d.get("type") else None)
+            check_expr(
+                cx0,
+                d["expr"],
+                resolve_or_report(d["type"], f"const {d['name']}") if d.get("type") else None,
+            )
         elif k == "func":
             cx_f = cx0.child()
             for p in d["params"]:
                 cx_f.vars[p["name"]] = TY(resolve_or_report(p.get("type"), f"func {d['name']}"))
-            check_expr(cx_f, d["body"], resolve_or_report(d["ret"], f"func {d['name']}") if d.get("ret") else None)
+            check_expr(
+                cx_f,
+                d["body"],
+                resolve_or_report(d["ret"], f"func {d['name']}") if d.get("ret") else None,
+            )
         elif k == "output":
             check_expr(cx0, d["expr"], resolve_or_report(d["type"], f"output {d['name']}"))
         elif k == "input" and d.get("fallback"):

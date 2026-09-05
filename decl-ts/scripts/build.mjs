@@ -16,7 +16,8 @@ const GRAMMAR = join(REPO, 'tree-sitter-decl');
 
 // web-tree-sitter's runtime wasm sits beside its entry (hoisted or not)
 let wtsDir = dirname(require.resolve('web-tree-sitter'));
-while (!existsSync(join(wtsDir, 'tree-sitter.wasm')) && basename(wtsDir) !== 'web-tree-sitter') wtsDir = dirname(wtsDir);
+while (!existsSync(join(wtsDir, 'tree-sitter.wasm')) && basename(wtsDir) !== 'web-tree-sitter')
+  wtsDir = dirname(wtsDir);
 const runtimeWasm = join(wtsDir, 'tree-sitter.wasm');
 
 rmSync('dist', { recursive: true, force: true });
@@ -42,7 +43,19 @@ await build({
   minify: true,
   outdir: 'dist',
   logLevel: 'info',
-  external: ['fs', 'fs/promises', 'path', 'url', 'crypto', 'module', 'worker_threads', 'perf_hooks', 'os', 'util', 'child_process'],
+  external: [
+    'fs',
+    'fs/promises',
+    'path',
+    'url',
+    'crypto',
+    'module',
+    'worker_threads',
+    'perf_hooks',
+    'os',
+    'util',
+    'child_process',
+  ],
 });
 copyFileSync(join(GRAMMAR, 'tree-sitter-decl.wasm'), 'dist/tree-sitter-decl.wasm');
 copyFileSync(runtimeWasm, 'dist/tree-sitter.wasm');
@@ -52,19 +65,24 @@ if (existsSync(join(REPO, 'LICENSE'))) copyFileSync(join(REPO, 'LICENSE'), 'LICE
 if (existsSync('../decl-py/decl')) {
   copyFileSync(join(REPO, 'LICENSE'), '../decl-py/LICENSE');
   // the grammar C sources for the native Python parser extension
-  const gsrc = join(GRAMMAR, 'src'), gdst = '../decl-py/decl/_tree_sitter/src';
+  const gsrc = join(GRAMMAR, 'src'),
+    gdst = '../decl-py/decl/_tree_sitter/src';
   rmSync(gdst, { recursive: true, force: true });
   mkdirSync(join(gdst, 'tree_sitter'), { recursive: true });
   for (const f of ['parser.c', 'scanner.c']) copyFileSync(join(gsrc, f), join(gdst, f));
-  for (const f of readdirSync(join(gsrc, 'tree_sitter'))) copyFileSync(join(gsrc, 'tree_sitter', f), join(gdst, 'tree_sitter', f));
+  for (const f of readdirSync(join(gsrc, 'tree_sitter')))
+    copyFileSync(join(gsrc, 'tree_sitter', f), join(gdst, 'tree_sitter', f));
   // ... and for the Rust crate (cargo publish needs them inside the package)
   const rdst = '../decl-rs/grammar';
   if (existsSync('../decl-rs')) {
     rmSync(rdst, { recursive: true, force: true });
     mkdirSync(join(rdst, 'tree_sitter'), { recursive: true });
     for (const f of ['parser.c', 'scanner.c']) copyFileSync(join(gsrc, f), join(rdst, f));
-    for (const f of readdirSync(join(gsrc, 'tree_sitter'))) copyFileSync(join(gsrc, 'tree_sitter', f), join(rdst, 'tree_sitter', f));
+    for (const f of readdirSync(join(gsrc, 'tree_sitter')))
+      copyFileSync(join(gsrc, 'tree_sitter', f), join(rdst, 'tree_sitter', f));
     copyFileSync(join(REPO, 'LICENSE'), '../decl-rs/LICENSE');
   }
 }
-console.log('built dist/ (cli.js, lsp.js, index.js, core.js, tree-sitter-decl.wasm, tree-sitter.wasm) + grammar sources synced to decl-py and decl-rs');
+console.log(
+  'built dist/ (cli.js, lsp.js, index.js, core.js, tree-sitter-decl.wasm, tree-sitter.wasm) + grammar sources synced to decl-py and decl-rs',
+);

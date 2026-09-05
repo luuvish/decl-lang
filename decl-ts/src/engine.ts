@@ -1,17 +1,36 @@
 // Binding, evaluation, validation, serialization (reference implementation;
 // promoted from the Phase 0 spike, adapted to the tree-sitter AST).
 import {
-  ABSENT, DeferSig, Env, EvalErr, Taint,
-  cmpPath, isArr, isClo, isMap, isQ, isRange, isRec, isRef, parsePath, pathStr, valueEq,
-  keyOfVec, vecCombine, vecOfKey, patternError, compilePattern, mapKey, segText, dotSpellable,
+  ABSENT,
+  DeferSig,
+  Env,
+  EvalErr,
+  Taint,
+  cmpPath,
+  isArr,
+  isClo,
+  isMap,
+  isQ,
+  isRange,
+  isRec,
+  isRef,
+  parsePath,
+  pathStr,
+  valueEq,
+  keyOfVec,
+  vecCombine,
+  vecOfKey,
+  patternError,
+  compilePattern,
+  mapKey,
+  segText,
+  dotSpellable,
 } from './semantics.ts';
-import type { Diag, RecInst, RT, Seg, Slot } from './semantics.ts';
-import type { Expr, TemplateParts } from './ast.ts';
+import type { RecInst, RT, Seg, Slot } from './semantics.ts';
+import type { Expr } from './ast.ts';
 import { subsumes } from './subsume.ts';
 
 type Scope = { inst: RecInst | null; locals: Map<string, any>; rootName: string; menv?: Env };
-type Pre = { __pre: 'obj'; entries: [string, PreVal][] } | { __pre: 'arr'; items: ({ spread: boolean; v: PreVal })[] };
-type PreVal = { __expr: Expr; scope: Scope } | any;
 
 export class Engine {
   env: Env;
@@ -27,33 +46,49 @@ export class Engine {
   reads = new Map<string, Set<string>>();
   computing: string[] = [];
   slotsByKey = new Map<string, { inst: RecInst; name: string }>();
-  static slotKey(inst: RecInst, name: string): string { return `${pathStr(inst.path)}.${name}`; }
-  record(read: string) { const top = this.computing[this.computing.length - 1]; if (top) this.reads.get(top)!.add(read); }
+  static slotKey(inst: RecInst, name: string): string {
+    return `${pathStr(inst.path)}.${name}`;
+  }
+  record(read: string) {
+    const top = this.computing[this.computing.length - 1];
+    if (top) this.reads.get(top)!.add(read);
+  }
   step<T>(key: string, f: () => T): T {
     this.computing.push(key);
     this.reads.set(key, new Set());
-    try { return f(); } finally { this.computing.pop(); }
+    try {
+      return f();
+    } finally {
+      this.computing.pop();
+    }
   }
-  noReg = 0;                     // >0: binding for comparison only — do not register instances
-  phase = 1;                     // 1: materialization; 2: universe complete, $referrers answers
+  noReg = 0; // >0: binding for comparison only — do not register instances
+  phase = 1; // 1: materialization; 2: universe complete, $referrers answers
   constructor(env: Env) {
     env.tagger = () => this.computing[this.computing.length - 1];
     this.env = env;
-    env.constEval = (name: string) => this.forceConst(name, '');   // §4.13 elaboration-time constants
+    env.constEval = (name: string) => this.forceConst(name, ''); // §4.13 elaboration-time constants
     env.exprEval = (e: Expr) => this.ev(e, { inst: null, locals: new Map(), rootName: '' });
   }
 
   // ---------- expression evaluation ----------
   ev(e: Expr, sc: Scope): any {
     switch (e.e) {
-      case 'lit': return e.v;
+      case 'lit':
+        return e.v;
       case 'unitlit': {
         let u: { key: string; toBase: number };
-        try { u = this.env.unitInfo(e.unit); } catch (err: any) { throw new EvalErr(err.message); }
+        try {
+          u = this.env.unitInfo(e.unit);
+        } catch (err: any) {
+          throw new EvalErr(err.message);
+        }
         return { __q: true, dim: u.key, value: e.num * u.toBase };
       }
-      case 'paren': return this.ev(e.x, sc);
-      case 'pattern': return { __pat: true, re: e.re };
+      case 'paren':
+        return this.ev(e.x, sc);
+      case 'pattern':
+        return { __pat: true, re: e.re };
       case 'mapcomp': {
         const entries: [string, any][] = [];
         const rec = (ci: number, locals: Map<string, any>) => {
@@ -66,8 +101,10 @@ export class Engine {
           }
           const cl = e.clauses[ci];
           for (const el of this.iterate(this.ev(cl.iter, { ...sc, locals }))) {
-            const l2 = new Map(locals); l2.set(cl.v, el);
-            if (cl.filters.every((f: Expr) => this.truthy(this.ev(f, { ...sc, locals: l2 })))) rec(ci + 1, l2);
+            const l2 = new Map(locals);
+            l2.set(cl.v, el);
+            if (cl.filters.every((f: Expr) => this.truthy(this.ev(f, { ...sc, locals: l2 }))))
+              rec(ci + 1, l2);
           }
         };
         rec(0, sc.locals);
@@ -88,7 +125,10 @@ export class Engine {
         const bound = this.moduleValue(menv, e.name, sc.rootName);
         if (bound !== undefined) return bound;
         if (e.name === 'std') return { __std: true, path: [] };
-        if (this.env.roots.has(e.name)) { this.record(`root:${e.name}`); return this.env.roots.get(e.name); }
+        if (this.env.roots.has(e.name)) {
+          this.record(`root:${e.name}`);
+          return this.env.roots.get(e.name);
+        }
         const inp = this.demandInput(menv, e.name);
         if (inp !== undefined) return inp;
         throw new EvalErr(`unknown name ${e.name}`);
@@ -103,11 +143,13 @@ export class Engine {
           return { __ref: true, segs: inst.path };
         }
         if (e.name === '$parent') {
-          if (!inst || !inst.parent) throw new EvalErr('$parent: the evaluation root has no owner', 'E4090');
+          if (!inst || !inst.parent)
+            throw new EvalErr('$parent: the evaluation root has no owner', 'E4090');
           return { __ref: true, segs: inst.parent.path };
         }
         if (e.name === '$root') {
-          if (!sc.rootName || !this.env.roots.has(sc.rootName)) throw new EvalErr('$root outside an evaluation root', 'E4090');
+          if (!sc.rootName || !this.env.roots.has(sc.rootName))
+            throw new EvalErr('$root outside an evaluation root', 'E4090');
           return { __ref: true, segs: [sc.rootName] };
         }
         if (e.name === '$key') {
@@ -125,40 +167,60 @@ export class Engine {
         }
         throw new EvalErr(`unsupported context var ${e.name}`);
       }
-      case 'referrers': return this.referrers(e.type, e.member, sc);
-      case 'obj': return { __pre: 'obj', entries: e.entries.map(en => [en.key, { __expr: en.val, scope: sc }]) };
-      case 'arr': return { __pre: 'arr', items: e.items.map(it => ({ spread: it.spread, v: { __expr: it.expr, scope: sc } })) };
+      case 'referrers':
+        return this.referrers(e.type, e.member, sc);
+      case 'obj':
+        return {
+          __pre: 'obj',
+          entries: e.entries.map((en) => [en.key, { __expr: en.val, scope: sc }]),
+        };
+      case 'arr':
+        return {
+          __pre: 'arr',
+          items: e.items.map((it) => ({ spread: it.spread, v: { __expr: it.expr, scope: sc } })),
+        };
       case 'comp': {
         const items: any[] = [];
         const rec = (ci: number, locals: Map<string, any>) => {
-          if (ci === e.clauses.length) { items.push({ spread: false, v: { __expr: e.head, scope: { ...sc, locals } } }); return; }
+          if (ci === e.clauses.length) {
+            items.push({ spread: false, v: { __expr: e.head, scope: { ...sc, locals } } });
+            return;
+          }
           const cl = e.clauses[ci];
           const iter = this.ev(cl.iter, { ...sc, locals });
           const elems = this.iterate(iter);
           for (const el of elems) {
-            const l2 = new Map(locals); l2.set(cl.v, el);
-            if (cl.filters.every(f => this.truthy(this.ev(f, { ...sc, locals: l2 })))) rec(ci + 1, l2);
+            const l2 = new Map(locals);
+            l2.set(cl.v, el);
+            if (cl.filters.every((f) => this.truthy(this.ev(f, { ...sc, locals: l2 }))))
+              rec(ci + 1, l2);
           }
         };
         rec(0, sc.locals);
         return { __pre: 'arr', items };
       }
-      case 'if': return this.truthy(this.ev(e.c, sc)) ? this.ev(e.t, sc) : this.ev(e.f, sc);
+      case 'if':
+        return this.truthy(this.ev(e.c, sc)) ? this.ev(e.t, sc) : this.ev(e.f, sc);
       case 'match': {
         const subj = this.deref(this.ev(e.subject, sc));
         const run = (arm: { v: string; body: Expr }) => {
-          const l2 = new Map(sc.locals); l2.set(arm.v, subj);
+          const l2 = new Map(sc.locals);
+          l2.set(arm.v, subj);
           return this.ev(arm.body, { ...sc, locals: l2 });
         };
         let catchAll: { v: string; body: Expr } | null = null;
         for (const arm of e.arms) {
-          if (!arm.type) { catchAll = arm; continue; }
+          if (!arm.type) {
+            catchAll = arm;
+            continue;
+          }
           if (this.memberOf(subj, (sc.menv ?? this.env).resolve(arm.type), sc)) return run(arm);
         }
         if (catchAll) return run(catchAll);
         throw new EvalErr('match: no arm matched');
       }
-      case 'lambda': return { __clo: true, params: e.params, body: e.body, scope: sc };
+      case 'lambda':
+        return { __clo: true, params: e.params, body: e.body, scope: sc };
       case 'un': {
         const x = this.ev(e.x, sc);
         if (e.op === '!') return !this.truthy(x);
@@ -167,10 +229,12 @@ export class Engine {
         throw new EvalErr('un');
       }
       case 'bin': {
-        if (e.op === '|>') {   // first-argument insertion (§4.9)
-          const call: Expr = e.r.e === 'call'
-            ? { e: 'call', fn: e.r.fn, args: [e.l, ...e.r.args] }
-            : { e: 'call', fn: e.r, args: [e.l] };
+        if (e.op === '|>') {
+          // first-argument insertion (§4.9)
+          const call: Expr =
+            e.r.e === 'call'
+              ? { e: 'call', fn: e.r.fn, args: [e.l, ...e.r.args] }
+              : { e: 'call', fn: e.r, args: [e.l] };
           return this.ev(call, sc);
         }
         return this.binop(e.op, e.l, e.r, sc);
@@ -195,7 +259,7 @@ export class Engine {
         throw new EvalErr('index on non-collection');
       }
       case 'call': {
-        const args = e.args.map(a => this.ev(a, sc));
+        const args = e.args.map((a) => this.ev(a, sc));
         const fn = this.evCallee(e.fn, sc);
         return this.call(fn, args, sc);
       }
@@ -206,9 +270,10 @@ export class Engine {
           // merge entries directly, still unbound
           const patch = this.ev(e.patch, sc);
           const entries: [string, any][] = base.entries.map(([k, v]: any) => [k, v]);
-          for (const [k, v] of (patch as any).entries) {
+          for (const [k, v] of patch.entries) {
             const i = entries.findIndex(([n]) => n === k);
-            if (i >= 0) entries[i] = [k, v]; else entries.push([k, v]);
+            if (i >= 0) entries[i] = [k, v];
+            else entries.push([k, v]);
           }
           return { __pre: 'obj', entries };
         }
@@ -216,19 +281,28 @@ export class Engine {
         const patch = this.ev(e.patch, sc);
         const entries: [string, any][] = [];
         for (const n of base.entryOrder) {
-          if (base.extras.has(n)) { entries.push([n, base.extras.get(n)]); continue; }
+          if (base.extras.has(n)) {
+            entries.push([n, base.extras.get(n)]);
+            continue;
+          }
           const s = base.slots.get(n)!;
-          if (s.kind === 'der') continue;                    // derived: dropped, recomputed downstream
+          if (s.kind === 'der') continue; // derived: dropped, recomputed downstream
           if (s.state === 'absent') continue;
           entries.push([n, this.forceSlot(base, n)]);
         }
-        for (const m of base.rt.members) {                   // defaulted members not in entryOrder
-          if (m.kind === 'dflt' && !entries.some(([k]) => k === m.name) && base.slots.get(m.name)?.state !== 'absent')
+        for (const m of base.rt.members) {
+          // defaulted members not in entryOrder
+          if (
+            m.kind === 'dflt' &&
+            !entries.some(([k]) => k === m.name) &&
+            base.slots.get(m.name)?.state !== 'absent'
+          )
             entries.push([m.name, this.forceSlot(base, m.name)]);
         }
-        for (const [k, v] of (patch as any).entries) {
+        for (const [k, v] of patch.entries) {
           const i = entries.findIndex(([n]) => n === k);
-          if (i >= 0) entries[i] = [k, v]; else entries.push([k, v]);
+          if (i >= 0) entries[i] = [k, v];
+          else entries.push([k, v]);
         }
         return { __pre: 'obj', entries };
       }
@@ -240,9 +314,15 @@ export class Engine {
     if (isRec(v)) return subsumes(this.env, v.rt, rt);
     const mark = this.env.diagnostics.length;
     this.noReg++;
-    try { this.bind(v, rt, ['<match>'], null, sc); return true; }
-    catch { return false; }
-    finally { this.noReg--; this.env.diagnostics.length = mark; }
+    try {
+      this.bind(v, rt, ['<match>'], null, sc);
+      return true;
+    } catch {
+      return false;
+    } finally {
+      this.noReg--;
+      this.env.diagnostics.length = mark;
+    }
   }
   evCallee(e: Expr, sc: Scope): any {
     if (e.e === 'member') {
@@ -259,14 +339,21 @@ export class Engine {
     if (menv.consts.has(name)) return this.forceConstIn(menv, name, rootName);
     if (menv.funcs.has(name)) {
       const f = menv.funcs.get(name)!;
-      return { __clo: true, params: f.params.map(p => p.name), body: f.body,
-               scope: { inst: null, locals: new Map(), rootName, menv } };
+      return {
+        __clo: true,
+        params: f.params.map((p) => p.name),
+        body: f.body,
+        scope: { inst: null, locals: new Map(), rootName, menv },
+      };
     }
     const im = menv.imports.get(name);
     if (im) {
       const v = this.moduleValue(im.env, im.name, rootName);
       if (v !== undefined) return v;
-      if (this.env.roots.has(im.name)) { this.record(`root:${im.name}`); return this.env.roots.get(im.name); }   // imported output/input root
+      if (this.env.roots.has(im.name)) {
+        this.record(`root:${im.name}`);
+        return this.env.roots.get(im.name);
+      } // imported output/input root
       return this.demandInput(im.env, im.name);
     }
     const ns = menv.namespaces.get(name);
@@ -278,7 +365,10 @@ export class Engine {
     if (!ex) throw new EvalErr(`namespace has no export ${name}`);
     const v = this.moduleValue(ex.env, ex.name, sc.rootName);
     if (v !== undefined) return v;
-    if (this.env.roots.has(ex.name)) { this.record(`root:${ex.name}`); return this.env.roots.get(ex.name); }
+    if (this.env.roots.has(ex.name)) {
+      this.record(`root:${ex.name}`);
+      return this.env.roots.get(ex.name);
+    }
     const inp = this.demandInput(ex.env, ex.name);
     if (inp !== undefined) return inp;
     throw new EvalErr(`${name} is not a value`);
@@ -297,7 +387,9 @@ export class Engine {
     if (!decl.fallback) throw new EvalErr(`input ${name} is not bound`, 'E5006');
     const sc: Scope = { inst: null, locals: new Map(), rootName: name, menv };
     try {
-      const v = this.step(`root:${name}`, () => this.bind(this.ev(decl.fallback!, sc), menv.resolve(decl.type), [name], null, sc));
+      const v = this.step(`root:${name}`, () =>
+        this.bind(this.ev(decl.fallback!, sc), menv.resolve(decl.type), [name], null, sc),
+      );
       this.env.roots.set(name, v);
       return v;
     } catch (e) {
@@ -310,18 +402,29 @@ export class Engine {
   // left unset — its demanders are tainted, nothing else is
   bindRoot(name: string, raw: any, rt: RT, sc: Scope, viaExpr: boolean) {
     try {
-      const v = this.step(`root:${name}`, () => viaExpr ? this.bind(this.ev(raw, sc), rt, [name], null, sc) : this.bind(raw, rt, [name], null, sc));
+      const v = this.step(`root:${name}`, () =>
+        viaExpr
+          ? this.bind(this.ev(raw, sc), rt, [name], null, sc)
+          : this.bind(raw, rt, [name], null, sc),
+      );
       this.env.roots.set(name, v);
     } catch (e) {
       if (e instanceof EvalErr)
-        this.env.report({ severity: 'error', message: e.message, path: name, code: (e as any).code });
-      else if (e instanceof DeferSig) { if (this.phase < 2) this.deferredRoots.push({ name, raw, rt, sc, viaExpr }); }
-      else if (!(e instanceof Taint)) throw e;
+        this.env.report({
+          severity: 'error',
+          message: e.message,
+          path: name,
+          code: (e as any).code,
+        });
+      else if (e instanceof DeferSig) {
+        if (this.phase < 2) this.deferredRoots.push({ name, raw, rt, sc, viaExpr });
+      } else if (!(e instanceof Taint)) throw e;
     }
   }
   /** phase 2: the roots that deferred are bound again (after the deferred slots) */
   bindDeferredRoots() {
-    for (const d of this.deferredRoots.splice(0)) this.bindRoot(d.name, d.raw, d.rt, d.sc, d.viaExpr);
+    for (const d of this.deferredRoots.splice(0))
+      this.bindRoot(d.name, d.raw, d.rt, d.sc, d.viaExpr);
   }
   // quantity arithmetic (§3.16): +/-/compare need equal dimensions;
   // * and / compose exponent vectors; a vector cancelling to zero is a
@@ -329,22 +432,28 @@ export class Engine {
   qArith(op: string, l: any, r: any): any {
     if (op === '+' || op === '-') {
       if (!isQ(l) || !isQ(r)) throw new EvalErr(`\`${op}\` mixes quantity and plain number`);
-      if (l.dim !== r.dim) throw new EvalErr(`quantity dimension mismatch: ${l.dim || '1'} vs ${r.dim || '1'}`);
+      if (l.dim !== r.dim)
+        throw new EvalErr(`quantity dimension mismatch: ${l.dim || '1'} vs ${r.dim || '1'}`);
       return { __q: true, dim: l.dim, value: op === '+' ? l.value + r.value : l.value - r.value };
     }
     if (['<', '<=', '>', '>='].includes(op)) {
-      if (!isQ(l) || !isQ(r) || l.dim !== r.dim) throw new EvalErr('quantity dimension mismatch in comparison');
+      if (!isQ(l) || !isQ(r) || l.dim !== r.dim)
+        throw new EvalErr('quantity dimension mismatch in comparison');
       if (op === '<') return l.value < r.value;
       if (op === '<=') return l.value <= r.value;
       if (op === '>') return l.value > r.value;
       return l.value >= r.value;
     }
-    const num = (x: any) => typeof x === 'number' ? x : typeof x === 'bigint' ? Number(x) : null;
+    const num = (x: any) => (typeof x === 'number' ? x : typeof x === 'bigint' ? Number(x) : null);
     const lm = isQ(l) ? l.value : num(l);
     const rm = isQ(r) ? r.value : num(r);
     if (lm === null || rm === null) throw new EvalErr(`bad operands for ${op}`);
     if (op === '/' && rm === 0) throw new EvalErr('division by zero', 'E5001');
-    const vec = vecCombine(isQ(l) ? vecOfKey(l.dim) : {}, isQ(r) ? vecOfKey(r.dim) : {}, op === '*' ? 1 : -1);
+    const vec = vecCombine(
+      isQ(l) ? vecOfKey(l.dim) : {},
+      isQ(r) ? vecOfKey(r.dim) : {},
+      op === '*' ? 1 : -1,
+    );
     const value = op === '*' ? lm * rm : lm / rm;
     if (!isFinite(value)) throw new EvalErr('non-finite', 'E5002');
     const key = keyOfVec(vec);
@@ -358,7 +467,7 @@ export class Engine {
       for (let i = v.lo; i < v.hi + (v.excl ? 0n : 1n); i++) out.push(i);
       return out;
     }
-    if (Array.isArray((v as any)?.items)) return (v as any).items;
+    if (Array.isArray(v?.items)) return v.items;
     throw new EvalErr('not iterable');
   }
   truthy(v: any): boolean {
@@ -368,11 +477,16 @@ export class Engine {
   binop(op: string, le: Expr, re: Expr, sc: Scope): any {
     if (op === '&&') return this.truthy(this.ev(le, sc)) ? this.truthy(this.ev(re, sc)) : false;
     if (op === '||') return this.truthy(this.ev(le, sc)) ? true : this.truthy(this.ev(re, sc));
-    if (op === '??') { const l = this.ev(le, sc); return l === ABSENT || l === null ? this.ev(re, sc) : l; }
-    const l = this.ev(le, sc); let r = this.ev(re, sc);
+    if (op === '??') {
+      const l = this.ev(le, sc);
+      return l === ABSENT || l === null ? this.ev(re, sc) : l;
+    }
+    const l = this.ev(le, sc);
+    let r = this.ev(re, sc);
     if (op === '..' || op === '..<') return { __range: true, lo: l, hi: r, excl: op === '..<' };
     if (op === 'matches') {
-      if (typeof l !== 'string' || !r || !r.__pat) throw new EvalErr('matches needs a string and a pattern');
+      if (typeof l !== 'string' || !r || !r.__pat)
+        throw new EvalErr('matches needs a string and a pattern');
       const bad = patternError(r.re);
       if (bad) throw new EvalErr(`malformed pattern /${r.re}/: ${bad}`, 'E4119');
       return compilePattern(r.re).test(l);
@@ -380,12 +494,15 @@ export class Engine {
     if (op === '==') return valueEq(l, r);
     if (op === '!=') return !valueEq(l, r);
     if (op === 'in') {
-      if (isRef(r)) r = this.deref(r);   // the container may be reached through a reference ($this, $parent)
+      if (isRef(r)) r = this.deref(r); // the container may be reached through a reference ($this, $parent)
       if (isRange(r)) return l >= r.lo && (r.excl ? l < r.hi : l <= r.hi);
       if (r && r.__pre) return this.matArr(r).some((x: any) => valueEq(l, x));
       if (isArr(r)) return r.items.some((x: any) => valueEq(l, x));
       if (isMap(r)) return r.entries.has(l);
-      if (isRec(r)) { const s = r.slots.get(l); return !!s && this.forceState(r, l) !== 'absent'; }
+      if (isRec(r)) {
+        const s = r.slots.get(l);
+        return !!s && this.forceState(r, l) !== 'absent';
+      }
       throw new EvalErr('in: bad container');
     }
     if (l === ABSENT || r === ABSENT) throw new EvalErr('absent consumed');
@@ -395,30 +512,68 @@ export class Engine {
     const bothF = typeof l === 'number' && typeof r === 'number';
     const bothS = typeof l === 'string' && typeof r === 'string';
     switch (op) {
-      case '+': if (bothS) return l + r; if (bothI || bothF) return (l as any) + (r as any); break;
-      case '-': if (bothI || bothF) return (l as any) - (r as any); break;
-      case '*': if (bothI || bothF) return (l as any) * (r as any); break;
-      case '/':
-        if (bothI) { if (r === 0n) throw new EvalErr('division by zero', 'E5001'); const q = (l as bigint) / (r as bigint); return q; }
-        if (bothF) { if (r === 0) throw new EvalErr('division by zero', 'E5001'); const q = (l as number) / (r as number); if (!isFinite(q)) throw new EvalErr('non-finite', 'E5002'); return q; }
+      case '+':
+        if (bothS) return l + r;
+        if (bothI || bothF) return (l as any) + r;
         break;
-      case '%': if (bothI) { if (r === 0n) throw new EvalErr('mod zero', 'E5001'); return (l as bigint) % (r as bigint); } break;
-      case '<': case '<=': case '>': case '>=': {
+      case '-':
+        if (bothI || bothF) return (l as any) - r;
+        break;
+      case '*':
+        if (bothI || bothF) return (l as any) * r;
+        break;
+      case '/':
+        if (bothI) {
+          if (r === 0n) throw new EvalErr('division by zero', 'E5001');
+          const q = l / (r as bigint);
+          return q;
+        }
+        if (bothF) {
+          if (r === 0) throw new EvalErr('division by zero', 'E5001');
+          const q = l / (r as number);
+          if (!isFinite(q)) throw new EvalErr('non-finite', 'E5002');
+          return q;
+        }
+        break;
+      case '%':
+        if (bothI) {
+          if (r === 0n) throw new EvalErr('mod zero', 'E5001');
+          return l % (r as bigint);
+        }
+        break;
+      case '<':
+      case '<=':
+      case '>':
+      case '>=': {
         if (bothI || bothF || bothS) {
-          if (op === '<') return l < r; if (op === '<=') return l <= r;
-          if (op === '>') return l > r; return l >= r;
+          if (op === '<') return l < r;
+          if (op === '<=') return l <= r;
+          if (op === '>') return l > r;
+          return l >= r;
         }
         if (isQ(l) && isQ(r) && l.dim === r.dim) {
-          if (op === '<') return l.value < r.value; if (op === '<=') return l.value <= r.value;
-          if (op === '>') return l.value > r.value; return l.value >= r.value;
+          if (op === '<') return l.value < r.value;
+          if (op === '<=') return l.value <= r.value;
+          if (op === '>') return l.value > r.value;
+          return l.value >= r.value;
         }
         break;
       }
-      case '&': if (bothI) return (l as bigint) & (r as bigint); break;
-      case '|': if (bothI) return (l as bigint) | (r as bigint); break;
-      case '^': if (bothI) return (l as bigint) ^ (r as bigint); break;
-      case '<<': if (bothI) return (l as bigint) << (r as bigint); break;
-      case '>>': if (bothI) return (l as bigint) >> (r as bigint); break;
+      case '&':
+        if (bothI) return l & (r as bigint);
+        break;
+      case '|':
+        if (bothI) return l | (r as bigint);
+        break;
+      case '^':
+        if (bothI) return l ^ (r as bigint);
+        break;
+      case '<<':
+        if (bothI) return l << (r as bigint);
+        break;
+      case '>>':
+        if (bothI) return l >> (r as bigint);
+        break;
     }
     throw new EvalErr(`bad operands for ${op}`);
   }
@@ -444,7 +599,8 @@ export class Engine {
     let cur: any = this.env.roots.get(segs[0] as string);
     for (let i = 1; i < segs.length && cur !== undefined; i++) {
       const s = segText(segs[i]);
-      if (isRec(cur)) cur = cur.slots.has(s as string) ? this.forceSlot(cur, s as string) : undefined;
+      if (isRec(cur))
+        cur = cur.slots.has(s as string) ? this.forceSlot(cur, s as string) : undefined;
       else if (isArr(cur)) cur = cur.items[s as number];
       else if (isMap(cur)) cur = cur.entries.get(s);
       else cur = undefined;
@@ -484,7 +640,8 @@ export class Engine {
       if (x.extras.has(name)) throw new EvalErr(`opaque field ${name} accessed`);
       throw new EvalErr(`no member ${name}`);
     }
-    if (x && x.__pre === 'obj') {   // unbound literal (e.g. std.map.entries records)
+    if (x && x.__pre === 'obj') {
+      // unbound literal (e.g. std.map.entries records)
       const en = x.entries.find(([k]: any) => k === name);
       if (!en) return ABSENT;
       const v = en[1];
@@ -515,16 +672,26 @@ export class Engine {
     throw new EvalErr('call of non-function');
   }
   std(name: string, a: any[], sc: Scope): any {
-    const domain = (msg: string): never => { throw new EvalErr(`std.${name}: ${msg}`, 'E5008'); };
+    const domain = (msg: string): never => {
+      throw new EvalErr(`std.${name}: ${msg}`, 'E5008');
+    };
     switch (name) {
-      case 'array.count': return BigInt(this.matArr(a[0]).length);
-      case 'array.all': return this.matArr(a[0]).every(x => this.truthy(this.call(a[1], [x], sc)));
-      case 'array.any': return this.matArr(a[0]).some(x => this.truthy(this.call(a[1], [x], sc)));
-      case 'array.filter': return { __arr: true, items: this.matArr(a[0]).filter(x => this.truthy(this.call(a[1], [x], sc))), path: [] };
+      case 'array.count':
+        return BigInt(this.matArr(a[0]).length);
+      case 'array.all':
+        return this.matArr(a[0]).every((x) => this.truthy(this.call(a[1], [x], sc)));
+      case 'array.any':
+        return this.matArr(a[0]).some((x) => this.truthy(this.call(a[1], [x], sc)));
+      case 'array.filter':
+        return {
+          __arr: true,
+          items: this.matArr(a[0]).filter((x) => this.truthy(this.call(a[1], [x], sc))),
+          path: [],
+        };
       case 'array.all_distinct': {
         const items = this.matArr(a[0]);
-        for (let i = 0; i < items.length; i++) for (let j = i + 1; j < items.length; j++)
-          if (valueEq(items[i], items[j])) return false;
+        for (let i = 0; i < items.length; i++)
+          for (let j = i + 1; j < items.length; j++) if (valueEq(items[i], items[j])) return false;
         return true;
       }
       case 'array.sum': {
@@ -532,15 +699,24 @@ export class Engine {
         if (items.length === 0) return 0n;
         return items.reduce((acc: any, x: any) => acc + x, typeof items[0] === 'number' ? 0 : 0n);
       }
-      case 'array.fold': return this.matArr(a[0]).reduce((acc, x) => this.call(a[2], [acc, x], sc), a[1]);
-      case 'map.keys': return { __arr: true, items: [...this.matMap(a[0]).entries.keys()], path: [] };
-      case 'map.values': return { __arr: true, items: [...this.matMap(a[0]).entries.values()], path: [] };
-      case 'string.length': return BigInt([...a[0]].length);
-      case 'string.of': return this.toStr(a[0]);
-      case 'string.join': return this.matArr(a[0]).join(a[1]);
-      case 'string.starts_with': return (a[0] as string).startsWith(a[1] as string);
-      case 'string.ends_with': return (a[0] as string).endsWith(a[1] as string);
-      case 'string.contains': return (a[0] as string).includes(a[1] as string);
+      case 'array.fold':
+        return this.matArr(a[0]).reduce((acc, x) => this.call(a[2], [acc, x], sc), a[1]);
+      case 'map.keys':
+        return { __arr: true, items: [...this.matMap(a[0]).entries.keys()], path: [] };
+      case 'map.values':
+        return { __arr: true, items: [...this.matMap(a[0]).entries.values()], path: [] };
+      case 'string.length':
+        return BigInt([...a[0]].length);
+      case 'string.of':
+        return this.toStr(a[0]);
+      case 'string.join':
+        return this.matArr(a[0]).join(a[1]);
+      case 'string.starts_with':
+        return (a[0] as string).startsWith(a[1] as string);
+      case 'string.ends_with':
+        return (a[0] as string).endsWith(a[1] as string);
+      case 'string.contains':
+        return (a[0] as string).includes(a[1] as string);
       case 'string.split': {
         if (a[1] === '') return domain('separator must be non-empty');
         return { __arr: true, items: (a[0] as string).split(a[1] as string), path: [] };
@@ -549,32 +725,45 @@ export class Engine {
         if (!isRef(a[0])) throw new EvalErr('ref.path on non-reference');
         return pathStr(a[0].segs);
       }
-      case 'math.abs': return typeof a[0] === 'bigint' ? (a[0] < 0n ? -a[0] : a[0]) : Math.abs(a[0]);
-      case 'math.min': return a[0] < a[1] ? a[0] : a[1];
-      case 'math.max': return a[0] > a[1] ? a[0] : a[1];
+      case 'math.abs':
+        return typeof a[0] === 'bigint' ? (a[0] < 0n ? -a[0] : a[0]) : Math.abs(a[0]);
+      case 'math.min':
+        return a[0] < a[1] ? a[0] : a[1];
+      case 'math.max':
+        return a[0] > a[1] ? a[0] : a[1];
       case 'math.clog2': {
         const n = a[0];
         if (typeof n !== 'bigint' || n < 1n) return domain(`n >= 1 required, got ${n}`);
         let k = 0n;
-        while ((1n << k) < n) k++;
+        while (1n << k < n) k++;
         return k;
       }
-      case 'math.floor': return BigInt(Math.floor(a[0]));
-      case 'math.ceil': return BigInt(Math.ceil(a[0]));
+      case 'math.floor':
+        return BigInt(Math.floor(a[0]));
+      case 'math.ceil':
+        return BigInt(Math.ceil(a[0]));
       case 'math.round': {
         const x = a[0] as number;
-        const f = Math.floor(x), frac = x - f;
+        const f = Math.floor(x),
+          frac = x - f;
         // ties to even (banker's rounding — deterministic, §13.3)
-        const r = frac > 0.5 ? f + 1 : frac < 0.5 ? f : (f % 2 === 0 ? f : f + 1);
+        const r = frac > 0.5 ? f + 1 : frac < 0.5 ? f : f % 2 === 0 ? f : f + 1;
         return BigInt(r);
       }
       case 'int.of': {
         const x = a[0];
-        if (typeof x !== 'number' || !Number.isInteger(x)) return domain(`no fractional part allowed, got ${x}`);
+        if (typeof x !== 'number' || !Number.isInteger(x))
+          return domain(`no fractional part allowed, got ${x}`);
         return BigInt(x);
       }
-      case 'int.at_least': { const n = a[0] as bigint; return { __nat: (args: any[]) => args[0] >= n }; }
-      case 'int.at_most': { const n = a[0] as bigint; return { __nat: (args: any[]) => args[0] <= n }; }
+      case 'int.at_least': {
+        const n = a[0] as bigint;
+        return { __nat: (args: any[]) => args[0] >= n };
+      }
+      case 'int.at_most': {
+        const n = a[0] as bigint;
+        return { __nat: (args: any[]) => args[0] <= n };
+      }
       case 'float.of': {
         const v = Number(a[0] as bigint);
         if (!isFinite(v)) return domain(`magnitude outside binary64 range`);
@@ -582,18 +771,30 @@ export class Engine {
       }
       case 'map.entries': {
         const m = this.matMap(a[0]);
-        return { __arr: true, items: [...m.entries.entries()].map(([k, v]: any) =>
-          ({ __pre: 'obj', entries: [['key', k], ['value', v]] })), path: [] };
+        return {
+          __arr: true,
+          items: [...m.entries.entries()].map(([k, v]: any) => ({
+            __pre: 'obj',
+            entries: [
+              ['key', k],
+              ['value', v],
+            ],
+          })),
+          path: [],
+        };
       }
-      case 'object.merge': return this.deepMerge(a[0], a[1]);
-      default: throw new EvalErr(`std.${name} does not exist`);
+      case 'object.merge':
+        return this.deepMerge(a[0], a[1]);
+      default:
+        throw new EvalErr(`std.${name} does not exist`);
     }
   }
   // std.object.merge (§13.7): per member — one side only → taken; both:
   // records recurse, everything else patch wins whole; derived members
   // are dropped (recomputed on the result); opacity of extras preserved
   deepMerge(base0: any, patch0: any): any {
-    const base = this.matRec(base0), patch = this.matRec(patch0);
+    const base = this.matRec(base0),
+      patch = this.matRec(patch0);
     const val = (r: RecInst, n: string): any => {
       if (r.extras.has(n)) return r.extras.get(n);
       const s = r.slots.get(n);
@@ -603,13 +804,16 @@ export class Engine {
     };
     const names: string[] = [];
     for (const n of base.entryOrder) if (!names.includes(n)) names.push(n);
-    for (const m of base.rt.members) if (m.kind === 'dflt' && !names.includes(m.name)) names.push(m.name);
+    for (const m of base.rt.members)
+      if (m.kind === 'dflt' && !names.includes(m.name)) names.push(m.name);
     for (const n of patch.entryOrder) if (!names.includes(n)) names.push(n);
-    for (const m of patch.rt.members) if (m.kind === 'dflt' && !names.includes(m.name)) names.push(m.name);
+    for (const m of patch.rt.members)
+      if (m.kind === 'dflt' && !names.includes(m.name)) names.push(m.name);
     const entries: [string, any][] = [];
     for (const n of names) {
       if (base.slots.get(n)?.kind === 'der' || patch.slots.get(n)?.kind === 'der') continue;
-      const bv = val(base, n), pv = val(patch, n);
+      const bv = val(base, n),
+        pv = val(patch, n);
       if (bv !== undefined && pv !== undefined && isRec(this.deref(bv)) && isRec(this.deref(pv)))
         entries.push([n, this.deepMerge(bv, pv)]);
       else if (pv !== undefined) entries.push([n, pv]);
@@ -638,7 +842,7 @@ export class Engine {
 
   // ---------- referrers ----------
   referrers(typeName: string, member: string, sc: Scope): any {
-    if (this.phase < 2) throw new DeferSig();   // universe not fully materialized yet
+    if (this.phase < 2) throw new DeferSig(); // universe not fully materialized yet
     this.record(`referrers:${typeName}`);
     const self = sc.inst!;
     const out: RecInst[] = [];
@@ -647,11 +851,15 @@ export class Engine {
       const slot = cand.slots.get(member);
       if (!slot) continue;
       let v: any;
-      try { v = this.forceSlot(cand, member); } catch { continue; }   // invalid m: excluded silently
+      try {
+        v = this.forceSlot(cand, member);
+      } catch {
+        continue;
+      } // invalid m: excluded silently
       if (this.containsRefTo(v, self.path)) out.push(cand);
     }
     out.sort((x, y) => cmpPath(x.path, y.path));
-    return { __arr: true, items: out.map(c => ({ __ref: true, segs: c.path })), path: [] };
+    return { __arr: true, items: out.map((c) => ({ __ref: true, segs: c.path })), path: [] };
   }
   containsRefTo(v: any, target: Seg[]): boolean {
     if (isRef(v)) return cmpPath(v.segs, target) === 0;
@@ -661,7 +869,7 @@ export class Engine {
   }
 
   // ---------- binding / checking ----------
-  bind(raw: any, rt: RT, path: Seg[], parent: RecInst | null, sc: Scope, forRef = false): any {
+  bind(raw: any, rt: RT, path: Seg[], parent: RecInst | null, sc: Scope): any {
     // raw: lexical-JSON value | PreVal | evaluated value
     if (raw && raw.__expr) {
       // the expression's instance scope is the nearest enclosing instance
@@ -671,7 +879,12 @@ export class Engine {
         if (!place) throw new EvalErr('not a place in ref position');
         // reference integrity (§7.5): the place must hold a value
         if (this.resolveSegs(place) === undefined) {
-          this.env.report({ severity: 'error', message: `dangling reference ${pathStr(place)}`, path: pathStr(path), code: 'E6002' });
+          this.env.report({
+            severity: 'error',
+            message: `dangling reference ${pathStr(place)}`,
+            path: pathStr(path),
+            code: 'E6002',
+          });
           throw new Taint();
         }
         return { __ref: true, segs: place };
@@ -680,8 +893,21 @@ export class Engine {
     }
     const fail = (msg: string, code?: string): never => {
       const tail = rt.tail;
-      if (tail && tail.t === 'inline') this.env.report({ severity: 'error', id: rt.name, message: tail.template.filter((p: any) => typeof p === 'string').join(''), path: pathStr(path), code: 'E4001' });
-      else this.env.report({ severity: 'error', message: msg, path: pathStr(path), code: code ?? 'E4001' });
+      if (tail && tail.t === 'inline')
+        this.env.report({
+          severity: 'error',
+          id: rt.name,
+          message: tail.template.filter((p: any) => typeof p === 'string').join(''),
+          path: pathStr(path),
+          code: 'E4001',
+        });
+      else
+        this.env.report({
+          severity: 'error',
+          message: msg,
+          path: pathStr(path),
+          code: code ?? 'E4001',
+        });
       throw new Taint();
     };
     switch (rt.t) {
@@ -690,32 +916,54 @@ export class Engine {
         if (rt.name === 'float' && typeof raw === 'number') return raw;
         // interchange leniency (D29): an integer lexeme binds where
         // float is expected iff it is exactly representable in binary64
-        if (rt.name === 'float' && typeof raw === 'bigint' && BigInt(Number(raw)) === raw && isFinite(Number(raw)))
+        if (
+          rt.name === 'float' &&
+          typeof raw === 'bigint' &&
+          BigInt(Number(raw)) === raw &&
+          isFinite(Number(raw))
+        )
           return Number(raw);
         if (rt.name === 'bool' && typeof raw === 'boolean') return raw;
         if (rt.name === 'string' && typeof raw === 'string') return raw;
         if (rt.name === 'null' && raw === null) return raw;
         return fail(`expected ${rt.name}`);
       }
-      case 'lit': return valueEq(raw, rt.v) || (typeof rt.v === 'bigint' && typeof raw === 'bigint' && raw === rt.v) || raw === rt.v ? raw : fail(`expected ${JSON.stringify(String(rt.v))}`);
+      case 'lit':
+        return valueEq(raw, rt.v) ||
+          (typeof rt.v === 'bigint' && typeof raw === 'bigint' && raw === rt.v) ||
+          raw === rt.v
+          ? raw
+          : fail(`expected ${JSON.stringify(String(rt.v))}`);
       case 'range': {
-        if (rt.base === 'float' && typeof raw === 'bigint' && BigInt(Number(raw)) === raw && isFinite(Number(raw)))
-          raw = Number(raw);   // interchange leniency (D29)
+        if (
+          rt.base === 'float' &&
+          typeof raw === 'bigint' &&
+          BigInt(Number(raw)) === raw &&
+          isFinite(Number(raw))
+        )
+          raw = Number(raw); // interchange leniency (D29)
         const ok = rt.base === 'int' ? typeof raw === 'bigint' : typeof raw === 'number';
         if (!ok) return fail(`expected ${rt.base} in range`);
         const hi = rt.excl ? raw < rt.hi : raw <= rt.hi;
-        return raw >= rt.lo && hi ? raw : fail(`out of range ${rt.lo}..${rt.excl ? '<' : ''}${rt.hi}`);
+        return raw >= rt.lo && hi
+          ? raw
+          : fail(`out of range ${rt.lo}..${rt.excl ? '<' : ''}${rt.hi}`);
       }
       case 'pattern':
-        return typeof raw === 'string' && rt.re.test(raw) ? raw : fail(`does not match /${rt.src}/`);
+        return typeof raw === 'string' && rt.re.test(raw)
+          ? raw
+          : fail(`does not match /${rt.src}/`);
       case 'quantity': {
         if (isQ(raw) && raw.dim === rt.dim) return raw;
         if (raw && raw.__jobj) {
           const es = new Map(raw.entries);
           if (es.size === 2 && es.has('value') && es.has('unit')) {
             let u: { key: string; toBase: number };
-            try { u = this.env.unitInfo(es.get('unit') as string); }
-            catch { return fail(`unknown unit ${es.get('unit')}`, 'E4073'); }
+            try {
+              u = this.env.unitInfo(es.get('unit') as string);
+            } catch {
+              return fail(`unknown unit ${String(es.get('unit'))}`, 'E4073');
+            }
             if (u.key !== rt.dim) return fail(`unit of wrong dimension`, 'E4073');
             const num = es.get('value');
             return { __q: true, dim: rt.dim, value: Number(num) * u.toBase };
@@ -739,31 +987,50 @@ export class Engine {
         if (raw && raw.__pre === 'arr') {
           items = [];
           for (const it of raw.items) {
-            if (it.spread) { const s = this.deref(this.ev(it.v.__expr, it.v.scope)); items.push(...this.matArr(s).map(x => x)); }
-            else items.push(it.v);
+            if (it.spread) {
+              const s = this.deref(this.ev(it.v.__expr, it.v.scope));
+              items.push(...this.matArr(s).map((x) => x));
+            } else items.push(it.v);
           }
         } else if (Array.isArray(raw)) items = raw;
         else if (isArr(raw)) items = raw.items;
         else return fail('expected array');
-        if (rt.lo !== undefined && (items.length < rt.lo || items.length > rt.hi)) return fail(`array size ${items.length} outside ${rt.lo}..${rt.hi}`);
+        if (rt.lo !== undefined && (items.length < rt.lo || items.length > rt.hi))
+          return fail(`array size ${items.length} outside ${rt.lo}..${rt.hi}`);
         const arr: any = { __arr: true, items: [], path };
         items.forEach((it, i) => {
-          try { arr.items.push(this.bind(it, rt.elem, [...path, i], parent, sc)); }
-          catch (err) { if (err instanceof Taint) arr.items.push(ABSENT); else throw err; }
+          try {
+            arr.items.push(this.bind(it, rt.elem, [...path, i], parent, sc));
+          } catch (err) {
+            if (err instanceof Taint) arr.items.push(ABSENT);
+            else throw err;
+          }
         });
         return arr;
       }
       case 'map': {
         const m: any = { __map: true, entries: new Map(), path };
-        const es: [string, any][] = raw && raw.__jobj ? raw.entries
-          : raw && raw.__pre === 'obj' ? raw.entries
-          : isMap(raw) ? [...raw.entries.entries()].map(([k, v]: any) => [k, v])
-          : null as any;
+        const es: [string, any][] =
+          raw && raw.__jobj
+            ? raw.entries
+            : raw && raw.__pre === 'obj'
+              ? raw.entries
+              : isMap(raw)
+                ? [...raw.entries.entries()].map(([k, v]: any) => [k, v])
+                : (null as any);
         if (!es) return fail('expected map');
         for (const [k, v] of es) {
-          try { this.bind(k, rt.key, path, parent, sc); } catch (e) { if (e instanceof Taint) continue; throw e; }
-          try { m.entries.set(k, this.bind(v, rt.val, [...path, mapKey(k)], parent, sc)); }
-          catch (e) { if (!(e instanceof Taint)) throw e; }
+          try {
+            this.bind(k, rt.key, path, parent, sc);
+          } catch (e) {
+            if (e instanceof Taint) continue;
+            throw e;
+          }
+          try {
+            m.entries.set(k, this.bind(v, rt.val, [...path, mapKey(k)], parent, sc));
+          } catch (e) {
+            if (!(e instanceof Taint)) throw e;
+          }
         }
         return m;
       }
@@ -772,8 +1039,14 @@ export class Engine {
         const recArms = rt.arms.filter((a: RT) => a.t === 'rec');
         if ((raw && raw.__jobj) || (raw && raw.__pre === 'obj') || isRec(raw)) {
           if (recArms.length > 0) {
-            const discNames = recArms[0].members.filter((m: any) =>
-              m.type?.t === 'lit' && recArms.every((a: RT) => a.members.some((x: any) => x.name === m.name && x.type?.t === 'lit')))
+            const discNames = recArms[0].members
+              .filter(
+                (m: any) =>
+                  m.type?.t === 'lit' &&
+                  recArms.every((a: RT) =>
+                    a.members.some((x: any) => x.name === m.name && x.type?.t === 'lit'),
+                  ),
+              )
               .map((m: any) => m.name);
             for (const arm of recArms) {
               const ok = discNames.every((dn: string) => {
@@ -791,13 +1064,23 @@ export class Engine {
         }
         return fail('no union arm matches');
       }
-      case 'rec': return this.bindRecord(raw, rt, path, parent, sc);
+      case 'rec':
+        return this.bindRecord(raw, rt, path, parent, sc);
       case 'pred': {
         const v = this.bind(raw, rt.base, path, parent, sc);
         for (const p of rt.preds) {
-          const fn = this.ev(p, { inst: null, locals: new Map(), rootName: sc.rootName, menv: sc.menv });
+          const fn = this.ev(p, {
+            inst: null,
+            locals: new Map(),
+            rootName: sc.rootName,
+            menv: sc.menv,
+          });
           let ok: any;
-          try { ok = this.call(fn, [v], sc); } catch { ok = false; }
+          try {
+            ok = this.call(fn, [v], sc);
+          } catch {
+            ok = false;
+          }
           if (ok !== true) return fail(`predicate ${JSON.stringify(exprName(p))} not satisfied`);
         }
         return v;
@@ -807,7 +1090,8 @@ export class Engine {
         for (const arm of rt.arms) v = this.bind(raw, arm, path, parent, sc);
         return v;
       }
-      case 'any': return raw;
+      case 'any':
+        return raw;
     }
     throw new Error(`bind: unhandled ${rt.t}`);
   }
@@ -817,29 +1101,43 @@ export class Engine {
     if (isRec(raw)) return raw.slots.has(name) ? this.forceSlot(raw, name) : undefined;
     return undefined;
   }
-  rawLit(v: any): any { return v && v.__expr ? this.ev(v.__expr, v.scope) : v; }
+  rawLit(v: any): any {
+    return v && v.__expr ? this.ev(v.__expr, v.scope) : v;
+  }
   kindMatches(raw: any, rt: RT): boolean {
     switch (rt.t) {
-      case 'prim': return (rt.name === 'int' && typeof raw === 'bigint') || (rt.name === 'float' && typeof raw === 'number')
-        || (rt.name === 'bool' && typeof raw === 'boolean') || (rt.name === 'string' && typeof raw === 'string') || (rt.name === 'null' && raw === null);
-      case 'lit': return valueEq(this.rawLit(raw), rt.v);
-      case 'range': return rt.base === 'int' ? typeof raw === 'bigint' : typeof raw === 'number';
-      case 'pattern': return typeof raw === 'string';
-      case 'arr': return Array.isArray(raw) || (raw && raw.__pre === 'arr') || isArr(raw);
-      default: return true;
+      case 'prim':
+        return (
+          (rt.name === 'int' && typeof raw === 'bigint') ||
+          (rt.name === 'float' && typeof raw === 'number') ||
+          (rt.name === 'bool' && typeof raw === 'boolean') ||
+          (rt.name === 'string' && typeof raw === 'string') ||
+          (rt.name === 'null' && raw === null)
+        );
+      case 'lit':
+        return valueEq(this.rawLit(raw), rt.v);
+      case 'range':
+        return rt.base === 'int' ? typeof raw === 'bigint' : typeof raw === 'number';
+      case 'pattern':
+        return typeof raw === 'string';
+      case 'arr':
+        return Array.isArray(raw) || (raw && raw.__pre === 'arr') || isArr(raw);
+      default:
+        return true;
     }
   }
   evalPlace(e: Expr, sc: Scope): Seg[] | null {
     // navigation chain -> place; forgiving: evaluate then take path
     const v = this.evNav(e, sc);
     if (v && v.__segs) return v.__segs;
-    if (isRef(v)) return v.segs;                          // $this / $parent / $root, or a reference read through
+    if (isRef(v)) return v.segs; // $this / $parent / $root, or a reference read through
     return isRec(v) || isArr(v) || isMap(v) ? v.path : null;
   }
   evNav(e: Expr, sc: Scope): any {
     // a conditional in a ref position chooses between places (§7.4):
     // only the taken branch is navigated
-    if (e.e === 'if') return this.truthy(this.ev(e.c, sc)) ? this.evNav(e.t, sc) : this.evNav(e.f, sc);
+    if (e.e === 'if')
+      return this.truthy(this.ev(e.c, sc)) ? this.evNav(e.t, sc) : this.evNav(e.f, sc);
     if (e.e === 'paren') return this.evNav(e.x, sc);
     // a step past a missing place (an absent optional member, a key or
     // index that is not there) is still a place: the chain keeps naming
@@ -864,7 +1162,10 @@ export class Engine {
       const x = this.deref(x0);
       if (isArr(x)) return x.items[Number(i)] ?? { __segs: [...x.path, Number(i)] };
       if (isMap(x)) return x.entries.get(i) ?? { __segs: [...x.path, mapKey(i)] };
-      if (isRec(x)) { const v = this.access(x, i); return v === ABSENT ? { __segs: [...x.path, i] } : v; }
+      if (isRec(x)) {
+        const v = this.access(x, i);
+        return v === ABSENT ? { __segs: [...x.path, i] } : v;
+      }
     }
     return this.ev(e, sc);
   }
@@ -874,17 +1175,31 @@ export class Engine {
     if (raw && raw.__jobj) entries = raw.entries;
     else if (raw && raw.__pre === 'obj') entries = raw.entries;
     else if (isRec(raw)) {
-      entries = raw.entryOrder.filter(n => !raw.slots.has(n) || raw.slots.get(n)!.kind !== 'der')
-        .map(n => [n, raw.extras.has(n) ? raw.extras.get(n) : this.forceSlot(raw, n)]);
+      entries = raw.entryOrder
+        .filter((n) => !raw.slots.has(n) || raw.slots.get(n)!.kind !== 'der')
+        .map((n) => [n, raw.extras.has(n) ? raw.extras.get(n) : this.forceSlot(raw, n)]);
+    } else {
+      this.env.report({
+        severity: 'error',
+        message: 'expected record',
+        path: pathStr(path),
+        code: 'E4001',
+      });
+      throw new Taint();
     }
-    else { this.env.report({ severity: 'error', message: 'expected record', path: pathStr(path), code: 'E4001' }); throw new Taint(); }
 
     const inst: RecInst = {
-      __rec: true, typeName: rt.name, rt, path, parent,
-      slots: new Map(), entryOrder: entries.map(([k]) => k), extras: new Map(),
+      __rec: true,
+      typeName: rt.name,
+      rt,
+      path,
+      parent,
+      slots: new Map(),
+      entryOrder: entries.map(([k]) => k),
+      extras: new Map(),
     };
     if (this.noReg === 0) this.env.registry.push(inst);
-    (inst as any).menv = sc.menv;   // module scope for asserts/diagnostics
+    (inst as any).menv = sc.menv; // module scope for asserts/diagnostics
     const isc0: Scope = { inst, locals: new Map(), rootName: sc.rootName, menv: sc.menv };
     const supplied = new Map(entries);
 
@@ -901,29 +1216,53 @@ export class Engine {
         // a hidden member (D34) is never part of the value: a document or
         // literal that supplies it is in error — there is nothing to restate
         if (has && m.hidden) {
-          this.env.report({ severity: 'error', message: `hidden member ${m.name} supplied`, path: pathStr([...path, m.name]), code: 'E4006' });
+          this.env.report({
+            severity: 'error',
+            message: `hidden member ${m.name} supplied`,
+            path: pathStr([...path, m.name]),
+            code: 'E4006',
+          });
           inst.slots.set(m.name, { kind: 'der', hidden: true, state: 'invalid', deferred: false });
           continue;
         }
         const slot: Slot = {
-          kind: 'der', hidden: m.hidden || undefined, state: 'unforced', deferred: mentionsReferrersLocal(m.expr),
+          kind: 'der',
+          hidden: m.hidden || undefined,
+          state: 'unforced',
+          deferred: mentionsReferrersLocal(m.expr),
           compute: () => {
             let v: any;
             // a member declared `ref<T>` holds a navigation (§7.4): the
             // expression names a place, and is bound as one
-            if (m.type?.t === 'ref') v = this.bind({ __expr: m.expr, scope: isc }, m.type, [...path, m.name], inst, isc);
+            if (m.type?.t === 'ref')
+              v = this.bind({ __expr: m.expr, scope: isc }, m.type, [...path, m.name], inst, isc);
             else {
               v = this.ev(m.expr, isc);
               if (m.type) v = this.bind(v, m.type, [...path, m.name], inst, isc);
-              else if (v && (v.__pre || v.__jobj)) v = this.materialize(v, [...path, m.name], inst, isc);
+              else if (v && (v.__pre || v.__jobj))
+                v = this.materialize(v, [...path, m.name], inst, isc);
             }
             if (has) {
               this.noReg++;
               let restated: any;
-              try { restated = this.bind(supplied.get(m.name), m.type ?? structuralOf(v), [...path, m.name], inst, isc); }
-              finally { this.noReg--; }
+              try {
+                restated = this.bind(
+                  supplied.get(m.name),
+                  m.type ?? structuralOf(v),
+                  [...path, m.name],
+                  inst,
+                  isc,
+                );
+              } finally {
+                this.noReg--;
+              }
               if (!valueEq(v, restated)) {
-                this.env.report({ severity: 'error', message: `derived member ${m.name} restated with a differing value`, path: pathStr([...path, m.name]), code: 'E4005' });
+                this.env.report({
+                  severity: 'error',
+                  message: `derived member ${m.name} restated with a differing value`,
+                  path: pathStr([...path, m.name]),
+                  code: 'E4005',
+                });
                 throw new Taint();
               }
             }
@@ -935,12 +1274,26 @@ export class Engine {
         continue;
       }
       if (has) {
-        inst.slots.set(m.name, { kind: m.kind, state: 'unforced', deferred: false, compute: mkCheck(supplied.get(m.name)) });
+        inst.slots.set(m.name, {
+          kind: m.kind,
+          state: 'unforced',
+          deferred: false,
+          compute: mkCheck(supplied.get(m.name)),
+        });
       } else if (m.kind === 'dflt') {
         inst.slots.set(m.name, {
-          kind: 'dflt', state: 'unforced', deferred: mentionsReferrersLocal(m.dflt),
+          kind: 'dflt',
+          state: 'unforced',
+          deferred: mentionsReferrersLocal(m.dflt),
           compute: () => {
-            if (m.type?.t === 'ref' && !m.conj) return this.bind({ __expr: m.dflt, scope: isc }, m.type, [...path, m.name], inst, isc);
+            if (m.type?.t === 'ref' && !m.conj)
+              return this.bind(
+                { __expr: m.dflt, scope: isc },
+                m.type,
+                [...path, m.name],
+                inst,
+                isc,
+              );
             const v = this.ev(m.dflt, isc);
             let out: any;
             for (const ty of types) out = this.bind(v, ty, [...path, m.name], inst, isc);
@@ -951,13 +1304,24 @@ export class Engine {
         inst.slots.set(m.name, { kind: 'opt', state: 'absent', deferred: false });
       } else {
         inst.slots.set(m.name, { kind: 'req', state: 'invalid', deferred: false });
-        this.env.report({ severity: 'error', message: `required member ${m.name} missing`, path: pathStr([...path, m.name]), code: 'E4002' });
+        this.env.report({
+          severity: 'error',
+          message: `required member ${m.name} missing`,
+          path: pathStr([...path, m.name]),
+          code: 'E4002',
+        });
       }
     }
     for (const [k, v] of entries) {
       if (rt.members.some((m: any) => m.name === k)) continue;
       if (rt.open) inst.extras.set(k, v);
-      else this.env.report({ severity: 'error', message: `undeclared member ${k} on closed record${rt.name ? ' ' + rt.name : ''}`, path: pathStr([...path, k]), code: 'E4003' });
+      else
+        this.env.report({
+          severity: 'error',
+          message: `undeclared member ${k} on closed record${rt.name ? ' ' + rt.name : ''}`,
+          path: pathStr([...path, k]),
+          code: 'E4003',
+        });
     }
     return inst;
   }
@@ -968,13 +1332,23 @@ export class Engine {
       let i = 0;
       for (const it of v.items) {
         const x = it.v.__expr ? this.ev(it.v.__expr, it.v.scope) : it.v;
-        arr.items.push(this.materialize(x, [...path, i], parent, sc)); i++;
+        arr.items.push(this.materialize(x, [...path, i], parent, sc));
+        i++;
       }
       return arr;
     }
     if (v && v.__pre === 'obj') {
       const m: any = { __map: true, entries: new Map(), path };
-      for (const [k, pv] of v.entries) m.entries.set(k, this.materialize(pv.__expr ? this.ev(pv.__expr, pv.scope) : pv, [...path, mapKey(k)], parent, sc));
+      for (const [k, pv] of v.entries)
+        m.entries.set(
+          k,
+          this.materialize(
+            pv.__expr ? this.ev(pv.__expr, pv.scope) : pv,
+            [...path, mapKey(k)],
+            parent,
+            sc,
+          ),
+        );
       return m;
     }
     return v;
@@ -985,8 +1359,11 @@ export class Engine {
     return inst.slots.get(name)!.state;
   }
   forceSlotSafe(inst: RecInst, name: string) {
-    try { this.forceSlot(inst, name); }
-    catch (e) { if (!(e instanceof Taint) && !(e instanceof DeferSig)) throw e; }
+    try {
+      this.forceSlot(inst, name);
+    } catch (e) {
+      if (!(e instanceof Taint) && !(e instanceof DeferSig)) throw e;
+    }
   }
   forceSlot(inst: RecInst, name: string): any {
     const s = inst.slots.get(name);
@@ -997,29 +1374,44 @@ export class Engine {
     if (s.state === 'absent') return ABSENT;
     if (s.state === 'invalid') throw new Taint();
     if (s.state === 'forcing') {
-      this.env.report({ severity: 'error', message: `dependency cycle at ${name}`, path: pathStr([...inst.path, name]), code: 'E5007' });
-      s.state = 'invalid'; throw new Taint();
+      this.env.report({
+        severity: 'error',
+        message: `dependency cycle at ${name}`,
+        path: pathStr([...inst.path, name]),
+        code: 'E5007',
+      });
+      s.state = 'invalid';
+      throw new Taint();
     }
     s.state = 'forcing';
     this.slotsByKey.set(key, { inst, name });
     try {
       const v = this.step(key, () => s.compute!());
-      s.state = 'ok'; s.value = v; return v;
+      s.state = 'ok';
+      s.value = v;
+      return v;
     } catch (e) {
       if (e instanceof DeferSig) {
-        s.state = 'unforced';                              // retry in phase 2
+        s.state = 'unforced'; // retry in phase 2
         this.deferredSlots.push({ inst, name });
         throw e;
       }
       if (s.state === 'forcing') s.state = 'invalid';
       if (e instanceof EvalErr) {
-        this.env.report({ severity: 'error', message: e.message, path: pathStr([...inst.path, name]), code: (e as any).code });
+        this.env.report({
+          severity: 'error',
+          message: e.message,
+          path: pathStr([...inst.path, name]),
+          code: (e as any).code,
+        });
         throw new Taint();
       }
       throw e;
     }
   }
-  forceConst(name: string, rootName: string): any { return this.forceConstIn(this.env, name, rootName); }
+  forceConst(name: string, rootName: string): any {
+    return this.forceConstIn(this.env, name, rootName);
+  }
   forceConstIn(env: Env, name: string, rootName: string): any {
     const c = env.consts.get(name)!;
     if (c.state === 'ok') return c.value;
@@ -1049,14 +1441,19 @@ export class Engine {
     for (const inst of this.env.registry) this.validateInst(inst, rootName);
   }
   validateInst(inst: RecInst, rootName: string) {
-    this.step(`assert:${pathStr(inst.path)}`, () => this.runAsserts(inst, inst.rt.asserts, rootName));
+    this.step(`assert:${pathStr(inst.path)}`, () =>
+      this.runAsserts(inst, inst.rt.asserts, rootName),
+    );
   }
   /** reset a computed slot so that it is computed again (dependency tracking) */
   resetSlot(key: string): boolean {
     const s = this.slotsByKey.get(key);
     const slot = s?.inst.slots.get(s.name);
     if (!slot || !slot.compute) return false;
-    if (slot.state === 'ok' || slot.state === 'invalid') { slot.state = 'unforced'; delete slot.value; }
+    if (slot.state === 'ok' || slot.state === 'invalid') {
+      slot.state = 'unforced';
+      delete slot.value;
+    }
     return true;
   }
   runAsserts(inst: RecInst, asserts: any[], rootName: string) {
@@ -1065,36 +1462,82 @@ export class Engine {
       const sc: Scope = a.menv ? { ...sc0, menv: a.menv } : sc0;
       if (a.kind === 'when') {
         let cond: any;
-        try { cond = this.ev(a.cond, sc); } catch (e) { if (e instanceof Taint || e instanceof EvalErr) continue; throw e; }
+        try {
+          cond = this.ev(a.cond, sc);
+        } catch (e) {
+          if (e instanceof Taint || e instanceof EvalErr) continue;
+          throw e;
+        }
         if (cond === true) {
-          const inner = a.body.map((b: any) => b.m === 'assert'
-            ? { kind: 'assert', name: b.name, cond: b.cond, tail: b.tail, origin: a.origin }
-            : { kind: 'when', cond: b.cond, body: b.body, origin: a.origin });
+          const inner = a.body.map((b: any) =>
+            b.m === 'assert'
+              ? { kind: 'assert', name: b.name, cond: b.cond, tail: b.tail, origin: a.origin }
+              : { kind: 'when', cond: b.cond, body: b.body, origin: a.origin },
+          );
           this.runAsserts(inst, inner, rootName);
         }
         continue;
       }
       let ok: any;
-      try { ok = this.ev(a.cond, sc); }
-      catch (e) {
+      try {
+        ok = this.ev(a.cond, sc);
+      } catch (e) {
         if (e instanceof Taint) continue;
-        if (e instanceof EvalErr) { this.env.report({ severity: 'error', message: `${a.name}: ${e.message}`, path: pathStr(inst.path), code: (e as any).code }); continue; }
+        if (e instanceof EvalErr) {
+          this.env.report({
+            severity: 'error',
+            message: `${a.name}: ${e.message}`,
+            path: pathStr(inst.path),
+            code: (e as any).code,
+          });
+          continue;
+        }
         throw e;
       }
       if (ok === true) continue;
       const id = `${a.origin ?? inst.typeName}.${a.name}`;
-      if (!a.tail) { this.env.report({ severity: 'error', id, message: `assert ${a.name} failed`, path: pathStr(inst.path), code: 'E6001' }); continue; }
+      if (!a.tail) {
+        this.env.report({
+          severity: 'error',
+          id,
+          message: `assert ${a.name} failed`,
+          path: pathStr(inst.path),
+          code: 'E6001',
+        });
+        continue;
+      }
       if (a.tail.t === 'inline') {
         let msg = '';
-        for (const p of a.tail.template) msg += typeof p === 'string' ? p : this.toStr(this.ev(p, sc));
-        this.env.report({ severity: a.tail.severity, id, message: msg, path: pathStr(inst.path), code: a.tail.severity === 'error' ? 'E6001' : a.tail.severity === 'warn' ? 'W6001' : 'I6001' });
+        for (const p of a.tail.template)
+          msg += typeof p === 'string' ? p : this.toStr(this.ev(p, sc));
+        this.env.report({
+          severity: a.tail.severity,
+          id,
+          message: msg,
+          path: pathStr(inst.path),
+          code:
+            a.tail.severity === 'error' ? 'E6001' : a.tail.severity === 'warn' ? 'W6001' : 'I6001',
+        });
       } else {
-        const d = ((inst as any).menv as Env | undefined)?.diags.get(a.tail.name) ?? this.env.diags.get(a.tail.name)!;
+        const d =
+          ((inst as any).menv as Env | undefined)?.diags.get(a.tail.name) ??
+          this.env.diags.get(a.tail.name)!;
         const args = a.tail.args.map((x: Expr) => this.ev(x, sc));
-        const psc: Scope = { inst: null, locals: new Map(d.params.map((p: any, i: number) => [p.name, args[i]])), rootName, menv: (inst as any).menv };
+        const psc: Scope = {
+          inst: null,
+          locals: new Map(d.params.map((p: any, i: number) => [p.name, args[i]])),
+          rootName,
+          menv: (inst as any).menv,
+        };
         let msg = '';
         for (const p of d.template) msg += typeof p === 'string' ? p : this.toStr(this.ev(p, psc));
-        this.env.report({ severity: d.severity, id, message: msg, path: pathStr(inst.path), code: d.severity === 'error' ? 'E6001' : 'W6001' });
+        this.env.report({
+          severity: d.severity,
+          id,
+          message: msg,
+          path: pathStr(inst.path),
+          code: d.severity === 'error' ? 'E6001' : 'W6001',
+        });
       }
     }
   }
@@ -1105,7 +1548,10 @@ export class Engine {
   // settable projection (required, optional, defaulted members) that a
   // document for the same type would carry
   serialize(v: any, rootName: string, settableOnly = false): string {
-    const fmtF = (n: number) => { const s = String(n); return /[.eE]/.test(s) ? s : s + '.0'; };
+    const fmtF = (n: number) => {
+      const s = String(n);
+      return /[.eE]/.test(s) ? s : s + '.0';
+    };
     const go = (x: any): string | undefined => {
       // absent members and function values (closures, natives, std refs) are not data
       if (x === ABSENT || (x && (x.__clo === true || x.__nat || x.__std))) return undefined;
@@ -1114,27 +1560,48 @@ export class Engine {
       if (typeof x === 'bigint') return x.toString();
       if (typeof x === 'number') return fmtF(x);
       if (typeof x === 'string') return JSON.stringify(x);
-      if (isQ(x)) return `{"value":${fmtF(x.value)},"unit":${JSON.stringify(this.env.baseUnitOf.get(x.dim) ?? x.dim)}}`;
+      if (isQ(x))
+        return `{"value":${fmtF(x.value)},"unit":${JSON.stringify(this.env.baseUnitOf.get(x.dim) ?? x.dim)}}`;
       if (isRef(x)) return JSON.stringify(pathStr(x.segs, rootName));
-      if (isArr(x)) return `[${x.items.map(go).filter((s: any) => s !== undefined).join(',')}]`;
-      if (isMap(x)) return `{${[...x.entries.entries()].map(([k, v]: any) => `${JSON.stringify(k)}:${go(v)}`).filter((s: any) => !s.endsWith(':undefined')).join(',')}}`;
+      if (isArr(x))
+        return `[${x.items
+          .map(go)
+          .filter((s: any) => s !== undefined)
+          .join(',')}]`;
+      if (isMap(x))
+        return `{${[...x.entries.entries()]
+          .map(([k, v]: any) => `${JSON.stringify(k)}:${go(v)}`)
+          .filter((s: any) => !s.endsWith(':undefined'))
+          .join(',')}}`;
       if (isRec(x)) {
         const parts: string[] = [];
         const done = new Set<string>();
         for (const n of x.entryOrder) {
           done.add(n);
-          if (x.extras.has(n)) { parts.push(`${JSON.stringify(n)}:${rawJson(x.extras.get(n))}`); continue; }
+          if (x.extras.has(n)) {
+            parts.push(`${JSON.stringify(n)}:${rawJson(x.extras.get(n))}`);
+            continue;
+          }
           const s = x.slots.get(n);
           if (!s || s.state === 'invalid' || s.state === 'absent') continue;
-          if (s.kind === 'der') continue;                     // derived appended below in decl order
-          const g = go(s.value); if (g !== undefined) parts.push(`${JSON.stringify(n)}:${g}`);
+          if (s.kind === 'der') continue; // derived appended below in decl order
+          const g = go(s.value);
+          if (g !== undefined) parts.push(`${JSON.stringify(n)}:${g}`);
         }
         for (const m of x.rt.members) {
           if (done.has(m.name) && m.kind !== 'der') continue;
           if (settableOnly && m.kind === 'der') continue;
           const s = x.slots.get(m.name);
-          if (!s || s.hidden || s.state === 'invalid' || s.state === 'absent' || s.state === 'unforced') continue;
-          const g = go(s.value); if (g !== undefined) parts.push(`${JSON.stringify(m.name)}:${g}`);
+          if (
+            !s ||
+            s.hidden ||
+            s.state === 'invalid' ||
+            s.state === 'absent' ||
+            s.state === 'unforced'
+          )
+            continue;
+          const g = go(s.value);
+          if (g !== undefined) parts.push(`${JSON.stringify(m.name)}:${g}`);
         }
         return `{${parts.join(',')}}`;
       }
@@ -1148,10 +1615,14 @@ function rawJson(v: any): string {
   if (v === null) return 'null';
   if (typeof v === 'boolean') return String(v);
   if (typeof v === 'bigint') return v.toString();
-  if (typeof v === 'number') { const s = String(v); return /[.eE]/.test(s) ? s : s + '.0'; }
+  if (typeof v === 'number') {
+    const s = String(v);
+    return /[.eE]/.test(s) ? s : s + '.0';
+  }
   if (typeof v === 'string') return JSON.stringify(v);
   if (Array.isArray(v)) return `[${v.map(rawJson).join(',')}]`;
-  if (v && v.__jobj) return `{${v.entries.map(([k, x]: any) => `${JSON.stringify(k)}:${rawJson(x)}`).join(',')}}`;
+  if (v && v.__jobj)
+    return `{${v.entries.map(([k, x]: any) => `${JSON.stringify(k)}:${rawJson(x)}`).join(',')}}`;
   throw new Error('rawJson');
 }
 
@@ -1163,7 +1634,9 @@ function exprName(e: any): string {
 function mentionsReferrersLocal(e: any): boolean {
   if (!e || typeof e !== 'object') return false;
   if (e.e === 'referrers') return true;
-  return Object.values(e).some(v => Array.isArray(v) ? v.some(mentionsReferrersLocal) : mentionsReferrersLocal(v));
+  return Object.values(e).some((v) =>
+    Array.isArray(v) ? v.some(mentionsReferrersLocal) : mentionsReferrersLocal(v),
+  );
 }
 function structuralOf(v: any): RT {
   // shape-of-computed type for restating unannotated derived members
@@ -1177,4 +1650,3 @@ function structuralOf(v: any): RT {
   if (isQ(v)) return { t: 'quantity', dim: v.dim };
   return { t: 'any' };
 }
-

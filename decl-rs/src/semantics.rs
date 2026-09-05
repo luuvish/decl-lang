@@ -8,6 +8,17 @@ use std::cell::{Cell, RefCell};
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::fmt;
 use std::rc::Rc;
+use std::sync::LazyLock;
+
+// the pattern-interpolation grammar (§3.6): compiled once
+static PATTERN_HOLE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"\$\{([^}]*)\}").unwrap());
+static PATTERN_STR_LIT: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r#"^"((?:[^"\\]|\\.)*)"$"#).unwrap());
+static PATTERN_INT_RANGE: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"^(-?[0-9]+)\.\.(<?)(-?[0-9]+)$").unwrap());
+static PATTERN_INT_LIT: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"^-?[0-9]+$").unwrap());
+static PATTERN_IDENT: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"^[A-Za-z_][A-Za-z0-9_.]*$").unwrap());
 
 // ---------------- paths ----------------
 #[derive(Clone, Debug, PartialEq)]
@@ -29,7 +40,8 @@ pub fn seg_text(s: &Seg) -> String {
 pub fn dot_spellable(name: &str) -> bool {
     let mut cs = name.chars();
     let head = matches!(cs.next(), Some(c) if c == '_' || c.is_ascii_alphabetic());
-    head && cs.all(|c| c == '_' || c.is_ascii_alphanumeric()) && !matches!(name, "true" | "false" | "null")
+    head && cs.all(|c| c == '_' || c.is_ascii_alphanumeric())
+        && !matches!(name, "true" | "false" | "null")
 }
 
 // ---------------- values ----------------
@@ -42,12 +54,19 @@ pub enum Value {
     Null,
     Absent,
     Undef,
-    Q { dim: String, value: f64 },
+    Q {
+        dim: String,
+        value: f64,
+    },
     Ref(Rc<SegPath>),
     Rec(Rc<RefCell<RecInst>>),
     Arr(Rc<RefCell<ArrV>>),
     Map(Rc<RefCell<MapV>>),
-    Range { lo: Box<Value>, hi: Box<Value>, excl: bool },
+    Range {
+        lo: Box<Value>,
+        hi: Box<Value>,
+        excl: bool,
+    },
     Clo(Rc<Closure>),
     Nat(NatFn),
     Std(Rc<Vec<String>>),
@@ -179,9 +198,28 @@ pub enum SlotState {
 
 #[derive(Clone)]
 pub enum Compute {
-    Check { raw: Value, types: Vec<RT>, name: String, root_name: String, menv: Option<Rc<Env>> },
-    Default { expr: Rc<Expr>, types: Vec<RT>, name: String, root_name: String, menv: Option<Rc<Env>> },
-    Derived { expr: Rc<Expr>, ty: Option<RT>, supplied: Option<Value>, name: String, root_name: String, menv: Option<Rc<Env>> },
+    Check {
+        raw: Value,
+        types: Vec<RT>,
+        name: String,
+        root_name: String,
+        menv: Option<Rc<Env>>,
+    },
+    Default {
+        expr: Rc<Expr>,
+        types: Vec<RT>,
+        name: String,
+        root_name: String,
+        menv: Option<Rc<Env>>,
+    },
+    Derived {
+        expr: Rc<Expr>,
+        ty: Option<RT>,
+        supplied: Option<Value>,
+        name: String,
+        root_name: String,
+        menv: Option<Rc<Env>>,
+    },
 }
 
 pub struct Slot {
@@ -235,16 +273,36 @@ pub struct Scope {
 }
 impl Scope {
     pub fn new(root_name: &str, menv: Option<Rc<Env>>) -> Scope {
-        Scope { inst: None, locals: Rc::new(HashMap::new()), root_name: root_name.to_string(), menv }
+        Scope {
+            inst: None,
+            locals: Rc::new(HashMap::new()),
+            root_name: root_name.to_string(),
+            menv,
+        }
     }
     pub fn with_locals(&self, locals: HashMap<String, Value>) -> Scope {
-        Scope { inst: self.inst.clone(), locals: Rc::new(locals), root_name: self.root_name.clone(), menv: self.menv.clone() }
+        Scope {
+            inst: self.inst.clone(),
+            locals: Rc::new(locals),
+            root_name: self.root_name.clone(),
+            menv: self.menv.clone(),
+        }
     }
     pub fn with_inst(&self, inst: Option<Rc<RefCell<RecInst>>>) -> Scope {
-        Scope { inst, locals: self.locals.clone(), root_name: self.root_name.clone(), menv: self.menv.clone() }
+        Scope {
+            inst,
+            locals: self.locals.clone(),
+            root_name: self.root_name.clone(),
+            menv: self.menv.clone(),
+        }
     }
     pub fn with_menv(&self, menv: Option<Rc<Env>>) -> Scope {
-        Scope { inst: self.inst.clone(), locals: self.locals.clone(), root_name: self.root_name.clone(), menv }
+        Scope {
+            inst: self.inst.clone(),
+            locals: self.locals.clone(),
+            root_name: self.root_name.clone(),
+            menv,
+        }
     }
 }
 
@@ -260,10 +318,16 @@ pub enum Fail {
 }
 pub type R<T> = Result<T, Fail>;
 pub fn err<T>(msg: impl Into<String>) -> R<T> {
-    Err(Fail::Eval(EvalErr { msg: msg.into(), code: None }))
+    Err(Fail::Eval(EvalErr {
+        msg: msg.into(),
+        code: None,
+    }))
 }
 pub fn err_code<T>(msg: impl Into<String>, code: &str) -> R<T> {
-    Err(Fail::Eval(EvalErr { msg: msg.into(), code: Some(code.to_string()) }))
+    Err(Fail::Eval(EvalErr {
+        msg: msg.into(),
+        code: Some(code.to_string()),
+    }))
 }
 
 #[derive(Clone, Debug)]
@@ -280,7 +344,15 @@ pub struct Diag {
 }
 impl Diag {
     pub fn error(message: impl Into<String>, path: String, code: Option<&str>) -> Diag {
-        Diag { severity: "error".into(), id: None, message: message.into(), path, code: code.map(|c| c.to_string()), loc: None, by: None }
+        Diag {
+            severity: "error".into(),
+            id: None,
+            message: message.into(),
+            path,
+            code: code.map(|c| c.to_string()),
+            loc: None,
+            by: None,
+        }
     }
     pub fn to_json(&self, file: Option<&str>) -> String {
         let mut parts = Vec::new();
@@ -312,23 +384,48 @@ pub struct Ty {
     pub tail: RefCell<Option<Tail>>,
 }
 pub fn ty(k: RTk) -> RT {
-    Rc::new(Ty { k, name: RefCell::new(None), tail: RefCell::new(None) })
+    Rc::new(Ty {
+        k,
+        name: RefCell::new(None),
+        tail: RefCell::new(None),
+    })
 }
 
 pub enum RTk {
     Prim(String),
     Lit(Value),
-    Range { lo: Value, hi: Value, excl: bool, base: String },
-    Pattern { src: String, re: Regex },
-    Arr { elem: RT, lo: Option<i64>, hi: Option<i64> },
-    Map { key: RT, val: RT },
+    Range {
+        lo: Value,
+        hi: Value,
+        excl: bool,
+        base: String,
+    },
+    Pattern {
+        src: String,
+        re: Regex,
+    },
+    Arr {
+        elem: RT,
+        lo: Option<i64>,
+        hi: Option<i64>,
+    },
+    Map {
+        key: RT,
+        val: RT,
+    },
     Union(Vec<RT>),
     IsectN(Vec<RT>),
     Rec(RecType),
-    Pred { base: RT, preds: Vec<Rc<Expr>> },
+    Pred {
+        base: RT,
+        preds: Vec<Rc<Expr>>,
+    },
     Ref(RT),
     Quantity(String),
-    Func { params: Vec<RT>, ret: RT },
+    Func {
+        params: Vec<RT>,
+        ret: RT,
+    },
     Any,
 }
 
@@ -390,7 +487,17 @@ pub fn is_rec(t: &RT) -> bool {
 // ---------------- dimension vectors ----------------
 pub type DimVec = BTreeMap<String, i32>;
 pub fn key_of_vec(v: &DimVec) -> String {
-    v.iter().filter(|(_, e)| **e != 0).map(|(n, e)| if *e == 1 { n.clone() } else { format!("{n}^{e}") }).collect::<Vec<_>>().join("*")
+    v.iter()
+        .filter(|(_, e)| **e != 0)
+        .map(|(n, e)| {
+            if *e == 1 {
+                n.clone()
+            } else {
+                format!("{n}^{e}")
+            }
+        })
+        .collect::<Vec<_>>()
+        .join("*")
 }
 pub fn vec_of_key(key: &str) -> DimVec {
     let mut v = DimVec::new();
@@ -421,7 +528,10 @@ pub struct Export {
 }
 impl Clone for Export {
     fn clone(&self) -> Self {
-        Export { env: self.env.clone(), name: self.name.clone() }
+        Export {
+            env: self.env.clone(),
+            name: self.name.clone(),
+        }
     }
 }
 pub struct ConstEntry {
@@ -496,19 +606,45 @@ pub fn sort_diags(diags: Vec<Diag>) -> Vec<Diag> {
         }
         parse_path(p, "").unwrap_or_else(|_| vec![Seg::Name(p.to_string())])
     };
-    let mut keyed: Vec<(usize, SegPath, Diag)> = diags.into_iter().enumerate().map(|(i, d)| (i, segs_of(&d.path), d)).collect();
+    let mut keyed: Vec<(usize, SegPath, Diag)> = diags
+        .into_iter()
+        .enumerate()
+        .map(|(i, d)| (i, segs_of(&d.path), d))
+        .collect();
     keyed.sort_by(|a, b| {
         cmp_path(&a.1, &b.1)
-            .then_with(|| a.2.id.as_deref().unwrap_or("").cmp(b.2.id.as_deref().unwrap_or("")))
+            .then_with(|| {
+                a.2.id
+                    .as_deref()
+                    .unwrap_or("")
+                    .cmp(b.2.id.as_deref().unwrap_or(""))
+            })
             .then_with(|| a.0.cmp(&b.0))
     });
     keyed.into_iter().map(|(_, _, d)| d).collect()
 }
 
 const SI_PREFIXES: [(&str, f64); 20] = [
-    ("y", 1e-24), ("z", 1e-21), ("a", 1e-18), ("f", 1e-15), ("p", 1e-12), ("n", 1e-9), ("u", 1e-6), ("m", 1e-3),
-    ("c", 1e-2), ("d", 1e-1), ("da", 1e1), ("h", 1e2), ("k", 1e3), ("M", 1e6), ("G", 1e9), ("T", 1e12),
-    ("P", 1e15), ("E", 1e18), ("Z", 1e21), ("Y", 1e24),
+    ("y", 1e-24),
+    ("z", 1e-21),
+    ("a", 1e-18),
+    ("f", 1e-15),
+    ("p", 1e-12),
+    ("n", 1e-9),
+    ("u", 1e-6),
+    ("m", 1e-3),
+    ("c", 1e-2),
+    ("d", 1e-1),
+    ("da", 1e1),
+    ("h", 1e2),
+    ("k", 1e3),
+    ("M", 1e6),
+    ("G", 1e9),
+    ("T", 1e12),
+    ("P", 1e15),
+    ("E", 1e18),
+    ("Z", 1e21),
+    ("Y", 1e24),
 ];
 
 impl Env {
@@ -557,30 +693,91 @@ impl Env {
             m.insert(
                 sym.to_string(),
                 match dim {
-                    Some(d) => UnitDecl { dim: Some(d.to_string()), factor: None, base: None },
-                    None => UnitDecl { dim: None, factor: Some(Rc::new(Expr::Lit(Value::Float(factor)))), base: Some(base.to_string()) },
+                    Some(d) => UnitDecl {
+                        dim: Some(d.to_string()),
+                        factor: None,
+                        base: None,
+                    },
+                    None => UnitDecl {
+                        dim: None,
+                        factor: Some(Rc::new(Expr::Lit(Value::Float(factor)))),
+                        base: Some(base.to_string()),
+                    },
                 },
             );
         };
-        let bases = [("Time", "s"), ("Length", "m"), ("Mass", "kg"), ("Current", "A"), ("Temperature", "K"), ("Amount", "mol"), ("LuminousIntensity", "cd")];
+        let bases = [
+            ("Time", "s"),
+            ("Length", "m"),
+            ("Mass", "kg"),
+            ("Current", "A"),
+            ("Temperature", "K"),
+            ("Amount", "mol"),
+            ("LuminousIntensity", "cd"),
+        ];
         for (d, _) in bases {
             self.dim_decls.borrow_mut().insert(d.to_string(), None);
         }
         let t = |n: &str, e: i32| (n.to_string(), e);
         let derived: Vec<(&str, Option<Vec<(String, i32)>>, &str)> = vec![
             ("Frequency", Some(vec![t("Time", -1)]), "Hz"),
-            ("Force", Some(vec![t("Mass", 1), t("Length", 1), t("Time", -2)]), "N"),
-            ("Pressure", Some(vec![t("Mass", 1), t("Length", -1), t("Time", -2)]), "Pa"),
-            ("Energy", Some(vec![t("Mass", 1), t("Length", 2), t("Time", -2)]), "J"),
-            ("Power", Some(vec![t("Mass", 1), t("Length", 2), t("Time", -3)]), "W"),
+            (
+                "Force",
+                Some(vec![t("Mass", 1), t("Length", 1), t("Time", -2)]),
+                "N",
+            ),
+            (
+                "Pressure",
+                Some(vec![t("Mass", 1), t("Length", -1), t("Time", -2)]),
+                "Pa",
+            ),
+            (
+                "Energy",
+                Some(vec![t("Mass", 1), t("Length", 2), t("Time", -2)]),
+                "J",
+            ),
+            (
+                "Power",
+                Some(vec![t("Mass", 1), t("Length", 2), t("Time", -3)]),
+                "W",
+            ),
             ("Charge", Some(vec![t("Current", 1), t("Time", 1)]), "C"),
-            ("Voltage", Some(vec![t("Mass", 1), t("Length", 2), t("Time", -3), t("Current", -1)]), "V"),
-            ("Resistance", Some(vec![t("Mass", 1), t("Length", 2), t("Time", -3), t("Current", -2)]), "Ohm"),
-            ("Capacitance", Some(vec![t("Mass", -1), t("Length", -2), t("Time", 4), t("Current", 2)]), "F"),
+            (
+                "Voltage",
+                Some(vec![
+                    t("Mass", 1),
+                    t("Length", 2),
+                    t("Time", -3),
+                    t("Current", -1),
+                ]),
+                "V",
+            ),
+            (
+                "Resistance",
+                Some(vec![
+                    t("Mass", 1),
+                    t("Length", 2),
+                    t("Time", -3),
+                    t("Current", -2),
+                ]),
+                "Ohm",
+            ),
+            (
+                "Capacitance",
+                Some(vec![
+                    t("Mass", -1),
+                    t("Length", -2),
+                    t("Time", 4),
+                    t("Current", 2),
+                ]),
+                "F",
+            ),
             ("DataSize", None, "bit"),
         ];
         for (d, terms, _) in &derived {
-            self.dim_decls.borrow_mut().insert(d.to_string(), terms.clone());
+            self.dim_decls
+                .borrow_mut()
+                .insert(d.to_string(), terms.clone());
         }
         for (d, s) in bases {
             unit(s, Some(d), 1.0, "");
@@ -590,7 +787,11 @@ impl Env {
         }
         unit("B", None, 8.0, "bit");
         unit("g", None, 1e-3, "kg");
-        let mut prefixable: Vec<&str> = bases.iter().map(|(_, s)| *s).filter(|s| *s != "kg").collect();
+        let mut prefixable: Vec<&str> = bases
+            .iter()
+            .map(|(_, s)| *s)
+            .filter(|s| *s != "kg")
+            .collect();
         prefixable.extend(derived.iter().map(|(_, _, s)| *s).filter(|s| *s != "bit"));
         prefixable.push("g");
         for u0 in prefixable {
@@ -599,7 +800,14 @@ impl Env {
             }
         }
         for u0 in ["bit", "B"] {
-            for (p, f) in [("Ki", 1024f64), ("Mi", 1024f64.powi(2)), ("Gi", 1024f64.powi(3)), ("Ti", 1024f64.powi(4)), ("Pi", 1024f64.powi(5)), ("Ei", 1024f64.powi(6))] {
+            for (p, f) in [
+                ("Ki", 1024f64),
+                ("Mi", 1024f64.powi(2)),
+                ("Gi", 1024f64.powi(3)),
+                ("Ti", 1024f64.powi(4)),
+                ("Pi", 1024f64.powi(5)),
+                ("Ei", 1024f64.powi(6)),
+            ] {
                 unit(&format!("{p}{u0}"), None, f, u0);
             }
             for (p, f) in SI_PREFIXES {
@@ -614,46 +822,118 @@ impl Env {
         let mut seen: HashSet<String> = HashSet::new();
         for d in decls {
             if let Some(n) = d.name() {
-                if !matches!(d.body, DeclBody::Unit { .. } | DeclBody::Dimension { .. }) {
-                    if !seen.insert(n.to_string()) {
-                        self.duplicates.borrow_mut().push(n.to_string());
-                    }
+                if !matches!(d.body, DeclBody::Unit { .. } | DeclBody::Dimension { .. })
+                    && !seen.insert(n.to_string())
+                {
+                    self.duplicates.borrow_mut().push(n.to_string());
                 }
             }
             match &d.body {
                 DeclBody::Dimension { name, terms } => {
                     if self.dim_decls.borrow().contains_key(name) {
-                        self.space_diags.borrow_mut().push(Diag::error(format!("dimension {name} redeclared"), String::new(), Some("E3001")));
+                        self.space_diags.borrow_mut().push(Diag::error(
+                            format!("dimension {name} redeclared"),
+                            String::new(),
+                            Some("E3001"),
+                        ));
                     } else {
-                        self.dim_decls.borrow_mut().insert(name.clone(), terms.clone());
+                        self.dim_decls
+                            .borrow_mut()
+                            .insert(name.clone(), terms.clone());
                     }
                 }
-                DeclBody::Unit { name, dim, factor, base } => {
+                DeclBody::Unit {
+                    name,
+                    dim,
+                    factor,
+                    base,
+                } => {
                     if self.unit_decls.borrow().contains_key(name) {
-                        self.space_diags.borrow_mut().push(Diag::error(format!("unit {name} redeclared"), String::new(), Some("E4073")));
+                        self.space_diags.borrow_mut().push(Diag::error(
+                            format!("unit {name} redeclared"),
+                            String::new(),
+                            Some("E4073"),
+                        ));
                     } else {
                         self.unit_order.borrow_mut().push(name.clone());
-                        self.unit_decls.borrow_mut().insert(name.clone(), UnitDecl { dim: dim.clone(), factor: factor.clone(), base: base.clone() });
+                        self.unit_decls.borrow_mut().insert(
+                            name.clone(),
+                            UnitDecl {
+                                dim: dim.clone(),
+                                factor: factor.clone(),
+                                base: base.clone(),
+                            },
+                        );
                     }
                 }
-                DeclBody::Type { name, params, ty, tail } => {
+                DeclBody::Type {
+                    name,
+                    params,
+                    ty,
+                    tail,
+                } => {
                     if !self.type_asts.borrow().contains_key(name) {
                         self.type_order.borrow_mut().push(name.clone());
                     }
-                    self.type_asts.borrow_mut().insert(name.clone(), Rc::new(TypeEntry { ast: ty.clone(), tail: tail.clone(), params: params.clone() }));
+                    self.type_asts.borrow_mut().insert(
+                        name.clone(),
+                        Rc::new(TypeEntry {
+                            ast: ty.clone(),
+                            tail: tail.clone(),
+                            params: params.clone(),
+                        }),
+                    );
                 }
                 DeclBody::Const { name, ty, expr } => {
-                    self.consts.borrow_mut().insert(name.clone(), Rc::new(ConstEntry { expr: expr.clone(), ty: ty.clone(), state: Cell::new(false), value: RefCell::new(Value::Null) }));
+                    self.consts.borrow_mut().insert(
+                        name.clone(),
+                        Rc::new(ConstEntry {
+                            expr: expr.clone(),
+                            ty: ty.clone(),
+                            state: Cell::new(false),
+                            value: RefCell::new(Value::Null),
+                        }),
+                    );
                 }
-                DeclBody::Func { name, params, ret, body } => {
-                    self.funcs.borrow_mut().insert(name.clone(), Rc::new(FuncEntry { params: params.clone(), ret: ret.clone(), body: body.clone() }));
+                DeclBody::Func {
+                    name,
+                    params,
+                    ret,
+                    body,
+                } => {
+                    self.funcs.borrow_mut().insert(
+                        name.clone(),
+                        Rc::new(FuncEntry {
+                            params: params.clone(),
+                            ret: ret.clone(),
+                            body: body.clone(),
+                        }),
+                    );
                 }
-                DeclBody::Output { name, ty, expr } => self.outputs.borrow_mut().push((name.clone(), ty.clone(), expr.clone())),
+                DeclBody::Output { name, ty, expr } => {
+                    self.outputs
+                        .borrow_mut()
+                        .push((name.clone(), ty.clone(), expr.clone()))
+                }
                 DeclBody::Input { name, ty, fallback } => {
-                    self.inputs.borrow_mut().insert(name.clone(), (ty.clone(), fallback.clone()));
+                    self.inputs
+                        .borrow_mut()
+                        .insert(name.clone(), (ty.clone(), fallback.clone()));
                 }
-                DeclBody::Diagnostic { name, params, severity, template } => {
-                    self.diags.borrow_mut().insert(name.clone(), Rc::new(DiagDecl { params: params.clone(), severity: severity.clone(), template: template.clone() }));
+                DeclBody::Diagnostic {
+                    name,
+                    params,
+                    severity,
+                    template,
+                } => {
+                    self.diags.borrow_mut().insert(
+                        name.clone(),
+                        Rc::new(DiagDecl {
+                            params: params.clone(),
+                            severity: severity.clone(),
+                            template: template.clone(),
+                        }),
+                    );
                 }
                 _ => {}
             }
@@ -678,7 +958,12 @@ impl Env {
         rc.borrow_mut().retain(|(n, _)| n != name);
     }
     pub fn root_names(&self) -> Vec<String> {
-        self.roots.borrow().borrow().iter().map(|(n, _)| n.clone()).collect()
+        self.roots
+            .borrow()
+            .borrow()
+            .iter()
+            .map(|(n, _)| n.clone())
+            .collect()
     }
     pub fn registry_retain(&self, mut pred: impl FnMut(&Rc<RefCell<RecInst>>) -> bool) {
         let rc = self.registry.borrow().clone();
@@ -694,7 +979,12 @@ impl Env {
         self.diagnostics.borrow().borrow_mut().truncate(n);
     }
     pub fn root(&self, name: &str) -> Option<Value> {
-        self.roots.borrow().borrow().iter().find(|(n, _)| n == name).map(|(_, v)| v.clone())
+        self.roots
+            .borrow()
+            .borrow()
+            .iter()
+            .find(|(n, _)| n == name)
+            .map(|(_, v)| v.clone())
     }
     pub fn set_root(&self, name: &str, v: Value) {
         let rc = self.roots.borrow().clone();
@@ -706,7 +996,12 @@ impl Env {
         }
     }
     pub fn root_values(&self) -> Vec<Value> {
-        self.roots.borrow().borrow().iter().map(|(_, v)| v.clone()).collect()
+        self.roots
+            .borrow()
+            .borrow()
+            .iter()
+            .map(|(_, v)| v.clone())
+            .collect()
     }
     pub fn registry_push(&self, inst: Rc<RefCell<RecInst>>) {
         self.registry.borrow().borrow_mut().push(inst);
@@ -743,11 +1038,20 @@ impl Env {
             Ok(Value::Float(f)) => Value::Float(f),
             Ok(Value::Undef) | Ok(Value::Null) => v.clone(),
             Ok(_) => {
-                diag("E4021", format!("constant {name} is not numeric in a constant position"));
+                diag(
+                    "E4021",
+                    format!("constant {name} is not numeric in a constant position"),
+                );
                 v.clone()
             }
             Err(Fail::Eval(e)) => {
-                let code = if e.msg.contains("zero") { "E5001" } else if e.msg.contains("NaN") || e.msg.contains("Infinity") { "E5002" } else { "E5001" };
+                let code = if e.msg.contains("zero") {
+                    "E5001"
+                } else if e.msg.contains("NaN") || e.msg.contains("Infinity") {
+                    "E5002"
+                } else {
+                    "E5001"
+                };
                 diag(code, format!("evaluating constant {name}: {}", e.msg));
                 v.clone()
             }
@@ -763,7 +1067,12 @@ impl Env {
         if visiting.iter().any(|v| v == name) {
             return Err(format!("circular dimension {name}"));
         }
-        let decl = self.dim_decls.borrow().get(name).cloned().ok_or_else(|| format!("unknown dimension {name}"))?;
+        let decl = self
+            .dim_decls
+            .borrow()
+            .get(name)
+            .cloned()
+            .ok_or_else(|| format!("unknown dimension {name}"))?;
         let mut vec = DimVec::new();
         match decl {
             None => {
@@ -780,7 +1089,9 @@ impl Env {
                 visiting.pop();
             }
         }
-        self.dim_memo.borrow_mut().insert(name.to_string(), vec.clone());
+        self.dim_memo
+            .borrow_mut()
+            .insert(name.to_string(), vec.clone());
         Ok(vec)
     }
     pub fn unit_info(&self, sym: &str) -> Result<(String, f64), String> {
@@ -793,19 +1104,36 @@ impl Env {
         let mut base_seen: HashMap<String, String> = HashMap::new();
         let syms = self.unit_order.borrow().clone();
         for sym in syms {
-            let has_dim = self.unit_decls.borrow().get(&sym).map(|u| u.dim.is_some()).unwrap_or(false);
+            let has_dim = self
+                .unit_decls
+                .borrow()
+                .get(&sym)
+                .map(|u| u.dim.is_some())
+                .unwrap_or(false);
             match self.unit_info(&sym) {
                 Ok((key, _)) => {
                     if has_dim {
                         if let Some(prev) = base_seen.get(&key) {
-                            out.push(Diag::error(format!("second base unit {sym} for dimension {key} (base is {prev})"), String::new(), Some("E4073")));
+                            out.push(Diag::error(
+                                format!(
+                                    "second base unit {sym} for dimension {key} (base is {prev})"
+                                ),
+                                String::new(),
+                                Some("E4073"),
+                            ));
                         } else {
                             base_seen.insert(key, sym.clone());
                         }
                     }
                 }
                 Err(msg) => {
-                    let code = if msg.contains("unknown dimension") || msg.contains("circular dimension") { "E3003" } else { "E4073" };
+                    let code = if msg.contains("unknown dimension")
+                        || msg.contains("circular dimension")
+                    {
+                        "E3003"
+                    } else {
+                        "E4073"
+                    };
                     out.push(Diag::error(msg, String::new(), Some(code)));
                 }
             }
@@ -826,7 +1154,10 @@ impl Env {
         };
         let info = if let Some(d) = dim {
             let key = key_of_vec(&self.resolve_dim(&d, &mut vec![])?);
-            self.base_unit_of.borrow_mut().entry(key.clone()).or_insert_with(|| sym.to_string());
+            self.base_unit_of
+                .borrow_mut()
+                .entry(key.clone())
+                .or_insert_with(|| sym.to_string());
             (key, 1.0)
         } else {
             visiting.push(sym.to_string());
@@ -849,7 +1180,9 @@ impl Env {
             let f = f.ok_or_else(|| format!("unit {sym}: factor is not a numeric constant"))?;
             (b.0, f * b.1)
         };
-        self.unit_memo.borrow_mut().insert(sym.to_string(), info.clone());
+        self.unit_memo
+            .borrow_mut()
+            .insert(sym.to_string(), info.clone());
         Ok(info)
     }
 
@@ -862,18 +1195,29 @@ impl Env {
                 let lo = self.const_num(lo);
                 let hi = self.const_num(hi);
                 let is_f = matches!(lo, Value::Float(_)) || matches!(hi, Value::Float(_));
-                ty(RTk::Range { lo, hi, excl: *excl, base: if is_f { "float".into() } else { "int".into() } })
+                ty(RTk::Range {
+                    lo,
+                    hi,
+                    excl: *excl,
+                    base: if is_f { "float".into() } else { "int".into() },
+                })
             }
             TypeAst::Pattern { re: src, .. } => {
                 let expanded = self.expand_pattern(src)?;
                 if let Some(bad) = pattern_error(&expanded) {
                     return Err(format!("malformed pattern /{src}/: {bad}"));
                 }
-                let re = compile_pattern(&expanded).map_err(|e| format!("malformed pattern /{src}/: {e}"))?;
+                let re = compile_pattern(&expanded)
+                    .map_err(|e| format!("malformed pattern /{src}/: {e}"))?;
                 ty(RTk::Pattern { src: expanded, re })
             }
-            TypeAst::Map { key, val, .. } => ty(RTk::Map { key: self.resolve(key, None)?, val: self.resolve(val, None)? }),
-            TypeAst::Array { elem, lo, hi, excl, .. } => {
+            TypeAst::Map { key, val, .. } => ty(RTk::Map {
+                key: self.resolve(key, None)?,
+                val: self.resolve(val, None)?,
+            }),
+            TypeAst::Array {
+                elem, lo, hi, excl, ..
+            } => {
                 let lo = lo.as_ref().map(|v| self.const_num(v));
                 let hi0 = hi.as_ref().map(|v| self.const_num(v));
                 let to_i = |v: &Value| match v {
@@ -881,13 +1225,27 @@ impl Env {
                     Value::Float(f) => Some(*f as i64),
                     _ => None,
                 };
-                let lo_i = lo.as_ref().and_then(|v| to_i(v));
-                let hi_i = hi0.as_ref().and_then(|v| to_i(v)).map(|h| if *excl { h - 1 } else { h });
-                ty(RTk::Arr { elem: self.resolve(elem, None)?, lo: lo_i, hi: hi_i })
+                let lo_i = lo.as_ref().and_then(&to_i);
+                let hi_i = hi0
+                    .as_ref()
+                    .and_then(to_i)
+                    .map(|h| if *excl { h - 1 } else { h });
+                ty(RTk::Arr {
+                    elem: self.resolve(elem, None)?,
+                    lo: lo_i,
+                    hi: hi_i,
+                })
             }
-            TypeAst::Union { arms, .. } => ty(RTk::Union(arms.iter().map(|a| self.resolve(a, None)).collect::<Result<_, _>>()?)),
+            TypeAst::Union { arms, .. } => ty(RTk::Union(
+                arms.iter()
+                    .map(|a| self.resolve(a, None))
+                    .collect::<Result<_, _>>()?,
+            )),
             TypeAst::Isect { arms, .. } => {
-                let arms: Vec<RT> = arms.iter().map(|a| self.resolve(a, None)).collect::<Result<_, _>>()?;
+                let arms: Vec<RT> = arms
+                    .iter()
+                    .map(|a| self.resolve(a, None))
+                    .collect::<Result<_, _>>()?;
                 if arms.iter().all(is_rec) {
                     self.merge_isect(&arms, name)
                 } else {
@@ -900,40 +1258,96 @@ impl Env {
                 self.fill_record(&rt, members)?;
                 rt
             }
-            TypeAst::Func { params, ret, .. } => ty(RTk::Func { params: params.iter().map(|p| self.resolve(p, None)).collect::<Result<_, _>>()?, ret: self.resolve(ret, None)? }),
-            TypeAst::Named { name: n, args, preds, ext, .. } => {
+            TypeAst::Func { params, ret, .. } => ty(RTk::Func {
+                params: params
+                    .iter()
+                    .map(|p| self.resolve(p, None))
+                    .collect::<Result<_, _>>()?,
+                ret: self.resolve(ret, None)?,
+            }),
+            TypeAst::Named {
+                name: n,
+                args,
+                preds,
+                ext,
+                ..
+            } => {
                 if let Some(preds) = preds {
                     if !preds.is_empty() {
-                        let base = self.resolve(&TypeAst::Named { name: n.clone(), args: args.clone(), preds: None, ext: ext.clone(), loc: None }, name)?;
-                        return Ok(ty(RTk::Pred { base, preds: preds.clone() }));
+                        let base = self.resolve(
+                            &TypeAst::Named {
+                                name: n.clone(),
+                                args: args.clone(),
+                                preds: None,
+                                ext: ext.clone(),
+                                loc: None,
+                            },
+                            name,
+                        )?;
+                        return Ok(ty(RTk::Pred {
+                            base,
+                            preds: preds.clone(),
+                        }));
                     }
                 }
                 if n == "quantity" {
                     let dn = match args.first() {
-                        Some(TypeAst::Named { name, .. }) | Some(TypeAst::Prim { name, .. }) => name.clone(),
+                        Some(TypeAst::Named { name, .. }) | Some(TypeAst::Prim { name, .. }) => {
+                            name.clone()
+                        }
                         _ => return Err("quantity needs a dimension".into()),
                     };
-                    return Ok(ty(RTk::Quantity(key_of_vec(&self.resolve_dim(&dn, &mut vec![])?))));
+                    return Ok(ty(RTk::Quantity(key_of_vec(
+                        &self.resolve_dim(&dn, &mut vec![])?,
+                    ))));
                 }
                 if n == "map" && args.len() == 2 {
-                    return Ok(ty(RTk::Map { key: self.resolve(&args[0], None)?, val: self.resolve(&args[1], None)? }));
+                    return Ok(ty(RTk::Map {
+                        key: self.resolve(&args[0], None)?,
+                        val: self.resolve(&args[1], None)?,
+                    }));
                 }
                 if n == "ref" {
                     return Ok(ty(RTk::Ref(self.resolve(&args[0], None)?)));
                 }
-                if ["int", "float", "bool", "string"].contains(&n.as_str()) && args.is_empty() && ext.is_none() {
+                if ["int", "float", "bool", "string"].contains(&n.as_str())
+                    && args.is_empty()
+                    && ext.is_none()
+                {
                     return Ok(ty(RTk::Prim(n.clone())));
                 }
                 let decl = self.type_asts.borrow().get(n).cloned();
                 let Some(decl) = decl else {
                     let im = self.imports.borrow().get(n).cloned();
                     if let Some(im) = im {
-                        return im.env.resolve(&TypeAst::Named { name: im.name.clone(), args: args.clone(), preds: None, ext: ext.clone(), loc: None }, name);
+                        return im.env.resolve(
+                            &TypeAst::Named {
+                                name: im.name.clone(),
+                                args: args.clone(),
+                                preds: None,
+                                ext: ext.clone(),
+                                loc: None,
+                            },
+                            name,
+                        );
                     }
                     if let Some((ns, rest)) = n.split_once('.') {
-                        let ex = self.namespaces.borrow().get(ns).and_then(|(_, exports)| exports.borrow().get(rest).cloned());
+                        let ex = self
+                            .namespaces
+                            .borrow()
+                            .get(ns)
+                            .and_then(|(_, exports)| exports.borrow().get(rest).cloned());
                         if let Some(ex) = ex {
-                            return ex.env.resolve(&TypeAst::Named { name: ex.name.clone(), args: args.clone(), preds: None, ext: ext.clone(), loc: None }, name);
+                            return ex.env.resolve(
+                                &TypeAst::Named {
+                                    name: ex.name.clone(),
+                                    args: args.clone(),
+                                    preds: None,
+                                    ext: ext.clone(),
+                                    loc: None,
+                                },
+                                name,
+                            );
                         }
                     }
                     return Err(format!("unknown type {n}"));
@@ -958,7 +1372,13 @@ impl Env {
                             }
                             rt
                         }
-                        TypeAst::Named { name: pn, args: pa, preds: pp, ext: Some(body), .. } => {
+                        TypeAst::Named {
+                            name: pn,
+                            args: pa,
+                            preds: pp,
+                            ext: Some(body),
+                            ..
+                        } => {
                             // an extension declaration (§3.14) is memoized before its parent
                             // resolves: in a recursive family — `type Base = { kids: { [string]:
                             // Kid } }`, `type Kid = Base { … }` — the parent's body names this
@@ -971,7 +1391,13 @@ impl Env {
                             *rt.name.borrow_mut() = Some(n.clone());
                             *rt.tail.borrow_mut() = decl.tail.clone();
                             self.type_memo.borrow_mut().insert(n.clone(), rt.clone());
-                            let parent_ast = TypeAst::Named { name: pn.clone(), args: pa.clone(), preds: pp.clone(), ext: None, loc: None };
+                            let parent_ast = TypeAst::Named {
+                                name: pn.clone(),
+                                args: pa.clone(),
+                                preds: pp.clone(),
+                                ext: None,
+                                loc: None,
+                            };
                             let filled = self.resolve(&parent_ast, None).and_then(|parent| {
                                 let extr = self.resolve(body, None)?;
                                 self.extend_into(&rt, &parent, &extr);
@@ -1075,7 +1501,7 @@ impl Env {
     // an integer-shaped T (int literal, int range, union) as the decimal
     // representations of its members
     fn expand_pattern(self: &Rc<Env>, re: &str) -> Result<String, String> {
-        let hole = Regex::new(r"\$\{([^}]*)\}").unwrap();
+        let hole: &Regex = &PATTERN_HOLE;
         let mut out = String::new();
         let mut last = 0;
         for m in hole.captures_iter(re) {
@@ -1088,10 +1514,10 @@ impl Env {
             // inside a pattern token
             let arms: Vec<String> = text.split('|').map(|a| a.trim().to_string()).collect();
             let mut frags: Vec<String> = vec![];
-            let str_lit = Regex::new(r#"^"((?:[^"\\]|\\.)*)"$"#).unwrap();
-            let int_range = Regex::new(r"^(-?[0-9]+)\.\.(<?)(-?[0-9]+)$").unwrap();
-            let int_lit = Regex::new(r"^-?[0-9]+$").unwrap();
-            let ident = Regex::new(r"^[A-Za-z_][A-Za-z0-9_.]*$").unwrap();
+            let str_lit: &Regex = &PATTERN_STR_LIT;
+            let int_range: &Regex = &PATTERN_INT_RANGE;
+            let int_lit: &Regex = &PATTERN_INT_LIT;
+            let ident: &Regex = &PATTERN_IDENT;
             for arm in &arms {
                 if str_lit.is_match(arm) {
                     let v = crate::parse::json_unquote(arm)?;
@@ -1101,7 +1527,12 @@ impl Env {
                 if let Some(c) = int_range.captures(arm) {
                     let lo = c[1].parse::<BigInt>().map_err(|e| e.to_string())?;
                     let hi = c[3].parse::<BigInt>().map_err(|e| e.to_string())?;
-                    let rt = ty(RTk::Range { lo: Value::Int(lo), hi: Value::Int(hi), excl: &c[2] == "<", base: "int".into() });
+                    let rt = ty(RTk::Range {
+                        lo: Value::Int(lo),
+                        hi: Value::Int(hi),
+                        excl: &c[2] == "<",
+                        base: "int".into(),
+                    });
                     frags.push(self.pattern_fragment(&rt, &text)?);
                     continue;
                 }
@@ -1111,13 +1542,24 @@ impl Env {
                     continue;
                 }
                 if !ident.is_match(arm) {
-                    return Err(format!("pattern interpolation of {text}: not a type (§3.6)"));
+                    return Err(format!(
+                        "pattern interpolation of {text}: not a type (§3.6)"
+                    ));
                 }
                 if self.pattern_visiting.borrow().iter().any(|v| v == arm) {
                     return Err(format!("pattern interpolation of {arm} is circular"));
                 }
                 self.pattern_visiting.borrow_mut().push(arm.clone());
-                let resolved = self.resolve(&TypeAst::Named { name: arm.clone(), args: vec![], preds: None, ext: None, loc: None }, None);
+                let resolved = self.resolve(
+                    &TypeAst::Named {
+                        name: arm.clone(),
+                        args: vec![],
+                        preds: None,
+                        ext: None,
+                        loc: None,
+                    },
+                    None,
+                );
                 self.pattern_visiting.borrow_mut().retain(|v| v != arm);
                 let rt = match resolved {
                     Ok(rt) => rt,
@@ -1150,20 +1592,26 @@ impl Env {
             }
             o
         };
-        let bad = || Err(format!("pattern interpolation of {name}: type is neither string- nor integer-shaped (§3.6)"));
+        let bad = || {
+            Err(format!("pattern interpolation of {name}: type is neither string- nor integer-shaped (§3.6)"))
+        };
         match &rt.k {
             RTk::Pattern { src, .. } => Ok(format!("(?:{src})")),
             RTk::Lit(Value::Str(s)) => Ok(esc(s)),
             RTk::Lit(Value::Int(i)) => Ok(i.to_string()),
             RTk::Lit(_) => bad(),
             RTk::Range { lo, hi, excl, base } => {
-                let (Value::Int(lo), Value::Int(hi)) = (lo, hi) else { return bad() };
+                let (Value::Int(lo), Value::Int(hi)) = (lo, hi) else {
+                    return bad();
+                };
                 if base != "int" {
                     return bad();
                 }
                 let hi = if *excl { hi - 1 } else { hi.clone() };
                 if &hi - lo >= BigInt::from(65536) {
-                    return Err(format!("pattern interpolation of {name}: range too large (limit 65536 values)"));
+                    return Err(format!(
+                        "pattern interpolation of {name}: range too large (limit 65536 values)"
+                    ));
                 }
                 let mut alts: Vec<String> = vec![];
                 let mut v = lo.clone();
@@ -1174,7 +1622,10 @@ impl Env {
                 Ok(format!("(?:{})", alts.join("|")))
             }
             RTk::Union(arms) => {
-                let parts = arms.iter().map(|a| self.pattern_fragment(a, name)).collect::<Result<Vec<_>, _>>()?;
+                let parts = arms
+                    .iter()
+                    .map(|a| self.pattern_fragment(a, name))
+                    .collect::<Result<Vec<_>, _>>()?;
                 Ok(format!("(?:{})", parts.join("|")))
             }
             RTk::Pred { base, .. } => self.pattern_fragment(base, name),
@@ -1185,10 +1636,19 @@ impl Env {
     }
 
     // §3.15 generics
-    fn instantiate(self: &Rc<Env>, name: &str, args: &[TypeAst], decl: &Rc<TypeEntry>) -> Result<RT, String> {
+    fn instantiate(
+        self: &Rc<Env>,
+        name: &str,
+        args: &[TypeAst],
+        decl: &Rc<TypeEntry>,
+    ) -> Result<RT, String> {
         let ps = &decl.params;
         if args.len() != ps.len() {
-            return Err(format!("generic arity: {name} expects {} argument(s), got {}", ps.len(), args.len()));
+            return Err(format!(
+                "generic arity: {name} expects {} argument(s), got {}",
+                ps.len(),
+                args.len()
+            ));
         }
         let mut types: HashMap<String, TypeAst> = HashMap::new();
         let mut values: HashMap<String, Value> = HashMap::new();
@@ -1197,18 +1657,35 @@ impl Env {
             if let Some(pty) = &p.ty {
                 let v = match a {
                     TypeAst::Lit { v, .. } => v.clone(),
-                    TypeAst::Named { name: an, args: aa, ext: None, preds: None, .. } if aa.is_empty() => {
+                    TypeAst::Named {
+                        name: an,
+                        args: aa,
+                        ext: None,
+                        preds: None,
+                        ..
+                    } if aa.is_empty() => {
                         let v = self.const_num(&Value::Str(an.clone()));
                         if matches!(v, Value::Str(_)) {
-                            return Err(format!("non-constant value argument {an} for {} of {name}", p.name));
+                            return Err(format!(
+                                "non-constant value argument {an} for {} of {name}",
+                                p.name
+                            ));
                         }
                         v
                     }
-                    _ => return Err(format!("generic arity: parameter {} of {name} takes a constant value", p.name)),
+                    _ => {
+                        return Err(format!(
+                            "generic arity: parameter {} of {name} takes a constant value",
+                            p.name
+                        ))
+                    }
                 };
                 let bound = self.resolve(&subst_type(pty, &types, &values), None)?;
                 if !crate::subsume::subsumes(self, &ty(RTk::Lit(v.clone())), &bound) {
-                    return Err(format!("value argument {v:?} outside parameter {}'s type in {name}", p.name));
+                    return Err(format!(
+                        "value argument {v:?} outside parameter {}'s type in {name}",
+                        p.name
+                    ));
                 }
                 label.push(format!("{v:?}"));
                 values.insert(p.name.clone(), v);
@@ -1220,7 +1697,10 @@ impl Env {
                 types.insert(p.name.clone(), a.clone());
             }
         }
-        let key = format!("{name}<{}>", args.iter().map(type_key).collect::<Vec<_>>().join(","));
+        let key = format!(
+            "{name}<{}>",
+            args.iter().map(type_key).collect::<Vec<_>>().join(",")
+        );
         if let Some(rt) = self.type_memo.borrow().get(&key).cloned() {
             return Ok(rt);
         }
@@ -1259,8 +1739,20 @@ impl Env {
         r.filling.set(true);
         for m in members {
             match m {
-                MemberAst::Value { name, opt, ty: t, dflt, .. } => r.members.borrow_mut().push(Member {
-                    kind: if dflt.is_some() { MKind::Dflt } else if *opt { MKind::Opt } else { MKind::Req },
+                MemberAst::Value {
+                    name,
+                    opt,
+                    ty: t,
+                    dflt,
+                    ..
+                } => r.members.borrow_mut().push(Member {
+                    kind: if dflt.is_some() {
+                        MKind::Dflt
+                    } else if *opt {
+                        MKind::Opt
+                    } else {
+                        MKind::Req
+                    },
                     name: name.clone(),
                     hidden: false,
                     ty: Some(self.resolve(t, None)?),
@@ -1269,23 +1761,51 @@ impl Env {
                     expr: None,
                     menv: Some(self.clone()),
                 }),
-                MemberAst::Derived { name, ty: t, expr, hidden, .. } => r.members.borrow_mut().push(Member {
+                MemberAst::Derived {
+                    name,
+                    ty: t,
+                    expr,
+                    hidden,
+                    ..
+                } => r.members.borrow_mut().push(Member {
                     kind: MKind::Der,
                     name: name.clone(),
                     hidden: *hidden,
-                    ty: match t { Some(t) => Some(self.resolve(t, None)?), None => None },
+                    ty: match t {
+                        Some(t) => Some(self.resolve(t, None)?),
+                        None => None,
+                    },
                     conj: None,
                     dflt: None,
                     expr: Some(expr.clone()),
                     menv: Some(self.clone()),
                 }),
-                MemberAst::Assert { name, cond, tail, .. } => r.asserts.borrow_mut().push(AssertItem {
-                    when: false, name: name.clone(), cond: cond.clone(), tail: tail.clone(), body: vec![], origin: origin.clone(), menv: Some(self.clone()),
+                MemberAst::Assert {
+                    name, cond, tail, ..
+                } => r.asserts.borrow_mut().push(AssertItem {
+                    when: false,
+                    name: name.clone(),
+                    cond: cond.clone(),
+                    tail: tail.clone(),
+                    body: vec![],
+                    origin: origin.clone(),
+                    menv: Some(self.clone()),
                 }),
                 MemberAst::When { cond, body, .. } => r.asserts.borrow_mut().push(AssertItem {
-                    when: true, name: String::new(), cond: cond.clone(), tail: None, body: body.clone(), origin: origin.clone(), menv: Some(self.clone()),
+                    when: true,
+                    name: String::new(),
+                    cond: cond.clone(),
+                    tail: None,
+                    body: body.clone(),
+                    origin: origin.clone(),
+                    menv: Some(self.clone()),
                 }),
-                MemberAst::Context { variable, ty: t, .. } => r.ctx_decls.borrow_mut().push((variable.clone(), self.resolve(t, None)?)),
+                MemberAst::Context {
+                    variable, ty: t, ..
+                } => r
+                    .ctx_decls
+                    .borrow_mut()
+                    .push((variable.clone(), self.resolve(t, None)?)),
             }
         }
         self.complete_record(rt);
@@ -1302,16 +1822,30 @@ impl Env {
             for m in r.members.borrow().iter() {
                 if let Some(i) = members.iter().position(|x| x.name == m.name) {
                     let prev = members[i].clone();
-                    let mut conj = prev.conj.clone().unwrap_or_else(|| prev.ty.iter().cloned().collect());
+                    let mut conj = prev
+                        .conj
+                        .clone()
+                        .unwrap_or_else(|| prev.ty.iter().cloned().collect());
                     if let Some(t) = &m.ty {
                         conj.push(t.clone());
                     }
-                    members[i] = Member { conj: Some(conj), kind: if m.kind == MKind::Req { MKind::Req } else { prev.kind }, ..prev };
+                    members[i] = Member {
+                        conj: Some(conj),
+                        kind: if m.kind == MKind::Req {
+                            MKind::Req
+                        } else {
+                            prev.kind
+                        },
+                        ..prev
+                    };
                 } else {
                     members.push(m.clone());
                 }
             }
-            asserts.extend(r.asserts.borrow().iter().map(|x| AssertItem { origin: x.origin.clone().or_else(|| a.name.borrow().clone()), ..x.clone() }));
+            asserts.extend(r.asserts.borrow().iter().map(|x| AssertItem {
+                origin: x.origin.clone().or_else(|| a.name.borrow().clone()),
+                ..x.clone()
+            }));
         }
         let rec = rec_type(open);
         *rec.members.borrow_mut() = members;
@@ -1326,11 +1860,18 @@ fn type_key(t: &TypeAst) -> String {
     match t {
         TypeAst::Prim { name: n, .. } => format!("p:{n}"),
         TypeAst::Lit { v, .. } => format!("l:{v:?}"),
-        TypeAst::Named { name, args, .. } => format!("n:{name}<{}>", args.iter().map(type_key).collect::<Vec<_>>().join(",")),
+        TypeAst::Named { name, args, .. } => format!(
+            "n:{name}<{}>",
+            args.iter().map(type_key).collect::<Vec<_>>().join(",")
+        ),
         TypeAst::Range { lo, hi, excl, .. } => format!("r:{lo:?}..{excl}{hi:?}"),
         TypeAst::Array { elem, lo, hi, .. } => format!("a:{}[{lo:?},{hi:?}]", type_key(elem)),
-        TypeAst::Union { arms: a, .. } => format!("u:{}", a.iter().map(type_key).collect::<Vec<_>>().join("|")),
-        TypeAst::Isect { arms: a, .. } => format!("i:{}", a.iter().map(type_key).collect::<Vec<_>>().join("&")),
+        TypeAst::Union { arms: a, .. } => {
+            format!("u:{}", a.iter().map(type_key).collect::<Vec<_>>().join("|"))
+        }
+        TypeAst::Isect { arms: a, .. } => {
+            format!("i:{}", a.iter().map(type_key).collect::<Vec<_>>().join("&"))
+        }
         TypeAst::Map { key, val, .. } => format!("m:{}:{}", type_key(key), type_key(val)),
         TypeAst::Pattern { re: p, .. } => format!("pat:{p}"),
         TypeAst::Record { members, .. } => format!("rec:{}", members.len()),
@@ -1339,23 +1880,38 @@ fn type_key(t: &TypeAst) -> String {
 }
 
 // ---------------- generic substitution ----------------
-pub fn subst_type(ast: &TypeAst, types: &HashMap<String, TypeAst>, values: &HashMap<String, Value>) -> TypeAst {
+pub fn subst_type(
+    ast: &TypeAst,
+    types: &HashMap<String, TypeAst>,
+    values: &HashMap<String, Value>,
+) -> TypeAst {
     let t = |a: &TypeAst| subst_type(a, types, values);
     match ast {
-        TypeAst::Named { name, args, preds, ext, loc } => {
+        TypeAst::Named {
+            name,
+            args,
+            preds,
+            ext,
+            loc,
+        } => {
             let plain = args.is_empty() && ext.is_none() && preds.is_none();
             if plain {
                 if let Some(x) = types.get(name) {
                     return x.clone();
                 }
                 if let Some(v) = values.get(name) {
-                    return TypeAst::Lit { v: v.clone(), loc: *loc };
+                    return TypeAst::Lit {
+                        v: v.clone(),
+                        loc: *loc,
+                    };
                 }
             }
             TypeAst::Named {
                 name: name.clone(),
                 args: args.iter().map(t).collect(),
-                preds: preds.as_ref().map(|ps| ps.iter().map(|p| subst_expr(p, values)).collect()),
+                preds: preds
+                    .as_ref()
+                    .map(|ps| ps.iter().map(|p| subst_expr(p, values)).collect()),
                 ext: ext.as_ref().map(|e| Box::new(t(e))),
                 loc: *loc,
             }
@@ -1365,31 +1921,118 @@ pub fn subst_type(ast: &TypeAst, types: &HashMap<String, TypeAst>, values: &Hash
                 Value::Str(s) if values.contains_key(s) => values[s].clone(),
                 other => other.clone(),
             };
-            TypeAst::Range { lo: sub(lo), hi: sub(hi), excl: *excl, loc: *loc }
+            TypeAst::Range {
+                lo: sub(lo),
+                hi: sub(hi),
+                excl: *excl,
+                loc: *loc,
+            }
         }
-        TypeAst::Array { elem, lo, hi, excl, loc } => {
+        TypeAst::Array {
+            elem,
+            lo,
+            hi,
+            excl,
+            loc,
+        } => {
             let sub = |v: &Value| match v {
                 Value::Str(s) if values.contains_key(s) => values[s].clone(),
                 other => other.clone(),
             };
-            TypeAst::Array { elem: Box::new(t(elem)), lo: lo.as_ref().map(sub), hi: hi.as_ref().map(sub), excl: *excl, loc: *loc }
+            TypeAst::Array {
+                elem: Box::new(t(elem)),
+                lo: lo.as_ref().map(sub),
+                hi: hi.as_ref().map(sub),
+                excl: *excl,
+                loc: *loc,
+            }
         }
-        TypeAst::Record { members, open, loc } => TypeAst::Record { members: members.iter().map(|m| subst_member(m, types, values)).collect(), open: *open, loc: *loc },
-        TypeAst::Map { key, val, loc } => TypeAst::Map { key: Box::new(t(key)), val: Box::new(t(val)), loc: *loc },
-        TypeAst::Union { arms: a, loc } => TypeAst::Union { arms: a.iter().map(t).collect(), loc: *loc },
-        TypeAst::Isect { arms: a, loc } => TypeAst::Isect { arms: a.iter().map(t).collect(), loc: *loc },
-        TypeAst::Func { params, ret, loc } => TypeAst::Func { params: params.iter().map(t).collect(), ret: Box::new(t(ret)), loc: *loc },
+        TypeAst::Record { members, open, loc } => TypeAst::Record {
+            members: members
+                .iter()
+                .map(|m| subst_member(m, types, values))
+                .collect(),
+            open: *open,
+            loc: *loc,
+        },
+        TypeAst::Map { key, val, loc } => TypeAst::Map {
+            key: Box::new(t(key)),
+            val: Box::new(t(val)),
+            loc: *loc,
+        },
+        TypeAst::Union { arms: a, loc } => TypeAst::Union {
+            arms: a.iter().map(t).collect(),
+            loc: *loc,
+        },
+        TypeAst::Isect { arms: a, loc } => TypeAst::Isect {
+            arms: a.iter().map(t).collect(),
+            loc: *loc,
+        },
+        TypeAst::Func { params, ret, loc } => TypeAst::Func {
+            params: params.iter().map(t).collect(),
+            ret: Box::new(t(ret)),
+            loc: *loc,
+        },
         other => other.clone(),
     }
 }
-fn subst_member(m: &MemberAst, types: &HashMap<String, TypeAst>, values: &HashMap<String, Value>) -> MemberAst {
+fn subst_member(
+    m: &MemberAst,
+    types: &HashMap<String, TypeAst>,
+    values: &HashMap<String, Value>,
+) -> MemberAst {
     let t = |a: &TypeAst| subst_type(a, types, values);
     match m {
-        MemberAst::Value { name, opt, ty, dflt, loc } => MemberAst::Value { name: name.clone(), opt: *opt, ty: t(ty), dflt: dflt.as_ref().map(|d| subst_expr(d, values)), loc: *loc },
-        MemberAst::Derived { name, ty, expr, hidden, loc } => MemberAst::Derived { name: name.clone(), ty: ty.as_ref().map(t), expr: subst_expr(expr, values), hidden: *hidden, loc: *loc },
-        MemberAst::Context { variable, ty, loc } => MemberAst::Context { variable: variable.clone(), ty: t(ty), loc: *loc },
-        MemberAst::Assert { name, cond, tail, loc } => MemberAst::Assert { name: name.clone(), cond: subst_expr(cond, values), tail: tail.clone(), loc: *loc },
-        MemberAst::When { cond, body, loc } => MemberAst::When { cond: subst_expr(cond, values), body: body.iter().map(|b| subst_member(b, types, values)).collect(), loc: *loc },
+        MemberAst::Value {
+            name,
+            opt,
+            ty,
+            dflt,
+            loc,
+        } => MemberAst::Value {
+            name: name.clone(),
+            opt: *opt,
+            ty: t(ty),
+            dflt: dflt.as_ref().map(|d| subst_expr(d, values)),
+            loc: *loc,
+        },
+        MemberAst::Derived {
+            name,
+            ty,
+            expr,
+            hidden,
+            loc,
+        } => MemberAst::Derived {
+            name: name.clone(),
+            ty: ty.as_ref().map(t),
+            expr: subst_expr(expr, values),
+            hidden: *hidden,
+            loc: *loc,
+        },
+        MemberAst::Context { variable, ty, loc } => MemberAst::Context {
+            variable: variable.clone(),
+            ty: t(ty),
+            loc: *loc,
+        },
+        MemberAst::Assert {
+            name,
+            cond,
+            tail,
+            loc,
+        } => MemberAst::Assert {
+            name: name.clone(),
+            cond: subst_expr(cond, values),
+            tail: tail.clone(),
+            loc: *loc,
+        },
+        MemberAst::When { cond, body, loc } => MemberAst::When {
+            cond: subst_expr(cond, values),
+            body: body
+                .iter()
+                .map(|b| subst_member(b, types, values))
+                .collect(),
+            loc: *loc,
+        },
     }
 }
 pub fn subst_expr(e: &Rc<Expr>, values: &HashMap<String, Value>) -> Rc<Expr> {
@@ -1397,24 +2040,77 @@ pub fn subst_expr(e: &Rc<Expr>, values: &HashMap<String, Value>) -> Rc<Expr> {
         return e.clone();
     }
     let s = |x: &Rc<Expr>| subst_expr(x, values);
-    let cls = |c: &ForClause| ForClause { v: c.v.clone(), iter: s(&c.iter), filters: c.filters.iter().map(s).collect() };
+    let cls = |c: &ForClause| ForClause {
+        v: c.v.clone(),
+        iter: s(&c.iter),
+        filters: c.filters.iter().map(s).collect(),
+    };
     let out = Rc::new(match &**e {
         Expr::Name(n) if values.contains_key(n) => Expr::Lit(values[n].clone()),
-        Expr::Template(parts) => Expr::Template(parts.iter().map(|p| match p { TPart::Expr(x) => TPart::Expr(s(x)), other => other.clone() }).collect()),
+        Expr::Template(parts) => Expr::Template(
+            parts
+                .iter()
+                .map(|p| match p {
+                    TPart::Expr(x) => TPart::Expr(s(x)),
+                    other => other.clone(),
+                })
+                .collect(),
+        ),
         Expr::Obj(es) => Expr::Obj(es.iter().map(|(k, v)| (k.clone(), s(v))).collect()),
         Expr::Arr(items) => Expr::Arr(items.iter().map(|(sp, v)| (*sp, s(v))).collect()),
-        Expr::Comp { head, clauses } => Expr::Comp { head: s(head), clauses: clauses.iter().map(cls).collect() },
-        Expr::MapComp { key, val, clauses } => Expr::MapComp { key: s(key), val: s(val), clauses: clauses.iter().map(cls).collect() },
-        Expr::Bin { op, l, r } => Expr::Bin { op: op.clone(), l: s(l), r: s(r) },
-        Expr::Un { op, x } => Expr::Un { op: op.clone(), x: s(x) },
+        Expr::Comp { head, clauses } => Expr::Comp {
+            head: s(head),
+            clauses: clauses.iter().map(cls).collect(),
+        },
+        Expr::MapComp { key, val, clauses } => Expr::MapComp {
+            key: s(key),
+            val: s(val),
+            clauses: clauses.iter().map(cls).collect(),
+        },
+        Expr::Bin { op, l, r } => Expr::Bin {
+            op: op.clone(),
+            l: s(l),
+            r: s(r),
+        },
+        Expr::Un { op, x } => Expr::Un {
+            op: op.clone(),
+            x: s(x),
+        },
         Expr::Paren(x) => Expr::Paren(s(x)),
-        Expr::If { c, t, f } => Expr::If { c: s(c), t: s(t), f: s(f) },
-        Expr::Lambda { params, body } => Expr::Lambda { params: params.clone(), body: s(body) },
-        Expr::Call { fun, args } => Expr::Call { fun: s(fun), args: args.iter().map(s).collect() },
-        Expr::Member { x, name, safe } => Expr::Member { x: s(x), name: name.clone(), safe: *safe },
+        Expr::If { c, t, f } => Expr::If {
+            c: s(c),
+            t: s(t),
+            f: s(f),
+        },
+        Expr::Lambda { params, body } => Expr::Lambda {
+            params: params.clone(),
+            body: s(body),
+        },
+        Expr::Call { fun, args } => Expr::Call {
+            fun: s(fun),
+            args: args.iter().map(s).collect(),
+        },
+        Expr::Member { x, name, safe } => Expr::Member {
+            x: s(x),
+            name: name.clone(),
+            safe: *safe,
+        },
         Expr::Index { x, i } => Expr::Index { x: s(x), i: s(i) },
-        Expr::With { base, patch } => Expr::With { base: s(base), patch: s(patch) },
-        Expr::Match { subject, arms } => Expr::Match { subject: s(subject), arms: arms.iter().map(|a| MatchArm { v: a.v.clone(), ty: a.ty.clone(), body: s(&a.body) }).collect() },
+        Expr::With { base, patch } => Expr::With {
+            base: s(base),
+            patch: s(patch),
+        },
+        Expr::Match { subject, arms } => Expr::Match {
+            subject: s(subject),
+            arms: arms
+                .iter()
+                .map(|a| MatchArm {
+                    v: a.v.clone(),
+                    ty: a.ty.clone(),
+                    body: s(&a.body),
+                })
+                .collect(),
+        },
         other => other.clone(),
     });
     // a substituted node keeps the source range of the node it replaces (the reference copies `loc`)
@@ -1481,7 +2177,10 @@ pub fn pattern_error(src: &str) -> Option<String> {
                         break;
                     }
                     let lo = if cs[i] == '\\' {
-                        match pattern_escape(&cs, &mut i) { Ok(v) => v, Err(r) => return Some(r) }
+                        match pattern_escape(&cs, &mut i) {
+                            Ok(v) => v,
+                            Err(r) => return Some(r),
+                        }
                     } else {
                         let v = cs[i] as i64;
                         i += 1;
@@ -1490,7 +2189,10 @@ pub fn pattern_error(src: &str) -> Option<String> {
                     if i < n && cs[i] == '-' && i + 1 < n && cs[i + 1] != ']' {
                         i += 1;
                         let hi = if cs[i] == '\\' {
-                            match pattern_escape(&cs, &mut i) { Ok(v) => v, Err(r) => return Some(r) }
+                            match pattern_escape(&cs, &mut i) {
+                                Ok(v) => v,
+                                Err(r) => return Some(r),
+                            }
                         } else {
                             let v = cs[i] as i64;
                             i += 1;
@@ -1567,7 +2269,9 @@ pub fn pattern_error(src: &str) -> Option<String> {
                     return Some("malformed repetition".into());
                 }
                 if let Some(h) = hi {
-                    if h.parse::<BigInt>().unwrap_or_default() < m.parse::<BigInt>().unwrap_or_default() {
+                    if h.parse::<BigInt>().unwrap_or_default()
+                        < m.parse::<BigInt>().unwrap_or_default()
+                    {
                         return Some("malformed repetition".into());
                     }
                 }
@@ -1585,7 +2289,11 @@ pub fn pattern_error(src: &str) -> Option<String> {
             }
         }
     }
-    if depth > 0 { Some("unbalanced parenthesis".into()) } else { None }
+    if depth > 0 {
+        Some("unbalanced parenthesis".into())
+    } else {
+        None
+    }
 }
 pub fn compile_pattern(src: &str) -> Result<Regex, String> {
     Regex::new(&format!("^(?:{src})$")).map_err(|e| e.to_string())
@@ -1625,21 +2333,32 @@ pub fn parse_path(s: &str, root_name: &str) -> R<SegPath> {
         segs.push(Seg::Name(root_name.to_string()));
         1
     } else {
-        let m = id_re.find(s).ok_or(()).or_else(|_| err(format!("bad path {s}")))?;
+        let m = id_re
+            .find(s)
+            .ok_or(())
+            .or_else(|_| err(format!("bad path {s}")))?;
         segs.push(Seg::Name(m.as_str().to_string()));
         m.end()
     };
     while i < s.len() {
         let rest = &s[i..];
         if let Some(r) = rest.strip_prefix('.') {
-            let m = id_re.find(r).ok_or(()).or_else(|_| err(format!("bad path {s}")))?;
+            let m = id_re
+                .find(r)
+                .ok_or(())
+                .or_else(|_| err(format!("bad path {s}")))?;
             segs.push(Seg::Name(m.as_str().to_string()));
             i += 1 + m.end();
         } else if rest.starts_with('[') {
-            let j = rest.find(']').ok_or(()).or_else(|_| err(format!("bad path {s}")))?;
+            let j = rest
+                .find(']')
+                .ok_or(())
+                .or_else(|_| err(format!("bad path {s}")))?;
             let inner = &rest[1..j];
             if inner.starts_with('"') {
-                segs.push(Seg::Key(crate::parse::json_unquote(inner).unwrap_or_default()));
+                segs.push(Seg::Key(
+                    crate::parse::json_unquote(inner).unwrap_or_default(),
+                ));
             } else {
                 segs.push(Seg::Idx(inner.parse().unwrap_or(0)));
             }
@@ -1675,8 +2394,10 @@ pub fn cmp_path(a: &[Seg], b: &[Seg]) -> std::cmp::Ordering {
 
 pub fn value_eq(a: &Value, b: &Value) -> bool {
     let (pa, pb) = (a.place(), b.place());
-    if (matches!(a, Value::Ref(_)) || matches!(b, Value::Ref(_))) && pa.is_some() && pb.is_some() {
-        return cmp_path(&pa.unwrap(), &pb.unwrap()) == std::cmp::Ordering::Equal;
+    if let (Some(pa), Some(pb)) = (&pa, &pb) {
+        if matches!(a, Value::Ref(_)) || matches!(b, Value::Ref(_)) {
+            return cmp_path(pa, pb) == std::cmp::Ordering::Equal;
+        }
     }
     match (a, b) {
         (Value::Int(x), Value::Int(y)) => x == y,
@@ -1689,11 +2410,15 @@ pub fn value_eq(a: &Value, b: &Value) -> bool {
         (Value::Q { dim: d1, value: v1 }, Value::Q { dim: d2, value: v2 }) => d1 == d2 && v1 == v2,
         (Value::Arr(x), Value::Arr(y)) => {
             let (x, y) = (x.borrow(), y.borrow());
-            x.items.len() == y.items.len() && x.items.iter().zip(&y.items).all(|(p, q)| value_eq(p, q))
+            x.items.len() == y.items.len()
+                && x.items.iter().zip(&y.items).all(|(p, q)| value_eq(p, q))
         }
         (Value::Map(x), Value::Map(y)) => {
             let (x, y) = (x.borrow(), y.borrow());
-            x.entries.len() == y.entries.len() && x.entries.iter().all(|(k, v)| y.get(k).map(|w| value_eq(v, w)).unwrap_or(false))
+            x.entries.len() == y.entries.len()
+                && x.entries
+                    .iter()
+                    .all(|(k, v)| y.get(k).map(|w| value_eq(v, w)).unwrap_or(false))
         }
         (Value::Rec(x), Value::Rec(y)) => {
             if Rc::ptr_eq(x, y) {
@@ -1704,7 +2429,11 @@ pub fn value_eq(a: &Value, b: &Value) -> bool {
                 if s.hidden {
                     continue; // a hidden member is not part of the value (D34)
                 }
-                let v1 = if s.state == SlotState::Absent { Value::Absent } else { s.value.clone() };
+                let v1 = if s.state == SlotState::Absent {
+                    Value::Absent
+                } else {
+                    s.value.clone()
+                };
                 let v2 = match y.slot(n) {
                     Some(s2) if s2.state != SlotState::Absent => s2.value.clone(),
                     _ => Value::Absent,
@@ -1828,13 +2557,18 @@ pub fn read_json(src: &str) -> R<Value> {
                     return Ok(Value::Null);
                 }
                 let re = Regex::new(r"^-?(?:0|[1-9][0-9]*)(\.[0-9]+)?([eE][-+]?[0-9]+)?").unwrap();
-                let m = re.captures(rest).ok_or(()).or_else(|_| err(format!("bad JSON at {i}")))?;
+                let m = re
+                    .captures(rest)
+                    .ok_or(())
+                    .or_else(|_| err(format!("bad JSON at {i}")))?;
                 let whole = m.get(0).unwrap().as_str();
                 *i += whole.len();
                 if m.get(1).is_some() || m.get(2).is_some() {
                     Ok(Value::Float(whole.parse::<f64>().unwrap_or(0.0)))
                 } else {
-                    Ok(Value::Int(whole.parse::<BigInt>().unwrap_or_else(|_| BigInt::zero())))
+                    Ok(Value::Int(
+                        whole.parse::<BigInt>().unwrap_or_else(|_| BigInt::zero()),
+                    ))
                 }
             }
         }
@@ -1869,10 +2603,18 @@ pub fn js_num_str(x: f64) -> String {
         format!("0.{}{digits}", "0".repeat((-n) as usize))
     } else {
         let e = n - 1;
-        let mant = if k > 1 { format!("{}.{}", &digits[..1], &digits[1..]) } else { digits.to_string() };
+        let mant = if k > 1 {
+            format!("{}.{}", &digits[..1], &digits[1..])
+        } else {
+            digits.to_string()
+        };
         format!("{mant}e{}{}", if e > 0 { "+" } else { "-" }, e.abs())
     };
-    if x < 0.0 { format!("-{body}") } else { body }
+    if x < 0.0 {
+        format!("-{body}")
+    } else {
+        body
+    }
 }
 
 pub fn json_str(s: &str) -> String {

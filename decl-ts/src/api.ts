@@ -19,8 +19,16 @@ import type { Diag } from './semantics.ts';
 import { format, initFormatter } from './fmt.ts';
 
 /** one diagnostic, in the report's field order (§12.2) */
-export type Diagnostic = { file: string; code?: string; id?: string; severity: string; message: string; path: string };
-export type JsonValue = null | boolean | number | string | JsonValue[] | { [key: string]: JsonValue };
+export type Diagnostic = {
+  file: string;
+  code?: string;
+  id?: string;
+  severity: string;
+  message: string;
+  path: string;
+};
+export type JsonValue =
+  null | boolean | number | string | JsonValue[] | { [key: string]: JsonValue };
 /** a document to bind to an input: the path of a JSON file (a string), or the value itself */
 export type InputDocument = string | JsonValue;
 export type EvaluateOptions = {
@@ -72,16 +80,38 @@ function openUniverse(file: string) {
 function bindInputs(modules: Module[], file: string, inputs: Record<string, InputDocument>) {
   const binds: { module?: Module; input: string; raw: any }[] = [];
   for (const [name, doc] of Object.entries(inputs)) {
-    const module = modules.find(m => m.env.inputs.has(name));
+    const module = modules.find((m) => m.env.inputs.has(name));
     if (!module) throw new DeclError(`no input named ${name}`);
     let text: string;
     if (typeof doc === 'string') {
-      try { text = readFileSync(doc, 'utf8'); }
-      catch { fail('', [{ file, code: 'E6004', severity: 'error', message: `bound document cannot be read: ${doc}`, path: name }]); }
+      try {
+        text = readFileSync(doc, 'utf8');
+      } catch {
+        fail('', [
+          {
+            file,
+            code: 'E6004',
+            severity: 'error',
+            message: `bound document cannot be read: ${doc}`,
+            path: name,
+          },
+        ]);
+      }
     } else text = JSON.stringify(doc);
     let raw: any;
-    try { raw = readJson(text!); }
-    catch { fail('', [{ file, code: 'E6004', severity: 'error', message: `bound document is not well-formed JSON: ${typeof doc === 'string' ? doc : name}`, path: name }]); }
+    try {
+      raw = readJson(text!);
+    } catch {
+      fail('', [
+        {
+          file,
+          code: 'E6004',
+          severity: 'error',
+          message: `bound document is not well-formed JSON: ${typeof doc === 'string' ? doc : name}`,
+          path: name,
+        },
+      ]);
+    }
     binds.push({ module, input: name, raw });
   }
   return binds;
@@ -92,16 +122,30 @@ function bindInputs(modules: Module[], file: string, inputs: Record<string, Inpu
  * the requested roots' documents (parsed JSON) by name. Throws DeclError
  * with the diagnostics on any error-severity outcome.
  */
-export async function evaluate(path: string, opts: EvaluateOptions = {}): Promise<Record<string, JsonValue>> {
+export async function evaluate(
+  path: string,
+  opts: EvaluateOptions = {},
+): Promise<Record<string, JsonValue>> {
   await init();
   const { modules, entry, diags } = openUniverse(path);
-  if (diags.length || !entry) fail(`${path}: cannot be loaded`, diags.map(d => tagged(path, d)));
-  const checks = modules.flatMap(m => checkModule(m.decls, m.env).map(d => tagged(fileTag(path, entry!.path, m.path), d)));
+  if (diags.length || !entry)
+    fail(
+      `${path}: cannot be loaded`,
+      diags.map((d) => tagged(path, d)),
+    );
+  const checks = modules.flatMap((m) =>
+    checkModule(m.decls, m.env).map((d) => tagged(fileTag(path, entry!.path, m.path), d)),
+  );
   if (checks.length) fail('', checks);
-  const { eng, diags: ed } = runUniverse(modules, entry!, bindInputs(modules, path, opts.inputs ?? {}));
-  const report = ed.map(d => tagged(path, d));
-  if (report.some(d => d.severity === 'error')) fail('', report);
-  const names = opts.outputs ?? entry!.env.outputs.filter((o: any) => o.exported).map((o: any) => o.name);
+  const { eng, diags: ed } = runUniverse(
+    modules,
+    entry!,
+    bindInputs(modules, path, opts.inputs ?? {}),
+  );
+  const report = ed.map((d) => tagged(path, d));
+  if (report.some((d) => d.severity === 'error')) fail('', report);
+  const names =
+    opts.outputs ?? entry!.env.outputs.filter((o: any) => o.exported).map((o: any) => o.name);
   const out: Record<string, JsonValue> = {};
   for (const n of names) {
     if (!entry!.env.roots.has(n)) throw new DeclError(`no root named ${n}`, report);
@@ -116,8 +160,11 @@ export async function check(...paths: string[]): Promise<Diagnostic[]> {
   const out: Diagnostic[] = [];
   for (const f of paths) {
     const { modules, entry, diags } = openUniverse(f);
-    out.push(...diags.map(d => tagged(f, d)));
-    for (const m of modules) out.push(...checkModule(m.decls, m.env).map(d => tagged(fileTag(f, entry?.path, m.path), d)));
+    out.push(...diags.map((d) => tagged(f, d)));
+    for (const m of modules)
+      out.push(
+        ...checkModule(m.decls, m.env).map((d) => tagged(fileTag(f, entry?.path, m.path), d)),
+      );
   }
   return out;
 }
@@ -127,22 +174,30 @@ export async function check(...paths: string[]): Promise<Diagnostic[]> {
  * bound; returns every diagnostic (all severities). Throws DeclError when
  * the file does not parse.
  */
-export async function validate(path: string, opts: { inputs?: Record<string, InputDocument> } = {}): Promise<Diagnostic[]> {
+export async function validate(
+  path: string,
+  opts: { inputs?: Record<string, InputDocument> } = {},
+): Promise<Diagnostic[]> {
   await init();
   const { decls, errors } = parseSource(readFileSync(path, 'utf8'));
   if (errors.length) throw new DeclError(`${path}: ${errors.length} parse error(s)`);
-  const checks = checkModule(decls).map(d => tagged(path, d));
+  const checks = checkModule(decls).map((d) => tagged(path, d));
   if (checks.length) return checks;
   if (opts.inputs && Object.keys(opts.inputs).length) {
     const { modules, entry } = openUniverse(path);
-    return runUniverse(modules, entry!, bindInputs(modules, path, opts.inputs)).diags.map(d => tagged(path, d));
+    return runUniverse(modules, entry!, bindInputs(modules, path, opts.inputs)).diags.map((d) =>
+      tagged(path, d),
+    );
   }
-  return runPipeline(decls).diags.map(d => tagged(path, d));
+  return runPipeline(decls).diags.map((d) => tagged(path, d));
 }
 
 /** The canonical formatting of a source text; throws DeclError when it does not parse. */
 export async function formatSource(text: string): Promise<string> {
   await initFormatter();
-  try { return format(text); }
-  catch (e: any) { throw new DeclError(e.message); }
+  try {
+    return format(text);
+  } catch (e: any) {
+    throw new DeclError(e.message);
+  }
 }

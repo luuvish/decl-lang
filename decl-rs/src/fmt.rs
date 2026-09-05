@@ -18,17 +18,59 @@ struct Leaf {
 }
 
 // atoms: leaves kept verbatim, including their internal whitespace
-const ATOMS: [&str; 7] = ["string", "template_string", "pattern", "unit_literal", "doc_comment", "line_comment", "block_comment"];
-const BIN_OPS: [&str; 24] = ["=", "==", "!=", "<=", ">=", "+", "*", "/", "%", "&&", "||", "??", "|>", "=>", "<<", ">>", "in", "matches", "with", "then", "else", "for", "if", "as"];
+const ATOMS: [&str; 7] = [
+    "string",
+    "template_string",
+    "pattern",
+    "unit_literal",
+    "doc_comment",
+    "line_comment",
+    "block_comment",
+];
+const BIN_OPS: [&str; 24] = [
+    "=", "==", "!=", "<=", ">=", "+", "*", "/", "%", "&&", "||", "??", "|>", "=>", "<<", ">>",
+    "in", "matches", "with", "then", "else", "for", "if", "as",
+];
 const BIN_OPS_EXTRA: [&str; 1] = ["from"];
-const CONT_STARTERS: [&str; 22] = ["else", "=", "for", "if", "&&", "||", "|>", "??", ".", "?.", "+", "-", "*", "/", "==", "!=", "<=", ">=", "<", ">", "=>", "then"];
+const CONT_STARTERS: [&str; 22] = [
+    "else", "=", "for", "if", "&&", "||", "|>", "??", ".", "?.", "+", "-", "*", "/", "==", "!=",
+    "<=", ">=", "<", ">", "=>", "then",
+];
 // a line whose last token leaves an expression open (`=`, `=>`, a binary
 // operator, `then`/`else`) makes the next line a continuation too
 const CONT_ENDERS: [&str; 29] = [
-    "=", "=>", "&&", "||", "|>", "??", "+", "-", "*", "/", "%", "==", "!=", "<=", ">=", "<", ">", "&", "|", "^", "<<", ">>", "..", "..<",
-    "then", "else", "in", "with", "matches",
+    "=", "=>", "&&", "||", "|>", "??", "+", "-", "*", "/", "%", "==", "!=", "<=", ">=", "<", ">",
+    "&", "|", "^", "<<", ">>", "..", "..<", "then", "else", "in", "with", "matches",
 ];
-const KEYWORDS: [&str; 27] = ["type", "const", "func", "output", "input", "export", "import", "diagnostic", "dimension", "unit", "assert", "when", "if", "then", "else", "match", "for", "in", "with", "as", "from", "true", "false", "null", "error", "warn", "info"];
+const KEYWORDS: [&str; 27] = [
+    "type",
+    "const",
+    "func",
+    "output",
+    "input",
+    "export",
+    "import",
+    "diagnostic",
+    "dimension",
+    "unit",
+    "assert",
+    "when",
+    "if",
+    "then",
+    "else",
+    "match",
+    "for",
+    "in",
+    "with",
+    "as",
+    "from",
+    "true",
+    "false",
+    "null",
+    "error",
+    "warn",
+    "info",
+];
 const KEYWORDS_EXTRA: [&str; 1] = ["matches"];
 
 /// a JavaScript string's length: UTF-16 code units
@@ -66,7 +108,10 @@ fn collect(n: Node, src: &str, lines: &[&str], out: &mut Vec<Leaf>) {
             return; // zero-width externals (NEWLINE)
         }
         let row = n.start_position().row;
-        let col = lines.get(row).map(|l| u16len(l.get(..n.start_position().column).unwrap_or(""))).unwrap_or(0);
+        let col = lines
+            .get(row)
+            .map(|l| u16len(l.get(..n.start_position().column).unwrap_or("")))
+            .unwrap_or(0);
         out.push(Leaf {
             text: text.to_string(),
             kind: n.kind().to_string(),
@@ -84,7 +129,8 @@ fn collect(n: Node, src: &str, lines: &[&str], out: &mut Vec<Leaf>) {
 }
 
 fn is_type_angle(l: &Leaf) -> bool {
-    (l.text == "<" || l.text == ">") && (l.parent == "type_arguments" || l.parent == "type_parameters")
+    (l.text == "<" || l.text == ">")
+        && (l.parent == "type_arguments" || l.parent == "type_parameters")
 }
 
 /// spacing decision: does a space go between a and b on one line?
@@ -125,7 +171,11 @@ fn spaced(a: &Leaf, b: &Leaf, prev: Option<&Leaf>) -> bool {
     if bt == "[" {
         // index/size brackets attach (also after a record type or literal: `{...}[]`); array literals
         // stand off, and a keyword before a literal array (`in [1, 2]`) does not attach
-        return !((keywordy(at) && !is_keyword(at)) || at == ")" || at == "]" || at == "}" || is_type_angle(a));
+        return !((keywordy(at) && !is_keyword(at))
+            || at == ")"
+            || at == "]"
+            || at == "}"
+            || is_type_angle(a));
     }
     if at == "{" || bt == "}" {
         return true; // { a: 1 }
@@ -142,7 +192,12 @@ fn spaced(a: &Leaf, b: &Leaf, prev: Option<&Leaf>) -> bool {
             None => true,
             Some(p) => {
                 let pt = p.text.as_str();
-                is_bin_op(pt) || ["(", "[", "{", ",", ":", "<", "..", "..<", "-", "+", "!", "~"].contains(&pt) || (keywordy(pt) && is_keyword(pt))
+                is_bin_op(pt)
+                    || [
+                        "(", "[", "{", ",", ":", "<", "..", "..<", "-", "+", "!", "~",
+                    ]
+                    .contains(&pt)
+                    || (keywordy(pt) && is_keyword(pt))
             }
         };
         if unary {
@@ -187,12 +242,19 @@ pub fn format(src: &str) -> Result<String, String> {
             out.push(String::new());
         }
         // indentation: bracket depth, closers on the line start dedent first
-        let closers = line.iter().take_while(|l| l.text == ")" || l.text == "]" || l.text == "}").count();
+        let closers = line
+            .iter()
+            .take_while(|l| l.text == ")" || l.text == "]" || l.text == "}")
+            .count();
         let mut indent = depth.saturating_sub(closers);
         // a line starting with a continuation token, or following a line that
         // left an expression open, hangs one level deeper
         // (`ref<...>` closes a type, it opens nothing)
-        let after_open = last_code.map(|l| !is_atom(&l.kind) && CONT_ENDERS.contains(&l.text.as_str()) && !is_type_angle(l)).unwrap_or(false);
+        let after_open = last_code
+            .map(|l| {
+                !is_atom(&l.kind) && CONT_ENDERS.contains(&l.text.as_str()) && !is_type_angle(l)
+            })
+            .unwrap_or(false);
         if closers == 0 && (CONT_STARTERS.contains(&first.text.as_str()) || after_open) {
             indent = depth + 1;
         }

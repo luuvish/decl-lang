@@ -27,17 +27,37 @@ impl DeclExtension {
             return Ok(path);
         }
         if let Some(path) = &self.cached_binary {
-            if std::fs::metadata(path).map(|m| m.is_file()).unwrap_or(false) {
+            if std::fs::metadata(path)
+                .map(|m| m.is_file())
+                .unwrap_or(false)
+            {
                 return Ok(path.clone());
             }
         }
-        zed::set_language_server_installation_status(id, &zed::LanguageServerInstallationStatus::CheckingForUpdate);
-        let release = zed::latest_github_release(RELEASE_REPO, zed::GithubReleaseOptions { require_assets: true, pre_release: false })?;
+        zed::set_language_server_installation_status(
+            id,
+            &zed::LanguageServerInstallationStatus::CheckingForUpdate,
+        );
+        let release = zed::latest_github_release(
+            RELEASE_REPO,
+            zed::GithubReleaseOptions {
+                require_assets: true,
+                pre_release: false,
+            },
+        )?;
         let (os, arch) = zed::current_platform();
         let asset_name = format!(
             "decl-lsp-{}-{}{}",
-            match os { zed::Os::Mac => "macos", zed::Os::Linux => "linux", zed::Os::Windows => "windows" },
-            match arch { zed::Architecture::Aarch64 => "arm64", zed::Architecture::X8664 => "x86_64", zed::Architecture::X86 => "x86" },
+            match os {
+                zed::Os::Mac => "macos",
+                zed::Os::Linux => "linux",
+                zed::Os::Windows => "windows",
+            },
+            match arch {
+                zed::Architecture::Aarch64 => "arm64",
+                zed::Architecture::X8664 => "x86_64",
+                zed::Architecture::X86 => "x86",
+            },
             if os == zed::Os::Windows { ".exe" } else { "" },
         );
         let asset = release
@@ -47,10 +67,20 @@ impl DeclExtension {
             .ok_or_else(|| format!("the release {} has no asset {asset_name}", release.version))?;
         let dir = format!("decl-lsp-{}", release.version);
         let path = format!("{dir}/{asset_name}");
-        if !std::fs::metadata(&path).map(|m| m.is_file()).unwrap_or(false) {
-            zed::set_language_server_installation_status(id, &zed::LanguageServerInstallationStatus::Downloading);
+        if !std::fs::metadata(&path)
+            .map(|m| m.is_file())
+            .unwrap_or(false)
+        {
+            zed::set_language_server_installation_status(
+                id,
+                &zed::LanguageServerInstallationStatus::Downloading,
+            );
             std::fs::create_dir_all(&dir).map_err(|e| format!("cannot create {dir}: {e}"))?;
-            zed::download_file(&asset.download_url, &path, zed::DownloadedFileType::Uncompressed)?;
+            zed::download_file(
+                &asset.download_url,
+                &path,
+                zed::DownloadedFileType::Uncompressed,
+            )?;
             zed::make_file_executable(&path)?;
             // older releases are not needed once the current one is in place
             if let Ok(entries) = std::fs::read_dir(".") {
@@ -69,27 +99,50 @@ impl DeclExtension {
 
 impl zed::Extension for DeclExtension {
     fn new() -> Self {
-        Self { cached_binary: None }
+        Self {
+            cached_binary: None,
+        }
     }
 
-    fn language_server_command(&mut self, id: &LanguageServerId, worktree: &zed::Worktree) -> Result<zed::Command> {
+    fn language_server_command(
+        &mut self,
+        id: &LanguageServerId,
+        worktree: &zed::Worktree,
+    ) -> Result<zed::Command> {
         let command = self.binary(id, worktree)?;
         let args = LspSettings::for_worktree("decl-lsp", worktree)
             .ok()
             .and_then(|s| s.binary)
             .and_then(|b| b.arguments)
             .unwrap_or_default();
-        Ok(zed::Command { command, args, env: Default::default() })
+        Ok(zed::Command {
+            command,
+            args,
+            env: Default::default(),
+        })
     }
 
-    fn language_server_workspace_configuration(&mut self, _id: &LanguageServerId, worktree: &zed::Worktree) -> Result<Option<zed::serde_json::Value>> {
+    fn language_server_workspace_configuration(
+        &mut self,
+        _id: &LanguageServerId,
+        worktree: &zed::Worktree,
+    ) -> Result<Option<zed::serde_json::Value>> {
         // `lsp.decl-lsp.settings` → the server's `decl` configuration (03_lsp.md §14)
-        let settings = LspSettings::for_worktree("decl-lsp", worktree).ok().and_then(|s| s.settings).unwrap_or_default();
+        let settings = LspSettings::for_worktree("decl-lsp", worktree)
+            .ok()
+            .and_then(|s| s.settings)
+            .unwrap_or_default();
         Ok(Some(zed::serde_json::json!({ "decl": settings })))
     }
 
-    fn language_server_initialization_options(&mut self, _id: &LanguageServerId, worktree: &zed::Worktree) -> Result<Option<zed::serde_json::Value>> {
-        Ok(LspSettings::for_worktree("decl-lsp", worktree).ok().and_then(|s| s.initialization_options))
+    fn language_server_initialization_options(
+        &mut self,
+        _id: &LanguageServerId,
+        worktree: &zed::Worktree,
+    ) -> Result<Option<zed::serde_json::Value>> {
+        Ok(LspSettings::for_worktree("decl-lsp", worktree)
+            .ok()
+            .and_then(|s| s.initialization_options))
     }
 }
 

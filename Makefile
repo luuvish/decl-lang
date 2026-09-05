@@ -1,29 +1,49 @@
 # Decl — three implementations, one behavior.
 #
-#   make verify        the gate: every implementation's own tests, then the
-#                      parity check that the TypeScript reference, the Rust
-#                      runtime, and the Python runtime are indistinguishable
-#   make parity        only the cross-implementation differential
-#   make test-<lang>   one implementation (typescript | rust | python)
-#   make site          the website (sync docs, copy the playground bundle, render)
+# From the repository root:
 #
-# Layout: decl-ts (npm workspace member `decl-lang`),
-# decl-rs (Cargo workspace member), decl-py (pip).
-# Requirements: Node.js >= 20, a Rust toolchain, Python >= 3.10 with a C
-# compiler (the grammar is compiled as an extension module).
+#   make verify          the gate: each implementation's own tests, then the
+#                        parity harness that holds the Rust and Python
+#                        implementations to the TypeScript reference byte for byte
+#   make lint            each language's type checker, linter, and formatter in
+#                        check mode (tsc, eslint, prettier; clippy, rustfmt;
+#                        mypy, ruff) — CI runs it beside the gate
+#   make format          rewrite every source in its language's canonical form
+#   make test-<lang>     one implementation's tests      (typescript | rust | python)
+#   make lint-<lang>     one language's checks
+#   make format-<lang>   one language's formatters
+#   make parity          the harness alone (tests/parity/differential.py)
+#   make site            the website (docs synced, the playground bundled, rendered)
+#   make clean           build outputs;  make distclean   environments too
+#
+# Toolchains: mise.toml pins them (`mise install`, docs/DEVELOPMENT.md); the
+# grammar is C, compiled into the Python extension by the platform's compiler.
+
 SHELL := /bin/bash
-PY ?= python3
-VENV := decl-py/.venv
-VPY := $(abspath $(VENV)/bin/python)
+PY    ?= python3
+VENV  := decl-py/.venv
+VPY   := $(abspath $(VENV)/bin/python)
 
-.PHONY: verify parity build-typescript test-typescript build-rust test-rust python-env test-python site clean
+.PHONY: verify lint format parity site clean distclean \
+        build-typescript test-typescript lint-typescript format-typescript \
+        build-rust test-rust lint-rust format-rust \
+        python-env test-python lint-python format-python
 
+# ---------------------------------------------------------------- the gate
 verify: test-typescript test-rust test-python parity
 	@echo "verify: all three implementations agree"
 
-# ---- TypeScript (the reference implementation) ----
+lint: lint-typescript lint-rust lint-python
+	@echo "lint: clean"
+
+format: format-typescript format-rust format-python
+
+# ---------------------------------------------------------------- TypeScript (the reference)
+# one npm workspace at the root: decl-ts, tree-sitter-decl, site, extension/vscode.
+# The web extension's test runner would download browsers on install; the CI
+# job that runs those tests installs them itself (npx playwright install).
 node_modules: package-lock.json
-	npm ci
+	PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1 npm ci
 
 build-typescript: node_modules
 	npm run build -w decl-lang
@@ -31,33 +51,68 @@ build-typescript: node_modules
 test-typescript: node_modules
 	npm test -w decl-lang
 
-# ---- Rust (native runtime) ----
+lint-typescript: node_modules
+	npm run typecheck
+	npm run lint
+	npm run format:check
+
+format-typescript: node_modules
+	npm run format
+	npm run lint:fix
+
+# ---------------------------------------------------------------- Rust
+# the Cargo workspace at the root (decl-rs); extension/zed is outside it
 build-rust:
-	cargo build --release
+	cargo build --locked --release
 
 test-rust: build-rust
-	cargo test --release
+	cargo test --locked --release
 	target/release/decl validate tests/validation
 
-# ---- Python (native runtime + package) ----
-# `npm run build` first: it copies the grammar sources the extension compiles
+lint-rust:
+	cargo fmt --all --check
+	cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
+	cd extension/zed && cargo fmt --check
+	cd extension/zed && cargo clippy --all-targets --locked -- -D warnings
+
+format-rust:
+	cargo fmt --all
+	cd extension/zed && cargo fmt
+
+# ---------------------------------------------------------------- Python
+# the venv holds the package (editable, with its dev tools) and the compiled
+# grammar; the reference build first, since it syncs the grammar sources
 python-env: build-typescript
 	test -x $(VENV)/bin/python || $(PY) -m venv $(VENV)
 	$(VPY) -m pip install -q --upgrade pip setuptools
-	$(VPY) -m pip install -q -e ./decl-py
+	$(VPY) -m pip install -q -e './decl-py[dev]'
 	cd decl-py && $(VPY) setup.py -q build_ext --inplace
 
 test-python: python-env
 	cd decl-py && $(VPY) scripts/e2e.py
 	$(VPY) -m decl.runtime validate tests/validation
+	cd decl-py && $(VPY) -m pytest -q
 
-# ---- parity: reference vs both native runtimes, byte for byte ----
+lint-python: python-env
+	cd decl-py && $(VPY) -m ruff check .
+	cd decl-py && $(VPY) -m ruff format --check .
+	cd decl-py && $(VPY) -m mypy decl
+
+format-python: python-env
+	cd decl-py && $(VPY) -m ruff format .
+	cd decl-py && $(VPY) -m ruff check --fix .
+
+# ---------------------------------------------------------------- parity
 parity: build-typescript build-rust python-env
 	DECL_PYTHON=$(VPY) $(VPY) tests/parity/differential.py
 
-# ---- the website ----
+# ---------------------------------------------------------------- the website
 site: build-typescript
 	npm run build -w site
 
+# ---------------------------------------------------------------- cleaning
 clean:
-	rm -rf decl-ts/dist target decl-py/build decl-py/decl/*.egg-info decl-py/decl/_tree_sitter/*.so site/dist
+	rm -rf decl-ts/dist target extension/zed/target decl-py/build decl-py/decl/*.egg-info decl-py/decl/_tree_sitter/*.so site/dist
+
+distclean: clean
+	rm -rf node_modules $(VENV)

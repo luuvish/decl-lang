@@ -1,7 +1,7 @@
 {
   "name": "decl-lang-monorepo",
   "private": true,
-  "description": "Decl \u2014 one language, three implementations (decl-ts, decl-rs, decl-py), the shared grammar and conformance corpus, and the website",
+  "description": "Decl — one language, three implementations (decl-ts, decl-rs, decl-py), the shared grammar and conformance corpus, and the website",
   "workspaces": [
     "decl-ts",
     "tree-sitter-decl",
@@ -11,7 +11,22 @@
   "scripts": {
     "build": "npm run build -w decl-lang",
     "test": "npm test -w decl-lang",
+    "typecheck": "tsc -p decl-ts && tsc -p extension/vscode",
+    "lint": "eslint .",
+    "lint:fix": "eslint . --fix",
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
     "site": "npm run build -w site",
     "verify": "make verify"
+  },
+  "devDependencies": {
+    "@eslint/js": "^10.0.1",
+    "@types/node": "^26.4.1",
+    "eslint": "^10.10.0",
+    "eslint-config-prettier": "^10.1.8",
+    "globals": "^17.12.0",
+    "prettier": "^3.9.6",
+    "typescript": "^6.0.3",
+    "typescript-eslint": "^8.69.0"
   }
 }

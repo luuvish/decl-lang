@@ -1,6 +1,7 @@
 """Smoke-test the Python package the way a user gets it: build the wheel,
 install it into a fresh venv, and drive the installed `decl` console
 script and the `decl` API — fully native, no Node.js involved."""
+
 from __future__ import annotations
 
 import json
@@ -25,7 +26,9 @@ def check(name: str, cond: bool, detail: str = "") -> None:
         print(f"  FAIL {name} {detail}")
 
 
-def sh(*cmd: str, cwd: str | Path | None = None, env: dict | None = None) -> subprocess.CompletedProcess:
+def sh(
+    *cmd: str, cwd: str | Path | None = None, env: dict | None = None
+) -> subprocess.CompletedProcess:
     return subprocess.run(list(cmd), cwd=cwd, env=env, capture_output=True, text=True, check=False)
 
 
@@ -46,13 +49,17 @@ with tempfile.TemporaryDirectory(prefix="decl-py-smoke-") as tmp:
     src = Path(tmp) / "t.decl"
     src.write_text("type T = { a: int, const b = a * 2 }\nexport output t: T = { a: 21 }\n")
     r = sh(str(decl_bin), "evaluate", str(src), "--root", "t")
-    check("installed decl evaluates", r.returncode == 0 and r.stdout.strip() == '{"a":21,"b":42}', r.stderr[-300:])
+    check(
+        "installed decl evaluates",
+        r.returncode == 0 and r.stdout.strip() == '{"a":21,"b":42}',
+        r.stderr[-300:],
+    )
 
     prog = f"""
 import json, decl
 v = decl.evaluate({str(src)!r}, root='t')
 d = decl.check({str(src)!r})
-bad = {str(Path(tmp) / 'bad.decl')!r}
+bad = {str(Path(tmp) / "bad.decl")!r}
 open(bad, 'w').write('type Bad = 10..3\\n')
 e = decl.check(bad)
 f = decl.format_source('const x=1+2\\n')
@@ -62,7 +69,9 @@ print(json.dumps({{'v': v, 'clean': d, 'codes': [x['code'] for x in e], 'f': f}}
     out = json.loads(r.stdout.strip() or "{}") if r.returncode == 0 else {}
     check("decl.evaluate returns the value", out.get("v") == {"a": 21, "b": 42}, r.stderr[-300:])
     check("decl.check returns [] when clean", out.get("clean") == [])
-    check("decl.check returns coded diagnostics", out.get("codes") == ["E4011"], str(out.get("codes")))
+    check(
+        "decl.check returns coded diagnostics", out.get("codes") == ["E4011"], str(out.get("codes"))
+    )
     check("decl.format_source canonicalizes", out.get("f") == "const x = 1 + 2\n")
 
     r = sh(str(py), "-c", "import decl; print(decl.__version__)")

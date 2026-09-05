@@ -19,10 +19,13 @@ const bytes = (b64: string): Uint8Array => {
 
 const worker: any = self;
 const feed = connect({
-  send: msg => worker.postMessage(msg),
-  init: async opts => {
+  send: (msg) => worker.postMessage(msg),
+  init: async (opts) => {
     const w = opts?.wasm ?? {};
-    await initParser({ grammar: bytes(w.grammar), runtime: w.runtime ? bytes(w.runtime) : undefined });
+    await initParser({
+      grammar: bytes(w.grammar),
+      runtime: w.runtime ? bytes(w.runtime) : undefined,
+    });
   },
   exit: () => worker.close(),
 });

@@ -1,0 +1,3 @@
+"""The C extension (binding.c): the grammar as a capsule the `tree_sitter` package accepts."""
+
+def language() -> object: ...

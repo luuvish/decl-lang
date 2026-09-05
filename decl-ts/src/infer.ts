@@ -22,19 +22,32 @@ export interface ICtx {
   record?: (e: Expr, ty: Ty) => void;
   resolveHook?: (e: Expr, target: Target | null) => void;
   vars: Map<string, Ty>;
-  present: Set<string>;   // narrowed definitely-present paths
-  nonnull: Set<string>;   // narrowed non-null paths
+  present: Set<string>; // narrowed definitely-present paths
+  nonnull: Set<string>; // narrowed non-null paths
   constMemo: Map<string, Ty>;
 }
 
 export function makeCtx(env: Env, report: (code: string, msg: string) => void): ICtx {
-  return { env, report, pos: {}, vars: new Map(), present: new Set(), nonnull: new Set(), constMemo: new Map() };
+  return {
+    env,
+    report,
+    pos: {},
+    vars: new Map(),
+    present: new Set(),
+    nonnull: new Set(),
+    constMemo: new Map(),
+  };
 }
-const child = (cx: ICtx, vars?: Map<string, Ty>): ICtx =>
-  ({ ...cx, vars: vars ?? new Map(cx.vars), present: new Set(cx.present), nonnull: new Set(cx.nonnull) });
+const child = (cx: ICtx, vars?: Map<string, Ty>): ICtx => ({
+  ...cx,
+  vars: vars ?? new Map(cx.vars),
+  present: new Set(cx.present),
+  nonnull: new Set(cx.nonnull),
+});
 
 // ---------------- type utilities ----------------
-const isNullLit = (t: RT) => (t.t === 'lit' && t.v === null) || (t.t === 'prim' && t.name === 'null');
+const isNullLit = (t: RT) =>
+  (t.t === 'lit' && t.v === null) || (t.t === 'prim' && t.name === 'null');
 export function hasNull(rt: RT | null): boolean {
   if (!rt) return false;
   if (isNullLit(rt)) return true;
@@ -49,10 +62,13 @@ function stripNull(rt: RT): RT {
   return rt;
 }
 function mkUnion(arms: (RT | null)[]): RT | null {
-  if (arms.some(a => !a)) return null;
+  if (arms.some((a) => !a)) return null;
   const flat: RT[] = [];
-  for (const a of arms as RT[]) (a.t === 'union' ? flat.push(...a.arms) : flat.push(a));
-  const uniq = flat.filter((a, i) => flat.findIndex(b => sameRT(a, b)) === i);
+  for (const a of arms) {
+    if (a.t === 'union') flat.push(...a.arms);
+    else flat.push(a);
+  }
+  const uniq = flat.filter((a, i) => flat.findIndex((b) => sameRT(a, b)) === i);
   return uniq.length === 1 ? uniq[0] : { t: 'union', arms: uniq };
 }
 function sameRT(a: RT, b: RT): boolean {
@@ -92,7 +108,10 @@ function armOf(rt: RT | null, t: string): RT | null {
   if (rt.t === 'pred') return armOf(rt.base, t);
   if (rt.t === t) return rt;
   if (rt.t === 'isectN') {
-    for (const x of rt.arms) { const v = armOf(x, t); if (v) return v; }
+    for (const x of rt.arms) {
+      const v = armOf(x, t);
+      if (v) return v;
+    }
   }
   if (rt.t === 'union') {
     // e.g. `xs ?? []`: every arm must present the wanted shape
@@ -108,15 +127,20 @@ function armOf(rt: RT | null, t: string): RT | null {
 // ---------------- navigation paths & narrowing ----------------
 function pathKey(e: Expr): string | null {
   switch (e.e) {
-    case 'name': return e.name;
-    case 'ctx': return e.name;
-    case 'paren': return pathKey(e.x);
+    case 'name':
+      return e.name;
+    case 'ctx':
+      return e.name;
+    case 'paren':
+      return pathKey(e.x);
     case 'member': {
       if (e.safe) return null;
-      const b = pathKey(e.x); return b ? `${b}.${e.name}` : null;
+      const b = pathKey(e.x);
+      return b ? `${b}.${e.name}` : null;
     }
     case 'index': {
-      const b = pathKey(e.x); if (!b) return null;
+      const b = pathKey(e.x);
+      if (!b) return null;
       if (e.i.e === 'lit') return `${b}[${String(e.i.v)}]`;
       if (e.i.e === 'name') return `${b}[${e.i.name}]`;
       return null;
@@ -128,22 +152,27 @@ type Guards = { present: string[]; nonnull: string[] };
 export function guardsOf(e: Expr, polarity: boolean): Guards {
   const none: Guards = { present: [], nonnull: [] };
   switch (e.e) {
-    case 'paren': return guardsOf(e.x, polarity);
-    case 'un': return e.op === '!' ? guardsOf(e.x, !polarity) : none;
+    case 'paren':
+      return guardsOf(e.x, polarity);
+    case 'un':
+      return e.op === '!' ? guardsOf(e.x, !polarity) : none;
     case 'bin': {
       if (e.op === '&&' && polarity) return merge(guardsOf(e.l, true), guardsOf(e.r, true));
       if (e.op === '||' && !polarity) return merge(guardsOf(e.l, false), guardsOf(e.r, false));
       if (e.op === 'in' && polarity) {
         const b = pathKey(e.r);
         if (!b) return none;
-        if (e.l.e === 'lit' && typeof e.l.v === 'string') return { present: [`${b}.${e.l.v}`, `${b}[${e.l.v}]`], nonnull: [] };
+        if (e.l.e === 'lit' && typeof e.l.v === 'string')
+          return { present: [`${b}.${e.l.v}`, `${b}[${e.l.v}]`], nonnull: [] };
         if (e.l.e === 'name') return { present: [`${b}[${e.l.name}]`], nonnull: [] };
         return none;
       }
-      const nullSide = e.l.e === 'lit' && e.l.v === null ? e.r : e.r.e === 'lit' && e.r.v === null ? e.l : null;
+      const nullSide =
+        e.l.e === 'lit' && e.l.v === null ? e.r : e.r.e === 'lit' && e.r.v === null ? e.l : null;
       if (nullSide) {
         const p = pathKey(nullSide);
-        if (p && ((e.op === '!=' && polarity) || (e.op === '==' && !polarity))) return { present: [], nonnull: [p] };
+        if (p && ((e.op === '!=' && polarity) || (e.op === '==' && !polarity)))
+          return { present: [], nonnull: [p] };
       }
       return none;
     }
@@ -153,17 +182,24 @@ export function guardsOf(e: Expr, polarity: boolean): Guards {
 // is a name already taken here? (locals or the module namespace — the
 // no-shadowing rule E3019 spans both)
 function nameBound(cx: ICtx, n: string): boolean {
-  return cx.vars.has(n) || cx.env.consts.has(n) || cx.env.funcs.has(n)
-    || cx.env.typeAsts.has(n) || cx.env.inputs.has(n)
-    || cx.env.outputs.some(o => o.name === n);
+  return (
+    cx.vars.has(n) ||
+    cx.env.consts.has(n) ||
+    cx.env.funcs.has(n) ||
+    cx.env.typeAsts.has(n) ||
+    cx.env.inputs.has(n) ||
+    cx.env.outputs.some((o) => o.name === n)
+  );
 }
 
-const merge = (a: Guards, b: Guards): Guards =>
-  ({ present: [...a.present, ...b.present], nonnull: [...a.nonnull, ...b.nonnull] });
+const merge = (a: Guards, b: Guards): Guards => ({
+  present: [...a.present, ...b.present],
+  nonnull: [...a.nonnull, ...b.nonnull],
+});
 export function applyGuards(cx: ICtx, g: Guards): ICtx {
   const c2 = child(cx);
-  g.present.forEach(p => c2.present.add(p));
-  g.nonnull.forEach(p => c2.nonnull.add(p));
+  g.present.forEach((p) => c2.present.add(p));
+  g.nonnull.forEach((p) => c2.nonnull.add(p));
   return c2;
 }
 
@@ -211,14 +247,21 @@ export function stdPath(e: Expr): string | null {
 // ---------------- the judgment ----------------
 export function tryResolve(env: Env, ast: TypeAst | undefined): RT | null {
   if (!ast) return null;
-  try { return env.resolve(ast); } catch { return null; }
+  try {
+    return env.resolve(ast);
+  } catch {
+    return null;
+  }
 }
 
 export function requireVal(cx: ICtx, e: Expr, ty: Ty, what: string): Ty {
   if (ty.abs) {
     const k = pathKey(e);
     if (!k || !cx.present.has(k))
-      cx.report('E4050', `maybe-absent expression consumed ${what} (use ?. / ?? or an \`in\` guard)`);
+      cx.report(
+        'E4050',
+        `maybe-absent expression consumed ${what} (use ?. / ?? or an \`in\` guard)`,
+      );
   }
   return ty;
 }
@@ -231,12 +274,18 @@ export function infer(cx: ICtx, e: Expr): Ty {
     if (cx.record) cx.record(e, ty);
     if (cx.resolveHook && e.e === 'name') cx.resolveHook(e, resolveName(cx, e.name));
     return ty;
+  } finally {
+    cx.pos.at = prev;
   }
-  finally { cx.pos.at = prev; }
 }
 
 /** what a name denotes: the declaration behind it, imports followed to their module */
-export type Target = { kind: 'var' | 'const' | 'func' | 'output' | 'input' | 'namespace' | 'type' | 'diagnostic' | 'export'; env: Env | null; name: string };
+export type Target = {
+  kind:
+    'var' | 'const' | 'func' | 'output' | 'input' | 'namespace' | 'type' | 'diagnostic' | 'export';
+  env: Env | null;
+  name: string;
+};
 export function resolveName(cx: ICtx, name: string): Target | null {
   if (cx.vars.has(name)) return { kind: 'var', env: null, name };
   return resolveIn(cx.env, name);
@@ -244,7 +293,7 @@ export function resolveName(cx: ICtx, name: string): Target | null {
 export function resolveIn(env: Env, name: string): Target | null {
   if (env.consts.has(name)) return { kind: 'const', env, name };
   if (env.funcs.has(name)) return { kind: 'func', env, name };
-  if (env.outputs.some(o => o.name === name)) return { kind: 'output', env, name };
+  if (env.outputs.some((o) => o.name === name)) return { kind: 'output', env, name };
   if (env.inputs.has(name)) return { kind: 'input', env, name };
   const im = env.imports.get(name);
   if (im) return resolveIn(im.env, im.name) ?? { kind: 'export', env: im.env, name: im.name };
@@ -255,18 +304,27 @@ export function resolveIn(env: Env, name: string): Target | null {
 }
 function infer0(cx: ICtx, e: Expr): Ty {
   switch (e.e) {
-    case 'lit': return { rt: { t: 'lit', v: e.v }, abs: false };
+    case 'lit':
+      return { rt: { t: 'lit', v: e.v }, abs: false };
     case 'pattern': {
       const bad = patternError(e.re);
-      if (bad) { cx.report('E4119', `malformed pattern /${e.re}/: ${bad}`); return UNK; }
+      if (bad) {
+        cx.report('E4119', `malformed pattern /${e.re}/: ${bad}`);
+        return UNK;
+      }
       return { rt: { t: 'pattern', src: e.re, re: compilePattern(e.re) }, abs: false };
     }
     case 'unitlit': {
-      try { return { rt: { t: 'quantity', dim: cx.env.unitInfo(e.unit).key }, abs: false }; }
-      catch (err: any) { cx.report('E4073', err.message); return UNK; }
+      try {
+        return { rt: { t: 'quantity', dim: cx.env.unitInfo(e.unit).key }, abs: false };
+      } catch (err: any) {
+        cx.report('E4073', err.message);
+        return UNK;
+      }
     }
     case 'template': {
-      for (const p of e.parts) if (typeof p !== 'string') requireVal(cx, p, infer(cx, p), 'in a template');
+      for (const p of e.parts)
+        if (typeof p !== 'string') requireVal(cx, p, infer(cx, p), 'in a template');
       return { rt: PRIM('string'), abs: false };
     }
     case 'name': {
@@ -275,40 +333,54 @@ function infer0(cx: ICtx, e: Expr): Ty {
       if (env.consts.has(e.name)) return constTy(cx, e.name);
       if (env.funcs.has(e.name)) return { rt: funcRT(cx, e.name), abs: false };
       if (e.name === 'std') return UNK;
-      const o = env.outputs.find(o => o.name === e.name);
+      const o = env.outputs.find((o) => o.name === e.name);
       if (o) return { rt: tryResolve(env, o.type), abs: false };
-      if (env.inputs.has(e.name)) return { rt: tryResolve(env, env.inputs.get(e.name)!.type), abs: false };
+      if (env.inputs.has(e.name))
+        return { rt: tryResolve(env, env.inputs.get(e.name)!.type), abs: false };
       const im = env.imports.get(e.name);
       if (im) return importedTy(cx, im);
-      if (env.namespaces.has(e.name)) { cx.report('E3008', `namespace name ${e.name} used as a value`); return UNK; }
-      if (env.typeAsts.has(e.name)) { cx.report('E3008', `type/namespace name ${e.name} used as a value`); return UNK; }
+      if (env.namespaces.has(e.name)) {
+        cx.report('E3008', `namespace name ${e.name} used as a value`);
+        return UNK;
+      }
+      if (env.typeAsts.has(e.name)) {
+        cx.report('E3008', `type/namespace name ${e.name} used as a value`);
+        return UNK;
+      }
       cx.report('E3003', `unknown name ${e.name}`);
       return UNK;
     }
-    case 'ctx': return cx.vars.get(e.name) ?? UNK;
+    case 'ctx':
+      return cx.vars.get(e.name) ?? UNK;
     case 'referrers': {
       const rt = tryResolve(cx.env, { k: 'named', name: e.type, args: [] });
       if (!rt) cx.report('E4091', `$referrers: unknown record type ${e.type}`);
       else if (rt.t !== 'rec') cx.report('E4091', `$referrers: ${e.type} is not a record type`);
-      return { rt: rt && rt.t === 'rec' ? { t: 'arr', elem: { t: 'ref', target: rt } } : null, abs: false };
+      return {
+        rt: rt && rt.t === 'rec' ? { t: 'arr', elem: { t: 'ref', target: rt } } : null,
+        abs: false,
+      };
     }
     case 'obj': {
-      for (const en of e.entries) requireVal(cx, en.val, infer(cx, en.val), 'as a construction member');
-      return UNK;   // literals are typed by their checked position (§3.18)
+      for (const en of e.entries)
+        requireVal(cx, en.val, infer(cx, en.val), 'as a construction member');
+      return UNK; // literals are typed by their checked position (§3.18)
     }
     case 'arr': {
-      const ts = e.items.map(it => {
+      const ts = e.items.map((it) => {
         const t = requireVal(cx, it.expr, infer(cx, it.expr), 'as an array element');
         return it.spread ? (t.rt?.t === 'arr' ? t.rt.elem : null) : t.rt;
       });
       const elem = mkUnion(ts);
       return { rt: elem ? { t: 'arr', elem } : null, abs: false };
     }
-    case 'comp': case 'mapcomp': {
+    case 'comp':
+    case 'mapcomp': {
       let c2 = child(cx);
       for (const cl of e.clauses) {
         const vt = iterVarTy(c2, cl.iter);
-        if (nameBound(c2, cl.v)) cx.report('E3019', `comprehension variable ${cl.v} shadows an enclosing name`);
+        if (nameBound(c2, cl.v))
+          cx.report('E3019', `comprehension variable ${cl.v} shadows an enclosing name`);
         c2.vars.set(cl.v, vt);
         for (const f of cl.filters) {
           requireVal(c2, f, infer(c2, f), 'as a filter');
@@ -320,20 +392,30 @@ function infer0(cx: ICtx, e: Expr): Ty {
         return { rt: h.rt ? { t: 'arr', elem: h.rt } : null, abs: false };
       }
       const k = requireVal(c2, e.key, infer(c2, e.key), 'as a map key');
-      if (k.rt && numKind(k.rt) !== 'string') cx.report('E4001', 'map-comprehension key is not a string');
+      if (k.rt && numKind(k.rt) !== 'string')
+        cx.report('E4001', 'map-comprehension key is not a string');
       const v = requireVal(c2, e.val, infer(c2, e.val), 'as a map value');
       return { rt: v.rt ? { t: 'map', key: PRIM('string'), val: v.rt } : null, abs: false };
     }
-    case 'bin': return inferBin(cx, e);
+    case 'bin':
+      return inferBin(cx, e);
     case 'un': {
       const t = requireVal(cx, e.x, infer(cx, e.x), `as \`${e.op}\` operand`);
-      if (e.op === '!') { if (t.rt && !isBoolish(t.rt)) cx.report('E4071', '`!` on a non-bool operand'); return BOOL; }
-      if (e.op === '~') { if (t.rt && numKind(t.rt) !== 'int') cx.report('E4071', '`~` on a non-int operand'); return { rt: PRIM('int'), abs: false }; }
+      if (e.op === '!') {
+        if (t.rt && !isBoolish(t.rt)) cx.report('E4071', '`!` on a non-bool operand');
+        return BOOL;
+      }
+      if (e.op === '~') {
+        if (t.rt && numKind(t.rt) !== 'int') cx.report('E4071', '`~` on a non-int operand');
+        return { rt: PRIM('int'), abs: false };
+      }
       const k = numKind(t.rt);
-      if (t.rt && k !== 'int' && k !== 'float' && k !== 'quantity') cx.report('E4071', 'unary `-` on a non-numeric operand');
+      if (t.rt && k !== 'int' && k !== 'float' && k !== 'quantity')
+        cx.report('E4071', 'unary `-` on a non-numeric operand');
       return { rt: k === 'int' || k === 'float' ? PRIM(k) : null, abs: false };
     }
-    case 'paren': return infer(cx, e.x);
+    case 'paren':
+      return infer(cx, e.x);
     case 'if': {
       const c = requireVal(cx, e.c, infer(cx, e.c), 'as a condition');
       if (c.rt && !isBoolish(c.rt)) cx.report('E4001', '`if` condition is not bool');
@@ -350,8 +432,10 @@ function infer0(cx: ICtx, e: Expr): Ty {
       infer(c2, e.body);
       return UNK;
     }
-    case 'call': return inferCall(cx, e);
-    case 'member': return inferMember(cx, e);
+    case 'call':
+      return inferCall(cx, e);
+    case 'member':
+      return inferMember(cx, e);
     case 'index': {
       const b = requireVal(cx, e.x, infer(cx, e.x), 'for indexing');
       return indexCore(cx, b, e);
@@ -359,19 +443,26 @@ function infer0(cx: ICtx, e: Expr): Ty {
     case 'with': {
       const b = requireVal(cx, e.base, infer(cx, e.base), 'as `with` base');
       const brt = b.rt && b.rt.t === 'ref' ? b.rt.target : b.rt;
-      if (brt && brt.t !== 'rec') { cx.report('E4080', '`with` on a non-record base'); return UNK; }
+      if (brt && brt.t !== 'rec') {
+        cx.report('E4080', '`with` on a non-record base');
+        return UNK;
+      }
       if (e.patch.e === 'obj' && brt) {
         for (const en of e.patch.entries) {
           const m = brt.members.find((m: any) => m.name === en.key);
           if (!m && !brt.open) cx.report('E4080', `\`with\` updates unknown member ${en.key}`);
-          else if (m?.kind === 'der') cx.report('E4080', `\`with\` updates derived member ${en.key}`);
+          else if (m?.kind === 'der')
+            cx.report('E4080', `\`with\` updates derived member ${en.key}`);
         }
       }
-      if (e.patch.e === 'obj') for (const en of e.patch.entries) requireVal(cx, en.val, infer(cx, en.val), 'as a `with` update');
+      if (e.patch.e === 'obj')
+        for (const en of e.patch.entries)
+          requireVal(cx, en.val, infer(cx, en.val), 'as a `with` update');
       else infer(cx, e.patch);
       return { rt: brt, abs: false };
     }
-    case 'match': return inferMatch(cx, e, null);
+    case 'match':
+      return inferMatch(cx, e, null);
   }
   return UNK;
 }
@@ -381,7 +472,10 @@ function iterVarTy(cx: ICtx, iter: Expr): Ty {
   if (iter.e === 'bin' && (iter.op === '..' || iter.op === '..<')) {
     const lo = iter.l.e === 'lit' ? iter.l.v : undefined;
     const hi = iter.r.e === 'lit' ? iter.r.v : undefined;
-    if (typeof lo === 'number' || typeof hi === 'number') { cx.report('E4115', 'comprehension over a float range'); return UNK; }
+    if (typeof lo === 'number' || typeof hi === 'number') {
+      cx.report('E4115', 'comprehension over a float range');
+      return UNK;
+    }
     if (lo !== undefined && hi !== undefined)
       return { rt: { t: 'range', base: 'int', lo, hi, excl: iter.op === '..<' }, abs: false };
     return { rt: PRIM('int'), abs: false };
@@ -389,20 +483,25 @@ function iterVarTy(cx: ICtx, iter: Expr): Ty {
   if (!t.rt) return UNK;
   const asArr = armOf(t.rt, 'arr');
   if (asArr) return { rt: asArr.elem, abs: false };
-  cx.report('E4115', `comprehension over a non-iterable ${armOf(t.rt, 'map') ? 'map (use std.map.keys/values)' : 'value'}`);
+  cx.report(
+    'E4115',
+    `comprehension over a non-iterable ${armOf(t.rt, 'map') ? 'map (use std.map.keys/values)' : 'value'}`,
+  );
   return UNK;
 }
 
 function inferBin(cx: ICtx, e: Expr & { e: 'bin' }): Ty {
   const { op } = e;
-  if (op === '|>') {   // first-argument insertion (§4.9)
-    const call: Expr = e.r.e === 'call'
-      ? { e: 'call', fn: e.r.fn, args: [e.l, ...e.r.args] }
-      : { e: 'call', fn: e.r, args: [e.l] };
-    return inferCall(cx, call as any);
+  if (op === '|>') {
+    // first-argument insertion (§4.9)
+    const call: Expr =
+      e.r.e === 'call'
+        ? { e: 'call', fn: e.r.fn, args: [e.l, ...e.r.args] }
+        : { e: 'call', fn: e.r, args: [e.l] };
+    return inferCall(cx, call);
   }
   if (op === '??') {
-    const l = infer(cx, e.l);   // absence/null on the left is the point
+    const l = infer(cx, e.l); // absence/null on the left is the point
     const r = requireVal(cx, e.r, infer(cx, e.r), 'as `??` fallback');
     return { rt: l.rt && r.rt ? mkUnion([stripNull(l.rt), r.rt]) : null, abs: false };
   }
@@ -420,50 +519,72 @@ function inferBin(cx: ICtx, e: Expr & { e: 'bin' }): Ty {
     const rrt = r.rt && r.rt.t === 'ref' ? r.rt.target : r.rt;
     if (rrt && rrt.t === 'rec' && e.l.e === 'lit' && typeof e.l.v === 'string') {
       const m = rrt.members.find((m: any) => m.name === (e.l as any).v);
-      if (m && m.kind !== 'opt') cx.report('E4054', `\`in\` on member ${e.l.v}, which is not optional`);
-      if (!m && !rrt.open) cx.report('E4054', `\`in\` on undeclared member ${e.l.v} of a closed record`);
+      if (m && m.kind !== 'opt')
+        cx.report('E4054', `\`in\` on member ${e.l.v}, which is not optional`);
+      if (!m && !rrt.open)
+        cx.report('E4054', `\`in\` on undeclared member ${e.l.v} of a closed record`);
     }
     return BOOL;
   }
   if (op === '..' || op === '..<') {
     requireVal(cx, e.l, infer(cx, e.l), 'as a range endpoint');
     requireVal(cx, e.r, infer(cx, e.r), 'as a range endpoint');
-    return UNK;   // a range value: iterable / membership container only
+    return UNK; // a range value: iterable / membership container only
   }
   const l = requireVal(cx, e.l, infer(cx, e.l), `as \`${op}\` operand`);
   const r = requireVal(cx, e.r, infer(cx, e.r), `as \`${op}\` operand`);
   if (op === 'matches') {
-    if (l.rt && numKind(l.rt) !== 'string') cx.report('E4071', '`matches` needs a string left operand');
+    if (l.rt && numKind(l.rt) !== 'string')
+      cx.report('E4071', '`matches` needs a string left operand');
     return BOOL;
   }
   if (op === '==' || op === '!=') return BOOL;
-  const lk = numKind(l.rt), rk = numKind(r.rt);
+  const lk = numKind(l.rt),
+    rk = numKind(r.rt);
   const cmp = ['<', '<=', '>', '>='].includes(op);
   if (lk === 'quantity' || rk === 'quantity') {
     // §3.16: +/-/compare need equal dimensions; * and / compose them;
     // a bare int/float scales; a cancelled vector is a plain number
     const qDim = (rt: RT | null): string | null =>
-      rt && rt.t === 'quantity' ? rt.dim : rt && rt.t === 'pred' && rt.base.t === 'quantity' ? rt.base.dim : null;
+      rt && rt.t === 'quantity'
+        ? rt.dim
+        : rt && rt.t === 'pred' && rt.base.t === 'quantity'
+          ? rt.base.dim
+          : null;
     if (op === '+' || op === '-' || cmp) {
       if (l.rt && r.rt) {
         if (lk !== 'quantity' || rk !== 'quantity')
           cx.report('E4071', `\`${op}\` mixes quantity and ${lk === 'quantity' ? rk : lk}`);
         else {
-          const a = qDim(l.rt), b = qDim(r.rt);
+          const a = qDim(l.rt),
+            b = qDim(r.rt);
           if (a !== null && b !== null && a !== b)
-            cx.report('E4072', `\`${op}\` on quantities of different dimensions (${a || '1'} vs ${b || '1'})`);
+            cx.report(
+              'E4072',
+              `\`${op}\` on quantities of different dimensions (${a || '1'} vs ${b || '1'})`,
+            );
         }
       }
       return cmp ? BOOL : { rt: lk === 'quantity' ? l.rt : r.rt, abs: false };
     }
     if (op === '*' || op === '/') {
       if (!l.rt || !r.rt) return UNK;
-      const lv = qDim(l.rt), rv = qDim(r.rt);
-      if ((lv === null && lk !== 'int' && lk !== 'float') || (rv === null && rk !== 'int' && rk !== 'float')) {
+      const lv = qDim(l.rt),
+        rv = qDim(r.rt);
+      if (
+        (lv === null && lk !== 'int' && lk !== 'float') ||
+        (rv === null && rk !== 'int' && rk !== 'float')
+      ) {
         cx.report('E4071', `\`${op}\` on a non-numeric operand`);
         return UNK;
       }
-      const key = keyOfVec(vecCombine(lv !== null ? vecOfKey(lv) : {}, rv !== null ? vecOfKey(rv) : {}, op === '*' ? 1 : -1));
+      const key = keyOfVec(
+        vecCombine(
+          lv !== null ? vecOfKey(lv) : {},
+          rv !== null ? vecOfKey(rv) : {},
+          op === '*' ? 1 : -1,
+        ),
+      );
       return { rt: key === '' ? PRIM('float') : { t: 'quantity', dim: key }, abs: false };
     }
     cx.report('E4071', `\`${op}\` on quantity operands`);
@@ -473,27 +594,35 @@ function inferBin(cx: ICtx, e: Expr & { e: 'bin' }): Ty {
     cx.report('E4071', `\`${op}\` mixes ${lk} and ${rk} operands`);
   if (cmp) return BOOL;
   if (['&', '^', '<<', '>>'].includes(op)) {
-    if ((l.rt && lk !== 'int') || (r.rt && rk !== 'int')) cx.report('E4071', `\`${op}\` on non-int operands`);
+    if ((l.rt && lk !== 'int') || (r.rt && rk !== 'int'))
+      cx.report('E4071', `\`${op}\` on non-int operands`);
     return { rt: PRIM('int'), abs: false };
   }
-  if (op === '|') {   // bitwise on ints (type-level | never reaches expressions)
-    if ((l.rt && lk !== 'int') || (r.rt && rk !== 'int')) cx.report('E4071', '`|` on non-int operands');
+  if (op === '|') {
+    // bitwise on ints (type-level | never reaches expressions)
+    if ((l.rt && lk !== 'int') || (r.rt && rk !== 'int'))
+      cx.report('E4071', '`|` on non-int operands');
     return { rt: PRIM('int'), abs: false };
   }
   // + - * / %
   if (op === '+' && lk === 'string' && rk === 'string') return { rt: PRIM('string'), abs: false };
   if (l.rt && r.rt && lk && rk) {
-    if (!['int', 'float', 'quantity'].includes(lk)) cx.report('E4071', `\`${op}\` on ${lk} operands`);
+    if (!['int', 'float', 'quantity'].includes(lk))
+      cx.report('E4071', `\`${op}\` on ${lk} operands`);
     if (lk === 'int' && ['+', '-', '*'].includes(op)) {
       // interval arithmetic keeps range-typed operands range-typed, so
       // `9000 + i` with i: 0..<3 stays assignable where 1..65535 is expected
-      const a = asIval(l.rt), b = asIval(r.rt);
+      const a = asIval(l.rt),
+        b = asIval(r.rt);
       if (a && b) {
-        const cands = op === '+' ? [a[0] + b[0], a[1] + b[1]]
-          : op === '-' ? [a[0] - b[1], a[1] - b[0]]
-          : [a[0] * b[0], a[0] * b[1], a[1] * b[0], a[1] * b[1]];
-        const lo = cands.reduce((x, y) => x < y ? x : y);
-        const hi = cands.reduce((x, y) => x > y ? x : y);
+        const cands =
+          op === '+'
+            ? [a[0] + b[0], a[1] + b[1]]
+            : op === '-'
+              ? [a[0] - b[1], a[1] - b[0]]
+              : [a[0] * b[0], a[0] * b[1], a[1] * b[0], a[1] * b[1]];
+        const lo = cands.reduce((x, y) => (x < y ? x : y));
+        const hi = cands.reduce((x, y) => (x > y ? x : y));
         return { rt: { t: 'range', base: 'int', lo, hi, excl: false }, abs: false };
       }
     }
@@ -503,13 +632,20 @@ function inferBin(cx: ICtx, e: Expr & { e: 'bin' }): Ty {
 }
 function asIval(rt: RT): [bigint, bigint] | null {
   if (rt.t === 'lit' && typeof rt.v === 'bigint') return [rt.v, rt.v];
-  if (rt.t === 'range' && rt.base === 'int' && typeof rt.lo === 'bigint' && typeof rt.hi === 'bigint')
+  if (
+    rt.t === 'range' &&
+    rt.base === 'int' &&
+    typeof rt.lo === 'bigint' &&
+    typeof rt.hi === 'bigint'
+  )
     return [rt.lo, rt.excl ? rt.hi - 1n : rt.hi];
   if (rt.t === 'union') {
     const ivs = rt.arms.map(asIval);
     if (ivs.every((v: any) => v))
-      return [ivs.reduce((x: bigint, v: any) => v[0] < x ? v[0] : x, ivs[0]![0]),
-              ivs.reduce((x: bigint, v: any) => v[1] > x ? v[1] : x, ivs[0]![1])];
+      return [
+        ivs.reduce((x: bigint, v: any) => (v[0] < x ? v[0] : x), ivs[0]![0]),
+        ivs.reduce((x: bigint, v: any) => (v[1] > x ? v[1] : x), ivs[0]![1]),
+      ];
   }
   if (rt.t === 'pred') return asIval(rt.base);
   return null;
@@ -528,7 +664,7 @@ function indexCore(cx: ICtx, b: Ty, e: Expr & { e: 'index' }): Ty {
     const k = pathKey(e);
     return { rt: asMap.val, abs: !(k && cx.present.has(k)) };
   }
-  if (armOf(b.rt, 'rec')) return UNK;   // dynamic member access
+  if (armOf(b.rt, 'rec')) return UNK; // dynamic member access
   cx.report('E4071', 'indexing a non-collection');
   return UNK;
 }
@@ -541,24 +677,42 @@ function importedTy(cx: ICtx, ex: { env: Env; name: string }): Ty {
     // its expression inferred silently in the exporting module
     const c = t.consts.get(ex.name)!;
     const anno = tryResolve(t, (c as any).type);
-    return anno ? { rt: anno, abs: false } : infer(makeCtx(t, () => { }), c.expr);
+    return anno
+      ? { rt: anno, abs: false }
+      : infer(
+          makeCtx(t, () => {}),
+          c.expr,
+        );
   }
   if (t.funcs.has(ex.name)) {
     const f = t.funcs.get(ex.name)!;
-    return { rt: { t: 'func', params: f.params.map(p => tryResolve(t, p.type) ?? { t: 'any' }), ret: tryResolve(t, f.ret) ?? null }, abs: false };
+    return {
+      rt: {
+        t: 'func',
+        params: f.params.map((p) => tryResolve(t, p.type) ?? { t: 'any' }),
+        ret: tryResolve(t, f.ret) ?? null,
+      },
+      abs: false,
+    };
   }
-  const o = t.outputs.find(o => o.name === ex.name);
+  const o = t.outputs.find((o) => o.name === ex.name);
   if (o) return { rt: tryResolve(t, o.type), abs: false };
   if (t.inputs.has(ex.name)) return { rt: tryResolve(t, t.inputs.get(ex.name)!.type), abs: false };
-  if (t.typeAsts.has(ex.name)) { cx.report('E3008', `type name ${ex.name} used as a value`); return UNK; }
+  if (t.typeAsts.has(ex.name)) {
+    cx.report('E3008', `type name ${ex.name} used as a value`);
+    return UNK;
+  }
   return UNK;
 }
 
 function inferMember(cx: ICtx, e: Expr & { e: 'member' }): Ty {
-  if (stdPath(e) !== null) return UNK;   // std.* namespace path (typed at the call)
+  if (stdPath(e) !== null) return UNK; // std.* namespace path (typed at the call)
   if (e.x.e === 'name' && !cx.vars.has(e.x.name) && cx.env.namespaces.has(e.x.name)) {
     const ex = cx.env.namespaces.get(e.x.name)!.exports.get(e.name);
-    if (!ex) { cx.report('E3005', `namespace ${e.x.name} has no export ${e.name}`); return UNK; }
+    if (!ex) {
+      cx.report('E3005', `namespace ${e.x.name} has no export ${e.name}`);
+      return UNK;
+    }
     return importedTy(cx, ex);
   }
   const b = infer(cx, e.x);
@@ -576,12 +730,13 @@ function memberCore(cx: ICtx, b: Ty, e: Expr & { e: 'member' }): Ty {
   if (brt && brt.t === 'ref') brt = brt.target;
   if (brt && brt.t === 'pred') brt = brt.base;
   if (brt && brt.t === 'isectN') brt = armOf(brt, 'rec') ?? armOf(brt, 'map') ?? brt;
-  const mkAbs = (t: Ty): Ty => e.safe ? { rt: t.rt, abs: true } : t;
+  const mkAbs = (t: Ty): Ty => (e.safe ? { rt: t.rt, abs: true } : t);
   if (!brt) return mkAbs(UNK);
   if (brt.t === 'rec') {
     const m = brt.members.find((m: any) => m.name === e.name);
     if (!m) {
-      if (!brt.open) cx.report('E4003', `member ${e.name} is not declared on ${brt.name ?? 'this record'}`);
+      if (!brt.open)
+        cx.report('E4003', `member ${e.name} is not declared on ${brt.name ?? 'this record'}`);
       return mkAbs(UNK);
     }
     const rt: RT | null = m.conj ? { t: 'isectN', arms: m.conj } : (m.type ?? null);
@@ -608,17 +763,21 @@ function funcRT(cx: ICtx, name: string): RT {
   const f = cx.env.funcs.get(name)!;
   return {
     t: 'func',
-    params: f.params.map(p => tryResolve(cx.env, p.type) ?? { t: 'any' }),
+    params: f.params.map((p) => tryResolve(cx.env, p.type) ?? { t: 'any' }),
     ret: tryResolve(cx.env, f.ret) ?? null,
   };
 }
 function constTy(cx: ICtx, name: string): Ty {
   if (cx.constMemo.has(name)) return cx.constMemo.get(name)!;
-  cx.constMemo.set(name, UNK);   // cycle guard
+  cx.constMemo.set(name, UNK); // cycle guard
   const c = cx.env.consts.get(name)!;
   const anno = tryResolve(cx.env, (c as any).type);
-  const ty: Ty = anno ? { rt: anno, abs: false }
-    : infer(makeCtx(cx.env, () => { }), c.expr);   // silent module-scope inference
+  const ty: Ty = anno
+    ? { rt: anno, abs: false }
+    : infer(
+        makeCtx(cx.env, () => {}),
+        c.expr,
+      ); // silent module-scope inference
   cx.constMemo.set(name, ty);
   return ty;
 }
@@ -631,7 +790,10 @@ function inferCall(cx: ICtx, e: Expr & { e: 'call' }): Ty {
     if (sig && e.args.length !== sig.arity)
       cx.report('E4062', `std.${sp} expects ${sig.arity} argument(s), got ${e.args.length}`);
     for (const a of e.args) {
-      if (a.e === 'lambda') { infer(cx, a); continue; }
+      if (a.e === 'lambda') {
+        infer(cx, a);
+        continue;
+      }
       requireVal(cx, a, infer(cx, a), 'as an argument');
     }
     return { rt: sig?.ret ?? null, abs: false };
@@ -641,9 +803,16 @@ function inferCall(cx: ICtx, e: Expr & { e: 'call' }): Ty {
   if (frt && e.args.length !== frt.params.length)
     cx.report('E4062', `call expects ${frt.params.length} argument(s), got ${e.args.length}`);
   e.args.forEach((a, i) => {
-    const expected: RT | null = frt && i < frt.params.length && frt.params[i].t !== 'any' ? frt.params[i] : null;
-    if (a.e === 'lambda' && expected && expected.t === 'func') { checkLambda(cx, a, expected); return; }
-    if (a.e === 'lambda') { infer(cx, a); return; }
+    const expected: RT | null =
+      frt && i < frt.params.length && frt.params[i].t !== 'any' ? frt.params[i] : null;
+    if (a.e === 'lambda' && expected && expected.t === 'func') {
+      checkLambda(cx, a, expected);
+      return;
+    }
+    if (a.e === 'lambda') {
+      infer(cx, a);
+      return;
+    }
     const at = requireVal(cx, a, infer(cx, a), 'as an argument');
     if (at.rt && expected && !subsumes(cx.env, at.rt, expected) && !deferrable(at.rt, expected))
       cx.report('E4001', `argument ${i + 1} is not assignable to its parameter`);
@@ -651,14 +820,22 @@ function inferCall(cx: ICtx, e: Expr & { e: 'call' }): Ty {
   return { rt: frt?.ret ?? null, abs: false };
 }
 function checkLambda(cx: ICtx, e: Expr & { e: 'lambda' }, expected: RT) {
-  if (e.params.length !== expected.params.length) { cx.report('E4062', 'lambda arity differs from expected function type'); return; }
+  if (e.params.length !== expected.params.length) {
+    cx.report('E4062', 'lambda arity differs from expected function type');
+    return;
+  }
   const c2 = child(cx);
   e.params.forEach((p, i) => {
     if (nameBound(c2, p)) cx.report('E3019', `lambda parameter ${p} shadows an enclosing name`);
     c2.vars.set(p, { rt: expected.params[i].t === 'any' ? null : expected.params[i], abs: false });
   });
   const b = requireVal(c2, e.body, infer(c2, e.body), 'as a lambda result');
-  if (b.rt && expected.ret && !subsumes(cx.env, b.rt, expected.ret) && !deferrable(b.rt, expected.ret))
+  if (
+    b.rt &&
+    expected.ret &&
+    !subsumes(cx.env, b.rt, expected.ret) &&
+    !deferrable(b.rt, expected.ret)
+  )
     cx.report('E4001', 'lambda body is not assignable to the expected result type');
 }
 
@@ -668,7 +845,8 @@ function inferMatch(cx: ICtx, e: Expr & { e: 'match' }, expected: RT | null): Ty
   let variants: RT[] | null = null;
   if (s.rt) {
     const srt = stripNull(s.rt);
-    if (srt.t === 'union') variants = hasNull(s.rt) ? [...srt.arms, { t: 'lit', v: null }] : srt.arms;
+    if (srt.t === 'union')
+      variants = hasNull(s.rt) ? [...srt.arms, { t: 'lit', v: null }] : srt.arms;
     else cx.report('E4103', '`match` subject is not a discriminable union');
   }
   const covered = new Set<number>();
@@ -676,13 +854,16 @@ function inferMatch(cx: ICtx, e: Expr & { e: 'match' }, expected: RT | null): Ty
   const results: (RT | null)[] = [];
   for (const arm of e.arms) {
     const c2 = child(cx);
-    if (nameBound(c2, arm.v)) cx.report('E3019', `match binding ${arm.v} shadows an enclosing name`);
+    if (nameBound(c2, arm.v))
+      cx.report('E3019', `match binding ${arm.v} shadows an enclosing name`);
     let armTy: RT | null = null;
     if (arm.type) {
       armTy = tryResolve(cx.env, arm.type);
       if (arm.type && !armTy) cx.report('E3003', `unknown type in match arm`);
       if (variants && armTy) {
-        const sel = variants.map((v, i) => [v, i] as const).filter(([v]) => subsumes(cx.env, v, armTy!));
+        const sel = variants
+          .map((v, i) => [v, i] as const)
+          .filter(([v]) => subsumes(cx.env, v, armTy));
         for (const [, i] of sel) {
           if (covered.has(i)) cx.report('E4100', `match arms overlap on a variant`);
           covered.add(i);
@@ -692,12 +873,18 @@ function inferMatch(cx: ICtx, e: Expr & { e: 'match' }, expected: RT | null): Ty
       catchAlls++;
       if (variants) {
         const rest = variants.filter((_, i) => !covered.has(i));
-        if (rest.length === 0) cx.report('E4102', 'match catch-all is dead (typed arms are exhaustive)');
+        if (rest.length === 0)
+          cx.report('E4102', 'match catch-all is dead (typed arms are exhaustive)');
         armTy = mkUnion(rest);
       }
     }
     c2.vars.set(arm.v, { rt: armTy, abs: false });
-    const b = requireVal(c2, arm.body, expected ? checkExpr(c2, arm.body, expected) : infer(c2, arm.body), 'as a match result');
+    const b = requireVal(
+      c2,
+      arm.body,
+      expected ? checkExpr(c2, arm.body, expected) : infer(c2, arm.body),
+      'as a match result',
+    );
     results.push(b.rt);
   }
   if (catchAlls > 1) cx.report('E4100', 'more than one match catch-all arm');
@@ -712,17 +899,22 @@ function inferMatch(cx: ICtx, e: Expr & { e: 'match' }, expected: RT | null): Ty
 // place holds a value is reference integrity (§7.5), checked at binding
 function placeTy(cx: ICtx, e: Expr): Ty {
   switch (e.e) {
-    case 'paren': return placeTy(cx, e.x);
+    case 'paren':
+      return placeTy(cx, e.x);
     case 'member': {
       const base = placeTy(cx, e.x);
       // a hidden member's value is not part of any document: no reference
       // can target it (§7.5, D34)
       const rec = base.rt?.t === 'ref' ? base.rt.target : base.rt;
       if (rec?.t === 'rec' && rec.members.find((m: any) => m.name === e.name)?.hidden)
-        cx.report('E4093', `\`ref\` position navigates hidden member ${e.name} — not part of the value (§7.5)`);
+        cx.report(
+          'E4093',
+          `\`ref\` position navigates hidden member ${e.name} — not part of the value (§7.5)`,
+        );
       return memberCore(cx, base, e);
     }
-    case 'index': return indexCore(cx, placeTy(cx, e.x), e);
+    case 'index':
+      return indexCore(cx, placeTy(cx, e.x), e);
     case 'if': {
       // a conditional between places is a place: each branch is read in
       // the ref position, the condition as an ordinary value (§7.4)
@@ -736,17 +928,26 @@ function placeTy(cx: ICtx, e: Expr): Ty {
       // the spine root must be a root-derived place, never a module
       // const (§7.5, D32)
       if (e.e === 'name' && !cx.vars.has(e.name) && cx.env.consts.has(e.name))
-        cx.report('E4093', `\`ref\` position navigates module const ${e.name} — not a root-derived place (§7.5)`);
+        cx.report(
+          'E4093',
+          `\`ref\` position navigates module const ${e.name} — not a root-derived place (§7.5)`,
+        );
       return infer(cx, e);
   }
 }
 
 export function checkExpr(cx: ICtx, e: Expr, expected: RT | null): Ty {
   if (!expected) return infer(cx, e);
-  if (expected.t === 'ref') { placeTy(cx, e); return { rt: expected, abs: false }; }   // place, not value (§7.4)
+  if (expected.t === 'ref') {
+    placeTy(cx, e);
+    return { rt: expected, abs: false };
+  } // place, not value (§7.4)
   if (expected.t === 'pred') return checkExpr(cx, e, expected.base);
-  if (expected.t === 'isectN' && (e.e === 'obj' || e.e === 'arr' || e.e === 'comp' || e.e === 'mapcomp')) {
-    for (const arm of expected.arms) checkExpr(cx, e, arm);   // a literal must satisfy every arm
+  if (
+    expected.t === 'isectN' &&
+    (e.e === 'obj' || e.e === 'arr' || e.e === 'comp' || e.e === 'mapcomp')
+  ) {
+    for (const arm of expected.arms) checkExpr(cx, e, arm); // a literal must satisfy every arm
     return { rt: expected, abs: false };
   }
   switch (e.e) {
@@ -755,7 +956,8 @@ export function checkExpr(cx: ICtx, e: Expr, expected: RT | null): Ty {
       let c2 = child(cx);
       for (const cl of e.clauses) {
         const vt = iterVarTy(c2, cl.iter);
-        if (nameBound(c2, cl.v)) cx.report('E3019', `comprehension variable ${cl.v} shadows an enclosing name`);
+        if (nameBound(c2, cl.v))
+          cx.report('E3019', `comprehension variable ${cl.v} shadows an enclosing name`);
         c2.vars.set(cl.v, vt);
         for (const f of cl.filters) {
           requireVal(c2, f, infer(c2, f), 'as a filter');
@@ -770,7 +972,8 @@ export function checkExpr(cx: ICtx, e: Expr, expected: RT | null): Ty {
       let c2 = child(cx);
       for (const cl of e.clauses) {
         const vt = iterVarTy(c2, cl.iter);
-        if (nameBound(c2, cl.v)) cx.report('E3019', `comprehension variable ${cl.v} shadows an enclosing name`);
+        if (nameBound(c2, cl.v))
+          cx.report('E3019', `comprehension variable ${cl.v} shadows an enclosing name`);
         c2.vars.set(cl.v, vt);
         for (const f of cl.filters) {
           requireVal(c2, f, infer(c2, f), 'as a filter');
@@ -778,11 +981,13 @@ export function checkExpr(cx: ICtx, e: Expr, expected: RT | null): Ty {
         }
       }
       const k = requireVal(c2, e.key, infer(c2, e.key), 'as a map key');
-      if (k.rt && numKind(k.rt) !== 'string') cx.report('E4001', 'map-comprehension key is not a string');
+      if (k.rt && numKind(k.rt) !== 'string')
+        cx.report('E4001', 'map-comprehension key is not a string');
       checkExpr(c2, e.val, expected.val);
       return { rt: expected, abs: false };
     }
-    case 'paren': return checkExpr(cx, e.x, expected);
+    case 'paren':
+      return checkExpr(cx, e.x, expected);
     case 'if': {
       const c = requireVal(cx, e.c, infer(cx, e.c), 'as a condition');
       if (c.rt && !isBoolish(c.rt)) cx.report('E4001', '`if` condition is not bool');
@@ -790,7 +995,8 @@ export function checkExpr(cx: ICtx, e: Expr, expected: RT | null): Ty {
       checkExpr(applyGuards(cx, guardsOf(e.c, false)), e.f, expected);
       return { rt: expected, abs: false };
     }
-    case 'match': return inferMatch(cx, e, expected);
+    case 'match':
+      return inferMatch(cx, e, expected);
     case 'obj': {
       if (expected.t === 'rec') {
         // entries see the record's members (siblings + inherited scope chain)
@@ -802,7 +1008,11 @@ export function checkExpr(cx: ICtx, e: Expr, expected: RT | null): Ty {
         for (const en of e.entries) {
           const m = expected.members.find((m: any) => m.name === en.key);
           if (!m) {
-            if (!expected.open) cx.report('E4003', `member ${en.key} is not declared on ${expected.name ?? 'the record'}`);
+            if (!expected.open)
+              cx.report(
+                'E4003',
+                `member ${en.key} is not declared on ${expected.name ?? 'the record'}`,
+              );
             requireVal(cxR, en.val, infer(cxR, en.val), 'as a construction member');
             continue;
           }
@@ -810,15 +1020,19 @@ export function checkExpr(cx: ICtx, e: Expr, expected: RT | null): Ty {
           requireVal(cxR, en.val, checkExpr(cxR, en.val, mt), 'as a construction member');
         }
         for (const m of expected.members)
-          if (m.kind === 'req' && !e.entries.some(en => en.key === m.name))
+          if (m.kind === 'req' && !e.entries.some((en) => en.key === m.name))
             cx.report('E4002', `required member ${m.name} missing in the construction`);
         return { rt: expected, abs: false };
       }
       if (expected.t === 'map') {
-        for (const en of e.entries) requireVal(cx, en.val, checkExpr(cx, en.val, expected.val), 'as a map value');
+        for (const en of e.entries)
+          requireVal(cx, en.val, checkExpr(cx, en.val, expected.val), 'as a map value');
         return { rt: expected, abs: false };
       }
-      if (expected.t === 'union') { infer(cx, e); return { rt: expected, abs: false }; }   // discriminated at binding
+      if (expected.t === 'union') {
+        infer(cx, e);
+        return { rt: expected, abs: false };
+      } // discriminated at binding
       infer(cx, e);
       cx.report('E4001', `object literal where ${expected.t} is expected`);
       return { rt: expected, abs: false };
@@ -826,7 +1040,10 @@ export function checkExpr(cx: ICtx, e: Expr, expected: RT | null): Ty {
     case 'arr': {
       if (expected.t === 'arr') {
         for (const it of e.items) {
-          if (it.spread) { requireVal(cx, it.expr, infer(cx, it.expr), 'as a spread'); continue; }
+          if (it.spread) {
+            requireVal(cx, it.expr, infer(cx, it.expr), 'as a spread');
+            continue;
+          }
           requireVal(cx, it.expr, checkExpr(cx, it.expr, expected.elem), 'as an array element');
         }
         return { rt: expected, abs: false };
@@ -834,7 +1051,10 @@ export function checkExpr(cx: ICtx, e: Expr, expected: RT | null): Ty {
       break;
     }
     case 'lambda':
-      if (expected.t === 'func') { checkLambda(cx, e, expected); return { rt: expected, abs: false }; }
+      if (expected.t === 'func') {
+        checkLambda(cx, e, expected);
+        return { rt: expected, abs: false };
+      }
       break;
   }
   const ty = requireVal(cx, e, infer(cx, e), 'as a value');
@@ -863,37 +1083,53 @@ function deferrable(s: RT, t: RT): boolean {
 // type syntax where it has one (`:type` in the REPL, hover in the editor)
 export function typeText(rt: RT | null): string {
   if (!rt) return 'unknown';
-  const lit = (v: any) => typeof v === 'bigint' ? v.toString() : typeof v === 'string' ? JSON.stringify(v) : String(v);
+  const lit = (v: any) =>
+    typeof v === 'bigint' ? v.toString() : typeof v === 'string' ? JSON.stringify(v) : String(v);
   switch (rt.t) {
-    case 'any': return 'any';
-    case 'prim': return rt.name;
-    case 'lit': return lit(rt.v);
-    case 'range': return `${lit(rt.lo)}..${rt.excl ? '<' : ''}${lit(rt.hi)}`;
-    case 'pattern': return `/${rt.src}/`;
-    case 'quantity': return `quantity<${rt.dim}>`;
-    case 'ref': return `ref<${typeText(rt.target)}>`;
-    case 'map': return `map<${typeText(rt.key)}, ${typeText(rt.val)}>`;
+    case 'any':
+      return 'any';
+    case 'prim':
+      return rt.name;
+    case 'lit':
+      return lit(rt.v);
+    case 'range':
+      return `${lit(rt.lo)}..${rt.excl ? '<' : ''}${lit(rt.hi)}`;
+    case 'pattern':
+      return `/${rt.src}/`;
+    case 'quantity':
+      return `quantity<${rt.dim}>`;
+    case 'ref':
+      return `ref<${typeText(rt.target)}>`;
+    case 'map':
+      return `map<${typeText(rt.key)}, ${typeText(rt.val)}>`;
     case 'arr': {
-      const b = rt.lo !== undefined || rt.hi !== undefined
-        ? `[${rt.lo ?? ''}..${rt.hi ?? ''}]` : '[]';
+      const b =
+        rt.lo !== undefined || rt.hi !== undefined ? `[${rt.lo ?? ''}..${rt.hi ?? ''}]` : '[]';
       const elem = typeText(rt.elem);
       // a compound element type is parenthesized (`(1 | 2)[]`, `(1..8)[]`), as the grammar's paren_type spells it
       return `${rt.elem && ['union', 'func', 'pred', 'range'].includes(rt.elem.t) ? `(${elem})` : elem}${b}`;
     }
     case 'union': {
       const arms: RT[] = rt.arms;
-      const nn = arms.filter(a => !((a.t === 'prim' && a.name === 'null') || (a.t === 'lit' && a.v === null)));
+      const nn = arms.filter(
+        (a) => !((a.t === 'prim' && a.name === 'null') || (a.t === 'lit' && a.v === null)),
+      );
       if (nn.length === arms.length - 1 && nn.length === 1) return `${typeText(nn[0])}?`;
       return arms.map(typeText).join(' | ');
     }
-    case 'pred': return `${typeText(rt.base)} where …`;
-    case 'func': return `(${(rt.params ?? []).map(typeText).join(', ')}) => ${typeText(rt.ret)}`;
+    case 'pred':
+      return `${typeText(rt.base)} where …`;
+    case 'func':
+      return `(${(rt.params ?? []).map(typeText).join(', ')}) => ${typeText(rt.ret)}`;
     case 'rec': {
       if (rt.name && !rt.name.startsWith('{')) return rt.name;
-      const ms = (rt.members ?? []).map((m: any) =>
-        `${m.name}${m.kind === 'opt' ? '?' : ''}${m.type ? `: ${typeText(m.type)}` : ''}${m.kind === 'der' || m.kind === 'dflt' ? ' = …' : ''}`);
+      const ms = (rt.members ?? []).map(
+        (m: any) =>
+          `${m.name}${m.kind === 'opt' ? '?' : ''}${m.type ? `: ${typeText(m.type)}` : ''}${m.kind === 'der' || m.kind === 'dflt' ? ' = …' : ''}`,
+      );
       return `{ ${ms.join(', ')}${rt.open ? (ms.length ? ', ...' : '...') : ''} }`;
     }
-    default: return '?';
+    default:
+      return '?';
   }
 }

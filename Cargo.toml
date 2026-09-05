@@ -3,3 +3,18 @@
 resolver = "2"
 exclude = ["extension/zed"]   # the Zed extension builds for wasm32-wasip1 by Zed's toolchain, on its own
 members = ["decl-rs"]
+
+# clippy for every member (decl-rs: `lints.workspace = true`); `cargo clippy
+# --workspace --all-targets -- -D warnings` is part of the gate. The three
+# allows follow from the ports mirroring the reference's shapes (AGENTS.md):
+[workspace.lints.clippy]
+# the environment's tables, the checker's hook callbacks, and multi-value
+# returns are the reference's record shapes; aliases would name them here only
+type_complexity = "allow"
+# the ports keep the reference's signatures, parameter for parameter
+too_many_arguments = "allow"
+# an Err carries the diagnostic record (Diag) with the exit code, as the reference's does
+result_large_err = "allow"
+# a judgment's environment parameter (§3.17, §3.19) is part of its signature
+# even where the judgment does not consult it, as in the reference
+only_used_in_recursion = "allow"

@@ -26,34 +26,41 @@ export type Verdict = { file: string; ok: boolean; detail: string };
 export function judgeFixture(file: string, isValid: boolean): Verdict {
   const src = readFileSync(file, 'utf8');
   const meta = Object.fromEntries(
-    [...src.matchAll(/\/\/ @([a-z-]+):\s*(.+)/g)].map(m => [m[1], m[2].trim()]),
+    [...src.matchAll(/\/\/ @([a-z-]+):\s*(.+)/g)].map((m) => [m[1], m[2].trim()]),
   );
   const phase = meta['expect-phase'];
   const wantCode = meta['expect-error'];
   const wantMsg = meta['expect-message'];
 
-  let verdict = false, detail = '';
+  let verdict = false;
+  let detail: string;
   const { decls, errors } = parseSource(src);
   if (isValid) {
     // a valid fixture must parse, check clean, AND evaluate its outputs
     // without error-severity diagnostics
     const checks = errors.length === 0 ? checkModule(decls) : [];
-    const evalErrs = errors.length === 0 && checks.length === 0
-      ? runPipeline(decls).diags.filter(d => d.severity === 'error') : [];
+    const evalErrs =
+      errors.length === 0 && checks.length === 0
+        ? runPipeline(decls).diags.filter((d) => d.severity === 'error')
+        : [];
     verdict = errors.length === 0 && checks.length === 0 && evalErrs.length === 0;
-    detail = errors.length ? `${errors.length} parse errors` : JSON.stringify([...checks, ...evalErrs]);
+    detail = errors.length
+      ? `${errors.length} parse errors`
+      : JSON.stringify([...checks, ...evalErrs]);
   } else if (phase === 'parsing') {
     verdict = errors.length > 0;
     detail = 'expected parse errors, got none';
   } else if (phase === 'checking') {
     const checks = errors.length === 0 ? checkModule(decls) : [];
-    verdict = checks.some(d => d.code === wantCode)
-      && (!wantMsg || checks.some(d => d.message.includes(wantMsg)));
+    verdict =
+      checks.some((d) => d.code === wantCode) &&
+      (!wantMsg || checks.some((d) => d.message.includes(wantMsg)));
     detail = JSON.stringify(checks);
   } else if (phase === 'binding') {
     const diags = errors.length === 0 ? runPipeline(decls).diags : [];
-    verdict = diags.some(d => d.code === wantCode)
-      && (!wantMsg || diags.some(d => d.message.includes(wantMsg)));
+    verdict =
+      diags.some((d) => d.code === wantCode) &&
+      (!wantMsg || diags.some((d) => d.message.includes(wantMsg)));
     detail = JSON.stringify(diags);
   } else {
     detail = `unknown phase ${phase}`;
@@ -63,8 +70,7 @@ export function judgeFixture(file: string, isValid: boolean): Verdict {
 
 export function judgeCorpus(dir: string): Verdict[] {
   const out: Verdict[] = [];
-  for (const file of walkDecl(dir))
-    out.push(judgeFixture(file, file.includes('/valid/')));
+  for (const file of walkDecl(dir)) out.push(judgeFixture(file, file.includes('/valid/')));
   return out;
 }
 
@@ -72,11 +78,17 @@ export function judgeCorpus(dir: string): Verdict[] {
 if (process.argv[1] && /conformance\.(ts|js)$/.test(process.argv[1])) {
   const root = join(dirname(fileURLToPath(import.meta.url)), '../..');
   await initParser();
-  let ok = 0, fail = 0;
+  let ok = 0,
+    fail = 0;
   for (const v of judgeCorpus(join(root, 'tests/validation'))) {
     const rel = v.file.slice(root.length + 1);
-    if (v.ok) { ok++; console.log(`  ok   ${rel}`); }
-    else { fail++; console.log(`  FAIL ${rel} ${v.detail}`); }
+    if (v.ok) {
+      ok++;
+      console.log(`  ok   ${rel}`);
+    } else {
+      fail++;
+      console.log(`  FAIL ${rel} ${v.detail}`);
+    }
   }
   console.log(`\n${ok} ok, ${fail} failed`);
   process.exitCode = fail > 0 ? 1 : 0;

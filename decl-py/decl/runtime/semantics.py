@@ -3,12 +3,13 @@ reference implementation's semantics.ts (decl-ts/src). Types and ASTs are
 plain dicts shaped exactly like the TypeScript objects; values use
 Python natives for scalars (int / float / str / bool / None) plus the
 small classes below."""
+
 from __future__ import annotations
 
-import copy
 import json
 import re
-from typing import Any, Callable, Optional
+from collections.abc import Callable
+from typing import Any, NoReturn, TypeGuard
 
 
 # ---------------- values ----------------
@@ -22,19 +23,19 @@ class _Absent:
 ABSENT = _Absent()
 
 
-def is_int(v: Any) -> bool:
+def is_int(v: Any) -> TypeGuard[int]:
     return type(v) is int
 
 
-def is_float(v: Any) -> bool:
+def is_float(v: Any) -> TypeGuard[float]:
     return type(v) is float
 
 
-def is_bool(v: Any) -> bool:
+def is_bool(v: Any) -> TypeGuard[bool]:
     return type(v) is bool
 
 
-def is_str(v: Any) -> bool:
+def is_str(v: Any) -> TypeGuard[str]:
     return type(v) is str
 
 
@@ -48,42 +49,42 @@ class Quantity:
 class Ref:
     __slots__ = ("segs",)
 
-    def __init__(self, segs: list):
+    def __init__(self, segs: list[Any]):
         self.segs = segs
 
 
 class RangeV:
-    __slots__ = ("lo", "hi", "excl")
+    __slots__ = ("excl", "hi", "lo")
 
-    def __init__(self, lo, hi, excl: bool):
+    def __init__(self, lo: Any, hi: Any, excl: bool) -> None:
         self.lo, self.hi, self.excl = lo, hi, excl
 
 
 class Closure:
-    __slots__ = ("params", "body", "scope")
+    __slots__ = ("body", "params", "scope")
 
-    def __init__(self, params, body, scope):
+    def __init__(self, params: Any, body: Any, scope: Any) -> None:
         self.params, self.body, self.scope = params, body, scope
 
 
 class NatFn:
     __slots__ = ("fn",)
 
-    def __init__(self, fn: Callable):
+    def __init__(self, fn: Callable[..., Any]):
         self.fn = fn
 
 
 class StdRef:
     __slots__ = ("path",)
 
-    def __init__(self, path: list):
+    def __init__(self, path: list[Any]):
         self.path = path
 
 
 class NsRef:
     __slots__ = ("env", "exports")
 
-    def __init__(self, env, exports):
+    def __init__(self, env: Any, exports: Any) -> None:
         self.env, self.exports = env, exports
 
 
@@ -96,38 +97,40 @@ class Pattern:
 
 class PreVal:
     """An unevaluated literal entry: expression + the scope it closes over."""
+
     __slots__ = ("expr", "scope")
 
-    def __init__(self, expr, scope):
+    def __init__(self, expr: Any, scope: Any) -> None:
         self.expr, self.scope = expr, scope
 
 
 class PreObj:
     __slots__ = ("entries",)
 
-    def __init__(self, entries: list):
-        self.entries = entries          # [(key, PreVal | value)]
+    def __init__(self, entries: list[Any]):
+        self.entries = entries  # [(key, PreVal | value)]
 
 
 class PreArr:
     __slots__ = ("items",)
 
-    def __init__(self, items: list):
-        self.items = items              # [(spread: bool, PreVal | value)]
+    def __init__(self, items: list[Any]):
+        self.items = items  # [(spread: bool, PreVal | value)]
 
 
 class JObj:
     """A lexical-JSON object (ordered entries), as read from a document."""
+
     __slots__ = ("entries",)
 
-    def __init__(self, entries: list):
-        self.entries = entries          # [(key, value)]
+    def __init__(self, entries: list[Any]):
+        self.entries = entries  # [(key, value)]
 
 
 class Segs:
     __slots__ = ("segs",)
 
-    def __init__(self, segs: list):
+    def __init__(self, segs: list[Any]):
         self.segs = segs
 
 
@@ -135,77 +138,91 @@ class Key:
     """A map key inside a canonical path (§7.2) — kept apart from a record
     member because the canonical text differs: a map key is always
     bracketed, a member is dotted when the dot can spell it."""
+
     __slots__ = ("k",)
 
     def __init__(self, k: str):
         self.k = k
 
-    def __eq__(self, other):
+    def __eq__(self, other: Any) -> Any:
         return isinstance(other, Key) and other.k == self.k
 
-    def __hash__(self):
+    def __hash__(self) -> Any:
         return hash(("key", self.k))
 
-    def __repr__(self):
+    def __repr__(self) -> Any:
         return f"Key({self.k!r})"
 
 
-def seg_text(s):
+def seg_text(s: Any) -> Any:
     return s.k if isinstance(s, Key) else s
 
 
-def dot_spellable(name) -> bool:
+def dot_spellable(name: Any) -> bool:
     """§3.11, §4.3: identifier-shaped and not a literal keyword."""
-    return isinstance(name, str) and _ID_RE.match(name) is not None and name not in ("true", "false", "null")
+    return (
+        isinstance(name, str)
+        and _ID_RE.match(name) is not None
+        and name not in ("true", "false", "null")
+    )
 
 
 class ArrV:
     __slots__ = ("items", "path")
 
-    def __init__(self, items: list, path: list):
+    def __init__(self, items: list[Any], path: list[Any]):
         self.items, self.path = items, path
 
 
 class MapV:
     __slots__ = ("entries", "path")
 
-    def __init__(self, entries: dict, path: list):
+    def __init__(self, entries: dict[str, Any], path: list[Any]):
         self.entries, self.path = entries, path
 
 
 class Slot:
-    __slots__ = ("kind", "state", "value", "deferred", "compute", "hidden")
+    __slots__ = ("compute", "deferred", "hidden", "kind", "state", "value")
 
-    def __init__(self, kind: str, state: str, deferred: bool = False, compute=None, hidden: bool = False):
+    def __init__(
+        self,
+        kind: str,
+        state: str,
+        deferred: bool = False,
+        compute: Any = None,
+        hidden: bool = False,
+    ) -> None:
         self.kind, self.state, self.deferred, self.compute = kind, state, deferred, compute
         self.value = None
-        self.hidden = hidden   # `x$ = e`: computed, never part of the value (D34)
+        self.hidden = hidden  # `x$ = e`: computed, never part of the value (D34)
 
 
 class RecInst:
-    __slots__ = ("type_name", "rt", "path", "parent", "slots", "entry_order", "extras", "menv")
+    __slots__ = ("entry_order", "extras", "menv", "parent", "path", "rt", "slots", "type_name")
 
-    def __init__(self, type_name, rt, path, parent):
+    def __init__(self, type_name: Any, rt: Any, path: Any, parent: Any) -> None:
         self.type_name, self.rt, self.path, self.parent = type_name, rt, path, parent
-        self.slots: dict = {}
-        self.entry_order: list = []
-        self.extras: dict = {}
+        self.slots: dict[str, Any] = {}
+        self.entry_order: list[Any] = []
+        self.extras: dict[str, Any] = {}
         self.menv = None
 
 
 class Scope:
-    __slots__ = ("inst", "locals", "root_name", "menv")
+    __slots__ = ("inst", "locals", "menv", "root_name")
 
-    def __init__(self, inst, locals_: dict, root_name: str, menv=None):
+    def __init__(
+        self, inst: Any, locals_: dict[str, Any], root_name: str, menv: Any = None
+    ) -> None:
         self.inst, self.locals, self.root_name, self.menv = inst, locals_, root_name, menv
 
-    def with_locals(self, locals_: dict) -> "Scope":
+    def with_locals(self, locals_: dict[str, Any]) -> Scope:
         return Scope(self.inst, locals_, self.root_name, self.menv)
 
-    def with_inst(self, inst) -> "Scope":
+    def with_inst(self, inst: Any) -> Scope:
         return Scope(inst, self.locals, self.root_name, self.menv)
 
-    def with_menv(self, menv) -> "Scope":
+    def with_menv(self, menv: Any) -> Scope:
         return Scope(self.inst, self.locals, self.root_name, menv)
 
 
@@ -218,19 +235,19 @@ class DeferSig(Exception):
 
 
 class EvalErr(Exception):
-    def __init__(self, msg: str, code: Optional[str] = None):
+    def __init__(self, msg: str, code: str | None = None):
         super().__init__(msg)
         self.msg, self.code = msg, code
 
 
 # ---------------- dimensions as exponent vectors (§3.16) ----------------
-def key_of_vec(v: dict) -> str:
+def key_of_vec(v: dict[str, Any]) -> str:
     parts = sorted((n, e) for n, e in v.items() if e != 0)
     return "*".join(n if e == 1 else f"{n}^{e}" for n, e in parts)
 
 
-def vec_of_key(key: str) -> dict:
-    v: dict = {}
+def vec_of_key(key: str) -> dict[str, Any]:
+    v: dict[str, Any] = {}
     if not key:
         return v
     for p in key.split("*"):
@@ -239,7 +256,7 @@ def vec_of_key(key: str) -> dict:
     return v
 
 
-def vec_combine(a: dict, b: dict, sign: int) -> dict:
+def vec_combine(a: dict[str, Any], b: dict[str, Any], sign: int) -> dict[str, Any]:
     out = dict(a)
     for n, e in b.items():
         out[n] = out.get(n, 0) + sign * e
@@ -248,62 +265,88 @@ def vec_combine(a: dict, b: dict, sign: int) -> dict:
 
 # ---------------- environment ----------------
 SI_PREFIXES = [
-    ("y", 1e-24), ("z", 1e-21), ("a", 1e-18), ("f", 1e-15), ("p", 1e-12),
-    ("n", 1e-9), ("u", 1e-6), ("m", 1e-3), ("c", 1e-2), ("d", 1e-1),
-    ("da", 1e1), ("h", 1e2), ("k", 1e3), ("M", 1e6), ("G", 1e9),
-    ("T", 1e12), ("P", 1e15), ("E", 1e18), ("Z", 1e21), ("Y", 1e24),
+    ("y", 1e-24),
+    ("z", 1e-21),
+    ("a", 1e-18),
+    ("f", 1e-15),
+    ("p", 1e-12),
+    ("n", 1e-9),
+    ("u", 1e-6),
+    ("m", 1e-3),
+    ("c", 1e-2),
+    ("d", 1e-1),
+    ("da", 1e1),
+    ("h", 1e2),
+    ("k", 1e3),
+    ("M", 1e6),
+    ("G", 1e9),
+    ("T", 1e12),
+    ("P", 1e15),
+    ("E", 1e18),
+    ("Z", 1e21),
+    ("Y", 1e24),
 ]
 
 
-def _t(name: str, exp: int) -> dict:
+def _t(name: str, exp: int) -> dict[str, Any]:
     return {"name": name, "exp": exp}
 
 
 class Env:
     def __init__(self) -> None:
-        self.type_asts: dict = {}
-        self.type_memo: dict = {}
+        self.type_asts: dict[str, Any] = {}
+        self.type_memo: dict[str, Any] = {}
         # names being spliced into a pattern right now, across nested
         # resolutions — a mutually recursive pair is a cycle, not a stack overflow
-        self.pattern_visiting: set = set()
-        self.consts: dict = {}
-        self.funcs: dict = {}
-        self.duplicates: list = []
-        self.outputs: list = []
-        self.inputs: dict = {}
-        self.diags: dict = {}
-        self.registry: list = []
-        self.roots: dict = {}
-        self.diagnostics: list = []
+        self.pattern_visiting: set[Any] = set()
+        self.consts: dict[str, Any] = {}
+        self.funcs: dict[str, Any] = {}
+        self.duplicates: list[Any] = []
+        self.outputs: list[Any] = []
+        self.inputs: dict[str, Any] = {}
+        self.diags: dict[str, Any] = {}
+        self.registry: list[Any] = []
+        self.roots: dict[str, Any] = {}
+        self.diagnostics: list[Any] = []
         # installed by the engine: the evaluation step a report is attributed to
-        self.tagger: Optional[Callable[[], Optional[str]]] = None
-        self.const_eval: Optional[Callable[[str], Any]] = None
-        self.expr_eval: Optional[Callable[[dict], Any]] = None
-        self.imports: dict = {}
-        self.namespaces: dict = {}
-        self.on_const_diag: Optional[Callable[[dict], None]] = None
-        self._const_diag_seen: set = set()
-        self.dim_decls: dict = {}
-        self.dim_memo: dict = {}
-        self.unit_decls: dict = {}
-        self.unit_memo: dict = {}
-        self.base_unit_of: dict = {}
-        self.space_diags: list = []
+        self.tagger: Callable[[], str | None] | None = None
+        self.const_eval: Callable[[str], Any] | None = None
+        self.expr_eval: Callable[[dict[str, Any]], Any] | None = None
+        self.imports: dict[str, Any] = {}
+        self.namespaces: dict[str, Any] = {}
+        self.on_const_diag: Callable[[dict[str, Any]], None] | None = None
+        self._const_diag_seen: set[Any] = set()
+        self.dim_decls: dict[str, Any] = {}
+        self.dim_memo: dict[str, Any] = {}
+        self.unit_decls: dict[str, Any] = {}
+        self.unit_memo: dict[str, Any] = {}
+        self.base_unit_of: dict[str, Any] = {}
+        self.space_diags: list[Any] = []
         self._seed_units()
 
     # std.units — the SI catalog generated from the §13.10 prefix rule (D15)
     def _seed_units(self) -> None:
-        def dim(name, terms=None):
+        def dim(name: Any, terms: Any = None) -> None:
             self.dim_decls[name] = {"terms": terms}
 
-        def unit(sym, dim_=None, factor=None, base=None):
+        def unit(sym: Any, dim_: Any = None, factor: Any = None, base: Any = None) -> None:
             if sym in self.unit_decls:
                 return
-            self.unit_decls[sym] = {"dim": dim_} if dim_ is not None else \
-                {"factor": {"e": "lit", "v": float(factor)}, "base": base}
+            self.unit_decls[sym] = (
+                {"dim": dim_}
+                if dim_ is not None
+                else {"factor": {"e": "lit", "v": float(factor)}, "base": base}
+            )
 
-        bases = [("Time", "s"), ("Length", "m"), ("Mass", "kg"), ("Current", "A"),
-                 ("Temperature", "K"), ("Amount", "mol"), ("LuminousIntensity", "cd")]
+        bases = [
+            ("Time", "s"),
+            ("Length", "m"),
+            ("Mass", "kg"),
+            ("Current", "A"),
+            ("Temperature", "K"),
+            ("Amount", "mol"),
+            ("LuminousIntensity", "cd"),
+        ]
         for d, _ in bases:
             dim(d)
         derived = [
@@ -314,8 +357,16 @@ class Env:
             ("Power", [_t("Mass", 1), _t("Length", 2), _t("Time", -3)], "W"),
             ("Charge", [_t("Current", 1), _t("Time", 1)], "C"),
             ("Voltage", [_t("Mass", 1), _t("Length", 2), _t("Time", -3), _t("Current", -1)], "V"),
-            ("Resistance", [_t("Mass", 1), _t("Length", 2), _t("Time", -3), _t("Current", -2)], "Ohm"),
-            ("Capacitance", [_t("Mass", -1), _t("Length", -2), _t("Time", 4), _t("Current", 2)], "F"),
+            (
+                "Resistance",
+                [_t("Mass", 1), _t("Length", 2), _t("Time", -3), _t("Current", -2)],
+                "Ohm",
+            ),
+            (
+                "Capacitance",
+                [_t("Mass", -1), _t("Length", -2), _t("Time", 4), _t("Current", 2)],
+                "F",
+            ),
             ("DataSize", None, "bit"),
         ]
         for d, terms, _ in derived:
@@ -326,20 +377,28 @@ class Env:
             unit(s, dim_=d)
         unit("B", factor=8, base="bit")
         unit("g", factor=1e-3, base="kg")
-        prefixable = [s for _, s in bases if s != "kg"] + [s for _, _, s in derived if s != "bit"] + ["g"]
+        prefixable = (
+            [s for _, s in bases if s != "kg"] + [s for _, _, s in derived if s != "bit"] + ["g"]
+        )
         for u0 in prefixable:
             for p, f in SI_PREFIXES:
                 unit(p + u0, factor=f, base=u0)
         for u0 in ("bit", "B"):
-            for p, f in [("Ki", 1024), ("Mi", 1024 ** 2), ("Gi", 1024 ** 3), ("Ti", 1024 ** 4),
-                         ("Pi", 1024 ** 5), ("Ei", 1024 ** 6)]:
+            for p, f in [
+                ("Ki", 1024),
+                ("Mi", 1024**2),
+                ("Gi", 1024**3),
+                ("Ti", 1024**4),
+                ("Pi", 1024**5),
+                ("Ei", 1024**6),
+            ]:
                 unit(p + u0, factor=f, base=u0)
             for p, f in SI_PREFIXES:
                 if p in ("k", "M", "G", "T", "P", "E"):
                     unit(p + u0, factor=f, base=u0)
 
-    def load(self, decls: list) -> None:
-        seen: set = set()
+    def load(self, decls: list[Any]) -> None:
+        seen: set[Any] = set()
 
         def claim(n: str) -> None:
             if n in seen:
@@ -353,20 +412,45 @@ class Env:
             k = d["d"]
             if k == "dimension":
                 if name in self.dim_decls:
-                    self.space_diags.append({"severity": "error", "code": "E3001",
-                                             "message": f"dimension {name} redeclared", "path": ""})
+                    self.space_diags.append(
+                        {
+                            "severity": "error",
+                            "code": "E3001",
+                            "message": f"dimension {name} redeclared",
+                            "path": "",
+                        }
+                    )
                 else:
                     self.dim_decls[name] = {"terms": d.get("terms")}
             elif k == "unit":
                 if name in self.unit_decls:
-                    self.space_diags.append({"severity": "error", "code": "E4073",
-                                             "message": f"unit {name} redeclared", "path": ""})
+                    self.space_diags.append(
+                        {
+                            "severity": "error",
+                            "code": "E4073",
+                            "message": f"unit {name} redeclared",
+                            "path": "",
+                        }
+                    )
                 else:
-                    self.unit_decls[name] = {"dim": d.get("dim"), "factor": d.get("factor"), "base": d.get("base")}
+                    self.unit_decls[name] = {
+                        "dim": d.get("dim"),
+                        "factor": d.get("factor"),
+                        "base": d.get("base"),
+                    }
             if k == "type":
-                self.type_asts[name] = {"ast": d["type"], "tail": d.get("tail"), "params": d.get("params")}
+                self.type_asts[name] = {
+                    "ast": d["type"],
+                    "tail": d.get("tail"),
+                    "params": d.get("params"),
+                }
             elif k == "const":
-                self.consts[name] = {"expr": d["expr"], "type": d.get("type"), "state": "unforced", "value": None}
+                self.consts[name] = {
+                    "expr": d["expr"],
+                    "type": d.get("type"),
+                    "state": "unforced",
+                    "value": None,
+                }
             elif k == "func":
                 self.funcs[name] = {"params": d["params"], "ret": d.get("ret"), "body": d["body"]}
             elif k == "output":
@@ -376,30 +460,41 @@ class Env:
             elif k == "diagnostic":
                 self.diags[name] = d
 
-    def report(self, d: dict) -> None:
+    def report(self, d: dict[str, Any]) -> None:
         by = self.tagger() if self.tagger is not None else None
         if by is not None:
             d["by"] = by
         self.diagnostics.append(d)
 
-    def finalize_unit_space(self) -> list:
+    def finalize_unit_space(self) -> list[Any]:
         """§3.16 unit/dimension-space findings for the checker: the load-time
         redeclarations plus unresolvable units and duplicate base units."""
         out = list(self.space_diags)
-        base_seen: dict = {}
+        base_seen: dict[str, Any] = {}
         for sym, u in list(self.unit_decls.items()):
             try:
                 info = self.unit_info(sym)
                 if u.get("dim") is not None:
                     prev = base_seen.get(info["key"])
                     if prev:
-                        out.append({"severity": "error", "code": "E4073",
-                                    "message": f"second base unit {sym} for dimension {info['key']} (base is {prev})", "path": ""})
+                        out.append(
+                            {
+                                "severity": "error",
+                                "code": "E4073",
+                                "message": f"second base unit {sym} for dimension {info['key']} "
+                                f"(base is {prev})",
+                                "path": "",
+                            }
+                        )
                     else:
                         base_seen[info["key"]] = sym
             except Exception as e:
                 msg = str(e)
-                code = "E3003" if ("unknown dimension" in msg or "circular dimension" in msg) else "E4073"
+                code = (
+                    "E3003"
+                    if ("unknown dimension" in msg or "circular dimension" in msg)
+                    else "E4073"
+                )
                 out.append({"severity": "error", "code": code, "message": msg, "path": ""})
         return out
 
@@ -423,14 +518,20 @@ class Env:
                 diag("E4021", f"constant {v} is not numeric in a constant position")
             return v
         except EvalErr as e:
-            code = "E5001" if "zero" in e.msg else "E5002" if ("NaN" in e.msg or "Infinity" in e.msg) else "E5001"
+            code = (
+                "E5001"
+                if "zero" in e.msg
+                else "E5002"
+                if ("NaN" in e.msg or "Infinity" in e.msg)
+                else "E5001"
+            )
             diag(code, f"evaluating constant {v}: {e.msg}")
             return v
         except Exception:
             return v
 
     # ---- unit / dimension name spaces ----
-    def resolve_dim(self, name: str, visiting: Optional[set] = None) -> dict:
+    def resolve_dim(self, name: str, visiting: set[Any] | None = None) -> dict[str, Any]:
         if name in self.dim_memo:
             return self.dim_memo[name]
         visiting = visiting or set()
@@ -439,7 +540,7 @@ class Env:
         d = self.dim_decls.get(name)
         if d is None:
             raise RuntimeError(f"unknown dimension {name}")
-        vec: dict = {}
+        vec: dict[str, Any] = {}
         if not d.get("terms"):
             vec = {name: 1}
         else:
@@ -452,7 +553,7 @@ class Env:
         self.dim_memo[name] = vec
         return vec
 
-    def unit_info(self, sym: str, visiting: Optional[set] = None) -> dict:
+    def unit_info(self, sym: str, visiting: set[Any] | None = None) -> dict[str, Any]:
         if sym in self.unit_memo:
             return self.unit_memo[sym]
         visiting = visiting or set()
@@ -485,7 +586,7 @@ class Env:
         return info
 
     # ---- type resolution ----
-    def resolve(self, ast: dict, name: Optional[str] = None) -> dict:
+    def resolve(self, ast: dict[str, Any], name: str | None = None) -> dict[str, Any]:
         k = ast["k"]
         if k == "prim":
             return {"t": "prim", "name": ast["name"]}
@@ -494,7 +595,13 @@ class Env:
         if k == "range":
             lo, hi = self.const_num(ast["lo"]), self.const_num(ast["hi"])
             is_f = is_float(lo) or is_float(hi)
-            return {"t": "range", "lo": lo, "hi": hi, "excl": ast["excl"], "base": "float" if is_f else "int"}
+            return {
+                "t": "range",
+                "lo": lo,
+                "hi": hi,
+                "excl": ast["excl"],
+                "base": "float" if is_f else "int",
+            }
         if k == "pattern":
             src = self.expand_pattern(ast["re"])
             bad = pattern_error(src)
@@ -503,16 +610,21 @@ class Env:
             try:
                 compiled = compile_pattern(src)
             except re.error as e:
-                raise RuntimeError(f"malformed pattern /{ast['re']}/: {e}")
+                raise RuntimeError(f"malformed pattern /{ast['re']}/: {e}") from e
             return {"t": "pattern", "src": src, "re": compiled}
         if k == "map":
             return {"t": "map", "key": self.resolve(ast["key"]), "val": self.resolve(ast["val"])}
         if k == "array":
             lo, hi0 = self.const_num(ast.get("lo")), self.const_num(ast.get("hi"))
-            hi = (int(hi0) - 1) if (ast.get("excl") and not is_str(hi0) and hi0 is not None) else hi0
-            return {"t": "arr", "elem": self.resolve(ast["elem"]),
-                    "lo": int(lo) if is_int(lo) or is_float(lo) else lo,
-                    "hi": int(hi) if is_int(hi) or is_float(hi) else hi}
+            hi = (
+                (int(hi0) - 1) if (ast.get("excl") and not is_str(hi0) and hi0 is not None) else hi0
+            )
+            return {
+                "t": "arr",
+                "elem": self.resolve(ast["elem"]),
+                "lo": int(lo) if is_int(lo) or is_float(lo) else lo,
+                "hi": int(hi) if is_int(hi) or is_float(hi) else hi,
+            }
         if k == "union":
             return {"t": "union", "arms": [self.resolve(a) for a in ast["arms"]]}
         if k == "isect":
@@ -521,16 +633,27 @@ class Env:
                 return self.merge_isect(arms, name)
             return {"t": "isectN", "arms": arms}
         if k == "record":
-            rt = {"t": "rec", "name": name, "members": [], "asserts": [], "open": ast["open"], "tail": None}
+            rt = {
+                "t": "rec",
+                "name": name,
+                "members": [],
+                "asserts": [],
+                "open": ast["open"],
+                "tail": None,
+            }
             self.fill_record(rt, ast["members"])
             return rt
         if k == "func":
-            return {"t": "func", "params": [self.resolve(p) for p in ast["params"]], "ret": self.resolve(ast["ret"])}
+            return {
+                "t": "func",
+                "params": [self.resolve(p) for p in ast["params"]],
+                "ret": self.resolve(ast["ret"]),
+            }
         if k == "named":
             return self._resolve_named(ast, name)
         raise RuntimeError(f"resolve: unhandled {k}")
 
-    def _resolve_named(self, ast: dict, name: Optional[str]) -> dict:
+    def _resolve_named(self, ast: dict[str, Any], name: str | None) -> dict[str, Any]:
         if ast.get("preds"):
             base = self.resolve({**ast, "preds": None}, name)
             return {"t": "pred", "base": base, "preds": ast["preds"]}
@@ -561,7 +684,14 @@ class Env:
         elif n in self.type_memo:
             base = self.type_memo[n]
         elif decl["ast"]["k"] == "record":
-            base = {"t": "rec", "name": n, "members": [], "asserts": [], "open": decl["ast"]["open"], "tail": decl.get("tail")}
+            base = {
+                "t": "rec",
+                "name": n,
+                "members": [],
+                "asserts": [],
+                "open": decl["ast"]["open"],
+                "tail": decl.get("tail"),
+            }
             self.type_memo[n] = base
             # a member that fails to resolve must not leave a half-filled
             # record memoized (later lookups would miss its later members)
@@ -576,7 +706,14 @@ class Env:
             # Kid } }`, `type Kid = Base { … }` — the parent's body names this
             # type, and every reference must share the one final record rather
             # than a snapshot of the parent's members taken mid-fill
-            base = {"t": "rec", "name": n, "members": [], "asserts": [], "tail": decl.get("tail"), "filling": True}
+            base = {
+                "t": "rec",
+                "name": n,
+                "members": [],
+                "asserts": [],
+                "tail": decl.get("tail"),
+                "filling": True,
+            }
             self.type_memo[n] = base
             try:
                 parent = self.resolve({**decl["ast"], "ext": None})
@@ -593,7 +730,13 @@ class Env:
             self.type_memo[n] = base
         if ast.get("ext"):
             # an inline extension in a type position: anonymous, never memoized
-            merged = {"t": "rec", "name": base.get("name"), "members": [], "asserts": [], "filling": True}
+            merged: dict[str, Any] = {
+                "t": "rec",
+                "name": base.get("name"),
+                "members": [],
+                "asserts": [],
+                "filling": True,
+            }
             self.extend_into(merged, base, self.resolve(ast["ext"]))
             return merged
         return base
@@ -604,7 +747,9 @@ class Env:
     # inherited one (§7.3). A base still being filled (the recursive-family
     # case above) defers the merge until it completes; `target` stays marked
     # filling meanwhile, so an extension of an extension waits in turn.
-    def extend_into(self, target: dict, base: dict, ext: dict) -> None:
+    def extend_into(
+        self, target: dict[str, Any], base: dict[str, Any], ext: dict[str, Any]
+    ) -> None:
         if base["t"] != "rec":
             target.update(base)
             target["filling"] = False
@@ -633,7 +778,7 @@ class Env:
         self.complete_record(target)
 
     # a record's members are final: extensions that waited on it merge now
-    def complete_record(self, rt: dict) -> None:
+    def complete_record(self, rt: dict[str, Any]) -> None:
         rt["filling"] = False
         pending = rt.pop("pending_exts", None) or []
         for target, ext in pending:
@@ -652,8 +797,16 @@ class Env:
                 return self.pattern_fragment({"t": "lit", "v": json.loads(f'"{m.group(1)}"')}, text)
             m = re.fullmatch(r"(-?[0-9]+)\.\.(<?)(-?[0-9]+)", arm)
             if m:
-                return self.pattern_fragment({"t": "range", "base": "int", "lo": int(m.group(1)), "hi": int(m.group(3)),
-                                              "excl": m.group(2) == "<"}, text)
+                return self.pattern_fragment(
+                    {
+                        "t": "range",
+                        "base": "int",
+                        "lo": int(m.group(1)),
+                        "hi": int(m.group(3)),
+                        "excl": m.group(2) == "<",
+                    },
+                    text,
+                )
             if re.fullmatch(r"-?[0-9]+", arm):
                 return self.pattern_fragment({"t": "lit", "v": int(arm)}, text)
             if not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_.]*", arm):
@@ -662,16 +815,18 @@ class Env:
                 raise RuntimeError(f"pattern interpolation of {arm} is circular")
             visiting.add(arm)
             try:
-                rt = self.resolve({"k": "named", "name": arm, "args": [], "preds": None, "ext": None})
+                rt = self.resolve(
+                    {"k": "named", "name": arm, "args": [], "preds": None, "ext": None}
+                )
             except Exception as e:
                 visiting.discard(arm)
                 if str(e).startswith("unknown type"):
-                    raise RuntimeError(f"pattern interpolation of {arm}: unknown type")
+                    raise RuntimeError(f"pattern interpolation of {arm}: unknown type") from e
                 raise
             visiting.discard(arm)
             return self.pattern_fragment(rt, arm)
 
-        def splice(m: "re.Match") -> str:
+        def splice(m: re.Match[str]) -> str:
             text = m.group(1).strip()
             # the spliced type: a union of string literals, int literals, int
             # ranges, and named types — the type-expression subset that fits
@@ -681,12 +836,15 @@ class Env:
 
         return re.sub(r"\$\{([^}]*)\}", splice, re_)
 
-    def pattern_fragment(self, rt: dict, name: str) -> str:
+    def pattern_fragment(self, rt: dict[str, Any], name: str) -> str:
         def esc(s: str) -> str:
             return re.sub(r"[.*+?^${}()|\[\]\\/]", lambda m: "\\" + m.group(0), s)
 
-        def bad():
-            raise RuntimeError(f"pattern interpolation of {name}: type is neither string- nor integer-shaped (§3.6)")
+        def bad() -> NoReturn:
+            raise RuntimeError(
+                f"pattern interpolation of {name}: type is neither string- nor integer-shaped "
+                f"(§3.6)"
+            )
 
         t = rt["t"]
         if t == "pattern":
@@ -702,7 +860,9 @@ class Env:
                 bad()
             hi = rt["hi"] - 1 if rt["excl"] else rt["hi"]
             if hi - rt["lo"] >= 65536:
-                raise RuntimeError(f"pattern interpolation of {name}: range too large (limit 65536 values)")
+                raise RuntimeError(
+                    f"pattern interpolation of {name}: range too large (limit 65536 values)"
+                )
             return "(?:" + "|".join(str(v) for v in range(rt["lo"], hi + 1)) + ")"
         if t == "union":
             return "(?:" + "|".join(self.pattern_fragment(a, name) for a in rt["arms"]) + ")"
@@ -717,28 +877,44 @@ class Env:
         bad()
 
     # §3.15 generics
-    def instantiate(self, ast: dict, decl: dict) -> dict:
+    def instantiate(self, ast: dict[str, Any], decl: dict[str, Any]) -> dict[str, Any]:
         from .subsume import subsumes
+
         ps = decl["params"]
         args = ast.get("args") or []
         if len(args) != len(ps):
-            raise RuntimeError(f"generic arity: {ast['name']} expects {len(ps)} argument(s), got {len(args)}")
-        types: dict = {}
-        values: dict = {}
+            raise RuntimeError(
+                f"generic arity: {ast['name']} expects {len(ps)} argument(s), got {len(args)}"
+            )
+        types: dict[str, Any] = {}
+        values: dict[str, Any] = {}
         label = []
-        for p, a in zip(ps, args):
+        for p, a in zip(ps, args, strict=False):
             if p.get("type"):
                 if a["k"] == "lit":
                     v = a["v"]
-                elif a["k"] == "named" and not a.get("args") and not a.get("ext") and not a.get("preds"):
+                elif (
+                    a["k"] == "named"
+                    and not a.get("args")
+                    and not a.get("ext")
+                    and not a.get("preds")
+                ):
                     v = self.const_num(a["name"])
                     if is_str(v):
-                        raise RuntimeError(f"non-constant value argument {a['name']} for {p['name']} of {ast['name']}")
+                        raise RuntimeError(
+                            f"non-constant value argument {a['name']} for {p['name']} of "
+                            f"{ast['name']}"
+                        )
                 else:
-                    raise RuntimeError(f"generic arity: parameter {p['name']} of {ast['name']} takes a constant value")
+                    raise RuntimeError(
+                        f"generic arity: parameter {p['name']} of {ast['name']} takes a constant "
+                        f"value"
+                    )
                 bound = self.resolve(self.subst_type(p["type"], types, values))
                 if not subsumes(self, {"t": "lit", "v": v}, bound):
-                    raise RuntimeError(f"value argument {v} outside parameter {p['name']}'s type in {ast['name']}")
+                    raise RuntimeError(
+                        f"value argument {v} outside parameter {p['name']}'s type in {ast['name']}"
+                    )
                 values[p["name"]] = v
                 label.append(str(v))
             else:
@@ -750,7 +926,14 @@ class Env:
         shown = f"{ast['name']}<{', '.join(label)}>"
         body = self.subst_type(decl["ast"], types, values)
         if body["k"] == "record":
-            rt = {"t": "rec", "name": shown, "members": [], "asserts": [], "open": body["open"], "tail": decl.get("tail")}
+            rt = {
+                "t": "rec",
+                "name": shown,
+                "members": [],
+                "asserts": [],
+                "open": body["open"],
+                "tail": decl.get("tail"),
+            }
             self.type_memo[key] = rt
             try:
                 self.fill_record(rt, body["members"])
@@ -766,8 +949,12 @@ class Env:
             self.type_memo[key] = rt
         return rt
 
-    def subst_type(self, ast: dict, types: dict, values: dict) -> dict:
-        t = lambda a: self.subst_type(a, types, values)
+    def subst_type(
+        self, ast: dict[str, Any], types: dict[str, Any], values: dict[str, Any]
+    ) -> dict[str, Any]:
+        def t(a: dict[str, Any]) -> dict[str, Any]:
+            return self.subst_type(a, types, values)
+
         k = ast["k"]
         if k == "named":
             plain = not ast.get("args") and not ast.get("ext") and not ast.get("preds")
@@ -775,15 +962,31 @@ class Env:
                 return types[ast["name"]]
             if plain and ast["name"] in values:
                 return {"k": "lit", "v": values[ast["name"]]}
-            return {**ast, "args": [t(a) for a in (ast.get("args") or [])],
-                    "ext": t(ast["ext"]) if ast.get("ext") else None,
-                    "preds": [subst_expr(p, values) for p in ast["preds"]] if ast.get("preds") else None}
+            return {
+                **ast,
+                "args": [t(a) for a in (ast.get("args") or [])],
+                "ext": t(ast["ext"]) if ast.get("ext") else None,
+                "preds": [subst_expr(p, values) for p in ast["preds"]]
+                if ast.get("preds")
+                else None,
+            }
         if k == "range":
-            sub = lambda v: values[v] if is_str(v) and v in values else v
+
+            def sub(v: Any) -> Any:
+                return values[v] if is_str(v) and v in values else v
+
             return {**ast, "lo": sub(ast["lo"]), "hi": sub(ast["hi"])}
         if k == "array":
-            sub = lambda v: int(values[v]) if is_str(v) and v in values else v
-            return {**ast, "elem": t(ast["elem"]), "lo": sub(ast.get("lo")), "hi": sub(ast.get("hi"))}
+
+            def sub_size(v: Any) -> Any:
+                return int(values[v]) if is_str(v) and v in values else v
+
+            return {
+                **ast,
+                "elem": t(ast["elem"]),
+                "lo": sub_size(ast.get("lo")),
+                "hi": sub_size(ast.get("hi")),
+            }
         if k == "record":
             return {**ast, "members": [self.subst_member(m, types, values) for m in ast["members"]]}
         if k == "map":
@@ -794,61 +997,118 @@ class Env:
             return {**ast, "params": [t(p) for p in ast["params"]], "ret": t(ast["ret"])}
         return ast
 
-    def subst_member(self, m: dict, types: dict, values: dict) -> dict:
-        t = lambda a: self.subst_type(a, types, values)
+    def subst_member(
+        self, m: dict[str, Any], types: dict[str, Any], values: dict[str, Any]
+    ) -> dict[str, Any]:
+        def t(a: dict[str, Any]) -> dict[str, Any]:
+            return self.subst_type(a, types, values)
+
         k = m["m"]
         if k == "value":
-            return {**m, "type": t(m["type"]), "dflt": subst_expr(m["dflt"], values) if m.get("dflt") else None}
+            return {
+                **m,
+                "type": t(m["type"]),
+                "dflt": subst_expr(m["dflt"], values) if m.get("dflt") else None,
+            }
         if k == "derived":
-            return {**m, "type": t(m["type"]) if m.get("type") else None, "expr": subst_expr(m["expr"], values)}
+            return {
+                **m,
+                "type": t(m["type"]) if m.get("type") else None,
+                "expr": subst_expr(m["expr"], values),
+            }
         if k == "context":
             return {**m, "type": t(m["type"])}
         if k == "assert":
             return {**m, "cond": subst_expr(m["cond"], values)}
         if k == "when":
-            return {**m, "cond": subst_expr(m["cond"], values),
-                    "body": [self.subst_member(b, types, values) for b in m["body"]]}
+            return {
+                **m,
+                "cond": subst_expr(m["cond"], values),
+                "body": [self.subst_member(b, types, values) for b in m["body"]],
+            }
         return m
 
-    def fill_record(self, rt: dict, members: list) -> None:
+    def fill_record(self, rt: dict[str, Any], members: list[Any]) -> None:
         rt["filling"] = True
         for m in members:
             k = m["m"]
             if k == "value":
-                rt["members"].append({"kind": "dflt" if m.get("dflt") else "opt" if m.get("opt") else "req",
-                                      "name": m["name"], "type": self.resolve(m["type"]),
-                                      "dflt": m.get("dflt"), "menv": self})
+                rt["members"].append(
+                    {
+                        "kind": "dflt" if m.get("dflt") else "opt" if m.get("opt") else "req",
+                        "name": m["name"],
+                        "type": self.resolve(m["type"]),
+                        "dflt": m.get("dflt"),
+                        "menv": self,
+                    }
+                )
             elif k == "derived":
-                rt["members"].append({"kind": "der", "name": m["name"],
-                                      "type": self.resolve(m["type"]) if m.get("type") else None,
-                                      "expr": m["expr"], "menv": self,
-                                      "hidden": True if m.get("hidden") else None})
+                rt["members"].append(
+                    {
+                        "kind": "der",
+                        "name": m["name"],
+                        "type": self.resolve(m["type"]) if m.get("type") else None,
+                        "expr": m["expr"],
+                        "menv": self,
+                        "hidden": True if m.get("hidden") else None,
+                    }
+                )
             elif k == "assert":
-                rt["asserts"].append({"kind": "assert", "name": m["name"], "cond": m["cond"],
-                                      "tail": m.get("tail"), "origin": rt.get("name"), "menv": self})
+                rt["asserts"].append(
+                    {
+                        "kind": "assert",
+                        "name": m["name"],
+                        "cond": m["cond"],
+                        "tail": m.get("tail"),
+                        "origin": rt.get("name"),
+                        "menv": self,
+                    }
+                )
             elif k == "when":
-                rt["asserts"].append({"kind": "when", "cond": m["cond"], "body": m["body"],
-                                      "origin": rt.get("name"), "menv": self})
+                rt["asserts"].append(
+                    {
+                        "kind": "when",
+                        "cond": m["cond"],
+                        "body": m["body"],
+                        "origin": rt.get("name"),
+                        "menv": self,
+                    }
+                )
             elif k == "context":
-                rt.setdefault("ctx_decls", []).append({"variable": m["variable"], "type": self.resolve(m["type"]), "menv": self})
+                rt.setdefault("ctx_decls", []).append(
+                    {"variable": m["variable"], "type": self.resolve(m["type"]), "menv": self}
+                )
         self.complete_record(rt)
 
-    def merge_isect(self, arms: list, name: Optional[str]) -> dict:
+    def merge_isect(self, arms: list[Any], name: str | None) -> dict[str, Any]:
         recs = [a for a in arms if a["t"] == "rec"]
         if len(recs) != len(arms):
             return {"t": "isectN", "arms": arms}
-        merged = {"t": "rec", "name": name, "open": all(r.get("open") for r in recs), "tail": None,
-                  "members": [], "asserts": []}
+        merged: dict[str, Any] = {
+            "t": "rec",
+            "name": name,
+            "open": all(r.get("open") for r in recs),
+            "tail": None,
+            "members": [],
+            "asserts": [],
+        }
         for r in recs:
             for m in r["members"]:
-                idx = next((i for i, x in enumerate(merged["members"]) if x["name"] == m["name"]), -1)
+                idx = next(
+                    (i for i, x in enumerate(merged["members"]) if x["name"] == m["name"]), -1
+                )
                 if idx >= 0:
                     prev = merged["members"][idx]
-                    merged["members"][idx] = {**prev, "conj": (prev.get("conj") or [prev["type"]]) + [m["type"]],
-                                              "kind": "req" if m["kind"] == "req" else prev["kind"]}
+                    merged["members"][idx] = {
+                        **prev,
+                        "conj": (prev.get("conj") or [prev["type"]]) + [m["type"]],
+                        "kind": "req" if m["kind"] == "req" else prev["kind"],
+                    }
                 else:
                     merged["members"].append(dict(m))
-            merged["asserts"].extend({**a, "origin": a.get("origin") or r.get("name")} for a in r["asserts"])
+            merged["asserts"].extend(
+                {**a, "origin": a.get("origin") or r.get("name")} for a in r["asserts"]
+            )
         return merged
 
 
@@ -857,7 +1117,7 @@ def _json_key(v: Any) -> str:
 
 
 # ---------------- helpers ----------------
-def subst_expr(e: Any, values: dict) -> Any:
+def subst_expr(e: Any, values: dict[str, Any]) -> Any:
     """Deep-copy an expression substituting generic value parameters."""
     if not isinstance(e, dict):
         if isinstance(e, list):
@@ -865,7 +1125,7 @@ def subst_expr(e: Any, values: dict) -> Any:
         return e
     if e.get("e") == "name" and e["name"] in values:
         return {"e": "lit", "v": values[e["name"]]}
-    out: dict = {}
+    out: dict[str, Any] = {}
     for k, v in e.items():
         if isinstance(v, list):
             out[k] = [subst_expr(x, values) if isinstance(x, (dict, list)) else x for x in v]
@@ -887,7 +1147,7 @@ _ID_RE = re.compile(r"^[_A-Za-z][_A-Za-z0-9]*$")
 PATTERN_PUNCT = "\\/.*+?()[]{}|^$-"
 
 
-def _pattern_escape(cs: list, pos: list) -> int:
+def _pattern_escape(cs: list[Any], pos: list[Any]) -> int:
     """the escape at pos[0]: the code point it stands for (-1 for a class
     escape), or raises ValueError with the reason"""
     i = pos[0]
@@ -910,7 +1170,7 @@ def _pattern_escape(cs: list, pos: list) -> int:
     raise ValueError(f"unsupported escape \\{e}")
 
 
-def pattern_error(src: str) -> Optional[str]:
+def pattern_error(src: str) -> str | None:
     cs = list(src)
     n = len(cs)
     pos = [0]
@@ -938,7 +1198,12 @@ def pattern_error(src: str) -> Optional[str]:
                     else:
                         lo = ord(cs[pos[0]])
                         pos[0] += 1
-                    if pos[0] < n and cs[pos[0]] == "-" and pos[0] + 1 < n and cs[pos[0] + 1] != "]":
+                    if (
+                        pos[0] < n
+                        and cs[pos[0]] == "-"
+                        and pos[0] + 1 < n
+                        and cs[pos[0] + 1] != "]"
+                    ):
                         pos[0] += 1
                         if cs[pos[0]] == "\\":
                             hi = _pattern_escape(cs, pos)
@@ -979,7 +1244,7 @@ def pattern_error(src: str) -> Optional[str]:
             elif c == "{":
                 if not can_repeat:
                     return "nothing to repeat"
-                m = re.match(r"\{([0-9]+)(?:(,)([0-9]*))?\}", src[pos[0]:])
+                m = re.match(r"\{([0-9]+)(?:(,)([0-9]*))?\}", src[pos[0] :])
                 if not m:
                     return "malformed repetition"
                 if m.group(3) and int(m.group(3)) < int(m.group(1)):
@@ -999,11 +1264,11 @@ def pattern_error(src: str) -> Optional[str]:
     return "unbalanced parenthesis" if depth > 0 else None
 
 
-def compile_pattern(src: str):
+def compile_pattern(src: str) -> Any:
     return re.compile(f"(?:{src})")
 
 
-def path_str(segs: list, rel_root: Optional[str] = None) -> str:
+def path_str(segs: list[Any], rel_root: str | None = None) -> str:
     out = ""
     for i, s in enumerate(segs):
         if i == 0:
@@ -1019,11 +1284,11 @@ def path_str(segs: list, rel_root: Optional[str] = None) -> str:
     return out
 
 
-def parse_path(s: str, root_name: str) -> list:
+def parse_path(s: str, root_name: str) -> list[Any]:
     """A path string from a document: `.name` is a member, `["…"]` a
     bracketed segment (a map key, or a member the dot cannot spell — the
     canonical walk, §7.5, decides which is legal where), `[n]` an index."""
-    segs: list = []
+    segs: list[Any] = []
     i = 0
     if s[:1] == "$":
         segs.append(root_name)
@@ -1036,14 +1301,14 @@ def parse_path(s: str, root_name: str) -> list:
         i = len(m.group(0))
     while i < len(s):
         if s[i] == ".":
-            m = re.match(r"[_A-Za-z][_A-Za-z0-9]*", s[i + 1:])
+            m = re.match(r"[_A-Za-z][_A-Za-z0-9]*", s[i + 1 :])
             if not m:
                 raise EvalErr(f"bad path {s}")
             segs.append(m.group(0))
             i += 1 + len(m.group(0))
         elif s[i] == "[":
             j = s.index("]", i)
-            inner = s[i + 1:j]
+            inner = s[i + 1 : j]
             segs.append(Key(json.loads(inner)) if inner.startswith('"') else int(inner))
             i = j + 1
         else:
@@ -1051,10 +1316,10 @@ def parse_path(s: str, root_name: str) -> list:
     return segs
 
 
-def cmp_path(a: list, b: list) -> int:
+def cmp_path(a: list[Any], b: list[Any]) -> int:
     """Canonical path order (§7.2): segment-wise, indices numerically,
     names and keys lexicographically, a prefix first."""
-    for x, y in zip(a, b):
+    for x, y in zip(a, b, strict=False):
         x, y = seg_text(x), seg_text(y)
         if is_int(x) and is_int(y):
             if x != y:
@@ -1064,12 +1329,12 @@ def cmp_path(a: list, b: list) -> int:
     return len(a) - len(b)
 
 
-def sort_diags(diags: list) -> list:
+def sort_diags(diags: list[Any]) -> list[Any]:
     """§6.7: evaluation- and validation-time diagnostics sort by (path, id),
     path in canonical order; stable."""
     import functools
 
-    def segs_of(p: str) -> list:
+    def segs_of(p: str) -> list[Any]:
         try:
             return parse_path(p, "") if p else []
         except Exception:
@@ -1077,7 +1342,7 @@ def sort_diags(diags: list) -> list:
 
     items = [(d, i, segs_of(d.get("path") or "")) for i, d in enumerate(diags)]
 
-    def cmp(a, b) -> int:
+    def cmp(a: Any, b: Any) -> int:
         c = cmp_path(a[2], b[2])
         if c:
             return c
@@ -1085,10 +1350,11 @@ def sort_diags(diags: list) -> list:
         if ai != bi:
             return -1 if ai < bi else 1
         return a[1] - b[1]
+
     return [x[0] for x in sorted(items, key=functools.cmp_to_key(cmp))]
 
 
-def _place_of(v: Any) -> Optional[list]:
+def _place_of(v: Any) -> list[Any] | None:
     if isinstance(v, Ref):
         return v.segs
     if isinstance(v, (RecInst, ArrV, MapV)):
@@ -1107,7 +1373,9 @@ def value_eq(a: Any, b: Any) -> bool:
     if isinstance(a, Quantity) and isinstance(b, Quantity):
         return a.dim == b.dim and a.value == b.value
     if isinstance(a, ArrV) and isinstance(b, ArrV):
-        return len(a.items) == len(b.items) and all(value_eq(x, y) for x, y in zip(a.items, b.items))
+        return len(a.items) == len(b.items) and all(
+            value_eq(x, y) for x, y in zip(a.items, b.items, strict=True)
+        )
     if isinstance(a, MapV) and isinstance(b, MapV):
         if len(a.entries) != len(b.entries):
             return False
@@ -1115,7 +1383,7 @@ def value_eq(a: Any, b: Any) -> bool:
     if isinstance(a, RecInst) and isinstance(b, RecInst):
         for n, s in a.slots.items():
             if s.hidden:
-                continue   # a hidden member is not part of the value (D34)
+                continue  # a hidden member is not part of the value (D34)
             s2 = b.slots.get(n)
             v1 = ABSENT if s.state == "absent" else s.value
             v2 = ABSENT if (s2 is None or s2.state == "absent") else s2.value
@@ -1163,21 +1431,29 @@ def read_json(src: str) -> Any:
             if src[j] == "\\":
                 e = src[j + 1]
                 if e == "n":
-                    out.append("\n"); j += 2
+                    out.append("\n")
+                    j += 2
                 elif e == "t":
-                    out.append("\t"); j += 2
+                    out.append("\t")
+                    j += 2
                 elif e == "r":
-                    out.append("\r"); j += 2
+                    out.append("\r")
+                    j += 2
                 elif e == "b":
-                    out.append("\b"); j += 2
+                    out.append("\b")
+                    j += 2
                 elif e == "f":
-                    out.append("\f"); j += 2
+                    out.append("\f")
+                    j += 2
                 elif e == "u":
-                    out.append(chr(int(src[j + 2:j + 6], 16))); j += 6
+                    out.append(chr(int(src[j + 2 : j + 6], 16)))
+                    j += 6
                 else:
-                    out.append(e); j += 2
+                    out.append(e)
+                    j += 2
             else:
-                out.append(src[j]); j += 1
+                out.append(src[j])
+                j += 1
         i = j + 1
         return "".join(out)
 
@@ -1187,7 +1463,7 @@ def read_json(src: str) -> Any:
         c = src[i]
         if c == "{":
             i += 1
-            entries: list = []
+            entries: list[Any] = []
             ws()
             if src[i] == "}":
                 i += 1
@@ -1206,7 +1482,7 @@ def read_json(src: str) -> Any:
                 return JObj(entries)
         if c == "[":
             i += 1
-            items: list = []
+            items: list[Any] = []
             ws()
             if src[i] == "]":
                 i += 1
@@ -1249,7 +1525,9 @@ def js_num_str(x: float) -> str:
     if x == 0:
         return "0"
     from decimal import Decimal
+
     sign, digs, exp = Decimal(repr(x)).as_tuple()
+    assert isinstance(exp, int)  # finite: the exponent is a number, not "n"/"N"/"F"
     digits = list(digs)
     while len(digits) > 1 and digits[-1] == 0:
         digits.pop()
