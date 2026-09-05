@@ -8,7 +8,7 @@ import name in Python is `decl`, and the binary is `decl` everywhere.
 | Channel | Package | Install | Status |
 |---|---|---|---|
 | GitHub release | `v0.3.0`: `decl` and `decl-lsp` for six platforms, the wheels, the `.vsix` | [releases/tag/v0.3.0](https://github.com/luuvish/decl-lang/releases/tag/v0.3.0) | **published 2026-09-05** by `release.yml` |
-| npm | `decl-lang` | `npm install -g decl-lang` | prepared (`decl-ts/`) |
+| npm | `decl-lang` | `npm install -g decl-lang` | **published 2026-09-05** (0.3.0; `decl-ts/`) |
 | PyPI | `decl-lang` | `pip install decl-lang` / `pip install 'decl-lang[node]'` | prepared (`decl-py/`) |
 | Homebrew | tap `luuvish/tap`, formula `decl-lang` | `brew install luuvish/tap/decl-lang` | prepared (`homebrew/`) |
 | crates.io | `decl-lang` (bin `decl`) | `cargo install decl-lang` | prepared (`decl-rs/`, native runtime) |
