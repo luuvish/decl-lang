@@ -358,6 +358,8 @@ jobs:
         if: env.HOMEBREW_TAP_TOKEN != ''
         shell: bash
         run: |
+          # the runner's Linuxbrew is installed but not on PATH
+          eval "$(/home/linuxbrew/.linuxbrew/bin/brew shellenv)"
           brew tap luuvish/tap
           brew install luuvish/tap/decl-lang
           decl --version
