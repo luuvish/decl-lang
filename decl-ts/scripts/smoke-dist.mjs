@@ -8,7 +8,14 @@ import { tmpdir } from 'node:os';
 import { createHash } from 'node:crypto';
 
 const impl = resolve(import.meta.dirname, '..');
-const run = (cmd, args, opts = {}) => execFileSync(cmd, args, { encoding: 'utf8', ...opts });
+// npm hands its own settings to lifecycle scripts as npm_config_* (a
+// `--dry-run` or `-w` on the `npm publish` that runs this smoke would turn
+// the scratch install below into a no-op); the child processes get an
+// environment without them
+const env = Object.fromEntries(
+  Object.entries(process.env).filter(([k]) => !/^npm_(config|package)_/i.test(k)),
+);
+const run = (cmd, args, opts = {}) => execFileSync(cmd, args, { encoding: 'utf8', env, ...opts });
 let pass = 0,
   fail = 0;
 const check = (name, cond, detail = '') => {
@@ -56,27 +63,36 @@ writeFileSync(join(dir, 'package.json'), '{"name":"smoke","private":true}');
 run('npm', ['install', '--silent', '--no-audit', '--no-fund', tarball], { cwd: dir });
 const bin = join(dir, 'node_modules', '.bin', 'decl');
 check('decl binary installed', existsSync(bin));
+if (!existsSync(bin)) {
+  console.log(
+    `\nTOTAL ${pass} ok, ${fail} failed (the installed package has no decl binary; the rest cannot run)`,
+  );
+  process.exit(1);
+}
 
 // 3. drive the installed CLI
 writeFileSync(
   join(dir, 't.decl'),
   'type T = { a: int, b = a * 2 }\nexport output t: T = { a: 21 }\n',
 );
-const ev = spawnSync(bin, ['evaluate', join(dir, 't.decl'), '--output', 't'], { encoding: 'utf8' });
+const ev = spawnSync(bin, ['evaluate', join(dir, 't.decl'), '--output', 't'], {
+  encoding: 'utf8',
+  env,
+});
 check(
   'installed decl evaluates',
   ev.status === 0 && ev.stdout.trim() === '{"a":21,"b":42}',
   ev.stderr + ev.stdout,
 );
 writeFileSync(join(dir, 'bad.decl'), 'type Bad = 10..3\n');
-const chk = spawnSync(bin, ['check', join(dir, 'bad.decl')], { encoding: 'utf8' });
+const chk = spawnSync(bin, ['check', join(dir, 'bad.decl')], { encoding: 'utf8', env });
 check(
   'installed decl checks (wasm resolved from dist/)',
   chk.status === 1 && chk.stderr.includes('E4011'),
   chk.stderr,
 );
 writeFileSync(join(dir, 'm.decl'), 'const x=1+2\n');
-const fmt = spawnSync(bin, ['fmt', join(dir, 'm.decl')], { encoding: 'utf8' });
+const fmt = spawnSync(bin, ['fmt', join(dir, 'm.decl')], { encoding: 'utf8', env });
 check(
   'installed decl fmt',
   fmt.status === 0 && readFileSync(join(dir, 'm.decl'), 'utf8') === 'const x = 1 + 2\n',
@@ -96,7 +112,7 @@ const l = spawnSync(lsp, [], {
 check(
   'installed decl-lsp initializes, then exits on request',
   l.status === 0 && l.stdout.includes('"hoverProvider":true'),
-  `status ${l.status} ${l.stderr.slice(0, 200)}`,
+  `status ${l.status} ${(l.stderr ?? '').slice(0, 200)}`,
 );
 
 // 5. the library entry
