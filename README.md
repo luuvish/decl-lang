@@ -73,8 +73,12 @@ Each implementation mirrors the same module layout (`parse`, `semantics`,
 lands in all three in one change, and the gate is:
 
 ```bash
+mise install       # the pinned Node, Python, and Rust (mise.toml)
 make verify        # each implementation's tests, then tests/parity/differential.py
 ```
+
+What a development machine needs before that (git, make, a C compiler,
+mise) and every tool's version: [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md).
 
 The parity harness diffs the Rust and Python implementations against the
 reference byte for byte: static diagnostics over every fixture and

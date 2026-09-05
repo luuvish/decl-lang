@@ -25,6 +25,11 @@ its phase table when a phase advances.
 - Post-freeze spec changes are **revisions**: amend the charter decision,
   every affected chapter, and `docs/REVISIONS.md` in one change.
 - Update the doc index in `docs/README.md` when adding documentation.
+- `docs/DEVELOPMENT.md` records the toolchains and versions the
+  repository is developed and verified with, and the version policy
+  (minimums in the manifests, pins in `mise.toml` — `mise install`
+  gives a machine the versions CI uses); update it when a requirement
+  changes.
 
 ## Implementations — one behavior, three times
 
@@ -34,8 +39,8 @@ its phase table when a phase advances.
 | `decl-rs/` | the whole language natively: `decl` (check / evaluate / validate / fmt, packages) and `decl-lsp` | crates.io `decl-lang` |
 | `decl-py/` | the whole language natively: `decl`, `decl-lsp`, and a Python API — no Node.js | PyPI `decl-lang` |
 | `tree-sitter-decl/` | the single grammar all three use | — |
-| `extension/vscode/`, `extension/zed/` | the editor extensions (docs/tooling/04_extension.md): clients of `decl-lsp`, the grammar's queries | Marketplace / Open VSX, the Zed registry (planned) |
-| `tests/` | shared corpus (`validation/`, `modules/`, `packages/`, REPL sessions `repl/`) and the parity harness (`parity/`) | — |
+| `extension/vscode/`, `extension/zed/` | the editor extensions (docs/tooling/04_extension.md): clients of `decl-lsp`, the grammar's queries; `extension/neovim/`, `extension/helix/`, `extension/emacs/`, `extension/vim/`, `extension/sublime/` are configurations (a mode, a syntax, a package), not extensions, and `extension/smoke-editors.sh` checks them | Marketplace / Open VSX, the Zed registry (planned) |
+| `tests/` | the shared corpora (`validation/`, `modules/`, `packages/`, `subsume/`, `golden/`, `repl/`) and the parity harness (`parity/`) — see `tests/README.md` | — |
 
 The three sit side by side at the top level, named by language
 (`decl-ts`, `decl-rs`, `decl-py`) beside the grammar
@@ -86,6 +91,10 @@ Rules:
   path) in all three. CI runs the same gate (`.github/workflows/verify.yml`).
 - A parity difference is a defect in whichever side diverges from the
   specification — fix the implementation, never the expectation.
+- **Tests are shared data** (`tests/README.md`): fixtures, subsumption
+  cases, golden outputs, and REPL sessions under `tests/` that all three
+  implementations run; a per-language test only drives those corpora or
+  covers a surface that exists in that language alone.
 
 ## Website (`site/`)
 
@@ -101,8 +110,13 @@ files are static assets under `site/public/playground/`.
 Every ```decl block on the site must evaluate cleanly with the reference
 implementation.
 
-## Code Style (for future phases)
+## Code Style
 
+- **Each language's canonical form and lints** (docs/DEVELOPMENT.md,
+  Quality tools): Prettier, ESLint, and `tsc` for TypeScript; rustfmt
+  and clippy for Rust; ruff and mypy for Python. `make lint` must be
+  clean and `make format` leaves the tree unchanged before a commit; a
+  rule is switched off only in the configuration file, with its reason.
 - **Decl files**: 4-space indentation, no tabs, 100-char line width
 - **Test fixtures**: descriptive `snake_case` filenames under `valid/` and
   `invalid/` per feature; `invalid/` files carry `@expect-error` /

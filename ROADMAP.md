@@ -206,41 +206,20 @@ fixture set · documented v0.2 revision list.
 ## Phase 6 — REPL, language server, editor extensions
 
 - Foundations: source ranges on the AST, a session object over the
-  universe with an operation log and dependency tracking, a per-node table
-  of types and resolutions
+  universe (operation log, dependency tracking), the checker's recorded
+  types and resolutions
 - `decl repl` — [docs/tooling/02_repl.md](docs/tooling/02_repl.md)
 - `decl-lsp` — [docs/tooling/03_lsp.md](docs/tooling/03_lsp.md)
 - `vscode-decl`, `zed-decl` — [docs/tooling/04_extension.md](docs/tooling/04_extension.md)
 
-Progress (2026-09-04): source ranges on every AST node and on checker
-diagnostics, the type printer, the settable projection, the checker's
-recorded types and resolutions; the session object and `decl repl` in
-the three implementations — expressions, bindings, edits with detaching,
-undo/redo, the scripted mode — with the session corpus (`tests/repl/`)
-in the parity harness; `decl-lsp` v2 on the session: positioned
-diagnostics (static and evaluation), hover with types, completion,
-definition / type definition / references / highlights, rename, symbols,
-folding, formatting, lenses, and the `decl.*` commands, one scripted
-editor session in the harness — then signature help, workspace
-symbols, selection ranges, semantic tokens, inlay hints, the call and
-type hierarchies, code actions (quick fixes and assists), linked
-editing and rename of locals, value hints, and the syntax tree; the VS
-Code and Zed extensions scaffolded (`extension/vscode/`, `extension/zed/`,
-unpublished) with the output preview, the trace view, the syntax-tree
-document, the Test Explorer, the release workflow, and the extension
-tests (passing in a downloaded VS Code); dependency tracking in the session (an operation recomputes only
-what read the changed documents, cross-checked against full
-recomputation over the corpus), and diagnostics ordered as §6.7 says.
-The web extension's entry and worker server (the reference core over
-a host abstraction) with a browser suite, every quick fix and assist of
-the language-server plan, on-type formatting, progress, the
-context-variable hints; both extensions smoke-tested by hand in VS Code
-(the development host) and Zed (a dev extension). Open: the first
-release — `git tag v0.3.0 && git push --tags` runs
-`.github/workflows/release.yml` (the prebuilt `decl-lsp` assets, the
-`.vsix`, publication with the tokens) after the registries of
-`packaging/README.md`'s checklist — and manual smoke in Neovim and
-Helix.
+Delivered (2026-09-05) in the three implementations, with the shared
+corpora (`tests/repl/`, `tests/subsume/`, `tests/golden/`) and the
+scripted REPL and editor sessions in the parity harness; each document's
+Status section records what shipped; Neovim, Helix, Emacs, Vim, and
+Sublime Text run the grammar (its queries, or a mirrored syntax) and the
+server through the configurations in `extension/`.
+Open: the first release (`git tag v0.3.0` runs
+`.github/workflows/release.yml`).
 
 **Exit criteria**: scripted REPL and LSP sessions in the parity harness,
 identical bytes from the three implementations · the reference scratch
