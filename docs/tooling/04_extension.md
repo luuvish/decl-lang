@@ -502,7 +502,10 @@ extension API has no views or commands to test (§1). The first release
 (v0.3.0, 2026-09-05) attaches the `.vsix` and the `decl-lsp` binaries
 of six platforms; the extension is on the Marketplace and Open VSX as
 `luuvish.vscode-decl` (2026-09-05; the Open VSX namespace claim is
-filed); the Zed registry waits for a public repository. Open: the extension in
+filed); the Zed registry entry is submitted
+(zed-industries/extensions#7488, 2026-09-05), tested as a dev extension
+at the submitted commit with the grammar fetched by https and the
+server downloaded from the release. Open: the extension in
 vscode.dev with a real workspace (the suite covers the mechanism, not
 the site).
 
