@@ -33,7 +33,7 @@ jobs:
       # the goldens are compared byte for byte: no CRLF conversion on Windows
       - run: git config --global core.autocrlf false
         shell: bash
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - id: pins
         name: the pinned versions (mise.toml)
         shell: bash
@@ -41,7 +41,7 @@ jobs:
           for t in node python; do echo "$t=$(sed -n "s/^$t = \"\(.*\)\"/\1/p" mise.toml)" >> "$GITHUB_OUTPUT"; done
           rust=$(sed -n 's/^rust = { version = "\([^"]*\)".*/\1/p' mise.toml); echo "rust=$rust" >> "$GITHUB_OUTPUT"
           test "$rust" = "$(sed -n 's/^channel = "\(.*\)"/\1/p' rust-toolchain.toml)" || { echo "rust-toolchain.toml does not match mise.toml"; exit 1; }
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version: ${{ steps.pins.outputs.node }}
           cache: npm
@@ -79,7 +79,7 @@ jobs:
           "$decl" --version
           "$decl" evaluate docs/examples/01_interconnect.decl | diff - tests/golden/docs__examples__01_interconnect.json
           "$decl" evaluate docs/examples/02_config.decl | diff - tests/golden/docs__examples__02_config.json
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: binaries-${{ matrix.suffix }}
           path: assets/*
@@ -98,7 +98,7 @@ jobs:
           - { os: windows-11-arm,   archs: ARM64 }
     runs-on: ${{ matrix.os }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - id: pins
         name: the pinned versions (mise.toml)
         shell: bash
@@ -106,11 +106,11 @@ jobs:
           for t in node python; do echo "$t=$(sed -n "s/^$t = \"\(.*\)\"/\1/p" mise.toml)" >> "$GITHUB_OUTPUT"; done
           rust=$(sed -n 's/^rust = { version = "\([^"]*\)".*/\1/p' mise.toml); echo "rust=$rust" >> "$GITHUB_OUTPUT"
           test "$rust" = "$(sed -n 's/^channel = "\(.*\)"/\1/p' rust-toolchain.toml)" || { echo "rust-toolchain.toml does not match mise.toml"; exit 1; }
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version: ${{ steps.pins.outputs.node }}
           cache: npm
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v7
         with:
           python-version: ${{ steps.pins.outputs.python }}
       # the grammar sources the extension compiles are synced by the reference build
@@ -126,7 +126,7 @@ jobs:
         run: |
           python -m pip install cibuildwheel
           python -m cibuildwheel decl-py --output-dir wheelhouse
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: wheels-${{ matrix.os }}
           path: wheelhouse/*.whl
@@ -135,7 +135,7 @@ jobs:
     name: vscode-decl .vsix
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - id: pins
         name: the pinned versions (mise.toml)
         shell: bash
@@ -143,7 +143,7 @@ jobs:
           for t in node python; do echo "$t=$(sed -n "s/^$t = \"\(.*\)\"/\1/p" mise.toml)" >> "$GITHUB_OUTPUT"; done
           rust=$(sed -n 's/^rust = { version = "\([^"]*\)".*/\1/p' mise.toml); echo "rust=$rust" >> "$GITHUB_OUTPUT"
           test "$rust" = "$(sed -n 's/^channel = "\(.*\)"/\1/p' rust-toolchain.toml)" || { echo "rust-toolchain.toml does not match mise.toml"; exit 1; }
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version: ${{ steps.pins.outputs.node }}
           cache: npm
@@ -151,7 +151,7 @@ jobs:
       - run: npm run build -w decl-lang
       - run: npm run build -w vscode-decl
       - run: cd extension/vscode && npx @vscode/vsce package --no-dependencies -o ../../vscode-decl.vsix
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: vscode-decl.vsix
           path: vscode-decl.vsix
@@ -170,11 +170,11 @@ jobs:
     if: startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           path: assets
           merge-multiple: true
-      - uses: softprops/action-gh-release@v2
+      - uses: softprops/action-gh-release@v3
         with:
           files: assets/*
           generate_release_notes: true
