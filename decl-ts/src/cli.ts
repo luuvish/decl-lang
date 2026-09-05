@@ -19,13 +19,13 @@ import { openPackageUniverse, verifyLock } from './package.ts';
 import { judgeCorpus } from './conformance.ts';
 import { format, initFormatter } from './fmt.ts';
 import { runRepl } from './repl.ts';
+import { VERSION } from './version.ts';
 
 const args = process.argv.slice(2);
 const cmd = args.shift();
 // `decl --version`: the package's version, the same string on every registry
 if (cmd === '--version') {
-  const pkg = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8'));
-  console.log(`decl ${pkg.version}`);
+  console.log(`decl ${VERSION}`);
   process.exit(0);
 }
 

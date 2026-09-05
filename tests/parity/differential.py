@@ -548,6 +548,16 @@ cli_row("repl: --input binds before the first line, --script - reads stdin", ["r
 cli_row("repl: a missing script is a usage error", ["repl", "--script", f"{tmp}/nope.txt"])
 cli_row("repl: an unknown option is a usage error", ["repl", "--nope"])
 
+print("== decl-lsp --version: the same line from the three servers (exit, stdout, stderr)")
+ref = outcome(["node", str(ROOT / "decl-ts/src/lsp.ts")], ["--version"])
+verdicts, detail = {}, {}
+for n, cmd in LSP_SERVERS.items():
+    nat = outcome(cmd, ["--version"])
+    # the reference's line is `decl-lsp <version>`; a server that prints nothing is not the same server
+    verdicts[n] = ref == nat and ref[0] == 0 and ref[1].startswith("decl-lsp ")
+    detail[n] = f"ref {describe(ref)} | {n} {describe(nat)}"
+row("decl-lsp --version", verdicts, detail)
+
 print("== lsp: one scripted editor session (diagnostics, hover, navigation, completion, symbols, formatting, rename, lenses, commands)")
 ref_t = lsp_transcript(["node", str(ROOT / "decl-ts/src/lsp.ts")])
 nat_t = {n: lsp_transcript(cmd) for n, cmd in LSP_SERVERS.items()}

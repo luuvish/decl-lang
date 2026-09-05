@@ -9,6 +9,8 @@
 #                        check mode (tsc, eslint, prettier; clippy, rustfmt;
 #                        mypy, ruff) — CI runs it beside the gate
 #   make format          rewrite every source in its language's canonical form
+#   make version         the release version, checked to agree in every place it lives
+#   make bump VERSION=x.y.z   set it everywhere (manifests, lockfiles, the reported version)
 #   make test-<lang>     one implementation's tests      (typescript | rust | python)
 #   make lint-<lang>     one language's checks
 #   make format-<lang>   one language's formatters
@@ -24,7 +26,7 @@ PY    ?= python3
 VENV  := decl-py/.venv
 VPY   := $(abspath $(VENV)/bin/python)
 
-.PHONY: verify lint format parity site clean distclean \
+.PHONY: verify lint format parity site clean distclean version bump \
         build-typescript test-typescript lint-typescript format-typescript \
         build-rust test-rust lint-rust format-rust \
         python-env test-python lint-python format-python
@@ -33,8 +35,16 @@ VPY   := $(abspath $(VENV)/bin/python)
 verify: test-typescript test-rust test-python parity
 	@echo "verify: all three implementations agree"
 
-lint: lint-typescript lint-rust lint-python
+lint: lint-typescript lint-rust lint-python version
 	@echo "lint: clean"
+
+# ---------------------------------------------------------------- the version
+version:
+	node scripts/version.mjs
+
+bump:
+	@test -n "$(VERSION)" || { echo "usage: make bump VERSION=x.y.z"; exit 2; }
+	node scripts/version.mjs --set $(VERSION)
 
 format: format-typescript format-rust format-python
 

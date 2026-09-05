@@ -266,11 +266,18 @@ the three implementations, and the Zed API together.
 
 Channels and the checklist are `packaging/README.md`; this is the shape.
 
-**The version** is one string in seven places, bumped together:
-`decl-ts/package.json`, `decl-rs/Cargo.toml`, `decl-py/pyproject.toml`
-and `decl-py/decl/__init__.py`, `extension/vscode/package.json`,
-`extension/zed/extension.toml` and `extension/zed/Cargo.toml`; the
-Homebrew formula follows the npm publication (url and sha256).
+**The version** is one string in nine places — `decl-ts/package.json`
+and `decl-ts/src/version.ts` (what the binaries report),
+`decl-rs/Cargo.toml`, `decl-py/pyproject.toml` and
+`decl-py/decl/__init__.py`, `extension/vscode/package.json`,
+`extension/zed/extension.toml` and `extension/zed/Cargo.toml`, and the
+site's exact dependency on `decl-lang` (so the workspace package, not
+the registry's, is what it bundles) — set
+together by `make bump VERSION=x.y.z` (`scripts/version.mjs`, which
+also refreshes the lockfiles) and checked to agree by `make version`
+(part of `make lint`) and by the release workflow's `preflight` job,
+which refuses a tag that is not that version. The Homebrew formula
+follows the npm publication (url and sha256).
 
 **The order**: bump, `make verify` and `make lint` green, the package
 smokes (`npm run smoke:dist`, `scripts/smoke.py`), then tag —

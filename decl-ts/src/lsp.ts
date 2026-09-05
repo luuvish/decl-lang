@@ -4,6 +4,13 @@
 // and the server exits when its input closes.
 import { initParser } from './node.ts';
 import { connect, drained } from './lsp-core.ts';
+import { VERSION } from './version.ts';
+
+// `decl-lsp --version`: the same string as `decl --version`
+if (process.argv.includes('--version')) {
+  console.log(`decl-lsp ${VERSION}`);
+  process.exit(0);
+}
 
 const feed = connect({
   send: (msg) => {

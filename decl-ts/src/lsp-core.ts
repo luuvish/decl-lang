@@ -16,6 +16,7 @@ import { typeText, resolveIn, stdPath, STD } from './infer.ts';
 import type { Ty, Target } from './infer.ts';
 import { Session, SessionError, fmtDiag, exprText } from './session.ts';
 import type { Run } from './session.ts';
+import { VERSION } from './version.ts';
 import type { Module } from './module.ts';
 import type { Decl, Expr, Loc, MemberAst, TypeAst } from './ast.ts';
 import type { Diag, Seg } from './semantics.ts';
@@ -2780,7 +2781,7 @@ async function handle(msg: any) {
             ],
           },
         },
-        serverInfo: { name: 'decl-lsp', version: '0.3.0' },
+        serverInfo: { name: 'decl-lsp', version: VERSION },
       });
       break;
     case 'initialized':

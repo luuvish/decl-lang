@@ -3681,7 +3681,7 @@ def handle(msg: dict[str, Any]) -> None:
                         ]
                     },
                 },
-                "serverInfo": {"name": "decl-lsp", "version": "0.3.0"},
+                "serverInfo": {"name": "decl-lsp", "version": _version()},
             },
         )
     elif method == "initialized":
@@ -3834,8 +3834,18 @@ def handle(msg: dict[str, Any]) -> None:
         reply(id_, None)
 
 
+def _version() -> str:
+    from .. import __version__
+
+    return str(__version__)
+
+
 def main(argv: list[Any] | None = None) -> int:
     global _out
+    # `decl-lsp --version`: the same string as `decl --version`
+    if argv and "--version" in argv:
+        print(f"decl-lsp {_version()}")
+        return 0
     _out = sys.stdout.buffer
     inp = sys.stdin.buffer
     buf = b""

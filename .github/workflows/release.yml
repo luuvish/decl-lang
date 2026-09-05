@@ -33,6 +33,21 @@ permissions:
   contents: write
 
 jobs:
+  # a tag must be the version every manifest carries (make version)
+  preflight:
+    name: the version
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - id: pins
+        name: the pinned versions (mise.toml)
+        shell: bash
+        run: echo "node=$(sed -n 's/^node = "\(.*\)"/\1/p' mise.toml)" >> "$GITHUB_OUTPUT"
+      - uses: actions/setup-node@v7
+        with:
+          node-version: ${{ steps.pins.outputs.node }}
+      - run: node scripts/version.mjs --check "${{ github.ref_type == 'tag' && github.ref_name || '' }}"
+
   binaries:
     name: decl + decl-lsp ${{ matrix.suffix }}
     strategy:
@@ -95,6 +110,7 @@ jobs:
           fi
           decl="assets/decl-${{ matrix.suffix }}${{ matrix.ext }}"
           "$decl" --version
+          "assets/decl-lsp-${{ matrix.suffix }}${{ matrix.ext }}" --version
           "$decl" evaluate docs/examples/01_interconnect.decl | diff - tests/golden/docs__examples__01_interconnect.json
           "$decl" evaluate docs/examples/02_config.decl | diff - tests/golden/docs__examples__02_config.json
       - uses: actions/upload-artifact@v7
@@ -181,7 +197,7 @@ jobs:
   # environment); on a tag, or on a dispatch that asks for it
   publish-pypi:
     name: PyPI
-    needs: [wheels, sdist]
+    needs: [preflight, wheels, sdist]
     if: startsWith(github.ref, 'refs/tags/v') || inputs.publish_pypi
     runs-on: ubuntu-latest
     environment: pypi
@@ -206,6 +222,7 @@ jobs:
   # npm attaches provenance. prepublishOnly builds, tests, and smokes the tarball.
   publish-npm:
     name: npm
+    needs: [preflight]
     if: startsWith(github.ref, 'refs/tags/v') || inputs.publish_npm
     runs-on: ubuntu-latest
     environment: npm
@@ -234,6 +251,7 @@ jobs:
   # the auth action turns it into a one-time token for cargo
   publish-crates:
     name: crates.io
+    needs: [preflight]
     if: startsWith(github.ref, 'refs/tags/v') || inputs.publish_crates
     runs-on: ubuntu-latest
     environment: crates-io
@@ -315,7 +333,7 @@ jobs:
 
   release:
     name: GitHub release
-    needs: [binaries, wheels, sdist, vsix]
+    needs: [preflight, binaries, wheels, sdist, vsix]
     if: startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
     steps:

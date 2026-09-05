@@ -27,6 +27,23 @@ const run = (...args: string[]) => {
 console.log('== decl check ==');
 {
   const ok = run('check', join(root, 'tests/validation/types/valid/predicates.decl'));
+  const pkg = JSON.parse(readFileSync(join(root, 'decl-ts/package.json'), 'utf8'));
+  const v = spawnSync('node', [join(root, 'decl-ts/src/cli.ts'), '--version'], {
+    encoding: 'utf8',
+  });
+  check(
+    'decl --version is the package version',
+    v.stdout.trim() === `decl ${pkg.version}`,
+    v.stdout,
+  );
+  const lv = spawnSync('node', [join(root, 'decl-ts/src/lsp.ts'), '--version'], {
+    encoding: 'utf8',
+  });
+  check(
+    'decl-lsp --version is the same version',
+    lv.stdout.trim() === `decl-lsp ${pkg.version}`,
+    lv.stdout + lv.stderr,
+  );
   check('valid file exits 0', ok.code === 0, ok.err);
   const bad = run('check', join(root, 'tests/validation/types/invalid/empty_range.decl'));
   check('invalid file exits 1 with the code', bad.code === 1 && bad.err.includes('E4011'), bad.err);

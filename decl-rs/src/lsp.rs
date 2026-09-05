@@ -6512,7 +6512,10 @@ fn handle(st: &mut State, msg: &Value) -> Option<i32> {
                     ("capabilities", caps),
                     (
                         "serverInfo",
-                        J::obj(vec![("name", J::s("decl-lsp")), ("version", J::s("0.3.0"))]),
+                        J::obj(vec![
+                            ("name", J::s("decl-lsp")),
+                            ("version", J::s(env!("CARGO_PKG_VERSION"))),
+                        ]),
                     ),
                 ]),
             );

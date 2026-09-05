@@ -16,6 +16,9 @@ Point an LSP client at the `decl-lsp` binary for the `decl` language
 (file extension `.decl`); the workspace root is the directory holding
 `decl.toml` when there is one, else the file's directory.
 
+- `decl-lsp --version` prints `decl-lsp <version>`, the same version as
+  `decl --version` and the `serverInfo` of `initialize`; anything else on
+  the command line is ignored and the server speaks the protocol on stdio.
 - **VS Code** and **Zed**: the extensions, [04. Editor extensions](04_extension.md)
   — VS Code's bundles this server and manages it, Zed's finds or
   downloads it; a generic LSP client works too (`command: decl-lsp`,

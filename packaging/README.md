@@ -130,8 +130,8 @@ in core as of 2026-09-02).
 
 ## Release checklist
 
-1. Bump `version` in `decl-ts/package.json`, `decl-py/pyproject.toml` and
-   `decl-py/decl/__init__.py`, and `decl-rs/Cargo.toml` (spec version + patch).
+1. `make bump VERSION=x.y.z` — every manifest, the reported version, and
+   the lockfiles (spec version + patch); `make version` shows them agree.
 2. `make verify` — every implementation's tests and the parity harness
    (`tests/parity/differential.py`): every line `same`.
 3. `cd decl-ts && npm run smoke:dist`; `cd decl-py && python scripts/smoke.py`.
