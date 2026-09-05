@@ -318,7 +318,7 @@
     "@types/vscode": "^1.90.0",
     "@vscode/test-electron": "^3.1.0",
     "@vscode/test-web": "^0.0.81",
-    "esbuild": "^0.25.12",
+    "esbuild": "^0.28.2",
     "mocha": "^10.7.3"
   },
   "browser": "./dist/web.js"
