@@ -30,14 +30,14 @@ name = "decl-lsp"
 path = "src/lsp_main.rs"
 
 [dependencies]
-tree-sitter = "0.25"
+tree-sitter = "0.27"
 tree-sitter-language = "0.1"
-num-bigint = "0.4"
+num-bigint = "0.5"
 num-traits = "0.2"
 num-integer = "0.1"
 regex = "1"
-sha2 = "0.10"
-rustyline = "15"
+sha2 = "0.11"
+rustyline = "18"
 
 [build-dependencies]
 cc = "1"
