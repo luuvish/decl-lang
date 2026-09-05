@@ -58,7 +58,7 @@ const nextDiagnostics = (uri: string): Promise<any> => new Promise(res => {
 
 const dir = mkdtempSync(join(tmpdir(), 'decl-lsp-'));
 const libPath = join(dir, 'lib.decl');
-writeFileSync(libPath, 'export type Service = { name: string, port?: 1..65535 = 8080 }\nexport const MAX = 16\nexport func cap(n: int): int = std.math.min(n, MAX)\nexport type Public = Service { public: bool }\n');
+writeFileSync(libPath, 'export type Service = { name: string, port?: 1..65535 = 8080 }\nexport const MAX = 16\nexport func cap(n: int): int = std.math.min(n, MAX)\nexport type Public = Service { public: bool }\nexport type Level = "low" | "high"\n');
 const mainPath = join(dir, 'main.decl');
 const mainUri = pathToFileURL(mainPath).toString();
 writeFileSync(mainPath, '');
@@ -87,7 +87,7 @@ notifyServer('initialized', {});
   check('diagnostic anchored to the name', d.diagnostics[0].range.start.line === 0 && d.diagnostics[0].range.start.character > 0, JSON.stringify(d.diagnostics[0].range));
 }
 // clean file + import; hover and definition
-const mainSrc = 'import { Service, MAX as LIMIT, cap } from "./lib.decl"\nconst top = LIMIT\nexport output s: Service = { name: "a" }\nexport output t: Service = {\n    name: "b"\n}\nconst first = s.name\nconst c = cap(top)\nconst d = 250ms\ntype Local = Service { extra = name }\n';
+const mainSrc = 'import { Service, MAX as LIMIT, cap, Level } from "./lib.decl"\nconst top = LIMIT\nexport output s: Service = { name: "a" }\nexport output t: Service = {\n    name: "b"\n}\nconst first = s.name\nconst c = cap(top)\nconst d = 250ms\ntype Local = Service { extra = name, level?: Level = "low" }\n';
 {
   const p = nextDiagnostics(mainUri);
   notifyServer('textDocument/didChange', {
@@ -115,6 +115,8 @@ const mainSrc = 'import { Service, MAX as LIMIT, cap } from "./lib.decl"\nconst 
 {
   const td = await request('textDocument/typeDefinition', { textDocument: { uri: mainUri }, position: { line: 6, character: 14 } });
   check('type definition of a value of type Service', td && td.uri.endsWith('lib.decl') && td.range.start.line === 0, JSON.stringify(td));
+  const tdm = await request('textDocument/typeDefinition', { textDocument: { uri: mainUri }, position: { line: 9, character: 37 } });
+  check('type definition on a member typed by a literal-union alias', tdm && tdm.uri.endsWith('lib.decl') && tdm.range.start.line === 4, JSON.stringify(tdm));
   const refs = await request('textDocument/references', { textDocument: { uri: mainUri }, position: { line: 2, character: 19 }, context: { includeDeclaration: true } });
   check('references of Service: declaration, import item, annotations, extensions', refs.length === 6 && refs.filter((r: any) => r.uri.endsWith('lib.decl')).length === 2, JSON.stringify(refs));
   const hl = await request('textDocument/documentHighlight', { textDocument: { uri: mainUri }, position: { line: 6, character: 14 } });

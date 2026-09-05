@@ -332,15 +332,69 @@ function definition(uri: string, pos: Pos): any {
   const s = a && siteAt(a, uri, pos);
   return s?.site ? location(s.site.module, s.site.range) : null;
 }
+// the named types a declared type mentions: `T`, `T[]`, `A | B`, `T?`,
+// `ref<T>`, `map<K, V>` — the declarations "go to type definition" reaches
+function namedTypesOf(ast: any, out: string[] = []): string[] {
+  if (!ast) return out;
+  switch (ast.k) {
+    case 'named': out.push(ast.name); for (const arg of ast.args ?? []) namedTypesOf(arg, out); break;
+    case 'array': namedTypesOf(ast.elem, out); break;
+    case 'union': case 'isect': for (const arm of ast.arms) namedTypesOf(arm, out); break;
+    case 'map': namedTypesOf(ast.val, out); break;
+  }
+  return out;
+}
+// the same over a resolved type: record names, through refs, arrays, maps, unions
+function namedTypesOfRt(rt: any, out: string[] = []): string[] {
+  if (!rt) return out;
+  switch (rt.t) {
+    case 'rec': if (rt.name && !rt.name.startsWith('{')) out.push(rt.name); break;
+    case 'pred': namedTypesOfRt(rt.base, out); break;
+    case 'ref': namedTypesOfRt(rt.target, out); break;
+    case 'arr': namedTypesOfRt(rt.elem, out); break;
+    case 'map': namedTypesOfRt(rt.val, out); break;
+    case 'union': for (const arm of rt.arms) namedTypesOfRt(arm, out); break;
+  }
+  return out;
+}
 function typeDefinition(uri: string, pos: Pos): any {
   const a = analysisOf(uri);
   const s = a && siteAt(a, uri, pos);
   if (!s) return null;
-  const rt = s.type?.rt;
-  const name = rt?.t === 'rec' ? rt.name : rt?.t === 'pred' ? rt.base?.name : undefined;
-  if (!name) return null;
-  const site = siteOfTarget(a!, resolveIn(s.module.env, name));
-  return site ? location(site.module, site.range) : null;
+  // the declared type first (a member, an output or input, a constant's
+  // annotation): the named types it spells, whatever they resolve to —
+  // an alias of a literal union has a declaration too; else the
+  // expression's inferred type
+  let names: string[] = [];
+  let env = s.module.env;
+  if (s.site) {
+    const d: any = s.site.decl;
+    const ast = s.site.member?.type ?? (d && (d.d === 'output' || d.d === 'input' || d.d === 'const') ? d.type : undefined);
+    if (ast) { names = namedTypesOf(ast); env = s.site.module.env; }
+    else if (d?.d === 'const' && d.expr) names = namedTypesOfRt(tablesOf(a!, s.site.module).types.get(d.expr)?.rt);
+  }
+  if (!names.length && s.hit && isExpr(s.hit.node) && s.hit.node.e === 'member') {
+    // a member access: the member's declared type, where it is declared
+    const xt = tablesOf(a!, s.module).types.get(s.hit.node.x)?.rt;
+    const ms = memberSite(a!, s.module, xt, s.hit.node.name);
+    if (ms?.member?.type) { names = namedTypesOf(ms.member.type); env = ms.module.env; }
+  }
+  if (!names.length) names = namedTypesOfRt(s.type?.rt);
+  const seen = new Set<string>();
+  const locs: any[] = [];
+  for (const n of names) {
+    const [head, tail] = n.split('.');
+    let target: Target | null;
+    if (tail && env.namespaces.has(head)) { const ex = env.namespaces.get(head)!.exports.get(tail); target = ex ? resolveIn(ex.env, ex.name) : null; }
+    else target = resolveIn(env, head);
+    const site = siteOfTarget(a!, target);
+    if (!site) continue;
+    const key = `${site.module.path}:${site.range.sl}:${site.range.sc}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    locs.push(location(site.module, site.range));
+  }
+  return locs.length === 0 ? null : locs.length === 1 ? locs[0] : locs;
 }
 // every reference to a site across the universe: name and member nodes
 // that resolve to the same declaration, plus the declaration itself

@@ -33,6 +33,7 @@ num-traits = "0.2"
 num-integer = "0.1"
 regex = "1"
 sha2 = "0.10"
+rustyline = "15"
 
 [build-dependencies]
 cc = "1"

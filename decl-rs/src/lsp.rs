@@ -935,13 +935,125 @@ fn definition(st: &mut State, uri: &str, pos: Pos) -> J {
         None => J::Null,
     }
 }
+// the named types a declared type spells (`T`, `T[]`, `A | B`, `T?`, `ref<T>`, `map<K, V>`): whatever they resolve to
+fn named_types_of(ast: &TypeAst, out: &mut Vec<String>) {
+    match ast {
+        TypeAst::Named { name, args, .. } => {
+            out.push(name.clone());
+            for arg in args {
+                named_types_of(arg, out);
+            }
+        }
+        TypeAst::Array { elem, .. } => named_types_of(elem, out),
+        TypeAst::Union { arms, .. } | TypeAst::Isect { arms, .. } => {
+            for arm in arms {
+                named_types_of(arm, out);
+            }
+        }
+        TypeAst::Map { val, .. } => named_types_of(val, out),
+        _ => {}
+    }
+}
+// the same over a resolved type: record names, through refs, arrays, maps, unions
+fn named_types_of_rt(rt: Option<&RT>, out: &mut Vec<String>) {
+    let Some(rt) = rt else { return };
+    match &rt.k {
+        RTk::Rec(_) => {
+            if let Some(n) = rt.name.borrow().clone() {
+                if !n.starts_with('{') {
+                    out.push(n);
+                }
+            }
+        }
+        RTk::Pred { base, .. } => named_types_of_rt(Some(base), out),
+        RTk::Ref(target) => named_types_of_rt(Some(target), out),
+        RTk::Arr { elem, .. } => named_types_of_rt(Some(elem), out),
+        RTk::Map { val, .. } => named_types_of_rt(Some(val), out),
+        RTk::Union(arms) => {
+            for arm in arms {
+                named_types_of_rt(Some(arm), out);
+            }
+        }
+        _ => {}
+    }
+}
+// the type a member declares, found again by name in its declaring type's body
+fn member_type_ast(m: &Module, site: &Site) -> Option<TypeAst> {
+    if site.kind != "member" {
+        return None;
+    }
+    let d = decl_by_id(m, site.decl)?;
+    record_body_of(d).map(record_members).and_then(|members| members.iter().find(|x| x.name() == Some(site.name.as_str())).and_then(|x| match x {
+        MemberAst::Value { ty, .. } | MemberAst::Context { ty, .. } => Some(ty.clone()),
+        MemberAst::Derived { ty, .. } => ty.clone(),
+        _ => None,
+    }))
+}
 fn type_definition(st: &mut State, uri: &str, pos: Pos) -> J {
     let Some(a) = st.analysis_of(uri) else { return J::Null };
     let Some(s) = site_at(st, &a, uri, pos) else { return J::Null };
-    let Some(name) = rec_name(s.ty.as_ref().and_then(|t| t.rt.as_ref())) else { return J::Null };
-    match site_of_target(st, &a, resolve_in(&s.module.env, &name).as_ref()) {
-        Some(site) => location(&site.module, site.range),
-        None => J::Null,
+    // the declared type first (a member, an output or input, a constant's
+    // annotation): the named types it spells, whatever they resolve to —
+    // an alias of a literal union has a declaration too; else the
+    // expression's inferred type
+    let mut names: Vec<String> = vec![];
+    let mut env = s.module.env.clone();
+    if let Some(site) = &s.site {
+        let sm = site.module.clone();
+        let d = decl_by_id(&sm, site.decl);
+        let ast: Option<TypeAst> = member_type_ast(&sm, site).or_else(|| d.and_then(|d| match &d.body {
+            DeclBody::Output { ty, .. } | DeclBody::Input { ty, .. } => Some(ty.clone()),
+            DeclBody::Const { ty: Some(ty), .. } => Some(ty.clone()),
+            _ => None,
+        }));
+        if let Some(ast) = ast {
+            named_types_of(&ast, &mut names);
+            env = sm.env.clone();
+        } else if let Some(DeclBody::Const { expr, .. }) = d.map(|d| &d.body) {
+            let rt = tables_of(&a, &sm).types.get(&key_of(expr)).and_then(|x| x.rt.clone());
+            named_types_of_rt(rt.as_ref(), &mut names);
+        }
+    }
+    if names.is_empty() {
+        if let Some(NodeRef::Expr(e)) = s.hit.as_ref().map(|h| h.node.clone()) {
+            if let Expr::Member { x, name, .. } = &**e {
+                // a member access: the member's declared type, where it is declared
+                let xt = tables_of(&a, &s.module).types.get(&key_of(x)).and_then(|t| t.rt.clone());
+                if let Some(ms) = member_site(st, &a, &s.module, xt.as_ref(), name) {
+                    if let Some(ast) = member_type_ast(&ms.module, &ms) {
+                        named_types_of(&ast, &mut names);
+                        env = ms.module.env.clone();
+                    }
+                }
+            }
+        }
+    }
+    if names.is_empty() {
+        named_types_of_rt(s.ty.as_ref().and_then(|t| t.rt.as_ref()), &mut names);
+    }
+    let mut seen: Vec<(PathBuf, usize, usize)> = vec![];
+    let mut locs: Vec<J> = vec![];
+    for n in names {
+        let (head, tail) = match n.split_once('.') { Some((h, t)) => (h.to_string(), Some(t.to_string())), None => (n.clone(), None) };
+        let target = match &tail {
+            Some(t) if env.namespaces.borrow().contains_key(&head) => {
+                let ex = env.namespaces.borrow().get(&head).and_then(|(_, exports)| exports.borrow().get(t).cloned());
+                ex.and_then(|ex| resolve_in(&ex.env, &ex.name))
+            }
+            _ => resolve_in(&env, &head),
+        };
+        let Some(site) = site_of_target(st, &a, target.as_ref()) else { continue };
+        let key = (site.module.path.clone(), site.range.sl, site.range.sc);
+        if seen.contains(&key) {
+            continue;
+        }
+        seen.push(key);
+        locs.push(location(&site.module, site.range));
+    }
+    match locs.len() {
+        0 => J::Null,
+        1 => locs.pop().unwrap(),
+        _ => J::Arr(locs),
     }
 }
 fn same(x: Option<&Site>, target: &Site) -> bool {

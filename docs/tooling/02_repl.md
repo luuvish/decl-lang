@@ -55,9 +55,9 @@ continues on the next line behind the continuation prompt `. `, the §2.9
 rule the formatter also applies (a command continues only while a
 bracket is open: an inline document). A blank line is ignored; `//` and
 `/* */` comments are allowed as in a module. The line editor offers
-history (previous inputs, searchable, kept across sessions in the
-user's data directory), **completion** on Tab (§7), and the usual
-editing keys; Ctrl-D at an empty prompt is `:quit`.
+history (previous inputs, searchable, kept across sessions in
+`~/.decl_history`), **completion** on Tab (§7), and the usual editing
+keys; Ctrl-D at an empty prompt is `:quit`.
 
 ### 2.1 An expression — partial evaluation
 

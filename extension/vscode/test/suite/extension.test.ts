@@ -42,6 +42,8 @@ suite('vscode-decl', () => {
     assert.ok(hovers.length && String((hovers[0].contents[0] as vscode.MarkdownString).value).includes('const top'));
     const defs = await vscode.commands.executeCommand<vscode.Location[]>('vscode.executeDefinitionProvider', doc.uri, new vscode.Position(2, 19));
     assert.ok(defs.length && defs[0].uri.fsPath.endsWith('lib.decl'));
+    const typeDefs = await vscode.commands.executeCommand<vscode.Location[]>('vscode.executeTypeDefinitionProvider', doc.uri, new vscode.Position(2, 14));
+    assert.ok(typeDefs.length && typeDefs[0].uri.fsPath.endsWith('lib.decl') && typeDefs[0].range.start.line === 0, 'go to type definition of the output s reaches Service');
     const completions = await vscode.commands.executeCommand<vscode.CompletionList>('vscode.executeCompletionItemProvider', doc.uri, new vscode.Position(1, 15));
     assert.ok(completions.items.some(i => i.label === 'LIMIT'));
     const messy = await vscode.workspace.openTextDocument(fixture('messy.decl'));

@@ -4,7 +4,9 @@
 // command-line verbs root for root. Everything it prints goes to
 // standard output; a scripted session (`--script`) prints the transcript
 // the terminal would show, so the three implementations can be diffed.
-import { readFileSync, writeFileSync } from 'node:fs';
+import { readFileSync, writeFileSync, appendFileSync } from 'node:fs';
+import { homedir } from 'node:os';
+import { join } from 'node:path';
 import { createInterface } from 'node:readline';
 import { Session, SessionError, fmtDiag, prettyJson } from './session.ts';
 import type { Op } from './session.ts';
@@ -337,9 +339,14 @@ export async function runRepl(args: string[]): Promise<number> {
     return repl.errors ? 1 : 0;
   }
 
-  // interactive: the line editor, with history and completion
+  // interactive: the line editor, with history (kept across sessions in
+  // ~/.decl_history) and completion
+  const historyFile = join(homedir(), '.decl_history');
+  let history: string[] = [];
+  try { history = readFileSync(historyFile, 'utf8').split('\n').filter(Boolean).reverse().slice(0, 1000); } catch { /* none yet */ }
   const rl = createInterface({
     input: process.stdin, output: process.stdout, prompt: '> ',
+    history, historySize: 1000,
     completer: (line: string) => {
       const cs = repl.session.complete(line, COMMAND_NAMES).map(c => c.split('  ')[0]);
       const m = /([A-Za-z_$:][A-Za-z0-9_$.\[\]"]*)$/.exec(line);
@@ -350,6 +357,7 @@ export async function runRepl(args: string[]): Promise<number> {
   });
   rl.prompt();
   rl.on('line', l => {
+    if (l.trim()) { try { appendFileSync(historyFile, l + '\n'); } catch { /* best effort */ } }
     repl.line(l);
     if (repl.quitRequested) { rl.close(); return; }
     rl.setPrompt(repl.pending() ? '. ' : '> ');

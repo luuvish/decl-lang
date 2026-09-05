@@ -305,7 +305,7 @@ class LspSession:
 
 def lsp_transcript(cmd: list[str]) -> list:
     d = Path(tempfile.mkdtemp(prefix="decl-parity-lsp-"))
-    (d / "lib.decl").write_text("export type Service = { name: string, port: 1..65535 = 8080 }\nexport const MAX = 16\nexport func cap(n: int): int = std.math.min(n, MAX)\nexport type Public = Service { public: bool }\n")
+    (d / "lib.decl").write_text("export type Service = { name: string, port: 1..65535 = 8080 }\nexport const MAX = 16\nexport func cap(n: int): int = std.math.min(n, MAX)\nexport type Public = Service { public: bool }\nexport type Level = \"low\" | \"high\"\n")
     main = d / "main.decl"
     main.write_text("")
     uri = main.as_uri()
@@ -323,7 +323,7 @@ def lsp_transcript(cmd: list[str]) -> list:
         for x in ds:
             x["message"] = x["message"].replace(str(d), "<dir>")
         out.append((f"diagnostics {i}", ds))
-    MAIN = 'import { Service, MAX as LIMIT, cap } from "./lib.decl"\nconst top = LIMIT\nexport output s: Service = { name: "a" }\nexport output t: Service = {\n    name: "b"\n}\nconst first = s.name\nconst c = cap(top)\nconst d = 250ms\ntype Local = Service { extra = name }\nconst m2 = std.math.min(top, 3)\n'
+    MAIN = 'import { Service, MAX as LIMIT, cap, Level } from "./lib.decl"\nconst top = LIMIT\nexport output s: Service = { name: "a" }\nexport output t: Service = {\n    name: "b"\n}\nconst first = s.name\nconst c = cap(top)\nconst d = 250ms\ntype Local = Service { extra = name, level?: Level = "low" }\nconst m2 = std.math.min(top, 3)\n'
 
     def norm(v):
         """temp paths and URI encodings normalized (servers encode file URIs differently)"""
@@ -349,6 +349,10 @@ def lsp_transcript(cmd: list[str]) -> list:
     for label, pos in [("definition Service", (2, 19)), ("definition LIMIT", (1, 13)), ("definition top", (1, 7)), ("definition s.name", (6, 16))]:
         ask(label, "textDocument/definition", at(*pos))
     ask("type definition of s", "textDocument/typeDefinition", at(6, 14))
+    ask("type definition on the output declaration s", "textDocument/typeDefinition", at(2, 14))
+    ask("type definition on the constant top", "textDocument/typeDefinition", at(1, 7))
+    ask("type definition on a member typed by a literal-union alias", "textDocument/typeDefinition", at(9, 37))
+    ask("type definition on a member of a primitive type", "textDocument/typeDefinition", at(6, 16))
     ask("references of Service", "textDocument/references", dict(at(2, 19), context={"includeDeclaration": True}))
     ask("references of s (uses only)", "textDocument/references", dict(at(6, 14), context={"includeDeclaration": False}))
     ask("highlight of s", "textDocument/documentHighlight", at(6, 14))

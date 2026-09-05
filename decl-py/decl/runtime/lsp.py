@@ -501,17 +501,101 @@ def definition(uri: str, pos: dict) -> Any:
     return location(a, s["site"].module, s["site"].range) if s and s["site"] is not None else None
 
 
+def named_types_of(ast: Any, out: Optional[list] = None) -> list:
+    """the named types a declared type mentions: `T`, `T[]`, `A | B`, `T?`,
+    `ref<T>`, `map<K, V>` — the declarations "go to type definition" reaches"""
+    if out is None:
+        out = []
+    if not ast:
+        return out
+    k = ast.get("k")
+    if k == "named":
+        out.append(ast["name"])
+        for arg in ast.get("args") or []:
+            named_types_of(arg, out)
+    elif k == "array":
+        named_types_of(ast.get("elem"), out)
+    elif k in ("union", "isect"):
+        for arm in ast["arms"]:
+            named_types_of(arm, out)
+    elif k == "map":
+        named_types_of(ast.get("val"), out)
+    return out
+
+
+def named_types_of_rt(rt: Any, out: Optional[list] = None) -> list:
+    """the same over a resolved type: record names, through refs, arrays, maps, unions"""
+    if out is None:
+        out = []
+    if not rt:
+        return out
+    t = rt.get("t")
+    if t == "rec":
+        if rt.get("name") and not rt["name"].startswith("{"):
+            out.append(rt["name"])
+    elif t == "pred":
+        named_types_of_rt(rt.get("base"), out)
+    elif t == "ref":
+        named_types_of_rt(rt.get("target"), out)
+    elif t == "arr":
+        named_types_of_rt(rt.get("elem"), out)
+    elif t == "map":
+        named_types_of_rt(rt.get("val"), out)
+    elif t == "union":
+        for arm in rt["arms"]:
+            named_types_of_rt(arm, out)
+    return out
+
+
 def type_definition(uri: str, pos: dict) -> Any:
     a = analysis_of(uri)
     s = site_at(a, uri, _pos_of(uri, pos)) if a else None
     if not s:
         return None
-    rt = s["type"]["rt"] if s["type"] else None
-    name = rt.get("name") if rt and rt.get("t") == "rec" else (rt["base"].get("name") if rt and rt.get("t") == "pred" and rt.get("base") else None)
-    if not name:
-        return None
-    site = site_of_target(a, resolve_in(s["module"].env, name))
-    return location(a, site.module, site.range) if site is not None else None
+    # the declared type first (a member, an output or input, a constant's
+    # annotation): the named types it spells, whatever they resolve to —
+    # an alias of a literal union has a declaration too; else the
+    # expression's inferred type
+    names: list = []
+    env = s["module"].env
+    site0: Optional[Site] = s["site"]
+    if site0 is not None:
+        d = site0.decl
+        ast = site0.member.get("type") if site0.member is not None else (d.get("type") if d is not None and d["d"] in ("output", "input", "const") else None)
+        if ast:
+            names = named_types_of(ast)
+            env = site0.module.env
+        elif d is not None and d["d"] == "const" and d.get("expr"):
+            ty = tables_of(a, site0.module)["types"].get(id(d["expr"]))
+            names = named_types_of_rt(ty.get("rt") if ty else None)
+    hit = s["hit"]
+    if not names and hit is not None and is_expr(hit["node"]) and hit["node"]["e"] == "member":
+        # a member access: the member's declared type, where it is declared
+        xt = (tables_of(a, s["module"])["types"].get(id(hit["node"]["x"])) or {}).get("rt")
+        ms = member_site(a, s["module"], xt, hit["node"]["name"])
+        if ms is not None and ms.member is not None and ms.member.get("type"):
+            names = named_types_of(ms.member["type"])
+            env = ms.module.env
+    if not names:
+        names = named_types_of_rt(s["type"]["rt"] if s["type"] else None)
+    seen: set = set()
+    locs: list = []
+    for n in names:
+        head, _, tail = n.partition(".")
+        if tail and head in env.namespaces:
+            ex = env.namespaces[head]["exports"].get(tail)
+            target = resolve_in(ex["env"], ex["name"]) if ex else None
+        else:
+            target = resolve_in(env, head)
+        site = site_of_target(a, target)
+        if site is None:
+            continue
+        key = f"{site.module.path}:{site.range['sl']}:{site.range['sc']}"
+        if key in seen:
+            continue
+        seen.add(key)
+        locs.append(location(a, site.module, site.range))
+    return None if not locs else locs[0] if len(locs) == 1 else locs
 
 
 def member_token_loc(text: str, e: dict) -> dict:

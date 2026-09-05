@@ -166,6 +166,10 @@ impl Repl {
         self.input(&whole);
         true
     }
+    /// drop the input being continued (Ctrl-C at a continuation prompt)
+    pub fn discard(&mut self) {
+        self.buffer.clear();
+    }
     pub fn pending(&self) -> bool {
         !self.buffer.is_empty()
     }
@@ -665,18 +669,85 @@ pub fn run_repl(args: Vec<String>) -> i32 {
         return if repl.errors > 0 { 1 } else { 0 };
     }
 
-    // interactive: a plain line loop over standard input, with the prompts
-    let stdin = std::io::stdin();
-    let mut lines = stdin.lock().lines();
+    // interactive: the line editor, with history (kept across sessions in
+    // ~/.decl_history) and completion on Tab (docs/tooling/02_repl.md §2, §7)
+    let repl = std::rc::Rc::new(std::cell::RefCell::new(repl));
+    // completion lists the candidates (the shell's way), not cycling through them
+    let config = rustyline::Config::builder().completion_type(rustyline::CompletionType::List).build();
+    let mut rl: rustyline::Editor<DeclHelper, rustyline::history::DefaultHistory> = match rustyline::Editor::with_config(config) {
+        Ok(e) => e,
+        Err(_) => return run_plain(repl),
+    };
+    rl.set_helper(Some(DeclHelper { repl: repl.clone() }));
+    let history = std::env::var_os("HOME").map(|h| std::path::PathBuf::from(h).join(".decl_history"));
+    if let Some(h) = &history {
+        let _ = rl.load_history(h);
+    }
     loop {
-        print!("{}", if repl.pending() { ". " } else { "> " });
-        let _ = std::io::stdout().flush();
-        let Some(Ok(l)) = lines.next() else { break };
-        repl.line(&l);
-        if repl.quit_requested {
-            break;
+        let prompt = if repl.borrow().pending() { ". " } else { "> " };
+        match rl.readline(prompt) {
+            Ok(l) => {
+                if !l.trim().is_empty() {
+                    let _ = rl.add_history_entry(l.as_str());
+                }
+                repl.borrow_mut().line(&l);
+                if repl.borrow().quit_requested {
+                    break;
+                }
+            }
+            Err(rustyline::error::ReadlineError::Interrupted) => {
+                repl.borrow_mut().discard();
+                continue;
+            }
+            Err(_) => break,
         }
+    }
+    if let Some(h) = &history {
+        let _ = rl.save_history(h);
     }
     let _ = Mode::Full;
     0
 }
+
+// without a terminal the editor cannot start: a plain line loop
+fn run_plain(repl: std::rc::Rc<std::cell::RefCell<Repl>>) -> i32 {
+    let stdin = std::io::stdin();
+    let mut lines = stdin.lock().lines();
+    loop {
+        print!("{}", if repl.borrow().pending() { ". " } else { "> " });
+        let _ = std::io::stdout().flush();
+        let Some(Ok(l)) = lines.next() else { break };
+        repl.borrow_mut().line(&l);
+        if repl.borrow().quit_requested {
+            break;
+        }
+    }
+    0
+}
+
+/// the line editor's helper: completion from the session (the tail of the
+/// trailing token completed, as the reference's completer does)
+struct DeclHelper {
+    repl: std::rc::Rc<std::cell::RefCell<Repl>>,
+}
+impl rustyline::completion::Completer for DeclHelper {
+    type Candidate = rustyline::completion::Pair;
+    fn complete(&self, line: &str, pos: usize, _ctx: &rustyline::Context<'_>) -> rustyline::Result<(usize, Vec<Self::Candidate>)> {
+        let head = &line[..pos];
+        let candidates: Vec<String> = self.repl.borrow_mut().session.complete(head, &command_names())
+            .into_iter().map(|c| c.split("  ").next().unwrap_or("").to_string()).collect();
+        let tok_start = head.rfind(|c: char| !(c.is_alphanumeric() || "_$:.[]\"".contains(c))).map(|i| i + 1).unwrap_or(0);
+        let tok = &head[tok_start..];
+        let tail_start = tok.rfind('.').map(|i| tok_start + i + 1).unwrap_or(tok_start);
+        let tail = &head[tail_start..];
+        let pairs = candidates.into_iter().filter(|c| c.starts_with(tail))
+            .map(|c| rustyline::completion::Pair { display: c.clone(), replacement: c }).collect();
+        Ok((tail_start, pairs))
+    }
+}
+impl rustyline::hint::Hinter for DeclHelper {
+    type Hint = String;
+}
+impl rustyline::highlight::Highlighter for DeclHelper {}
+impl rustyline::validate::Validator for DeclHelper {}
+impl rustyline::Helper for DeclHelper {}

@@ -7,6 +7,7 @@ session (`--script`) prints the transcript the terminal would show, so
 the three implementations can be diffed."""
 from __future__ import annotations
 
+import os
 import re
 import sys
 from typing import Callable, Optional
@@ -446,6 +447,13 @@ class Repl:
 
 
 # ---------------- the command ----------------
+def _save_history(readline, path: str) -> None:
+    try:
+        readline.write_history_file(path)
+    except OSError:
+        pass
+
+
 def run_repl(args: list) -> int:
     entry: Optional[str] = None
     script: Optional[str] = None
@@ -512,17 +520,31 @@ def run_repl(args: list) -> int:
         import readline  # noqa: F401
 
         def completer(text: str, state: int):
+            # readline replaces the word from the last delimiter (`site.la`):
+            # the candidates keep the token's head, the session completes its tail
             line = readline.get_line_buffer()
             cs = [c.split("  ")[0] for c in repl.session.complete(line, COMMAND_NAMES)]
             m = re.search(r"([A-Za-z_$:][A-Za-z0-9_$.\[\]\"]*)$", line)
             tok = m.group(1) if m else ""
-            tail = tok[tok.rfind(".") + 1:] if "." in tok else tok
-            matches = [c for c in cs if c.startswith(tail)]
+            head, tail = (tok[: tok.rfind(".") + 1], tok[tok.rfind(".") + 1:]) if "." in tok else ("", tok)
+            matches = [head + c for c in cs if c.startswith(tail)]
             return matches[state] if state < len(matches) else None
 
         readline.set_completer(completer)
         readline.set_completer_delims(" \t\n")
-        readline.parse_and_bind("tab: complete")
+        # macOS ships libedit behind the readline module: its binding syntax differs
+        backend = getattr(readline, "backend", None)
+        libedit = backend == "editline" if backend else "libedit" in (readline.__doc__ or "")
+        readline.parse_and_bind("bind ^I rl_complete" if libedit else "tab: complete")
+        # the history is kept across sessions
+        history = os.path.join(os.path.expanduser("~"), ".decl_history")
+        try:
+            readline.read_history_file(history)
+        except OSError:
+            pass
+        readline.set_history_length(1000)
+        import atexit
+        atexit.register(lambda: _save_history(readline, history))
     except ImportError:
         pass
     while True:
