@@ -500,9 +500,9 @@ every query loads against the tree-sitter grammar and runs over the
 fixture corpus — the tests each extension can have, since Zed's
 extension API has no views or commands to test (§1). The first release
 (v0.3.0, 2026-09-05) attaches the `.vsix` and the `decl-lsp` binaries
-of six platforms; the extension is on the Marketplace as
-`luuvish.vscode-decl` (2026-09-05); Open VSX waits for its token and
-the Zed registry for a public repository. Open: the extension in
+of six platforms; the extension is on the Marketplace and Open VSX as
+`luuvish.vscode-decl` (2026-09-05; the Open VSX namespace claim is
+filed); the Zed registry waits for a public repository. Open: the extension in
 vscode.dev with a real workspace (the suite covers the mechanism, not
 the site).
 
