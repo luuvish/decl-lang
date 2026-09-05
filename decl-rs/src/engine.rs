@@ -12,10 +12,15 @@ use std::cmp::Ordering::{self, Equal, Greater, Less};
 use std::collections::{HashMap, HashSet};
 use std::rc::{Rc, Weak};
 
+/// a record instance, shared: the engine's unit of binding and forcing
 pub type Inst = Rc<RefCell<RecInst>>;
 
+/// the evaluator (§9): binds documents and expressions to types, forces slots
+/// lazily with dependency tracking, validates, serializes
 pub struct Engine {
+    /// the environment the roots live in
     pub env: Rc<Env>,
+    /// slots whose forcing was deferred to phase 2 (a `$referrers` read, a reference not yet bound)
     pub deferred_slots: RefCell<Vec<(Inst, String)>>,
     no_reg: Cell<u32>,
     phase: Cell<u8>,
@@ -26,8 +31,11 @@ pub struct Engine {
     // being bound (`root:name`), an instance's asserts (`assert:path`) —
     // records what it read: slots, roots, and `$referrers` queries by type
     // (`referrers:Type`); diagnostics carry the step that produced them
+    /// the dependency graph: the slot keys each computation read (the session's incremental step)
     pub reads: RefCell<HashMap<String, HashSet<String>>>,
+    /// the slots being forced, innermost last: a key already here is a cycle (E5007)
     pub computing: RefCell<Vec<String>>,
+    /// every slot by its key, for the dependency graph
     pub slots_by_key: RefCell<HashMap<String, (Inst, String)>>,
     /// roots whose binding deferred through `$referrers` in phase 1: bound again after the deferred slots
     pub deferred_roots: RefCell<Vec<DeferredRoot>>,
@@ -35,20 +43,29 @@ pub struct Engine {
 
 /// a root binding kept for phase 2 (its source owned)
 pub struct DeferredRoot {
+    /// the root's name
     pub name: String,
+    /// what it is bound from
     pub src: OwnedRootSrc,
+    /// its declared type, resolved
     pub rt: RT,
+    /// the scope it is bound in
     pub sc: Scope,
 }
+/// what a deferred root is bound from, owned
 pub enum OwnedRootSrc {
+    /// an output's expression
     Expr(Rc<Expr>),
+    /// a document
     Doc(Value),
 }
 
 /// what an evaluation root is bound from: an output's expression, or an
 /// input's document (bound as-is)
 pub enum RootSrc<'a> {
+    /// an output's expression
     Expr(&'a Rc<Expr>),
+    /// a document
     Doc(Value),
 }
 
@@ -163,6 +180,8 @@ fn structural_of(v: &Value) -> RT {
     }
 }
 
+/// The canonical text of a float in a document (§10.4): the shortest round trip,
+/// a `.0` on a whole number, JavaScript's exponent form.
 pub fn fmt_f(n: f64) -> String {
     let s = js_num_str(n);
     if s.contains('.') || s.contains('e') || s.contains('E') {
@@ -193,15 +212,18 @@ impl Engine {
         }));
         eng
     }
+    /// The key of a slot in the dependency graph: the instance's path and the member's name.
     pub fn slot_key(inst: &Inst, name: &str) -> String {
         format!("{}.{}", path_str(&inst.borrow().path, None), name)
     }
+    /// Record that the computation in progress read a slot (dependency tracking).
     pub fn record(&self, read: String) {
         let top = self.computing.borrow().last().cloned();
         if let Some(top) = top {
             self.reads.borrow_mut().entry(top).or_default().insert(read);
         }
     }
+    /// Run a computation as a step of the dependency graph, its reads recorded under `key`.
     pub fn step<T>(&self, key: &str, f: impl FnOnce() -> T) -> T {
         self.computing.borrow_mut().push(key.to_string());
         self.reads
@@ -211,9 +233,11 @@ impl Engine {
         self.computing.borrow_mut().pop();
         r
     }
+    /// The evaluation phase: 1 while the roots bind, 2 while the deferred slots force (§9.3).
     pub fn phase(&self) -> u8 {
         self.phase.get()
     }
+    /// An engine over an environment, wired in as its constant and expression evaluator.
     pub fn new(env: Rc<Env>) -> Rc<Engine> {
         let eng = Self::bare(env.clone());
         eng.install_hooks(&env, false);
@@ -240,6 +264,7 @@ impl Engine {
     }
 
     // ---------- expression evaluation ----------
+    /// Evaluate an expression in a scope (§4, §9).
     pub fn ev(&self, e: &Rc<Expr>, sc: &Scope) -> R<Value> {
         match &**e {
             Expr::Lit(v) => Ok(v.clone()),
@@ -585,6 +610,7 @@ impl Engine {
         Ok(())
     }
 
+    /// Whether a value belongs to a type, as `in` and `match` decide it (§4.9).
     pub fn member_of(&self, v: &Value, rt: &RT, sc: &Scope) -> bool {
         if let Value::Rec(r) = v {
             let vrt = r.borrow().rt.clone();
@@ -670,6 +696,7 @@ impl Engine {
     // the tool bound one, else its fallback — bound on first demand and
     // memoized as a root; a fallback-less unbound input is E5006 at the
     // demanding path. Returns None when `name` is not an input.
+    /// An input read by an output: the bound document, its fallback, or none (§5.6, §9.4).
     pub fn demand_input(&self, menv: &Rc<Env>, name: &str) -> R<Option<Value>> {
         let decl = menv.inputs.borrow().get(name).cloned();
         let Some((ty_ast, fallback)) = decl else {
@@ -707,6 +734,7 @@ impl Engine {
     // bind an evaluation root (an output's expression, or an input's
     // document / fallback): a failing root is reported at its own path and
     // left unset — its demanders are tainted, nothing else is
+    /// Bind a root — an output's expression or an input's document — to its declared type (§9.2).
     pub fn bind_root(&self, name: &str, src: RootSrc, rt: &RT, sc: &Scope) {
         let keep = match &src {
             RootSrc::Expr(e) => OwnedRootSrc::Expr((*e).clone()),
@@ -1029,6 +1057,7 @@ impl Engine {
         }
     }
 
+    /// Read through a reference to the value it names (§7.4).
     pub fn deref(&self, v: Value) -> R<Value> {
         if let Value::Ref(p) = &v {
             let target = self.resolve_segs(p)?;
@@ -1043,6 +1072,7 @@ impl Engine {
     // the value at a place; Undef when there is none (an absent optional
     // member counts as none — §7.5). Lenient about segment kinds: engine-built
     // paths are canonical by construction
+    /// The value at a canonical path from a root (§7.2), forcing what the path crosses.
     pub fn resolve_segs(&self, segs: &[Seg]) -> R<Value> {
         let mut cur = match segs.first() {
             Some(Seg::Name(n)) => self.env.root(n).unwrap_or(Value::Undef),
@@ -1081,6 +1111,7 @@ impl Engine {
     // bracketed, a record member dotted when the dot can spell it and
     // bracketed otherwise, an array index numeric — any other spelling does
     // not resolve
+    /// The value at a canonical path as a document's reference string names it (§7.5).
     pub fn resolve_canonical(&self, segs: &[Seg]) -> R<Value> {
         let mut cur = match segs.first() {
             Some(Seg::Name(n)) => self.env.root(n).unwrap_or(Value::Undef),
@@ -1170,6 +1201,7 @@ impl Engine {
         Ok(None)
     }
 
+    /// Apply a function value — a closure, a native, a standard-library function — to arguments (§4.8).
     pub fn call(&self, f: &Value, args: Vec<Value>, sc: &Scope) -> R<Value> {
         match f {
             Value::Clo(c) => {
@@ -1585,6 +1617,8 @@ impl Engine {
     }
 
     // ---------- binding / checking ----------
+    /// Bind a raw value to a type at a path (§9.2): a record instance with its slots,
+    /// an array, a map, or a scalar checked against the type.
     pub fn bind(
         &self,
         raw: Value,
@@ -1962,6 +1996,8 @@ impl Engine {
         })
     }
 
+    /// Evaluate an expression as a place — a canonical path — where a reference is
+    /// expected (§7.4); none when it names no place.
     pub fn eval_place(&self, e: &Rc<Expr>, sc: &Scope) -> R<Option<SegPath>> {
         let v = self.ev_nav(e, sc)?;
         Ok(match &v {
@@ -2376,6 +2412,7 @@ impl Engine {
         }
     }
 
+    /// Force a value whole, recursively, so it can be serialized or compared.
     pub fn materialize(&self, v: Value, path: &[Seg]) -> R<Value> {
         match v {
             Value::PreArr(items) => {
@@ -2488,6 +2525,7 @@ impl Engine {
     }
 
     // ---------- slots ----------
+    /// Force a slot and tell how it ended: ok, invalid, absent.
     pub fn force_state(&self, inst: &Inst, name: &str) -> SlotState {
         self.force_slot_safe(inst, name);
         inst.borrow()
@@ -2496,10 +2534,13 @@ impl Engine {
             .unwrap_or(SlotState::Invalid)
     }
 
+    /// Force a slot, a failure recorded as its state rather than raised.
     pub fn force_slot_safe(&self, inst: &Inst, name: &str) {
         let _ = self.force_slot(inst, name);
     }
 
+    /// Force a slot — its check, default, or derived expression — once, with
+    /// dependency tracking (§9.3).
     pub fn force_slot(&self, inst: &Inst, name: &str) -> R<Value> {
         let (state, compute) = {
             let b = inst.borrow();
@@ -2580,6 +2621,7 @@ impl Engine {
         }
     }
 
+    /// The value of a module-level constant, evaluated once in its module's environment.
     pub fn force_const_in(&self, env: &Rc<Env>, name: &str, root_name: &str) -> R<Value> {
         let c = env.consts.borrow().get(name).cloned();
         let Some(c) = c else {
@@ -2605,6 +2647,7 @@ impl Engine {
     }
 
     // ---------- driving ----------
+    /// Force every slot under a value, recursively.
     pub fn force_all(&self, v: &Value) {
         match v {
             Value::Rec(r) => {
@@ -2663,6 +2706,7 @@ impl Engine {
             i += 1;
         }
     }
+    /// Force every root of an environment and every deferred slot, until nothing is left (§9.3).
     pub fn drive(&self, env: &Env) {
         self.force_roots(env);
         self.phase.set(2);
@@ -2683,11 +2727,13 @@ impl Engine {
         self.validate_all("");
     }
 
+    /// Run every assertion of every instance, reporting under the root's name (§6).
     pub fn validate_all(&self, root_name: &str) {
         for inst in self.env.registry_snapshot() {
             self.validate_inst(&inst, root_name);
         }
     }
+    /// Run one instance's assertions, invalidating it on an error-severity failure (§6.6).
     pub fn validate_inst(&self, inst: &Inst, root_name: &str) {
         let asserts = match &inst.borrow().rt.k {
             RTk::Rec(r) => r.asserts.borrow().clone(),

@@ -192,10 +192,16 @@ fn kind_name(k: MKind) -> &'static str {
 
 /// the language server's tables, filled while the checker runs (infer.rs hooks)
 pub struct CheckHooks {
+    /// called with every expression's inferred type as the checker settles it (the language server's hover and hints)
     pub record: Option<Rc<dyn Fn(&Rc<Expr>, &Ty)>>,
+    /// called with every name's resolution target, or none for an unresolved name (navigation)
     pub resolve_hook: Option<Rc<dyn Fn(&Rc<Expr>, Option<Target>)>>,
 }
 
+/// The static checks of a module (§3, §4, §6, §9.7): its declarations, in the
+/// environment of a linked universe when one is given, with the hooks recording
+/// types and resolutions for a client. Returns every finding in the order the
+/// declarations are checked.
 pub fn check_module(
     decls: &[Decl],
     linked: Option<Rc<Env>>,

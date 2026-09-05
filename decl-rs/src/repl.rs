@@ -12,6 +12,8 @@ use crate::session::{
 use regex::Regex;
 use std::io::{BufRead, IsTerminal, Read, Write};
 
+/// the `:` commands — `name args`, what it does, its group (docs/tooling/02_repl.md
+/// §2.4); the help text and completion read this table
 pub const COMMANDS: &[(&str, &str, &str)] = &[
     // the universe
     (
@@ -244,16 +246,22 @@ pub fn needs_more(text: &str) -> bool {
         .is_match(tail)
 }
 
+/// the read-eval-print loop over a session: lines in, answers out
 pub struct Repl {
+    /// the session the lines act on
     pub session: Session,
+    /// `--compact`: documents printed in the wire form, one line each
     pub compact: bool,
+    /// how many inputs were refused (`error:` lines): the exit status
     pub errors: usize,
+    /// `:quit` was given, or the input ended
     pub quit_requested: bool,
     out: Box<dyn Fn(&str)>,
     buffer: Vec<String>,
 }
 
 impl Repl {
+    /// A REPL printing through `out`, over the universe of `entry` (none: a scratch session).
     pub fn new(out: Box<dyn Fn(&str)>, entry: Option<&str>) -> Repl {
         Repl {
             session: Session::new(entry),
@@ -280,6 +288,7 @@ impl Repl {
     pub fn discard(&mut self) {
         self.buffer.clear();
     }
+    /// Whether the lines so far continue an input: an open brace, bracket, or template.
     pub fn pending(&self) -> bool {
         !self.buffer.is_empty()
     }
@@ -302,6 +311,7 @@ impl Repl {
         }
     }
 
+    /// One line of input: completes or continues a pending input, then evaluates it.
     pub fn input(&mut self, text: &str) {
         let t = text.trim();
         if t.is_empty() || (t.starts_with("//") && !t.starts_with("///")) {
@@ -860,6 +870,8 @@ fn js_parse_int(s: &str) -> Option<i64> {
 }
 
 // ---------------- the command ----------------
+/// The `decl repl` command line: the arguments, then the scripted or the
+/// interactive session. Returns the exit status.
 pub fn run_repl(args: Vec<String>) -> i32 {
     let mut entry: Option<String> = None;
     let mut script: Option<String> = None;

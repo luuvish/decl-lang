@@ -10,12 +10,17 @@ use crate::pipeline::run_pipeline;
 use crate::semantics::Diag;
 use std::path::{Path, PathBuf};
 
+/// the judgment of one fixture
 pub struct Verdict {
+    /// the fixture's path
     pub file: PathBuf,
+    /// whether it behaved as its header says
     pub ok: bool,
+    /// why not: the diagnostics seen, or what was expected
     pub detail: String,
 }
 
+/// Every `.decl` file under a directory, recursively and sorted, appended to `out`.
 pub fn walk_decl(dir: &Path, out: &mut Vec<PathBuf>) {
     let Ok(rd) = std::fs::read_dir(dir) else {
         return;
@@ -32,6 +37,9 @@ pub fn walk_decl(dir: &Path, out: &mut Vec<PathBuf>) {
     }
 }
 
+/// Judge one fixture (tests/validation/README.md): a valid one must parse, check,
+/// and evaluate clean; an invalid one must fail in the phase and with the code
+/// (and message) its `@expect-*` comments name.
 pub fn judge_fixture(file: &Path, is_valid: bool) -> Verdict {
     let src = std::fs::read_to_string(file).unwrap_or_default();
     let meta = |key: &str| -> Option<String> {
@@ -106,6 +114,7 @@ pub fn judge_fixture(file: &Path, is_valid: bool) -> Verdict {
     }
 }
 
+/// Judge every fixture under a directory: `valid/` paths as valid, the rest as invalid.
 pub fn judge_corpus(dir: &Path) -> Vec<Verdict> {
     let mut files = vec![];
     walk_decl(dir, &mut files);

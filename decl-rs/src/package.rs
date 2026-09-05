@@ -27,18 +27,25 @@ fn version_re() -> Regex {
 }
 
 #[derive(Clone, Debug)]
+/// a `decl.toml` (§8.6)
 pub struct Manifest {
+    /// the package's name
     pub name: String,
+    /// its version, an exact semantic version
     pub version: String,
     /// declaration order, like the reference's Map
     pub dependencies: Vec<(String, String)>,
 }
 impl Manifest {
+    /// Whether the manifest declares a dependency of that name.
     pub fn has_dep(&self, n: &str) -> bool {
         self.dependencies.iter().any(|(d, _)| d == n)
     }
 }
 
+/// Read a manifest, fail-closed (D28): an unknown field is E3011, a range pin
+/// E3012, a missing file E3004 — each reported through `report` with the code
+/// and the message. `None` when the manifest cannot be used.
 pub fn parse_manifest(path: &Path, report: &mut dyn FnMut(&str, String)) -> Option<Manifest> {
     let shown = path.display().to_string();
     let Ok(src) = std::fs::read_to_string(path) else {
@@ -210,24 +217,36 @@ pub fn package_hash(dir: &Path) -> String {
 }
 
 #[derive(Clone, Debug)]
+/// a dependency resolved to a directory
 pub struct ResolvedPackage {
+    /// its name
     pub name: String,
+    /// its version
     pub version: String,
+    /// where it lives
     pub dir: PathBuf,
+    /// the content hash of its files, the one the lock records
     pub hash: String,
 }
 
+/// maps a package specifier, from a directory, to the package's path or to a (code, message) diagnostic
 pub type Resolver = Rc<dyn Fn(&str, &Path) -> Result<PathBuf, (String, String)>>;
 
+/// the closed set of packages an entry file's manifest reaches (§8.6)
 pub struct PackageUniverse {
+    /// the directory holding `decl.toml`
     pub root_dir: PathBuf,
+    /// that manifest
     pub manifest: Manifest,
     /// closed dependency set (root excluded), in resolution order
     pub packages: Vec<ResolvedPackage>,
+    /// the resolver over the closed set
     pub resolver: Resolver,
+    /// the manifest and resolution diagnostics
     pub diags: Vec<Diag>,
 }
 impl PackageUniverse {
+    /// The resolved package of that name, when the closed set has it.
     pub fn package(&self, n: &str) -> Option<&ResolvedPackage> {
         self.packages.iter().find(|p| p.name == n)
     }
@@ -249,6 +268,9 @@ pub fn find_package_root(from_file: &Path) -> Option<PathBuf> {
     }
 }
 
+/// Open the package universe of an entry file: the manifest found upward from
+/// it, its dependencies resolved to a closed set. `None` when no manifest
+/// governs the entry.
 pub fn open_package_universe(entry_file: &Path) -> Option<PackageUniverse> {
     let mut diags: Vec<Diag> = vec![];
     let root_dir = find_package_root(entry_file)?; // not in a package: relative imports only
@@ -394,6 +416,7 @@ pub fn open_package_universe(entry_file: &Path) -> Option<PackageUniverse> {
 }
 
 // ---------------- decl.lock (§8.7) ----------------
+/// The lock file's text (§8.7): one line per package, `name version hash`, sorted by name.
 pub fn lock_text(u: &PackageUniverse) -> String {
     let mut ps: Vec<&ResolvedPackage> = u.packages.iter().collect();
     ps.sort_by(|a, b| a.name.cmp(&b.name));
@@ -407,6 +430,7 @@ pub fn lock_text(u: &PackageUniverse) -> String {
         lines.join("\n") + "\n"
     }
 }
+/// Write the lock file into the package root; returns its path.
 pub fn write_lock(u: &PackageUniverse) -> PathBuf {
     let path = u.root_dir.join("decl.lock");
     let _ = std::fs::write(&path, lock_text(u));

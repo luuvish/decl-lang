@@ -32,19 +32,39 @@ static SQUEEZE_WS: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"\s*\n\s*").un
 
 // ---------------- operations ----------------
 #[derive(Clone, Debug)]
+/// what a document is bound from
 pub enum BindSource {
-    File { file: String, text: String },
-    Inline { text: String },
-    Expr { text: String },
+    /// a JSON file, with its text as read
+    File {
+        /// the file's path
+        file: String,
+        /// its text
+        text: String,
+    },
+    /// JSON text given in the session
+    Inline {
+        /// the text
+        text: String,
+    },
+    /// an expression evaluated over the universe
+    Expr {
+        /// the expression's text
+        text: String,
+    },
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
+/// an edit of a document
 pub enum EditKind {
+    /// a member added
     Create,
+    /// a member's value replaced
     Update,
+    /// a member removed
     Remove,
 }
 impl EditKind {
+    /// The edit's name, as the REPL spells it.
     pub fn word(self) -> &'static str {
         match self {
             EditKind::Create => "create",
@@ -55,46 +75,75 @@ impl EditKind {
 }
 
 #[derive(Clone)]
+/// an operation of the session log (docs/tooling/02_repl.md §1)
 pub enum Op {
+    /// bind a document to a root
     Bind {
+        /// the root
         name: String,
+        /// the document
         src: BindSource,
     },
+    /// unbind a root
     Unbind {
+        /// the root
         name: String,
     },
+    /// edit a document
     Edit {
+        /// the edit
         kind: EditKind,
+        /// the canonical path edited
         path: String,
+        /// the new value, as an expression
         expr: Option<String>,
     },
+    /// declare a type, a function, or a constant in the session
     Declare {
+        /// its name
         name: String,
+        /// the declaration's text
         text: String,
     },
+    /// add a session output
     Output {
+        /// its name
         name: String,
+        /// its type annotation
         ty: Option<String>,
+        /// its expression
         expr: String,
     },
+    /// drop a session declaration
     Drop {
+        /// its name
         name: String,
     },
+    /// re-read the universe from disk
     Reload {
+        /// the texts as they were, so undo restores them
         snapshot: HashMap<PathBuf, String>,
     },
+    /// forget every operation
     Reset,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
+/// where a root's document came from
 pub enum Origin {
+    /// a file
     File,
+    /// inline text
     Inline,
+    /// an expression
     Expr,
+    /// the input's fallback
     Fallback,
+    /// an output detached by an edit
     Detached,
 }
 impl Origin {
+    /// The origin's name, as `:roots` shows it.
     pub fn word(self) -> &'static str {
         match self {
             Origin::File => "file",
@@ -109,10 +158,15 @@ impl Origin {
 /// the document a root is built from, as the session holds it
 #[derive(Clone)]
 pub struct Document {
+    /// where it came from
     pub origin: Origin,
+    /// the file, for a file
     pub file: Option<String>,
-    pub doc: Value,  // read_json's shape
-    pub base: Value, // what it started from (`:diff`)
+    /// the document, in the JSON reader's shape
+    pub doc: Value,
+    /// what it started from, for `:diff`
+    pub base: Value,
+    /// whether an edit changed it
     pub edited: bool,
 }
 
@@ -162,23 +216,32 @@ impl State {
 }
 
 #[derive(Debug, Clone)]
+/// an operation refused, with the reason
 pub struct SessionError(pub String);
 impl SessionError {
     fn new(msg: impl Into<String>) -> SessionError {
         SessionError(msg.into())
     }
 }
+/// an operation's outcome
 pub type SResult<T> = Result<T, SessionError>;
 
 #[derive(Clone, Copy, Debug)]
+/// the milliseconds of a run, by phase (`:time`)
 pub struct Timing {
+    /// loading
     pub load: f64,
+    /// checking
     pub check: f64,
+    /// binding
     pub bind: f64,
+    /// evaluating
     pub evaluate: f64,
+    /// all of it
     pub total: f64,
     /// the incremental step: how many slots were recomputed, and out of how many (a full run: None)
     pub recomputed: Option<usize>,
+    /// the slots in the universe, when the incremental step counted them
     pub slots: Option<usize>,
 }
 
@@ -190,38 +253,64 @@ pub fn full_recompute() -> bool {
 }
 
 #[derive(Clone, Copy, PartialEq)]
+/// how much of a run to do
 pub enum Mode {
+    /// load and check only
     Check,
+    /// evaluate what is asked
     Lazy,
+    /// evaluate everything
     Full,
 }
 
 #[derive(Clone)]
+/// one run of the universe: the modules, the checks, the engine, the diagnostics
 pub struct Run {
+    /// the modules loaded
     pub modules: Vec<Rc<Module>>,
+    /// the entry module
     pub entry: Option<Rc<Module>>,
+    /// the loading diagnostics
     pub load_diags: Vec<Diag>,
+    /// the static findings, by file
     pub checks: Vec<(String, Diag)>,
-    pub session_checks: Vec<Diag>, // session outputs whose expressions do not check (path: the output)
-    pub session_roots: Vec<(String, Rc<Expr>, RT)>, // the session outputs bound, as bound
+    /// session outputs whose expressions do not check (path: the output)
+    pub session_checks: Vec<Diag>,
+    /// the session outputs bound, as bound
+    pub session_roots: Vec<(String, Rc<Expr>, RT)>,
+    /// the engine, when evaluation ran
     pub eng: Option<Rc<Engine>>,
+    /// the evaluation diagnostics
     pub diags: Vec<Diag>,
+    /// the timing
     pub timing: Timing,
 }
 
+/// a root as `:roots` lists it
 pub struct RootInfo {
-    pub kind: &'static str, // "output" | "input"
+    /// output or input
+    pub kind: &'static str,
+    /// its name
     pub name: String,
-    pub module: String, // "" for a session root
+    /// the module declaring it; empty for a session root
+    pub module: String,
+    /// whether it is exported
     pub exported: bool,
+    /// whether the session declared it
     pub session: bool,
-    pub binding: String, // for inputs and detached outputs
-    pub detail: String,  // the bound file, when there is one
+    /// how it is bound, for an input or a detached output
+    pub binding: String,
+    /// the bound file, when there is one
+    pub detail: String,
+    /// whether an edit changed its document
     pub edited: bool,
 }
 
+/// an expression evaluated in the session
 pub struct ExprResult {
+    /// its value as JSON, when it has one
     pub value: Option<String>,
+    /// the diagnostics it raised
     pub diags: Vec<Diag>,
     /// Some(code, message): a failure; an empty message prints only `(invalid)`
     pub error: Option<(Option<String>, String)>,
@@ -230,6 +319,7 @@ pub struct ExprResult {
 fn ms(i: Instant) -> f64 {
     i.elapsed().as_secs_f64() * 1000.0
 }
+/// Whether a diagnostic concerns a root: its path starts there.
 pub fn is_root_diag(d: &Diag, root: &str) -> bool {
     d.path == root
         || d.path.starts_with(&format!("{root}."))
@@ -274,6 +364,7 @@ fn parse_doc(text: &str, what: &str) -> SResult<Value> {
 }
 
 // ---------------- JSON documents (read_json's shape) ----------------
+/// A document in the wire form: canonical JSON, one line.
 pub fn doc_json(v: &Value) -> String {
     match v {
         Value::Null => "null".into(),
@@ -393,10 +484,16 @@ fn relative_path(from_dir: &Path, p: &Path) -> String {
 }
 
 // ---------------- the session ----------------
+/// the session: the universe of an entry module, the documents bound, the
+/// session's declarations, and the log of operations with its cursor
 pub struct Session {
-    pub entry_path: Option<PathBuf>, // absolute
+    /// the entry module, absolute
+    pub entry_path: Option<PathBuf>,
+    /// the operations applied, in order
     pub log: Vec<Op>,
+    /// how many of them are in force (undo moves it back)
     pub cursor: usize,
+    /// the last run's timing
     pub last_timing: Cell<Option<Timing>>,
     snapshot0: HashMap<PathBuf, String>,
     state: State,
@@ -408,6 +505,7 @@ pub struct Session {
     pub overlay: HashMap<PathBuf, String>,
 }
 
+/// the file name of the session's own declarations
 pub const SCRATCH: &str = "<session>";
 
 #[derive(Clone)]
@@ -422,6 +520,7 @@ fn under(path: &str, root: &str) -> bool {
 }
 
 impl Session {
+    /// A session over an entry module (none: a scratch session).
     pub fn new(entry: Option<&str>) -> Session {
         Session::with_overlay(entry, None)
     }
@@ -446,11 +545,13 @@ impl Session {
         s
     }
 
+    /// The entry module's absolute path.
     pub fn entry_abs(&self) -> PathBuf {
         self.entry_path.clone().unwrap_or_else(|| {
             std::path::absolute(SCRATCH).unwrap_or_else(|_| PathBuf::from(SCRATCH))
         })
     }
+    /// The entry module's file name, as `:roots` shows it.
     pub fn entry_name(&self) -> String {
         self.entry_path
             .as_ref()
@@ -496,6 +597,8 @@ impl Session {
     }
 
     // ---- the log ----
+    /// Apply an operation and log it; a refused operation is an error and is not
+    /// logged. An operation after undo discards what was undone.
     pub fn apply(&mut self, op: Op) -> SResult<()> {
         self.log.truncate(self.cursor); // a new operation after :undo discards what was undone
         let mut st = std::mem::take(&mut self.state);
@@ -506,6 +609,7 @@ impl Session {
         self.cursor += 1;
         Ok(())
     }
+    /// Step back `n` operations; returns how many were undone.
     pub fn undo(&mut self, n: usize) -> usize {
         let to = self.cursor.saturating_sub(n);
         let stepped = self.cursor - to;
@@ -513,6 +617,7 @@ impl Session {
         self.replay();
         stepped
     }
+    /// Step forward `n` operations; returns how many were redone.
     pub fn redo(&mut self, n: usize) -> usize {
         let to = (self.cursor + n).min(self.log.len());
         let stepped = to - self.cursor;
@@ -528,6 +633,7 @@ impl Session {
         }
         self.state = st;
     }
+    /// The reload operation for the universe as it is on disk now.
     pub fn reload_op(&self) -> Op {
         Op::Reload {
             snapshot: self.snapshot_from_disk(),
@@ -1556,9 +1662,11 @@ impl Session {
         }
         out
     }
+    /// Every root's name, the session's included.
     pub fn all_root_names(&self) -> Vec<String> {
         self.roots().into_iter().map(|r| r.name).collect()
     }
+    /// Whether a root of that name exists.
     pub fn has_root(&self, name: &str) -> bool {
         self.all_root_names().iter().any(|n| n == name)
     }
@@ -2300,6 +2408,7 @@ impl Session {
     }
 
     // ---- the scratch module (§4) ----
+    /// The session's declarations as a module's text.
     pub fn scratch_text(&self) -> String {
         let mut parts: Vec<String> = self
             .state
@@ -2352,6 +2461,7 @@ impl Session {
         };
         header + &body
     }
+    /// The scratch module, formatted.
     pub fn fmt(&self) -> SResult<String> {
         let t = self.scratch_text();
         if t.is_empty() {
@@ -2359,12 +2469,14 @@ impl Session {
         }
         format(&t).map_err(SessionError::new)
     }
+    /// Write the scratch module to a file.
     pub fn write(&self, file: &str) -> SResult<()> {
         std::fs::write(file, self.module_text())
             .map_err(|_| SessionError::new(format!("cannot write {file}")))
     }
 
     // ---- documents out (§3) ----
+    /// A root's document as JSON: the bound document, or the root evaluated.
     pub fn document_text(&self, name: &str) -> SResult<String> {
         if let Some(d) = self.state.document(name) {
             return Ok(doc_json(&d.doc));
@@ -2378,11 +2490,13 @@ impl Session {
             .and_then(|(_, j)| j)
             .ok_or_else(|| SessionError::new(format!("{name} is invalid")))
     }
+    /// Save a root's document to a file.
     pub fn save(&self, name: &str, file: &str) -> SResult<()> {
         let text = self.document_text(name)?;
         std::fs::write(file, format!("{text}\n"))
             .map_err(|_| SessionError::new(format!("cannot write {file}")))
     }
+    /// The lines of a document's diff against what it started from.
     pub fn diff(&self, name: &str) -> SResult<Vec<String>> {
         let Some(d) = self.state.document(name) else {
             return Err(SessionError::new(if self.has_root(name) {
@@ -2407,6 +2521,7 @@ impl Session {
     }
 
     // ---- introspection ----
+    /// The session's declarations and bindings, as `:session` prints them.
     pub fn session_lines(&self) -> Vec<String> {
         let mut out = vec![];
         for (n, t) in &self.state.decls {
@@ -2434,6 +2549,7 @@ impl Session {
         }
         out
     }
+    /// The log with its cursor, as `:history` prints it.
     pub fn history_lines(&self) -> Vec<String> {
         let mut out = vec![format!(
             "{} 0  (start)",
@@ -2449,12 +2565,14 @@ impl Session {
         }
         out
     }
+    /// The log as a session script, replayable with `--script`.
     pub fn script_lines(&self) -> Vec<String> {
         self.log[..self.cursor].iter().map(op_text).collect()
     }
 }
 
 // ---------------- helpers ----------------
+/// A diagnostic as the REPL prints it, with the file when it is another module's.
 pub fn fmt_diag(d: &Diag, in_file: Option<&str>) -> String {
     format!(
         "{}{}{}{}: {}{}",
@@ -2474,6 +2592,7 @@ pub fn fmt_diag(d: &Diag, in_file: Option<&str>) -> String {
     )
 }
 
+/// An operation as the session's input spells it.
 pub fn op_text(op: &Op) -> String {
     match op {
         Op::Bind { name, src } => match src {

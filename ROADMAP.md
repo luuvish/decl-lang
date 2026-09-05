@@ -28,7 +28,7 @@ here, and nothing was migrated from earlier work.
 | 5 | Real-world validation & feedback + v0.2 cycle | 3 domain examples, v0.2 revisions adjudicated | **done — 2026-09-01** (three domain examples under `examples/`: service graph, fixture generation, and a synthetic network fabric with scale + corruption probes; the full proprietary fixture corpus — 178 documents incl. the complete real set — additionally validated locally, artifacts kept out of the repo by security policy; v0.2 candidates adjudicated 2026-09-01 → revisions v0.1.4–v0.1.8, **v0.2 declared**) |
 | 6 | REPL, language server & editors | `decl repl`, `decl-lsp` v2/v3, `vscode-decl`, `zed-decl` | **delivered — 2026-09-05**; v0.3.0 released 2026-09-05 |
 | 7 | Conformance depth | the corpora cover every surface: the command line, an API corpus, a language-server corpus, the goldens | **done — 2026-09-05** |
-| 8 | Crate documentation | rustdoc on docs.rs; the Python and JavaScript API docs to the same bar | planned |
+| 8 | Crate documentation | rustdoc on docs.rs; the Python and JavaScript API docs to the same bar | **done — 2026-09-06** |
 | 9 | Website | design, content, playground | planned |
 | 10 | Renderer | `--format yaml`, `decl render` with a template dialect | planned |
 
@@ -280,6 +280,14 @@ with the row that catches it.
 - `decl-lang` on docs.rs: the crate page, every public item, the README
   as doctests, `missing_docs` in the gate; the Python and JavaScript
   APIs to the same bar — [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md) §5
+
+Delivered (2026-09-06): the README is the crate page (`#![doc =
+include_str!]`), its Rust example a doctest, its "Library layout" the
+module map; every public item of the crate documented (767 were not),
+`#![warn(missing_docs)]` under `-D warnings` and rustdoc in
+`make lint-rust`; `documentation` and the docs.rs metadata in
+`Cargo.toml`. Python: ruff's `D1` on the package's API. TypeScript:
+TSDoc on the three entries.
 
 **Exit criteria**: `cargo doc` clean with `missing_docs` on · the README
 examples run as doctests · the package pages of the website agree with

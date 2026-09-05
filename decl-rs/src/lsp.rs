@@ -134,6 +134,7 @@ fn notify(method: &str, params: J) {
 }
 
 // ---------------- documents ----------------
+/// The file path a `file:` URI names, percent-decoded; a query or a fragment is dropped.
 pub fn path_of(uri: &str) -> PathBuf {
     let raw = uri.strip_prefix("file://").unwrap_or(uri);
     let raw = raw.split(['?', '#']).next().unwrap_or(raw);
@@ -153,6 +154,7 @@ pub fn path_of(uri: &str) -> PathBuf {
     }
     PathBuf::from(String::from_utf8_lossy(&out).to_string())
 }
+/// The `file:` URI of a path, percent-encoded as clients expect (`%20` for a space).
 pub fn uri_of(path: &Path) -> String {
     let s = path.to_string_lossy();
     let mut out = String::from("file://");
@@ -6780,6 +6782,8 @@ fn handle(st: &mut State, msg: &Value) -> Option<i32> {
     None
 }
 
+/// The `decl-lsp` entry: `--version` prints the version; otherwise the server runs
+/// over standard input and output until `exit`. Returns the exit status.
 pub fn main() -> i32 {
     std::panic::set_hook(Box::new(|_| {})); // the error reply carries the message; nothing on stderr
     let mut st = State::default();

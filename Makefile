@@ -81,6 +81,7 @@ test-rust: build-rust
 lint-rust:
 	cargo fmt --all --check
 	cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
+	RUSTDOCFLAGS="-D warnings" cargo doc --no-deps --locked -p decl-lang
 	cd extension/zed && cargo fmt --check
 	cd extension/zed && cargo clippy --all-targets --locked -- -D warnings
 

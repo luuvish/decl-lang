@@ -6,6 +6,8 @@ use num_traits::ToPrimitive;
 use std::collections::HashMap;
 use std::rc::Rc;
 
+/// Whether `a` ⊑ `b` (§3.17): every value of `a` is a value of `b` — recursive
+/// types are assumed subsumed while they are being compared.
 pub fn subsumes(env: &Rc<Env>, a: &RT, b: &RT) -> bool {
     let mut assume: HashMap<usize, Vec<usize>> = HashMap::new();
     sub(env, a, b, &mut assume)
@@ -241,6 +243,9 @@ fn js_gt(a: &Value, b: &Value) -> bool {
     }
 }
 
+/// Whether a type has no values by its structure alone (§3.19): an empty range,
+/// an array bound below zero, a record with an uninhabited required member, an
+/// empty union.
 pub fn structurally_empty(env: &Rc<Env>, t: &RT) -> bool {
     match &t.k {
         RTk::Range { lo, hi, excl, .. } => {

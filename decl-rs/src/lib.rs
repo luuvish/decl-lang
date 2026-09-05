@@ -1,7 +1,8 @@
-//! Decl, implemented natively in Rust: the parser binding, the static
-//! checker, the evaluator, modules and packages, the canonical formatter,
-//! and the language server — the same behavior as the TypeScript
-//! reference implementation, verified by tests/parity in the repository.
+// The crate's page is the README (crates.io shows it; docs.rs renders it
+// here, its Rust examples compiled as doctests); every public item beneath
+// it is documented, and the compiler holds the crate to that.
+#![doc = include_str!("../README.md")]
+#![warn(missing_docs)]
 pub mod api;
 pub mod ast;
 pub mod checker;

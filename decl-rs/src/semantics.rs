@@ -22,14 +22,18 @@ static PATTERN_IDENT: LazyLock<Regex> =
 
 // ---------------- paths ----------------
 #[derive(Clone, Debug, PartialEq)]
+/// a segment of a canonical path (§7.2)
 pub enum Seg {
     /// a record member by name: dotted when the dot can spell it (§7.2)
     Name(String),
+    /// an array index
     Idx(usize),
     /// a map key: always bracketed (§7.2)
     Key(String),
 }
+/// a canonical path
 pub type SegPath = Vec<Seg>;
+/// A segment's text as the path spells it.
 pub fn seg_text(s: &Seg) -> String {
     match s {
         Seg::Name(n) | Seg::Key(n) => n.clone(),
@@ -46,37 +50,68 @@ pub fn dot_spellable(name: &str) -> bool {
 
 // ---------------- values ----------------
 #[derive(Clone)]
+/// a runtime value (§9): the scalars, quantities, references, and instances,
+/// and the engine's intermediate forms
 pub enum Value {
+    /// an integer
     Int(BigInt),
+    /// a float
     Float(f64),
+    /// a string
     Str(String),
+    /// a boolean
     Bool(bool),
+    /// null
     Null,
+    /// an absent optional member (§4.6)
     Absent,
+    /// not yet computed
     Undef,
+    /// a quantity
     Q {
+        /// its dimension key
         dim: String,
+        /// its value in the base unit
         value: f64,
     },
+    /// a reference, by canonical path
     Ref(Rc<SegPath>),
+    /// a record instance
     Rec(Rc<RefCell<RecInst>>),
+    /// an array
     Arr(Rc<RefCell<ArrV>>),
+    /// a map
     Map(Rc<RefCell<MapV>>),
+    /// a range value
     Range {
+        /// the lower bound
         lo: Box<Value>,
+        /// the upper bound
         hi: Box<Value>,
+        /// whether the upper bound is excluded
         excl: bool,
     },
+    /// a closure
     Clo(Rc<Closure>),
+    /// a native function
     Nat(NatFn),
+    /// a standard-library path, partially spelled
     Std(Rc<Vec<String>>),
+    /// a namespace
     NsRef(Rc<NsRefV>),
+    /// a pattern
     Pat(String),
+    /// a record literal not yet bound
     PreObj(Rc<Vec<(String, Value)>>),
+    /// an array literal not yet bound: (spread, item)
     PreArr(Rc<Vec<(bool, Value)>>),
+    /// an expression not yet evaluated, with its scope
     PreVal(Rc<PreValV>),
+    /// a JSON object, as read
     JObj(Rc<Vec<(String, Value)>>),
+    /// a JSON array, as read
     JArr(Rc<Vec<Value>>),
+    /// a path value
     Segs(Rc<SegPath>),
 }
 
@@ -97,6 +132,7 @@ impl fmt::Debug for Value {
 }
 
 impl Value {
+    /// The value's kind, as a word.
     pub fn tag(&self) -> &'static str {
         match self {
             Value::Int(_) => "int",
@@ -125,12 +161,15 @@ impl Value {
             Value::Segs(_) => "segs",
         }
     }
+    /// Whether the value is not yet computed.
     pub fn is_undef(&self) -> bool {
         matches!(self, Value::Undef)
     }
+    /// Whether the value is absent.
     pub fn is_absent(&self) -> bool {
         matches!(self, Value::Absent)
     }
+    /// The canonical path the value sits at or refers to, when it has one.
     pub fn place(&self) -> Option<SegPath> {
         match self {
             Value::Ref(p) => Some((**p).clone()),
@@ -142,35 +181,54 @@ impl Value {
     }
 }
 
+/// a native function
 pub type NatFn = Rc<dyn Fn(&[Value]) -> R<Value>>;
 
+/// a function value: its parameters, its body, the scope it closed over
 pub struct Closure {
+    /// the parameters
     pub params: Vec<String>,
+    /// the body
     pub body: Rc<Expr>,
+    /// the scope
     pub scope: Scope,
 }
+/// a namespace's exports
 pub struct NsRefV {
+    /// the exports, by name
     pub exports: Rc<RefCell<HashMap<String, Export>>>,
 }
+/// an expression waiting to be evaluated in its scope
 pub struct PreValV {
+    /// the expression
     pub expr: Rc<Expr>,
+    /// the scope
     pub scope: Scope,
 }
+/// an array value
 pub struct ArrV {
+    /// the items
     pub items: Vec<Value>,
+    /// its canonical path
     pub path: SegPath,
 }
+/// a map value
 pub struct MapV {
+    /// the entries, in order
     pub entries: Vec<(String, Value)>,
+    /// its canonical path
     pub path: SegPath,
 }
 impl MapV {
+    /// The value at a key.
     pub fn get(&self, k: &str) -> Option<&Value> {
         self.entries.iter().find(|(n, _)| n == k).map(|(_, v)| v)
     }
+    /// Whether the key is present.
     pub fn has(&self, k: &str) -> bool {
         self.entries.iter().any(|(n, _)| n == k)
     }
+    /// Set a key's value.
     pub fn set(&mut self, k: String, v: Value) {
         if let Some(e) = self.entries.iter_mut().find(|(n, _)| *n == k) {
             e.1 = v;
@@ -181,71 +239,118 @@ impl MapV {
 }
 
 #[derive(Clone, Copy, PartialEq, Debug)]
+/// a member's kind (§5)
 pub enum MKind {
+    /// required
     Req,
+    /// optional
     Opt,
+    /// defaulted
     Dflt,
+    /// derived
     Der,
 }
 #[derive(Clone, Copy, PartialEq, Debug)]
+/// the state of a slot
 pub enum SlotState {
+    /// not forced yet
     Unforced,
+    /// being forced
     Forcing,
+    /// forced, with a value
     Ok,
+    /// an error invalidated it
     Invalid,
+    /// absent
     Absent,
 }
 
 #[derive(Clone)]
+/// how a slot computes its value
 pub enum Compute {
+    /// a supplied value checked against the types
     Check {
+        /// the value supplied
         raw: Value,
+        /// the types to check against
         types: Vec<RT>,
+        /// the member
         name: String,
+        /// the root
         root_name: String,
+        /// the module environment
         menv: Option<Rc<Env>>,
     },
+    /// a default expression
     Default {
+        /// the expression
         expr: Rc<Expr>,
+        /// the types to check against
         types: Vec<RT>,
+        /// the member
         name: String,
+        /// the root
         root_name: String,
+        /// the module environment
         menv: Option<Rc<Env>>,
     },
+    /// a derived expression
     Derived {
+        /// the expression
         expr: Rc<Expr>,
+        /// the declared type
         ty: Option<RT>,
+        /// the value the document supplied, to compare (§10.5)
         supplied: Option<Value>,
+        /// the member
         name: String,
+        /// the root
         root_name: String,
+        /// the module environment
         menv: Option<Rc<Env>>,
     },
 }
 
+/// a member's slot in an instance
 pub struct Slot {
+    /// the member's kind
     pub kind: MKind,
     /// `x$ = e`: computed, never part of the value (D34)
     pub hidden: bool,
+    /// its state
     pub state: SlotState,
+    /// its value, once forced
     pub value: Value,
+    /// how it computes
     pub compute: Option<Compute>,
 }
 
+/// a record instance: its type, its path, its slots
 pub struct RecInst {
+    /// the type's name, when named
     pub type_name: Option<String>,
+    /// the type
     pub rt: RT,
+    /// its canonical path
     pub path: SegPath,
+    /// the enclosing instance
     pub parent: Option<Rc<RefCell<RecInst>>>,
     // declaration order matters (forcing order drives diagnostic order)
+    /// the slots, in declaration order
     pub slots: Vec<(String, Slot)>,
+    /// the order the document supplied the members
     pub entry_order: Vec<String>,
+    /// members of an open record beyond its type
     pub extras: Vec<(String, Value)>,
+    /// the module environment
     pub menv: Option<Rc<Env>>,
 }
 impl RecInst {
+    /// An extra member's value.
     pub fn extra(&self, n: &str) -> Option<&Value> {
         self.extras.iter().find(|(k, _)| k == n).map(|(_, v)| v)
     }
+    /// Set an extra member.
     pub fn set_extra(&mut self, n: &str, v: Value) {
         if let Some(e) = self.extras.iter_mut().find(|(k, _)| k == n) {
             e.1 = v;
@@ -253,25 +358,34 @@ impl RecInst {
             self.extras.push((n.to_string(), v));
         }
     }
+    /// A slot by name.
     pub fn slot(&self, n: &str) -> Option<&Slot> {
         self.slots.iter().find(|(k, _)| k == n).map(|(_, s)| s)
     }
+    /// A slot by name, mutably.
     pub fn slot_mut(&mut self, n: &str) -> Option<&mut Slot> {
         self.slots.iter_mut().find(|(k, _)| k == n).map(|(_, s)| s)
     }
+    /// Whether the slot exists.
     pub fn has_slot(&self, n: &str) -> bool {
         self.slots.iter().any(|(k, _)| k == n)
     }
 }
 
 #[derive(Clone)]
+/// an evaluation scope: the enclosing instance, the local variables, the root, the module environment
 pub struct Scope {
+    /// the enclosing instance
     pub inst: Option<Rc<RefCell<RecInst>>>,
+    /// the local variables
     pub locals: Rc<HashMap<String, Value>>,
+    /// the root
     pub root_name: String,
+    /// the module environment
     pub menv: Option<Rc<Env>>,
 }
 impl Scope {
+    /// A scope at a root.
     pub fn new(root_name: &str, menv: Option<Rc<Env>>) -> Scope {
         Scope {
             inst: None,
@@ -280,6 +394,7 @@ impl Scope {
             menv,
         }
     }
+    /// The scope with local variables.
     pub fn with_locals(&self, locals: HashMap<String, Value>) -> Scope {
         Scope {
             inst: self.inst.clone(),
@@ -288,6 +403,7 @@ impl Scope {
             menv: self.menv.clone(),
         }
     }
+    /// The scope inside an instance.
     pub fn with_inst(&self, inst: Option<Rc<RefCell<RecInst>>>) -> Scope {
         Scope {
             inst,
@@ -296,6 +412,7 @@ impl Scope {
             menv: self.menv.clone(),
         }
     }
+    /// The scope in a module environment.
     pub fn with_menv(&self, menv: Option<Rc<Env>>) -> Scope {
         Scope {
             inst: self.inst.clone(),
@@ -307,22 +424,32 @@ impl Scope {
 }
 
 // ---------------- failures & diagnostics ----------------
+/// an evaluation error, with its code when it has one
 pub struct EvalErr {
+    /// the message
     pub msg: String,
+    /// the code
     pub code: Option<String>,
 }
+/// why an evaluation stopped
 pub enum Fail {
+    /// it read an invalid value
     Taint,
+    /// it must wait for phase 2
     Defer,
+    /// an error
     Eval(EvalErr),
 }
+/// an evaluation's outcome
 pub type R<T> = Result<T, Fail>;
+/// An evaluation error without a code.
 pub fn err<T>(msg: impl Into<String>) -> R<T> {
     Err(Fail::Eval(EvalErr {
         msg: msg.into(),
         code: None,
     }))
 }
+/// An evaluation error with a code.
 pub fn err_code<T>(msg: impl Into<String>, code: &str) -> R<T> {
     Err(Fail::Eval(EvalErr {
         msg: msg.into(),
@@ -331,11 +458,17 @@ pub fn err_code<T>(msg: impl Into<String>, code: &str) -> R<T> {
 }
 
 #[derive(Clone, Debug)]
+/// a diagnostic (§6, §12)
 pub struct Diag {
+    /// `error`, `warn`, or `info`
     pub severity: String,
+    /// the constraint's stable id, for an assertion
     pub id: Option<String>,
+    /// the message, rendered
     pub message: String,
+    /// the canonical path
     pub path: String,
+    /// the code (§12)
     pub code: Option<String>,
     /// the source range the checker reported at (the declaration, or the expression under inference)
     pub loc: Option<Loc>,
@@ -343,6 +476,7 @@ pub struct Diag {
     pub by: Option<String>,
 }
 impl Diag {
+    /// An error diagnostic at a path.
     pub fn error(message: impl Into<String>, path: String, code: Option<&str>) -> Diag {
         Diag {
             severity: "error".into(),
@@ -354,6 +488,7 @@ impl Diag {
             by: None,
         }
     }
+    /// The diagnostic as a JSON object in the report's field order (§12.2), with the file when given.
     pub fn to_json(&self, file: Option<&str>) -> String {
         let mut parts = Vec::new();
         // the report's field order (§12.2): file, code, id, severity,
@@ -376,13 +511,19 @@ impl Diag {
 }
 
 // ---------------- resolved types ----------------
+/// a resolved type, shared
 pub type RT = Rc<Ty>;
 
+/// a resolved type: its kind, its name when named, its `else` tail
 pub struct Ty {
+    /// the kind
     pub k: RTk,
+    /// the name, for a named type
     pub name: RefCell<Option<String>>,
+    /// the `else` tail
     pub tail: RefCell<Option<Tail>>,
 }
+/// A resolved type of a kind.
 pub fn ty(k: RTk) -> RT {
     Rc::new(Ty {
         k,
@@ -391,54 +532,90 @@ pub fn ty(k: RTk) -> RT {
     })
 }
 
+/// the kinds of resolved types (§3)
 pub enum RTk {
+    /// a primitive
     Prim(String),
+    /// a literal
     Lit(Value),
+    /// a numeric range
     Range {
+        /// the lower bound
         lo: Value,
+        /// the upper bound
         hi: Value,
+        /// whether the upper bound is excluded
         excl: bool,
+        /// int or float
         base: String,
     },
+    /// a string pattern
     Pattern {
+        /// its text
         src: String,
+        /// compiled
         re: Regex,
     },
+    /// an array
     Arr {
+        /// the element type
         elem: RT,
+        /// the lower size bound
         lo: Option<i64>,
+        /// the upper size bound
         hi: Option<i64>,
     },
+    /// a map
     Map {
+        /// the key type
         key: RT,
+        /// the value type
         val: RT,
     },
+    /// a union
     Union(Vec<RT>),
+    /// an intersection not yet merged
     IsectN(Vec<RT>),
+    /// a record
     Rec(RecType),
+    /// a predicate refinement
     Pred {
+        /// the base type
         base: RT,
+        /// the predicates
         preds: Vec<Rc<Expr>>,
     },
+    /// a reference type
     Ref(RT),
+    /// a quantity of a dimension
     Quantity(String),
+    /// a function type
     Func {
+        /// the parameter types
         params: Vec<RT>,
+        /// the return type
         ret: RT,
     },
+    /// any value
     Any,
 }
 
+/// a record type's shape
 pub struct RecType {
+    /// whether it is open
     pub open: Cell<bool>,
+    /// its members
     pub members: RefCell<Vec<Member>>,
+    /// its assertions and guarded groups
     pub asserts: RefCell<Vec<AssertItem>>,
     /// `context $parent: ref<T>` declarations (D30), checked at embedding sites
     pub ctx_decls: RefCell<Vec<(String, RT)>>,
     /// still being filled; extensions of it wait in `pending` (§3.14)
     pub filling: Cell<bool>,
+    /// extensions not yet merged (recursive types)
     pub pending: RefCell<Vec<(RT, RT)>>,
 }
+/// An empty record type.
 pub fn rec_type(open: bool) -> RecType {
     RecType {
         open: Cell::new(open),
@@ -451,41 +628,61 @@ pub fn rec_type(open: bool) -> RecType {
 }
 
 #[derive(Clone)]
+/// a member of a resolved record type
 pub struct Member {
+    /// the kind
     pub kind: MKind,
+    /// the name
     pub name: String,
     /// a hidden member (D34): computed, never part of the value
     pub hidden: bool,
+    /// the type
     pub ty: Option<RT>,
+    /// the types a conjunction contributed
     pub conj: Option<Vec<RT>>,
+    /// the default
     pub dflt: Option<Rc<Expr>>,
+    /// the derived expression
     pub expr: Option<Rc<Expr>>,
+    /// the module environment
     pub menv: Option<Rc<Env>>,
 }
 
 #[derive(Clone)]
+/// an assertion or a guarded group of a record type
 pub struct AssertItem {
+    /// whether it is a `when` group
     pub when: bool,
+    /// the name
     pub name: String,
+    /// the condition
     pub cond: Rc<Expr>,
+    /// the `else` tail
     pub tail: Option<Tail>,
+    /// the members, for a group
     pub body: Vec<MemberAst>,
+    /// the type declaring it, for the id
     pub origin: Option<String>,
+    /// the module environment
     pub menv: Option<Rc<Env>>,
 }
 
+/// The members of a record type; empty for any other type.
 pub fn rec_members(t: &RT) -> Vec<Member> {
     match &t.k {
         RTk::Rec(r) => r.members.borrow().clone(),
         _ => vec![],
     }
 }
+/// Whether the type is a record.
 pub fn is_rec(t: &RT) -> bool {
     matches!(t.k, RTk::Rec(_))
 }
 
 // ---------------- dimension vectors ----------------
+/// a dimension as base dimensions with exponents
 pub type DimVec = BTreeMap<String, i32>;
+/// The dimension's key (`Length*Time^-1`).
 pub fn key_of_vec(v: &DimVec) -> String {
     v.iter()
         .filter(|(_, e)| **e != 0)
@@ -499,6 +696,7 @@ pub fn key_of_vec(v: &DimVec) -> String {
         .collect::<Vec<_>>()
         .join("*")
 }
+/// A dimension from its key.
 pub fn vec_of_key(key: &str) -> DimVec {
     let mut v = DimVec::new();
     if key.is_empty() {
@@ -513,6 +711,7 @@ pub fn vec_of_key(key: &str) -> DimVec {
     }
     v
 }
+/// Two dimensions multiplied (`sign` 1) or divided (`sign` -1).
 pub fn vec_combine(a: &DimVec, b: &DimVec, sign: i32) -> DimVec {
     let mut out = a.clone();
     for (n, e) in b {
@@ -522,8 +721,11 @@ pub fn vec_combine(a: &DimVec, b: &DimVec, sign: i32) -> DimVec {
 }
 
 // ---------------- environment ----------------
+/// an exported name: the environment declaring it
 pub struct Export {
+    /// the environment
     pub env: Rc<Env>,
+    /// the name there
     pub name: String,
 }
 impl Clone for Export {
@@ -534,63 +736,111 @@ impl Clone for Export {
         }
     }
 }
+/// a constant's declaration and memoized value
 pub struct ConstEntry {
+    /// the expression
     pub expr: Rc<Expr>,
+    /// the annotation
     pub ty: Option<TypeAst>,
+    /// whether the value is computed
     pub state: Cell<bool>,
+    /// the value
     pub value: RefCell<Value>,
 }
+/// a function's declaration
 pub struct FuncEntry {
+    /// the parameters
     pub params: Vec<Param>,
+    /// the return type
     pub ret: Option<TypeAst>,
+    /// the body
     pub body: Rc<Expr>,
 }
+/// a type's declaration
 pub struct TypeEntry {
+    /// the type
     pub ast: TypeAst,
+    /// its `else` tail
     pub tail: Option<Tail>,
+    /// the type parameters
     pub params: Vec<Param>,
 }
+/// a diagnostic template's declaration
 pub struct DiagDecl {
+    /// the parameters
     pub params: Vec<Param>,
+    /// the severity
     pub severity: String,
+    /// the template
     pub template: Vec<TPart>,
 }
+/// a unit's declaration
 pub struct UnitDecl {
+    /// its dimension
     pub dim: Option<String>,
+    /// its factor
     pub factor: Option<Rc<Expr>>,
+    /// its base unit
     pub base: Option<String>,
 }
+/// evaluates a constant by name (the engine's)
 pub type ConstEval = Rc<dyn Fn(&str) -> R<Value>>;
+/// evaluates an expression (the engine's)
 pub type ExprEval = Rc<dyn Fn(&Rc<Expr>) -> R<Value>>;
 
+/// the environment of a module: its declarations, its imports, its roots and
+/// diagnostics, the unit space
 pub struct Env {
+    /// the type declarations
     pub type_asts: RefCell<HashMap<String, Rc<TypeEntry>>>,
+    /// resolved types, memoized
     pub type_memo: RefCell<HashMap<String, RT>>,
     // names being spliced into a pattern right now, across nested
     // resolutions — a mutually recursive pair is a cycle, not a stack overflow
+    /// the named types being resolved (recursion)
     pub pattern_visiting: RefCell<Vec<String>>,
+    /// the constants
     pub consts: RefCell<HashMap<String, Rc<ConstEntry>>>,
+    /// the functions
     pub funcs: RefCell<HashMap<String, Rc<FuncEntry>>>,
+    /// names declared twice
     pub duplicates: RefCell<Vec<String>>,
+    /// the outputs: name, type, expression
     pub outputs: RefCell<Vec<(String, TypeAst, Rc<Expr>)>>,
+    /// the inputs: type, fallback
     pub inputs: RefCell<HashMap<String, (TypeAst, Option<Rc<Expr>>)>>,
+    /// the diagnostic templates
     pub diags: RefCell<HashMap<String, Rc<DiagDecl>>>,
+    /// every instance bound
     pub registry: RefCell<Rc<RefCell<Vec<Rc<RefCell<RecInst>>>>>>,
+    /// the roots' values, by name
     pub roots: RefCell<Rc<RefCell<Vec<(String, Value)>>>>,
+    /// the diagnostics raised
     pub diagnostics: RefCell<Rc<RefCell<Vec<Diag>>>>,
+    /// the constant evaluator, once an engine is wired in
     pub const_eval: RefCell<Option<ConstEval>>,
+    /// the expression evaluator, once an engine is wired in
     pub expr_eval: RefCell<Option<ExprEval>>,
+    /// the imported names
     pub imports: RefCell<HashMap<String, Export>>,
+    /// the namespace imports
     pub namespaces: RefCell<HashMap<String, (Rc<Env>, Rc<RefCell<HashMap<String, Export>>>)>>,
     const_diag_seen: RefCell<HashSet<String>>,
+    /// the dimension declarations
     pub dim_decls: RefCell<HashMap<String, Option<Vec<(String, i32)>>>>,
+    /// dimensions resolved, memoized
     pub dim_memo: RefCell<HashMap<String, DimVec>>,
+    /// the unit declarations
     pub unit_decls: RefCell<HashMap<String, UnitDecl>>,
+    /// units resolved to (dimension, factor), memoized
     pub unit_memo: RefCell<HashMap<String, (String, f64)>>,
+    /// the base unit of each dimension
     pub base_unit_of: RefCell<HashMap<String, String>>,
+    /// the unit space's diagnostics (E4073 and friends)
     pub space_diags: RefCell<Vec<Diag>>,
     /// declaration order (HashMaps do not keep it; diagnostics follow it)
     pub type_order: RefCell<Vec<String>>,
+    /// the units in declaration order
     pub unit_order: RefCell<Vec<String>>,
     /// installed by the checker: constant-evaluation errors go here instead of the report
     pub const_diag_sink: RefCell<Option<Rc<RefCell<Vec<Diag>>>>>,
@@ -648,6 +898,7 @@ const SI_PREFIXES: [(&str, f64); 20] = [
 ];
 
 impl Env {
+    /// An empty environment.
     pub fn new() -> Rc<Env> {
         let env = Env {
             type_asts: RefCell::new(HashMap::new()),
@@ -818,6 +1069,7 @@ impl Env {
         }
     }
 
+    /// Load declarations into the environment (§5, §8).
     pub fn load(&self, decls: &[Decl]) {
         let mut seen: HashSet<String> = HashSet::new();
         for d in decls {
@@ -940,6 +1192,7 @@ impl Env {
         }
     }
 
+    /// Raise a diagnostic.
     pub fn report(&self, d: Diag) {
         let by = self.tagger.borrow().as_ref().and_then(|t| t());
         let mut d = d;
@@ -953,10 +1206,12 @@ impl Env {
         let rc = self.diagnostics.borrow().clone();
         *rc.borrow_mut() = diags;
     }
+    /// Forget a root.
     pub fn remove_root(&self, name: &str) {
         let rc = self.roots.borrow().clone();
         rc.borrow_mut().retain(|(n, _)| n != name);
     }
+    /// The roots' names, in order.
     pub fn root_names(&self) -> Vec<String> {
         self.roots
             .borrow()
@@ -965,19 +1220,24 @@ impl Env {
             .map(|(n, _)| n.clone())
             .collect()
     }
+    /// Keep the instances a predicate accepts.
     pub fn registry_retain(&self, mut pred: impl FnMut(&Rc<RefCell<RecInst>>) -> bool) {
         let rc = self.registry.borrow().clone();
         rc.borrow_mut().retain(|i| pred(i));
     }
+    /// The diagnostics raised so far.
     pub fn diagnostics_vec(&self) -> Vec<Diag> {
         self.diagnostics.borrow().borrow().clone()
     }
+    /// How many diagnostics were raised.
     pub fn diag_len(&self) -> usize {
         self.diagnostics.borrow().borrow().len()
     }
+    /// Forget the diagnostics after the first `n`.
     pub fn diag_truncate(&self, n: usize) {
         self.diagnostics.borrow().borrow_mut().truncate(n);
     }
+    /// A root's value.
     pub fn root(&self, name: &str) -> Option<Value> {
         self.roots
             .borrow()
@@ -986,6 +1246,7 @@ impl Env {
             .find(|(n, _)| n == name)
             .map(|(_, v)| v.clone())
     }
+    /// Set a root's value.
     pub fn set_root(&self, name: &str, v: Value) {
         let rc = self.roots.borrow().clone();
         let mut roots = rc.borrow_mut();
@@ -995,6 +1256,7 @@ impl Env {
             roots.push((name.to_string(), v));
         }
     }
+    /// The roots' values, in order.
     pub fn root_values(&self) -> Vec<Value> {
         self.roots
             .borrow()
@@ -1003,14 +1265,17 @@ impl Env {
             .map(|(_, v)| v.clone())
             .collect()
     }
+    /// Register an instance.
     pub fn registry_push(&self, inst: Rc<RefCell<RecInst>>) {
         self.registry.borrow().borrow_mut().push(inst);
     }
+    /// The instances registered so far.
     pub fn registry_snapshot(&self) -> Vec<Rc<RefCell<RecInst>>> {
         self.registry.borrow().borrow().clone()
     }
 
     // §4.13: a named endpoint in a constant position evaluates at elaboration time
+    /// A numeric constant's value where a type expects a number (a size, a bound).
     pub fn const_num(&self, v: &Value) -> Value {
         let name = match v {
             Value::Str(s) => s.clone(),
@@ -1060,6 +1325,7 @@ impl Env {
     }
 
     // ---- unit / dimension name spaces ----
+    /// Resolve a dimension by name to its base dimensions.
     pub fn resolve_dim(&self, name: &str, visiting: &mut Vec<String>) -> Result<DimVec, String> {
         if let Some(v) = self.dim_memo.borrow().get(name) {
             return Ok(v.clone());
@@ -1094,6 +1360,7 @@ impl Env {
             .insert(name.to_string(), vec.clone());
         Ok(vec)
     }
+    /// A unit's dimension key and factor against the base unit.
     pub fn unit_info(&self, sym: &str) -> Result<(String, f64), String> {
         self.unit_info_v(sym, &mut vec![])
     }
@@ -1187,6 +1454,7 @@ impl Env {
     }
 
     // ---- type resolution ----
+    /// Resolve a type annotation to a resolved type (§3), memoized under `name` for a named type.
     pub fn resolve(self: &Rc<Env>, ast: &TypeAst, name: Option<&str>) -> Result<RT, String> {
         Ok(match ast {
             TypeAst::Prim { name: n, .. } => ty(RTk::Prim(n.clone())),
@@ -1880,6 +2148,7 @@ fn type_key(t: &TypeAst) -> String {
 }
 
 // ---------------- generic substitution ----------------
+/// Substitute a generic type's parameters (§3.15).
 pub fn subst_type(
     ast: &TypeAst,
     types: &HashMap<String, TypeAst>,
@@ -2035,6 +2304,7 @@ fn subst_member(
         },
     }
 }
+/// Substitute values for names in an expression.
 pub fn subst_expr(e: &Rc<Expr>, values: &HashMap<String, Value>) -> Rc<Expr> {
     if values.is_empty() {
         return e.clone();
@@ -2150,6 +2420,7 @@ fn pattern_escape(cs: &[char], i: &mut usize) -> Result<i64, String> {
     }
     Err(format!("unsupported escape \\{e}"))
 }
+/// Why a pattern body is outside the §3.6 core (E4119), when it is.
 pub fn pattern_error(src: &str) -> Option<String> {
     let cs: Vec<char> = src.chars().collect();
     let n = cs.len();
@@ -2295,10 +2566,12 @@ pub fn pattern_error(src: &str) -> Option<String> {
         None
     }
 }
+/// Compile a pattern body to a regular expression.
 pub fn compile_pattern(src: &str) -> Result<Regex, String> {
     Regex::new(&format!("^(?:{src})$")).map_err(|e| e.to_string())
 }
 
+/// A canonical path's text, relative to `rel_root` (`$.…`) when given.
 pub fn path_str(segs: &[Seg], rel_root: Option<&str>) -> String {
     let mut out = String::new();
     for (i, s) in segs.iter().enumerate() {
@@ -2392,6 +2665,7 @@ pub fn cmp_path(a: &[Seg], b: &[Seg]) -> std::cmp::Ordering {
     a.len().cmp(&b.len())
 }
 
+/// Structural equality of two values (§4.5).
 pub fn value_eq(a: &Value, b: &Value) -> bool {
     let (pa, pb) = (a.place(), b.place());
     if let (Some(pa), Some(pb)) = (&pa, &pb) {
@@ -2455,6 +2729,8 @@ pub fn value_eq(a: &Value, b: &Value) -> bool {
 }
 
 // ---------------- lexical JSON (int/float by lexeme) ----------------
+/// Read a JSON document (§10.2): objects keep their key order, integers stay
+/// exact; trailing characters are an error.
 pub fn read_json(src: &str) -> R<Value> {
     let b = src.as_bytes();
     let mut i = 0usize;
@@ -2617,6 +2893,7 @@ pub fn js_num_str(x: f64) -> String {
     }
 }
 
+/// A string as JSON text, escaped.
 pub fn json_str(s: &str) -> String {
     let mut out = String::with_capacity(s.len() + 2);
     out.push('"');

@@ -57,13 +57,19 @@ target-version = "py310"
 extend-exclude = ["src/decl/_tree_sitter/src", ".venv", "build", "dist"]
 
 [tool.ruff.lint]
-select = ["E", "F", "W", "I", "UP", "B", "SIM", "RUF"]
-# E741: the port keeps the reference implementation's names (AGENTS.md), `l` included
-ignore = ["E741"]
+# D1: a docstring on every public module, class, and function of the package's API
+select = ["E", "F", "W", "I", "UP", "B", "SIM", "RUF", "D1"]
+# E741: the port keeps the reference implementation's names (AGENTS.md), `l` included;
+# D107: a class's docstring describes its construction
+ignore = ["E741", "D107"]
 
 [tool.ruff.lint.per-file-ignores]
 # the corpus drivers: sections import as they go, and the Decl sources they feed are kept whole
-"scripts/*.py" = ["E402", "E501"]
+"scripts/*.py" = ["E402", "E501", "D1"]
+# the tests and the ports' internal modules are held to the reference's shape, not to docstrings
+"tests/**/*.py" = ["D1"]
+"src/decl/{checker,cli,conformance,engine,fmt,infer,lsp,module,package,parse,pipeline,repl,semantics,session,subsume}.py" = ["D1"]
+"src/decl/_tree_sitter/*.py" = ["D1"]
 
 [tool.ruff.lint.isort]
 known-first-party = ["decl"]

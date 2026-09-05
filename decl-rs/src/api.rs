@@ -20,11 +20,17 @@ use std::rc::Rc;
 /// One diagnostic, in the report's field order (§12.2).
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Diagnostic {
+    /// the file the diagnostic is reported against: the entry module by the path given, another module by its absolute path
     pub file: String,
+    /// the diagnostic code (§12), when the finding carries one
     pub code: Option<String>,
+    /// the constraint's stable id (`Type.name`), for an assertion
     pub id: Option<String>,
+    /// `error`, `warn`, or `info`
     pub severity: String,
+    /// the message, rendered
     pub message: String,
+    /// the canonical path of the value the finding concerns (§7.2); empty for a module-level finding
     pub path: String,
 }
 
@@ -32,7 +38,9 @@ pub struct Diagnostic {
 /// error such as an unknown input or root).
 #[derive(Clone, Debug)]
 pub struct DeclError {
+    /// the first diagnostic's message, or the usage error
     pub message: String,
+    /// the report (§12.2), in canonical order; empty for a usage error
     pub diagnostics: Vec<Diagnostic>,
 }
 impl fmt::Display for DeclError {
@@ -45,7 +53,9 @@ impl std::error::Error for DeclError {}
 /// A document to bind to an input: the path of a JSON file, or its JSON text.
 #[derive(Clone, Debug)]
 pub enum Document {
+    /// a JSON file, by path
     File(PathBuf),
+    /// JSON text
     Json(String),
 }
 

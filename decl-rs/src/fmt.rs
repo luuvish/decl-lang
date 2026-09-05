@@ -207,6 +207,9 @@ fn spaced(a: &Leaf, b: &Leaf, prev: Option<&Leaf>) -> bool {
     true
 }
 
+/// The canonical form of a source text (`decl fmt`, docs/tooling/01_cli.md):
+/// idempotent and AST-preserving, the author's line structure kept (§2.9).
+/// Fails with the message when the text does not parse.
 pub fn format(src: &str) -> Result<String, String> {
     let mut parser = Parser::new();
     let lang: Language = LANGUAGE.into();

@@ -10,12 +10,18 @@ use crate::parse::parse_source;
 use crate::semantics::{sort_diags, Diag, Env, Scope};
 use std::rc::Rc;
 
+/// one module evaluated: its environment, its engine, its diagnostics
 pub struct Pipeline {
+    /// the environment the declarations loaded into
     pub env: Rc<Env>,
+    /// the engine that bound and evaluated the roots
     pub eng: Rc<Engine>,
+    /// every diagnostic, in canonical order (§6.7)
     pub diags: Vec<Diag>,
 }
 
+/// Evaluate one module's declarations (§9.1): load, bind every output, force,
+/// validate; the diagnostics sorted.
 pub fn run_pipeline(decls: &[Decl]) -> Pipeline {
     let env = Env::new();
     env.load(decls);
@@ -37,13 +43,20 @@ pub fn run_pipeline(decls: &[Decl]) -> Pipeline {
 /// the phase that decided a source-level report
 #[derive(Clone, Copy, PartialEq, Debug)]
 pub enum Phase {
+    /// a syntax error decided
     Parse,
+    /// a static check decided
     Check,
+    /// evaluation decided
     Evaluate,
 }
+/// the source-level report of [`evaluate_source`]: what the playground and the REPL show
 pub struct Report {
+    /// the phase that decided the report
     pub phase: Phase,
+    /// no error-severity finding in that phase
     pub ok: bool,
+    /// the syntax errors, as zero-based (row, column)
     pub parse_errors: Vec<(usize, usize)>,
     /// static-checker diagnostics
     pub checks: Vec<Diag>,

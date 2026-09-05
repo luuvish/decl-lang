@@ -52,7 +52,9 @@ The sdist needs a C compiler at install time; publish platform wheels
 
 ## crates.io — `decl-lang`
 
-`decl-rs/` is the native Rust implementation: the grammar is compiled in by
+`decl-rs/` is the native Rust implementation; its documentation is
+<https://docs.rs/decl-lang> (the README as the crate page, every public
+item beneath it). The grammar is compiled in by
 `build.rs` (from `../tree-sitter-decl/src` inside the repository, or
 from `grammar/` in the published crate — `npm run build` in `decl-ts/`
 copies the sources there); the `decl` binary offers `check`, `evaluate`,

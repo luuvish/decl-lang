@@ -36,17 +36,23 @@ was reported.
 ## Library
 
 ```rust
-use decl_lang::{evaluate, check, validate, format_source, Document, EvaluateOptions};
+use decl_lang::{check, evaluate, format_source, validate, DeclError, Document, EvaluateOptions};
 
-let docs = evaluate("site.decl", &EvaluateOptions::default())?;          // exported outputs, by name, as canonical JSON text
-let site = &evaluate("site.decl", &EvaluateOptions { outputs: vec!["site".into()], ..Default::default() })?["site"];
-let done = evaluate("cfg.decl", &EvaluateOptions {
-    inputs: vec![("deployed".into(), Document::File("doc.json".into()))],   // or Document::Json(text)
-    outputs: vec!["deployed".into()],
-})?;
-let problems = check(&["schema.decl"]);                                     // empty when clean
-let report = validate("cfg.decl", &[("deployed".into(), Document::Json("{\"host\":\"h\"}".into()))])?;
-let text = format_source("const x=1+2\n")?;                                // "const x = 1 + 2\n"
+fn example() -> Result<(), DeclError> {
+    // the exported outputs, by name in declaration order, as canonical JSON text
+    let docs = evaluate("site.decl", &EvaluateOptions::default())?;
+    let site = &evaluate("site.decl", &EvaluateOptions { outputs: vec!["site".into()], ..Default::default() })?["site"];
+    // a document bound to an input root, and that root returned completed
+    let done = evaluate("cfg.decl", &EvaluateOptions {
+        inputs: vec![("deployed".into(), Document::File("doc.json".into()))], // or Document::Json(text)
+        outputs: vec!["deployed".into()],
+    })?;
+    let problems = check(&["schema.decl"]); // empty when clean
+    let report = validate("cfg.decl", &[("deployed".into(), Document::Json("{\"host\":\"h\"}".into()))])?;
+    let text = format_source("const x=1+2\n")?; // "const x = 1 + 2\n"
+    assert_eq!(text, "const x = 1 + 2\n");
+    Ok(())
+}
 ```
 
 The functions are the `decl` command line in its own vocabulary:
@@ -57,6 +63,32 @@ exported outputs; a failure is a `DeclError` whose `diagnostics` carry
 the report. The npm package (`evaluate`, …) and the PyPI package
 (`decl.evaluate`, …) offer the same functions with the same semantics;
 the modules the functions are built from are public as well.
+
+## Library layout
+
+The crate is the same modules as the reference implementation, one
+language rule in the same-named file everywhere (`AGENTS.md` in the
+repository), and each is public:
+
+| Module | Holds |
+|---|---|
+| `api` | the high-level API above: `evaluate`, `check`, `validate`, `evaluate_source`, `format_source`, `DeclError`, `Diagnostic`, `Document`, `EvaluateOptions`, `Report` |
+| `ast` | the syntax tree (specification chapter 11): declarations, types, members, expressions, source ranges |
+| `parse` | the tree-sitter binding: `parse_source`, source text to `ast` |
+| `semantics` | values, the environment (`Env`), resolved types (`RT`), diagnostics (`Diag`), canonical paths, the JSON reader and writers |
+| `subsume` | the subsumption judgment ⊑ (§3.17) and structural emptiness (§3.19) |
+| `infer` | expression inference and the static assignability of §4 |
+| `checker` | the static checks of a module (`check_module`) |
+| `engine` | binding, lazy evaluation, validation, serialization (`Engine`) |
+| `pipeline` | one module end to end (`run_pipeline`, `evaluate_source`) |
+| `module` | modules and the universe (`load_modules`, `run_universe`) |
+| `package` | manifests, the resolver, the lock file (§8.6–8.7) |
+| `fmt` | the canonical formatter (`format`) |
+| `conformance` | the fixture corpus judge (`judge_corpus`) |
+| `session` | the evaluation session behind the REPL and the server (`Session`) |
+| `repl` | `decl repl` |
+| `lsp` | `decl-lsp` |
+| `cli` | `decl` |
 
 ## Scope
 

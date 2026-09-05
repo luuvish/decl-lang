@@ -10,11 +10,15 @@ use tree_sitter_language::LanguageFn;
 extern "C" {
     fn tree_sitter_decl() -> *const ();
 }
+/// the tree-sitter grammar compiled into the crate (`build.rs`, from `grammar/`)
 pub const LANGUAGE: LanguageFn = unsafe { LanguageFn::from_raw(tree_sitter_decl) };
 
 #[derive(Clone)]
+/// what parsing a source text yields: the declarations and the syntax errors
 pub struct ParseResult {
+    /// the declarations, in source order
     pub decls: Vec<Decl>,
+    /// the syntax errors, as zero-based (row, column)
     pub errors: Vec<(usize, usize)>,
 }
 
@@ -30,6 +34,8 @@ struct Lower<'a> {
     src: &'a [u8],
 }
 
+/// Parse a module's source text: the tree-sitter CST lowered to the AST of
+/// [`crate::ast`], with source ranges (specification chapter 11).
 pub fn parse_source(src: &str) -> ParseResult {
     if let Some(hit) = PARSE_CACHE.with(|c| {
         c.borrow()
@@ -976,6 +982,8 @@ fn neg_value(v: Value) -> Value {
         other => other,
     }
 }
+/// An integer literal's text (§2.6: decimal, `0x`, `0o`, `0b`, `_` separators) as
+/// an arbitrary-precision integer.
 pub fn parse_int(text: &str) -> LR<BigInt> {
     let t = text.replace('_', "");
     let (radix, digits) = if let Some(h) = t.strip_prefix("0x").or_else(|| t.strip_prefix("0X")) {

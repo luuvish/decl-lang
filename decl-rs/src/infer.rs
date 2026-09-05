@@ -13,19 +13,25 @@ use std::collections::{HashMap, HashSet};
 use std::rc::Rc;
 
 #[derive(Clone)]
+/// an inferred type: what is known of an expression's type, and whether it may be absent
 pub struct Ty {
+    /// the type, when known
     pub rt: Option<RT>,
+    /// the expression may be absent (an optional member read without `?.` or `??`)
     pub abs: bool,
 }
+/// The unknown type.
 pub fn unk() -> Ty {
     Ty {
         rt: None,
         abs: false,
     }
 }
+/// A present type.
 pub fn tyv(rt: Option<RT>) -> Ty {
     Ty { rt, abs: false }
 }
+/// A primitive type by name.
 pub fn prim(name: &str) -> RT {
     ty(RTk::Prim(name.to_string()))
 }
@@ -33,30 +39,44 @@ fn bool_ty() -> Ty {
     tyv(Some(prim("bool")))
 }
 
+/// receives a finding: its code and its message
 pub type Report = Rc<dyn Fn(&str, String)>;
 
 #[derive(Clone)]
+/// the inference context: the environment, the local variables, the narrowing
+/// guards in force, the reporter
 pub struct Ctx {
+    /// the environment names resolve in
     pub env: Rc<Env>,
+    /// where findings go
     pub report: Report,
+    /// the local variables in scope, with their types
     pub vars: HashMap<String, Ty>,
+    /// the paths a guard proved present
     pub present: HashSet<String>,
+    /// the paths a guard proved non-null
     pub nonnull: HashSet<String>,
+    /// the constants' inferred types, memoized
     pub const_memo: Rc<RefCell<HashMap<String, Ty>>>,
     /// the expression under inference (shared by child contexts): what a report is anchored to
     pub pos: Rc<RefCell<Option<Rc<Expr>>>>,
     /// Phase 6 foundations: every inferred node's type, and every name's resolution (the language server's tables)
     pub record: Option<Rc<dyn Fn(&Rc<Expr>, &Ty)>>,
+    /// called with every name's resolution (the language server's navigation)
     pub resolve_hook: Option<Rc<dyn Fn(&Rc<Expr>, Option<Target>)>>,
 }
 
 /// what a name denotes: the declaration behind it, imports followed to their module
 #[derive(Clone)]
 pub struct Target {
+    /// what the name is: var, const, func, output, input, namespace, type, diagnostic, export
     pub kind: &'static str, // var | const | func | output | input | namespace | type | diagnostic | export
+    /// the environment declaring it; none for a local
     pub env: Option<Rc<Env>>,
+    /// its name
     pub name: String,
 }
+/// Resolve a name in the context: a local variable first, then the environment and its imports.
 pub fn resolve_name(cx: &Ctx, name: &str) -> Option<Target> {
     if cx.vars.contains_key(name) {
         return Some(Target {
@@ -67,6 +87,7 @@ pub fn resolve_name(cx: &Ctx, name: &str) -> Option<Target> {
     }
     resolve_in(&cx.env, name)
 }
+/// Resolve a name in an environment: its declarations, then its imports.
 pub fn resolve_in(env: &Rc<Env>, name: &str) -> Option<Target> {
     let t = |kind: &'static str| {
         Some(Target {
@@ -107,18 +128,22 @@ pub fn resolve_in(env: &Rc<Env>, name: &str) -> Option<Target> {
     None
 }
 impl Ctx {
+    /// Report a finding.
     pub fn report(&self, code: &str, msg: String) {
         (self.report)(code, msg)
     }
+    /// A child context: the same environment and reporter, its own variables.
     pub fn child(&self) -> Ctx {
         self.clone()
     }
+    /// The context over another environment (an imported module's).
     pub fn with_env(&self, env: Rc<Env>) -> Ctx {
         let mut c = self.clone();
         c.env = env;
         c
     }
 }
+/// A fresh context over an environment.
 pub fn make_ctx(env: Rc<Env>, report: Report) -> Ctx {
     Ctx {
         env,
@@ -134,6 +159,7 @@ pub fn make_ctx(env: Rc<Env>, report: Report) -> Ctx {
 }
 
 // ---------------- JS-faithful helpers ----------------
+/// The value's JavaScript type name, as the reference tags it.
 pub fn js_typeof(v: &Value) -> &'static str {
     match v {
         Value::Bool(_) => "boolean",
@@ -143,6 +169,7 @@ pub fn js_typeof(v: &Value) -> &'static str {
         _ => "object",
     }
 }
+/// The value's text as JavaScript would print it.
 pub fn js_str(v: &Value) -> String {
     match v {
         Value::Null => "null".into(),
@@ -159,6 +186,7 @@ pub fn js_str(v: &Value) -> String {
         other => format!("{other:?}"),
     }
 }
+/// A resolved type's kind, as a word.
 pub fn tag(rt: &RT) -> &'static str {
     match &rt.k {
         RTk::Prim(_) => "prim",
@@ -185,6 +213,7 @@ fn ret_of(rt: &RT) -> Option<RT> {
         Some(rt.clone())
     }
 }
+/// A member's type, from its annotation or its conjunction.
 pub fn member_ty(m: &Member) -> Option<RT> {
     match &m.conj {
         Some(c) => Some(ty(RTk::IsectN(c.clone()))),
@@ -199,6 +228,7 @@ fn find_member<'a>(members: &'a [Member], name: &str) -> Option<&'a Member> {
 fn is_null_lit(t: &RT) -> bool {
     matches!(&t.k, RTk::Lit(Value::Null)) || matches!(&t.k, RTk::Prim(n) if n == "null")
 }
+/// Whether a type admits null.
 pub fn has_null(rt: Option<&RT>) -> bool {
     match rt {
         None => false,
@@ -229,6 +259,7 @@ fn same_rt(a: &RT, b: &RT) -> bool {
         _ => false,
     }
 }
+/// The union of the arms, flattened; none when any arm is unknown.
 pub fn mk_union(arms: Vec<Option<RT>>) -> Option<RT> {
     if arms.iter().any(|a| a.is_none()) {
         return None;
@@ -252,6 +283,7 @@ pub fn mk_union(arms: Vec<Option<RT>>) -> Option<RT> {
         ty(RTk::Union(uniq))
     })
 }
+/// The numeric kind of a type — int, float, quantity — when it has one.
 pub fn num_kind(rt: Option<&RT>) -> Option<String> {
     let rt = rt?;
     match &rt.k {
@@ -332,6 +364,7 @@ fn arm_of(rt: Option<&RT>, t: &str) -> Option<RT> {
 }
 
 // ---------------- navigation paths & narrowing ----------------
+/// The key of an expression as a guard path (`a.b.c`), when it is one.
 pub fn path_key(e: &Expr) -> Option<String> {
     match e {
         Expr::Name(n) => Some(n.clone()),
@@ -355,8 +388,11 @@ pub fn path_key(e: &Expr) -> Option<String> {
     }
 }
 #[derive(Default)]
+/// what a condition proves when it holds: the paths present, the paths non-null
 pub struct Guards {
+    /// the paths proved present
     pub present: Vec<String>,
+    /// the paths proved non-null
     pub nonnull: Vec<String>,
 }
 fn merge(mut a: Guards, b: Guards) -> Guards {
@@ -364,6 +400,7 @@ fn merge(mut a: Guards, b: Guards) -> Guards {
     a.nonnull.extend(b.nonnull);
     a
 }
+/// The guards a condition establishes on the branch where it holds (`polarity`).
 pub fn guards_of(e: &Expr, polarity: bool) -> Guards {
     match e {
         Expr::Paren(x) => guards_of(x, polarity),
@@ -429,6 +466,7 @@ fn name_bound(cx: &Ctx, n: &str) -> bool {
         || cx.env.inputs.borrow().contains_key(n)
         || cx.env.outputs.borrow().iter().any(|(o, _, _)| o == n)
 }
+/// A context with the guards in force.
 pub fn apply_guards(cx: &Ctx, g: Guards) -> Ctx {
     let mut c2 = cx.child();
     c2.present.extend(g.present);
@@ -440,12 +478,19 @@ pub fn apply_guards(cx: &Ctx, g: Guards) -> Ctx {
 /// the return type of a std function, by shape
 #[derive(Clone, Copy)]
 pub enum StdRet {
+    /// unknown
     Unknown,
+    /// an integer
     Int,
+    /// a boolean
     Bool,
+    /// a string
     Str,
+    /// a float
     Float,
+    /// an array of strings
     ArrStr,
+    /// a predicate function
     PredFn,
 }
 /// the std functions (§13.1: names not listed do not exist): name, arity, return
@@ -509,6 +554,8 @@ fn std_sig(name: &str) -> Option<(usize, Option<RT>)> {
 // ---------------- type text ----------------
 // the static type as inference sees it, spelled in the language's own
 // type syntax where it has one (`:type` in the REPL, hover in the editor)
+/// The text of a type as the language spells it: `int`, `1..10`, `int[3..3]`,
+/// `(1 | 2)[]`, `quantity<Length>`.
 pub fn type_text(rt: Option<&RT>) -> String {
     let Some(rt) = rt else {
         return "unknown".into();
@@ -609,6 +656,7 @@ pub fn type_text(rt: Option<&RT>) -> String {
         RTk::IsectN(_) => "?".into(),
     }
 }
+/// The `std.module.function` path an expression spells, when it does.
 pub fn std_path(e: &Expr) -> Option<String> {
     match e {
         Expr::Member {
@@ -629,9 +677,11 @@ pub fn std_path(e: &Expr) -> Option<String> {
 }
 
 // ---------------- the judgment ----------------
+/// Resolve a type annotation; none when it is absent or fails.
 pub fn try_resolve(env: &Rc<Env>, ast: Option<&TypeAst>) -> Option<RT> {
     env.resolve(ast?, None).ok()
 }
+/// A named type's annotation, without arguments.
 pub fn named(name: &str) -> TypeAst {
     TypeAst::Named {
         name: name.to_string(),
@@ -642,6 +692,7 @@ pub fn named(name: &str) -> TypeAst {
     }
 }
 
+/// Require a value-typed expression where a type or a namespace would be an error.
 pub fn require_val(cx: &Ctx, e: &Expr, ty: Ty, what: &str) -> Ty {
     if ty.abs {
         let k = path_key(e);
@@ -655,6 +706,7 @@ pub fn require_val(cx: &Ctx, e: &Expr, ty: Ty, what: &str) -> Ty {
     ty
 }
 
+/// Infer an expression's type (§4), reporting findings through the context.
 pub fn infer(cx: &Ctx, e: &Rc<Expr>) -> Ty {
     let prev = cx.pos.replace(Some(e.clone()));
     let t = infer0(cx, e);
@@ -1728,6 +1780,8 @@ fn place_ty(cx: &Ctx, e: &Rc<Expr>) -> Ty {
     }
 }
 
+/// Check an expression against an expected type (§3.18, D31), or infer it when
+/// none is expected.
 pub fn check_expr(cx: &Ctx, e: &Rc<Expr>, expected: Option<&RT>) -> Ty {
     let Some(expected) = expected else {
         return infer(cx, e);

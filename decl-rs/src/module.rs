@@ -11,16 +11,25 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
 
+/// one module of a universe
 pub struct Module {
+    /// the module's absolute path
     pub path: PathBuf,
+    /// its declarations
     pub decls: Vec<Decl>,
+    /// its environment, with its imports linked
     pub env: Rc<Env>,
+    /// what it exports, by name (§8.2)
     pub exports: Rc<RefCell<HashMap<String, Export>>>,
 }
 
+/// a universe loaded from an entry module
 pub struct LoadResult {
+    /// every module, the entry included, in load order
     pub modules: Vec<Rc<Module>>,
+    /// the entry module, when it loaded
     pub entry: Option<Rc<Module>>,
+    /// the loading and linking diagnostics (§8): a missing module, a cycle, a collision, an unexported name
     pub diags: Vec<Diag>,
 }
 
@@ -378,11 +387,17 @@ fn link_universe(mods: &[Rc<Module>], entry: &Rc<Module>, diags: &mut Vec<Diag>)
 /// a document bound to an input (§10): `module` is the one declaring the
 /// input (the entry when unset)
 pub struct Bind {
+    /// the module declaring the input, when one does
     pub module: Option<Rc<Module>>,
+    /// the input's name
     pub input: String,
+    /// the document, as the JSON reader gives it
     pub raw: Value,
 }
 
+/// Evaluate a universe: bind the documents to their inputs, then every root of
+/// every module (§9.2), force, validate; returns the entry's engine and every
+/// diagnostic in canonical order.
 pub fn run_universe(
     mods: &[Rc<Module>],
     entry: &Rc<Module>,
