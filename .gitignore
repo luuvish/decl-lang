@@ -58,3 +58,4 @@ tree-sitter-decl/*.so
 # on this machine), the agent's session files
 .zed/
 .claude/
+extension/vscode/LICENSE

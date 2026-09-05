@@ -39,6 +39,8 @@ copyFileSync(
   join(root, 'syntaxes/decl.tmLanguage.json'),
 );
 mkdirSync(join(root, 'server'), { recursive: true });
+// the LICENSE travels with the package, as it does in decl-ts, decl-rs, decl-py
+copyFileSync(join(root, '../../LICENSE'), join(root, 'LICENSE'));
 // the Node bundles are ES modules: they keep that as .mjs inside this
 // CommonJS package (the client forks the server with node); the worker
 // server is a classic script

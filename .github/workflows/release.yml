@@ -24,6 +24,10 @@ on:
         description: publish decl-lang to crates.io (trusted publishing), as a tag does
         type: boolean
         default: false
+      publish_vsix:
+        description: publish the .vsix to the Marketplace and Open VSX (VSCE_PAT / OVSX_PAT), as a tag does
+        type: boolean
+        default: false
 
 permissions:
   contents: write
@@ -285,13 +289,17 @@ jobs:
           name: vscode-decl.vsix
           path: vscode-decl.vsix
       - name: publish to the Marketplace and Open VSX (when the tokens are configured)
-        if: startsWith(github.ref, 'refs/tags/v')
+        if: startsWith(github.ref, 'refs/tags/v') || inputs.publish_vsix
         env:
           VSCE_PAT: ${{ secrets.VSCE_PAT }}
           OVSX_PAT: ${{ secrets.OVSX_PAT }}
         run: |
           if [ -n "$VSCE_PAT" ]; then npx @vscode/vsce publish --packagePath vscode-decl.vsix -p "$VSCE_PAT"; else echo "VSCE_PAT not set: skipping the Marketplace"; fi
-          if [ -n "$OVSX_PAT" ]; then npx ovsx publish vscode-decl.vsix -p "$OVSX_PAT"; else echo "OVSX_PAT not set: skipping Open VSX"; fi
+          if [ -n "$OVSX_PAT" ]; then
+            # the namespace exists after the first publish; creating it again is harmless
+            npx ovsx create-namespace luuvish -p "$OVSX_PAT" || true
+            npx ovsx publish vscode-decl.vsix -p "$OVSX_PAT"
+          else echo "OVSX_PAT not set: skipping Open VSX"; fi
 
   release:
     name: GitHub release
