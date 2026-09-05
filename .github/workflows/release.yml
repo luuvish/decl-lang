@@ -288,18 +288,30 @@ jobs:
         with:
           name: vscode-decl.vsix
           path: vscode-decl.vsix
-      - name: publish to the Marketplace and Open VSX (when the tokens are configured)
+      # each registry on its own, skipped when its token is absent or the
+      # version is already there (a re-run of a release never fails on that)
+      - name: publish to the Marketplace (VSCE_PAT)
         if: startsWith(github.ref, 'refs/tags/v') || inputs.publish_vsix
         env:
           VSCE_PAT: ${{ secrets.VSCE_PAT }}
+        run: |
+          v=$(node -p "require('./extension/vscode/package.json').version")
+          if [ -z "$VSCE_PAT" ]; then echo "VSCE_PAT not set: skipping the Marketplace"
+          elif npx @vscode/vsce show luuvish.vscode-decl --json 2>/dev/null | grep -q "\"version\": *\"$v\""; then echo "luuvish.vscode-decl $v is already on the Marketplace"
+          else npx @vscode/vsce publish --packagePath vscode-decl.vsix -p "$VSCE_PAT"; fi
+      - name: publish to Open VSX (OVSX_PAT)
+        if: startsWith(github.ref, 'refs/tags/v') || inputs.publish_vsix
+        env:
           OVSX_PAT: ${{ secrets.OVSX_PAT }}
         run: |
-          if [ -n "$VSCE_PAT" ]; then npx @vscode/vsce publish --packagePath vscode-decl.vsix -p "$VSCE_PAT"; else echo "VSCE_PAT not set: skipping the Marketplace"; fi
-          if [ -n "$OVSX_PAT" ]; then
+          v=$(node -p "require('./extension/vscode/package.json').version")
+          if [ -z "$OVSX_PAT" ]; then echo "OVSX_PAT not set: skipping Open VSX"
+          elif curl -sf "https://open-vsx.org/api/luuvish/vscode-decl/$v" >/dev/null; then echo "luuvish.vscode-decl $v is already on Open VSX"
+          else
             # the namespace exists after the first publish; creating it again is harmless
             npx ovsx create-namespace luuvish -p "$OVSX_PAT" || true
             npx ovsx publish vscode-decl.vsix -p "$OVSX_PAT"
-          else echo "OVSX_PAT not set: skipping Open VSX"; fi
+          fi
 
   release:
     name: GitHub release
