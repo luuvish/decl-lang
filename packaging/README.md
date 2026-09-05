@@ -137,7 +137,11 @@ in core as of 2026-09-02).
 3. `cd decl-ts && npm run smoke:dist`; `cd decl-py && python scripts/smoke.py`.
 4. `npm publish` (first time: `npm login`; the name `decl-lang` is
    unclaimed as of 2026-09-02); `python -m twine upload dist/*`;
-   `cargo publish`.
+   `cargo publish -p decl-lang --locked --allow-dirty` from the root, after
+   `npm run build -w decl-lang` (the crate packages the grammar sources and
+   the LICENSE that build copies into `decl-rs/`; they are ignored files,
+   hence `--allow-dirty`). `--dry-run` first: it packages and verifies
+   the build.
 5. Tag the repository: `git tag v0.3.0 && git push --tags` — the tag
    runs `.github/workflows/release.yml`, which attaches to the GitHub
    release:
