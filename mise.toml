@@ -7,4 +7,5 @@
 [tools]
 node = "24"
 python = "3.12"
-rust = { version = "1.97.1", profile = "minimal" }
+# minimal profile plus the two tools `make lint` runs
+rust = { version = "1.97.1", profile = "minimal", components = ["rustfmt", "clippy"] }
