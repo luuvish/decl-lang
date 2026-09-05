@@ -54,7 +54,17 @@ export class EvalErr extends Error {
 
 export type Diag = { severity: string; id?: string; message: string; path: string; code?: string;
   /** the source range the checker reported at (the declaration, or the expression under inference) */
-  loc?: Loc };
+  loc?: Loc;
+  /** the evaluation step that produced it (a slot, a root, an assert): dependency tracking's tag */
+  by?: string };
+
+/** §6.7: evaluation- and validation-time diagnostics sort by (path, id), path in canonical order; stable */
+export function sortDiags(diags: Diag[]): Diag[] {
+  const segsOf = (p: string): Seg[] => { try { return p ? parsePath(p, '') : []; } catch { return [p]; } };
+  return diags.map((d, i) => ({ d, i, segs: segsOf(d.path) }))
+    .sort((a, b) => cmpPath(a.segs, b.segs) || ((a.d.id ?? '') < (b.d.id ?? '') ? -1 : (a.d.id ?? '') > (b.d.id ?? '') ? 1 : 0) || a.i - b.i)
+    .map(x => x.d);
+}
 
 // ---------------- dimensions as exponent vectors (§3.16) ----------------
 // two dimension expressions are equal iff their base-exponent vectors
@@ -249,7 +259,9 @@ export class Env {
     }
   }
 
-  report(d: Diag) { this.diagnostics.push(d); }
+  /** installed by the engine: the evaluation step a report is attributed to */
+  tagger?: () => string | undefined;
+  report(d: Diag) { const by = this.tagger?.(); if (by !== undefined) d.by = by; this.diagnostics.push(d); }
 
   // §4.13: a named endpoint in a constant position evaluates at
   // elaboration time; an erroring constant is a compile-time diagnostic

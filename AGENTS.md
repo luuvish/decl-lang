@@ -63,9 +63,9 @@ in the same-named file everywhere:
 | canonical formatter | `fmt.ts` | `fmt.rs` | `fmt.py` |
 | corpus judgment | `conformance.ts` | `conformance.rs` | `conformance.py` |
 | session object (universe + operation log), the REPL | `session.ts`, `repl.ts` | `session.rs`, `repl.rs` | `session.py`, `repl.py` |
-| language server (stdio) | `lsp.ts` | `lsp.rs` (+ `lsp_main.rs`) | `lsp.py` |
+| language server | `lsp-core.ts` (every answer), `lsp.ts` (stdio), `lsp-web.ts` (a web worker) | `lsp.rs` (+ `lsp_main.rs`) | `lsp.py` |
 | command line | `cli.ts` | `cli.rs` (+ `main.rs`) | `cli.py` (+ `__main__.py`) |
-| platform: locating the grammar (Rust and Python compile it in; TypeScript loads a wasm, from disk in `node.ts` or from a URL) | `node.ts`, entries `core.ts` (platform-neutral) / `index.ts` (Node) | `lib.rs` | `_tree_sitter/` |
+| platform: locating the grammar (Rust and Python compile it in; TypeScript loads a wasm, from disk in `node.ts` or from a URL) and reaching files (TypeScript through a host: the disk under Node, memory in a browser) | `host.ts`, `node.ts`, entries `core.ts` (platform-neutral) / `index.ts` (Node) | `lib.rs` | `_tree_sitter/` |
 
 Rules:
 

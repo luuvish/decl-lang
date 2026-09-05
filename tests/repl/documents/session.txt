@@ -18,6 +18,7 @@ extra.label
 :bind nothing=tests/repl/documents/doc.json
 :roots
 // editing a document
+:diff deployed
 :update deployed.port = 9100
 :create deployed.replicas = 9
 :create deployed.replicas = 10

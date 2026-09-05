@@ -6,7 +6,8 @@ use crate::ast::{Decl, DeclBody};
 use crate::checker::check_module;
 use crate::engine::{Engine, RootSrc};
 use crate::parse::parse_source;
-use crate::semantics::{Diag, Env, Scope};
+
+use crate::semantics::{sort_diags, Diag, Env, Scope};
 use std::rc::Rc;
 
 pub struct Pipeline {
@@ -28,7 +29,8 @@ pub fn run_pipeline(decls: &[Decl]) -> Pipeline {
         }
     }
     eng.drive(&env);
-    let diags = env.diagnostics_vec();
+    let diags = sort_diags(env.diagnostics_vec()); // §6.7
+    env.diag_set(diags.clone());
     Pipeline { env, eng, diags }
 }
 

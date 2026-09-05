@@ -389,7 +389,40 @@ check("type hierarchy: Service has two subtypes", ",".join(sorted(x["name"] for 
 notify_server("textDocument/didChange", {"textDocument": {"uri": main_uri, "version": 40}, "contentChanges": [{"text": "const z = cap(1)\n"}]})
 dz = next_diagnostics(main_uri)
 ca = request("textDocument/codeAction", {"textDocument": {"uri": main_uri}, "range": {"start": {"line": 0, "character": 10}, "end": {"line": 0, "character": 13}}, "context": {"diagnostics": dz["diagnostics"]}})
-check("code action: import the unknown name from the module beside", len(ca) == 1 and ca[0]["title"] == 'import cap from "./lib.decl"', json.dumps(ca))
+check("code action: import the unknown name from the module beside", any(x["title"] == 'import cap from "./lib.decl"' for x in ca), json.dumps(ca))
+# linked editing and rename of a local variable; the member-kind conversions; flipping a comparison
+actions_src = "type Pair = {\n    a: int,\n    b?: int,\n    c = a + 1\n}\nconst xs = [x * 2 for x in [1, 2] if x > 0]\nconst cmp = 3 < 4\n"
+notify_server("textDocument/didChange", {"textDocument": {"uri": main_uri, "version": 50}, "contentChanges": [{"text": actions_src}]})
+next_diagnostics(main_uri)
+le = request("textDocument/linkedEditingRange", {"textDocument": {"uri": main_uri}, "position": {"line": 5, "character": 12}})
+check("linked editing of a comprehension variable", bool(le) and len(le["ranges"]) == 3, json.dumps(le))
+lr = request("textDocument/rename", {"textDocument": {"uri": main_uri}, "position": {"line": 5, "character": 12}, "newName": "y"})
+check("rename of a local variable", bool(lr) and len(lr["changes"][main_uri]) == 3, json.dumps(lr))
+conv = request("textDocument/codeAction", {"textDocument": {"uri": main_uri}, "range": {"start": {"line": 3, "character": 4}, "end": {"line": 3, "character": 4}}, "context": {"diagnostics": []}})
+check("assists on a derived member: annotate, hide, export", all(any(x["title"] == t for x in conv) for t in ["annotate: int", "make hidden (x$)", "export Pair"]), json.dumps([x["title"] for x in conv]))
+flip = request("textDocument/codeAction", {"textDocument": {"uri": main_uri}, "range": {"start": {"line": 6, "character": 14}, "end": {"line": 6, "character": 14}}, "context": {"diagnostics": []}})
+check("assist: flip the comparison", any(x["title"] == "flip the comparison" and x["edit"]["changes"][main_uri][0]["newText"] == "4 > 3" for x in flip), json.dumps(flip))
+# the remaining quick fixes and assists, and the context-variable hints
+actions2 = ("type Item = { label = $parent.name }\ntype Owner = { name: string, items: Item[] }\n"
+            "const K = 2\nconst twice = K + K\nconst dur = 250ms\n"
+            "type R = {\n    d = 1,\n    a: int\n}\n"
+            "type Ctx = { $parent: ref<Owner2>, tag = $parent.name }\ntype Owner2 = { name: string, c: Ctx }\n")
+notify_server("textDocument/didChange", {"textDocument": {"uri": main_uri, "version": 60}, "contentChanges": [{"text": actions2}]})
+d2 = next_diagnostics(main_uri)["diagnostics"]
+fix = request("textDocument/codeAction", {"textDocument": {"uri": main_uri}, "range": {"start": {"line": 0, "character": 22}, "end": {"line": 0, "character": 22}}, "context": {"diagnostics": d2}})
+check("quick fix: declare the context variable", any(x["title"] == "declare $parent: ref<{ ... }> on Item" for x in fix), json.dumps([x["title"] for x in fix]))
+inl = request("textDocument/codeAction", {"textDocument": {"uri": main_uri}, "range": {"start": {"line": 2, "character": 0}, "end": {"line": 2, "character": 0}}, "context": {"diagnostics": []}})
+check("assist: inline the constant", any(x["title"] == "inline K" and len(x["edit"]["changes"][main_uri]) == 3 for x in inl), json.dumps([x["title"] for x in inl]))
+unit = request("textDocument/codeAction", {"textDocument": {"uri": main_uri}, "range": {"start": {"line": 4, "character": 12}, "end": {"line": 4, "character": 12}}, "context": {"diagnostics": []}})
+check("assist: convert the unit literal", any(x["title"] == "convert to 0.25s" for x in unit), json.dumps([x["title"] for x in unit]))
+reorder = request("textDocument/codeAction", {"textDocument": {"uri": main_uri}, "range": {"start": {"line": 5, "character": 5}, "end": {"line": 5, "character": 5}}, "context": {"diagnostics": []}})
+check("assist: reorder the members", any(x["title"] == "reorder the members canonically" and x["edit"]["changes"][main_uri][0]["newText"] == "{\n    a: int\n    d = 1\n}" for x in reorder), json.dumps([x for x in reorder if x["title"].startswith("reorder")]))
+notify_server("workspace/didChangeConfiguration", {"settings": {"decl": {"inlayHints": {"contextVariables": True}}}})
+next_diagnostics(main_uri)
+ch2 = request("textDocument/inlayHint", {"textDocument": {"uri": main_uri}, "range": {"start": {"line": 0, "character": 0}, "end": {"line": 20, "character": 0}}})
+check("inlay hints: the context variable's declared bound", any(h["label"] == ": ref<Owner2>" for h in ch2), json.dumps(ch2))
+notify_server("workspace/didChangeConfiguration", {"settings": {"decl": {"inlayHints": {"contextVariables": False}}}})
+next_diagnostics(main_uri)
 notify_server("textDocument/didChange", {"textDocument": {"uri": main_uri, "version": 41}, "contentChanges": [{"text": main_src}]})
 next_diagnostics(main_uri)
 tree = request("workspace/executeCommand", {"command": "decl.showSyntaxTree", "arguments": [main_uri]})
@@ -446,6 +479,15 @@ for case in sorted(p for p in (ROOT / "tests/repl").iterdir() if (p / "session.t
     check(f"repl {case.name}: transcript", r.stdout == want,
           next((f"line {i + 1}: expected {a!r}, got {b!r}" for i, (a, b) in enumerate(zip(want.split("\n"), r.stdout.split("\n"))) if a != b), r.stderr[:300]))
     check(f"repl {case.name}: exit {want_code}", r.returncode == want_code, f"got {r.returncode} {r.stderr[:200]}")
+print("== repl: the incremental step is observationally identical to a full recomputation ==")
+for case in sorted(p for p in (ROOT / "tests/repl").iterdir() if (p / "session.txt").exists()):
+    rel = str(case.relative_to(ROOT))
+    entry = [f"{rel}/main.decl"] if (case / "main.decl").exists() else []
+    args = [sys.executable, "-m", "decl.cli", "repl", *entry, "--script", f"{rel}/session.txt"]
+    inc = subprocess.run(args, capture_output=True, text=True, cwd=str(ROOT))
+    full = subprocess.run(args, capture_output=True, text=True, cwd=str(ROOT), env={**os.environ, "DECL_FULL_RECOMPUTE": "1"})
+    check(f"repl {case.name}: incremental == full", inc.stdout == full.stdout and inc.returncode == full.returncode,
+          next((f"line {i + 1}: full {a!r}, incremental {b!r}" for i, (a, b) in enumerate(zip(full.stdout.split("\n"), inc.stdout.split("\n"))) if a != b), inc.stderr[:300]))
 piped = subprocess.run([sys.executable, "-m", "decl.cli", "repl", "tests/repl/documents/main.decl", "--input", "deployed=tests/repl/documents/doc.json", "--script", "-", "--compact"],
                        capture_output=True, text=True, cwd=str(ROOT), input="deployed\n")
 check("repl: --input, --script -, --compact", piped.stdout == '> deployed\n{"port":9000,"name":"doc","replicas":1,"label":"doc:9000"}\n(partial)\n', piped.stdout)

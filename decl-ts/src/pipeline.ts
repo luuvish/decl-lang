@@ -4,7 +4,7 @@
 // that front-ends (the website, embedders) consume.
 import { parseSource } from './parse.ts';
 import { checkModule } from './checker.ts';
-import { Env } from './semantics.ts';
+import { Env, sortDiags } from './semantics.ts';
 import type { Diag } from './semantics.ts';
 import { Engine } from './engine.ts';
 import type { Decl } from './ast.ts';
@@ -22,8 +22,10 @@ export function runPipeline(decls: Decl[]): Pipeline {
   for (const v of env.roots.values()) eng.forceAll(v, false);
   eng.phase = 2;
   for (let i = 0; i < eng.deferredSlots.length; i++) eng.forceSlotSafe(eng.deferredSlots[i].inst, eng.deferredSlots[i].name);
+  eng.bindDeferredRoots();
   for (const v of env.roots.values()) eng.forceAll(v, true);
   eng.validateAll('');
+  env.diagnostics.splice(0, env.diagnostics.length, ...sortDiags(env.diagnostics));   // §6.7
   return { env, eng, diags: env.diagnostics };
 }
 

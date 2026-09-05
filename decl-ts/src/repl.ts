@@ -276,7 +276,7 @@ export class Repl {
         const t = s.lastTiming;
         if (!t) { this.out('nothing evaluated yet'); return; }
         const ms = (x: number) => `${x.toFixed(1)} ms`;
-        this.out(`total ${ms(t.total)} (load ${ms(t.load)}, check ${ms(t.check)}, bind ${ms(t.bind)}, evaluate ${ms(t.evaluate)})`);
+        this.out(`total ${ms(t.total)} (load ${ms(t.load)}, check ${ms(t.check)}, bind ${ms(t.bind)}, evaluate ${ms(t.evaluate)})${t.recomputed !== undefined ? `, recomputed ${t.recomputed} of ${t.slots} slots` : ''}`);
         return;
       }
       case ':set': {

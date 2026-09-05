@@ -27,8 +27,34 @@ class Engine:
         self.no_reg = 0
         self.phase = 1
         self.failed_inputs: set = set()
+        self.deferred_roots: list = []   # (name, raw, rt, sc, via_expr): roots that deferred through $referrers in phase 1
+        # ---- dependency tracking (Phase 6 foundations; docs/tooling/02_repl.md §6) ----
+        # every evaluation step — a slot being computed (`path.member`), a root
+        # being bound (`root:name`), an instance's asserts (`assert:path`) —
+        # records what it read: slots, roots, and `$referrers` queries by type
+        # (`referrers:Type`); diagnostics carry the step that produced them
+        self.reads: dict = {}
+        self.computing: list = []
+        self.slots_by_key: dict = {}
+        env.tagger = lambda: self.computing[-1] if self.computing else None
         env.const_eval = lambda name: self.force_const_in(env, name, "")
         env.expr_eval = lambda e: self.ev(e, Scope(None, {}, ""))
+
+    @staticmethod
+    def slot_key(inst: RecInst, name: str) -> str:
+        return f"{path_str(inst.path)}.{name}"
+
+    def record(self, read: str) -> None:
+        if self.computing:
+            self.reads[self.computing[-1]].add(read)
+
+    def step(self, key: str, f):
+        self.computing.append(key)
+        self.reads[key] = set()
+        try:
+            return f()
+        finally:
+            self.computing.pop()
 
     # ---------- expression evaluation ----------
     def ev(self, e: dict, sc: Scope) -> Any:
@@ -82,6 +108,7 @@ class Engine:
             if name == "std":
                 return StdRef([])
             if name in self.env.roots:
+                self.record(f"root:{name}")
                 return self.env.roots[name]
             inp = self.demand_input(menv, name)
             if inp is not _UNDEF:
@@ -278,6 +305,7 @@ class Engine:
             if v is not _UNDEF:
                 return v
             if im["name"] in self.env.roots:
+                self.record(f"root:{im['name']}")
                 return self.env.roots[im["name"]]   # imported output/input root
             return self.demand_input(im["env"], im["name"])
         ns = menv.namespaces.get(name)
@@ -293,6 +321,7 @@ class Engine:
         if v is not _UNDEF:
             return v
         if ex["name"] in self.env.roots:
+            self.record(f"root:{ex['name']}")
             return self.env.roots[ex["name"]]
         inp = self.demand_input(ex["env"], ex["name"])
         if inp is not _UNDEF:
@@ -307,6 +336,7 @@ class Engine:
         decl = menv.inputs.get(name)
         if decl is None:
             return _UNDEF
+        self.record(f"root:{name}")
         if name in self.env.roots:
             return self.env.roots[name]
         if name in self.failed_inputs:
@@ -315,7 +345,7 @@ class Engine:
             raise EvalErr(f"input {name} is not bound", "E5006")
         sc = Scope(None, {}, name, menv)
         try:
-            v = self.bind(self.ev(decl["fallback"], sc), menv.resolve(decl["type"]), [name], None, sc)
+            v = self.step(f"root:{name}", lambda: self.bind(self.ev(decl["fallback"], sc), menv.resolve(decl["type"]), [name], None, sc))
             self.env.roots[name] = v
             return v
         except Taint:
@@ -327,12 +357,21 @@ class Engine:
     # left unset — its demanders are tainted, nothing else is
     def bind_root(self, name: str, raw: Any, rt: dict, sc: Scope, via_expr: bool) -> None:
         try:
-            v = self.bind(self.ev(raw, sc), rt, [name], None, sc) if via_expr else self.bind(raw, rt, [name], None, sc)
+            v = self.step(f"root:{name}", lambda: self.bind(self.ev(raw, sc), rt, [name], None, sc) if via_expr else self.bind(raw, rt, [name], None, sc))
             self.env.roots[name] = v
         except EvalErr as e:
             self.env.report({"severity": "error", "message": e.msg, "path": name, "code": e.code})
-        except (Taint, DeferSig):
+        except DeferSig:
+            if self.phase < 2:
+                self.deferred_roots.append((name, raw, rt, sc, via_expr))
+        except Taint:
             pass
+
+    def bind_deferred_roots(self) -> None:
+        """phase 2: the roots that deferred are bound again (after the deferred slots)"""
+        pending, self.deferred_roots = self.deferred_roots, []
+        for name, raw, rt, sc, via_expr in pending:
+            self.bind_root(name, raw, rt, sc, via_expr)
 
     def q_arith(self, op: str, l: Any, r: Any) -> Any:
         if op in ("+", "-"):
@@ -753,6 +792,7 @@ class Engine:
     def referrers(self, type_name: str, member: str, sc: Scope) -> Any:
         if self.phase < 2:
             raise DeferSig()
+        self.record(f"referrers:{type_name}")
         self_inst = sc.inst
         out: list = []
         for cand in self.env.registry:
@@ -1162,6 +1202,8 @@ class Engine:
         s = inst.slots.get(name)
         if s is None:
             raise EvalErr(f"no member {name}")
+        key = Engine.slot_key(inst, name)
+        self.record(key)
         if s.state == "ok":
             return s.value
         if s.state == "absent":
@@ -1174,8 +1216,9 @@ class Engine:
             s.state = "invalid"
             raise Taint()
         s.state = "forcing"
+        self.slots_by_key[key] = (inst, name)
         try:
-            v = s.compute()
+            v = self.step(key, s.compute)
             s.state, s.value = "ok", v
             return v
         except DeferSig:
@@ -1211,6 +1254,18 @@ class Engine:
         return v
 
     # ---------- driving ----------
+    # every root, in insertion order, the roots added while walking (an
+    # input demanded through its fallback) included — the reference walks
+    # its live Map, and a snapshot would skip them in this pass
+    def force_all_roots(self, deferred_too: bool) -> None:
+        seen = 0
+        while True:
+            vals = list(self.env.roots.values())
+            if seen >= len(vals):
+                break
+            self.force_all(vals[seen], deferred_too)
+            seen += 1
+
     def force_all(self, v: Any, deferred_too: bool) -> None:
         if isinstance(v, RecInst):
             for n, s in list(v.slots.items()):
@@ -1226,7 +1281,21 @@ class Engine:
 
     def validate_all(self, root_name: str) -> None:
         for inst in list(self.env.registry):
-            self.run_asserts(inst, inst.rt["asserts"], root_name)
+            self.validate_inst(inst, root_name)
+
+    def validate_inst(self, inst: RecInst, root_name: str) -> None:
+        self.step(f"assert:{path_str(inst.path)}", lambda: self.run_asserts(inst, inst.rt["asserts"], root_name))
+
+    def reset_slot(self, key: str) -> bool:
+        """reset a computed slot so that it is computed again (dependency tracking)"""
+        s = self.slots_by_key.get(key)
+        slot = s[0].slots.get(s[1]) if s is not None else None
+        if slot is None or slot.compute is None:
+            return False
+        if slot.state in ("ok", "invalid"):
+            slot.state = "unforced"
+            slot.value = None
+        return True
 
     def run_asserts(self, inst: RecInst, asserts: list, root_name: str) -> None:
         sc0 = Scope(inst, {}, root_name, inst.menv)

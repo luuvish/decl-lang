@@ -6,11 +6,6 @@ export * from './core.ts';
 // the high-level API: evaluate / check / validate / formatSource (reads files)
 export { evaluate, check, validate, formatSource, DeclError } from './api.ts';
 export type { Diagnostic, EvaluateOptions, InputDocument, JsonValue } from './api.ts';
-export { initParser, grammarPath } from './node.ts';   // shadows core's: locates the grammar on disk
-export { loadModules, runUniverse } from './module.ts';
-export type { Module, LoadResult, PackageResolver } from './module.ts';
-export { openPackageUniverse, parseManifest, packageHash, writeLock, verifyLock, lockText } from './package.ts';
+export { initParser, grammarPath, nodeHost } from './node.ts';   // shadows core's: locates the grammar on disk, installs the file-system host
 export { judgeCorpus, judgeFixture, walkDecl } from './conformance.ts';
-export { Session, SessionError, prettyJson, fmtDiag } from './session.ts';
-export type { Op, BindSource, Document, Run, RootInfo } from './session.ts';
 export { Repl, runRepl, needsMore, COMMANDS } from './repl.ts';

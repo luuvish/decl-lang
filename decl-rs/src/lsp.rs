@@ -12,7 +12,7 @@ use crate::fmt::{format, u16len};
 use crate::infer::{resolve_in, std_path, type_text, Target, Ty, STD};
 use crate::module::Module;
 use crate::parse::parse_source;
-use crate::semantics::{json_str, parse_path, read_json, rec_members, seg_text, Diag, MKind, RTk, Seg, Value, RT};
+use crate::semantics::{is_rec, json_str, parse_path, read_json, rec_members, seg_text, Diag, MKind, RTk, Seg, SlotState, Value, RT};
 use crate::session::{fmt_diag, BindSource, Mode, Op, Run, Session};
 use regex::Regex;
 use std::cell::RefCell;
@@ -221,10 +221,11 @@ struct State {
     hint_parameter_names: bool,
     hint_values: bool,
     hint_units: bool,
+    hint_context_variables: bool,
 }
 impl Default for State {
     fn default() -> Self {
-        State { docs: vec![], overlay: HashMap::new(), analyses: HashMap::new(), last_good: HashMap::new(), inputs: vec![], hint_types: true, hint_parameter_names: true, hint_values: false, hint_units: true }
+        State { docs: vec![], overlay: HashMap::new(), analyses: HashMap::new(), last_good: HashMap::new(), inputs: vec![], hint_types: true, hint_parameter_names: true, hint_values: false, hint_units: true, hint_context_variables: false }
     }
 }
 impl State {
@@ -1580,8 +1581,17 @@ fn formatting(st: &State, uri: &str) -> J {
 
 // ---------------- rename ----------------
 fn prepare_rename(st: &mut State, uri: &str, pos: Pos) -> J {
-    let Some(a) = st.analysis_of(uri) else { return J::Null };
-    let Some(s) = site_at(st, &a, uri, pos) else { return J::Null };
+    let a = st.analysis_of(uri);
+    let s = a.as_ref().and_then(|a| site_at(st, a, uri, pos));
+    if s.as_ref().map(|s| s.site.is_none()).unwrap_or(true) {
+        // a local variable: its binding and uses
+        let Some(locs) = local_ranges(st, uri, pos) else { return J::Null };
+        let Some(here) = locs.iter().find(|l| contains(**l, pos)) else { return J::Null };
+        let text = st.text(uri).cloned().unwrap_or_default();
+        let line = text.split('\n').nth(here.sl).unwrap_or("");
+        return J::obj(vec![("range", range_json(*here)), ("placeholder", J::s(slice16(line, here.sc, here.ec)))]);
+    }
+    let s = s.unwrap();
     let (Some(site), Some(hit)) = (&s.site, &s.hit) else { return J::Null };
     let loc = match &hit.node {
         NodeRef::Expr(e) => match &***e {
@@ -1603,7 +1613,12 @@ fn prepare_rename(st: &mut State, uri: &str, pos: Pos) -> J {
 fn rename(st: &mut State, uri: &str, pos: Pos, new_name: &str) -> J {
     let refs = references(st, uri, pos, true);
     if refs.is_empty() {
-        return J::Null;
+        let Some(locs) = local_ranges(st, uri, pos) else { return J::Null };
+        if locs.is_empty() {
+            return J::Null;
+        }
+        let edits: Vec<J> = locs.iter().map(|l| J::obj(vec![("range", range_json(*l)), ("newText", J::s(new_name))])).collect();
+        return J::obj(vec![("changes", J::Obj(vec![(uri.to_string(), J::Arr(edits))]))]);
     }
     let mut changes: Vec<(String, Vec<J>)> = vec![];
     for (m, l) in refs {
@@ -2241,7 +2256,8 @@ struct HintWalk<'a> {
     text: String,
     t: Rc<Tables>,
     range: (Pos, Pos),
-    hints: (bool, bool, bool),
+    /// types, parameter names, units, values, context variables
+    hints: (bool, bool, bool, bool, bool),
     out: Vec<(Pos, J)>,
 }
 impl<'a> HintWalk<'a> {
@@ -2269,6 +2285,16 @@ impl<'a> HintWalk<'a> {
                     let p = Pos { line: r.el, character: r.ec };
                     if self.in_range(p) {
                         self.hint(p, format!(": {}", type_text(Some(&rt))), Some(1), false, false);
+                    }
+                }
+            }
+        }
+        if let DeclBody::Output { name, expr, .. } = &d.body {
+            if self.hints.3 && d.loc.is_some() {
+                if let (Some(eng), Some(entry)) = (self.a.run.eng.clone(), self.a.run.entry.clone()) {
+                    let root = entry.env.roots.borrow().borrow().iter().find(|(n, _)| n == name).map(|(_, v)| v.clone());
+                    if let Some(v) = root {
+                        self.values(&v, expr, name, &eng);
                     }
                 }
             }
@@ -2323,6 +2349,55 @@ impl<'a> HintWalk<'a> {
             DeclBody::Unit { factor, .. } => {
                 if let Some(f) = factor {
                     self.expr(f);
+                }
+            }
+            _ => {}
+        }
+    }
+    // the evaluated derived members of a literal, at the end of the literal
+    fn values(&mut self, v: &Value, e: &Rc<Expr>, root: &str, eng: &crate::engine::Engine) {
+        match (v, &**e) {
+            (Value::Rec(inst), Expr::Obj(entries)) => {
+                let inst = inst.borrow();
+                let mut parts: Vec<String> = vec![];
+                for mem in rec_members(&inst.rt) {
+                    let Some((_, s)) = inst.slots.iter().find(|(n, _)| *n == mem.name) else { continue };
+                    if mem.kind != MKind::Der || s.hidden || s.state != SlotState::Ok {
+                        continue;
+                    }
+                    let txt = eng.serialize(&s.value, root, false);
+                    let shown = if u16len(&txt) > 40 { format!("{}…", slice16(&txt, 0, 37)) } else { txt };
+                    parts.push(format!("{} = {}", mem.name, shown));
+                }
+                if let Some(l) = expr_loc(e) {
+                    let p = Pos { line: l.el, character: l.ec };
+                    if !parts.is_empty() && self.in_range(p) {
+                        self.hint(p, format!("// {}", parts.join(", ")), None, true, false);
+                    }
+                }
+                let children: Vec<(Value, Rc<Expr>)> = entries
+                    .iter()
+                    .filter_map(|(k, val)| inst.slots.iter().find(|(n, _)| n == k).filter(|(_, s)| s.state == SlotState::Ok).map(|(_, s)| (s.value.clone(), val.clone())))
+                    .collect();
+                drop(inst);
+                for (cv, ce) in children {
+                    self.values(&cv, &ce, root, eng);
+                }
+            }
+            (Value::Arr(arr), Expr::Arr(items)) => {
+                let vals: Vec<Value> = arr.borrow().items.clone();
+                for (i, it) in vals.iter().enumerate() {
+                    if let Some((_, ce)) = items.get(i) {
+                        self.values(it, ce, root, eng);
+                    }
+                }
+            }
+            (Value::Map(map), Expr::Obj(entries)) => {
+                for (k, val) in entries {
+                    let cv = map.borrow().get(k).cloned();
+                    if let Some(cv) = cv {
+                        self.values(&cv, val, root, eng);
+                    }
                 }
             }
             _ => {}
@@ -2445,6 +2520,22 @@ impl<'a> HintWalk<'a> {
                     }
                 }
             }
+            Expr::Ctx(name) if self.hints.4 && (name == "$parent" || name == "$root" || name == "$key") => {
+                // the bound the enclosing type declares for the variable
+                if let Some(l) = expr_loc(e) {
+                    let decl = self.m.decls.iter().find(|d| matches!(d.body, DeclBody::Type { .. }) && d.loc.map(|dl| dl.sl <= l.sl && l.el <= dl.el).unwrap_or(false));
+                    let tl = decl.and_then(record_body_of).map(record_members).and_then(|members| members.iter().find_map(|mm| match mm {
+                        MemberAst::Context { variable, ty, .. } if variable == name => ty.loc(),
+                        _ => None,
+                    }));
+                    let p = Pos { line: l.el, character: l.ec };
+                    if let Some(tl) = tl {
+                        if self.in_range(p) {
+                            self.hint(p, format!(": {}", src_of(&self.text, tl)), Some(1), false, false);
+                        }
+                    }
+                }
+            }
             Expr::UnitLit { num, unit } if self.hints.2 => {
                 if let (Ok((key, to_base)), Some(l)) = (self.m.env.unit_info(unit), expr_loc(e)) {
                     let base = self.m.env.base_unit_of.borrow().get(&key).cloned().unwrap_or(key);
@@ -2531,7 +2622,7 @@ fn inlay_hints(st: &mut State, uri: &str, range: (Pos, Pos)) -> J {
     let Some(m) = module_of(&a, &path_of(uri)) else { return J::Arr(vec![]) };
     let t = tables_of(&a, &m);
     let text = text_of(st, &m);
-    let hints = (st.hint_types, st.hint_parameter_names, st.hint_units);
+    let hints = (st.hint_types, st.hint_parameter_names, st.hint_units, st.hint_values, st.hint_context_variables);
     let mut w = HintWalk { st, a: &a, m: &m, text, t, range, hints, out: vec![] };
     for d in &m.decls {
         w.decl(d);
@@ -2694,6 +2785,33 @@ fn js_value_string(v: &Value) -> String {
         _ => "null".into(),
     }
 }
+// the record body of a type declaration: its own, or its extension's
+trait ConstExprLoc { fn const_expr_loc(&self) -> Option<Loc>; }
+impl ConstExprLoc for DeclBody {
+    fn const_expr_loc(&self) -> Option<Loc> {
+        match self { DeclBody::Const { expr, .. } => expr_loc(expr), _ => None }
+    }
+}
+fn record_body_of(d: &Decl) -> Option<&TypeAst> {
+    let DeclBody::Type { ty, .. } = &d.body else { return None };
+    match ty {
+        TypeAst::Record { .. } => Some(ty),
+        TypeAst::Named { ext: Some(x), .. } => match &**x {
+            TypeAst::Record { .. } => Some(&**x),
+            _ => None,
+        },
+        _ => None,
+    }
+}
+fn record_parts(t: &TypeAst) -> Option<(&[MemberAst], Loc, bool)> {
+    match t {
+        TypeAst::Record { members, open, loc: Some(l) } => Some((members, *l, *open)),
+        _ => None,
+    }
+}
+fn safe_resolve(m: &Module, type_name: &str) -> Option<RT> {
+    m.env.resolve(&TypeAst::Named { name: type_name.to_string(), args: vec![], preds: None, ext: None, loc: None }, None).ok()
+}
 fn placeholder_for(rt: Option<&RT>) -> String {
     let Some(rt) = rt else { return "null".into() };
     let r: RT = match &rt.k {
@@ -2808,7 +2926,10 @@ fn exporters_of(st: &State, a: &Analysis, m: &Module, name: &str) -> Vec<PathBuf
 fn edit_json(l: Loc, new_text: &str) -> J {
     J::obj(vec![("range", range_json(l)), ("newText", J::s(new_text))])
 }
-fn action_json(title: String, kind: &str, diagnostic: Option<J>, preferred: bool, uri: &str, edit: J) -> J {
+fn insert_json(p: Pos, new_text: &str) -> J {
+    edit_json(Loc { sl: p.line, sc: p.character, el: p.line, ec: p.character }, new_text)
+}
+fn action_edits_json(title: String, kind: &str, diagnostic: Option<J>, preferred: bool, uri: &str, edits: Vec<J>) -> J {
     let mut item = vec![("title", J::s(title)), ("kind", J::s(kind))];
     if let Some(d) = diagnostic {
         item.push(("diagnostics", J::Arr(vec![d])));
@@ -2816,8 +2937,127 @@ fn action_json(title: String, kind: &str, diagnostic: Option<J>, preferred: bool
     if preferred {
         item.push(("isPreferred", J::Bool(true)));
     }
-    item.push(("edit", J::obj(vec![("changes", J::Obj(vec![(uri.to_string(), J::Arr(vec![edit]))]))])));
+    item.push(("edit", J::obj(vec![("changes", J::Obj(vec![(uri.to_string(), J::Arr(edits))]))])));
     J::obj(item)
+}
+fn action_json(title: String, kind: &str, diagnostic: Option<J>, preferred: bool, uri: &str, edit: J) -> J {
+    action_edits_json(title, kind, diagnostic, preferred, uri, vec![edit])
+}
+fn diag_pos(d: &Value, which: &str) -> Pos {
+    let p = get(d, "range").and_then(|r| get(r, which));
+    Pos { line: as_usize(p.and_then(|s| get(s, "line"))).unwrap_or(0), character: as_usize(p.and_then(|s| get(s, "character"))).unwrap_or(0) }
+}
+fn chain_of<'a>(hit: &Hit<'a>) -> Vec<NodeRef<'a>> {
+    let mut chain: Vec<NodeRef> = vec![hit.node.clone()];
+    chain.extend(hit.parents.iter().rev().cloned());
+    chain
+}
+fn chain_expr<'a>(chain: &[NodeRef<'a>], pred: impl Fn(&Expr) -> bool) -> Option<Rc<Expr>> {
+    chain.iter().find_map(|n| match n {
+        NodeRef::Expr(e) if pred(e) => Some((*e).clone()),
+        _ => None,
+    })
+}
+// every expression under a node, in the reference's pre-order
+fn exprs_under<'a>(n: &NodeRef<'a>) -> Vec<Rc<Expr>> {
+    let mut exprs: Vec<Rc<Expr>> = vec![];
+    let mut types: Vec<&TypeAst> = vec![];
+    match n {
+        NodeRef::Decl(d) => collect_decl(d, &mut exprs, &mut types),
+        NodeRef::Member(m) => collect_member(m, &mut exprs, &mut types),
+        NodeRef::Type(t) => collect_type(t, &mut exprs, &mut types),
+        NodeRef::Expr(e) => collect_expr(e, &mut exprs, &mut types),
+    }
+    exprs
+}
+// a literal's type widened to its primitive: a declaration wants `bool`, not `true`
+fn widen(rt: &RT) -> RT {
+    match &rt.k {
+        RTk::Lit(v) => {
+            let name = match v {
+                Value::Str(_) => "string",
+                Value::Bool(_) => "bool",
+                Value::Int(_) => "int",
+                Value::Float(_) => "float",
+                _ => "null",
+            };
+            crate::semantics::ty(RTk::Prim(name.to_string()))
+        }
+        _ => rt.clone(),
+    }
+}
+fn is_logical(op: &str) -> bool {
+    op == "&&" || op == "||"
+}
+// the mixed `??` operand: the first binary node (pre-order) whose operator
+// mixes with its parent's, whichever side it is on
+fn mixed_in_expr(e: &Rc<Expr>, parent_op: Option<&str>) -> Option<Rc<Expr>> {
+    if let Expr::Bin { op, .. } = &**e {
+        if let (Some(pop), Some(_)) = (parent_op, expr_loc(e)) {
+            if (op == "??" && is_logical(pop)) || (is_logical(op) && pop == "??") {
+                return Some(e.clone());
+            }
+        }
+    }
+    let op: Option<&str> = match &**e {
+        Expr::Bin { op, .. } => Some(op.as_str()),
+        _ => None,
+    };
+    let kids: Vec<Rc<Expr>> = match &**e {
+        Expr::Template(parts) => parts.iter().filter_map(|p| if let TPart::Expr(x) = p { Some(x.clone()) } else { None }).collect(),
+        Expr::Obj(entries) => entries.iter().map(|(_, v)| v.clone()).collect(),
+        Expr::Arr(items) => items.iter().map(|(_, v)| v.clone()).collect(),
+        Expr::Comp { head, clauses } => std::iter::once(head.clone()).chain(clauses.iter().flat_map(|c| std::iter::once(c.iter.clone()).chain(c.filters.iter().cloned()))).collect(),
+        Expr::MapComp { key, val, clauses } => vec![key.clone(), val.clone()].into_iter().chain(clauses.iter().flat_map(|c| std::iter::once(c.iter.clone()).chain(c.filters.iter().cloned()))).collect(),
+        Expr::Bin { l, r, .. } => vec![l.clone(), r.clone()],
+        Expr::Un { x, .. } | Expr::Paren(x) => vec![x.clone()],
+        Expr::If { c, t, f } => vec![c.clone(), t.clone(), f.clone()],
+        Expr::Lambda { body, .. } => vec![body.clone()],
+        Expr::Call { fun, args } => std::iter::once(fun.clone()).chain(args.iter().cloned()).collect(),
+        Expr::Member { x, .. } => vec![x.clone()],
+        Expr::Index { x, i } => vec![x.clone(), i.clone()],
+        Expr::With { base, patch } => vec![base.clone(), patch.clone()],
+        Expr::Match { subject, arms } => std::iter::once(subject.clone()).chain(arms.iter().map(|a| a.body.clone())).collect(),
+        _ => vec![],
+    };
+    for k in kids {
+        if let Some(t) = mixed_in_expr(&k, op) {
+            return Some(t);
+        }
+    }
+    None
+}
+fn mixed_in_node(n: &NodeRef) -> Option<Rc<Expr>> {
+    match n {
+        NodeRef::Expr(e) => mixed_in_expr(e, None),
+        NodeRef::Decl(d) => {
+            let tops: Vec<Rc<Expr>> = match &d.body {
+                DeclBody::Const { expr, .. } | DeclBody::Output { expr, .. } => vec![expr.clone()],
+                DeclBody::Input { fallback, .. } => fallback.iter().cloned().collect(),
+                DeclBody::Func { body, .. } => vec![body.clone()],
+                DeclBody::Unit { factor, .. } => factor.iter().cloned().collect(),
+                _ => vec![],
+            };
+            tops.iter().find_map(|e| mixed_in_expr(e, None))
+        }
+        NodeRef::Member(m) => match m {
+            MemberAst::Derived { expr, .. } => mixed_in_expr(expr, None),
+            MemberAst::Value { dflt: Some(d), .. } => mixed_in_expr(d, None),
+            MemberAst::Assert { cond, .. } | MemberAst::When { cond, .. } => mixed_in_expr(cond, None),
+            _ => None,
+        },
+        NodeRef::Type(_) => None,
+    }
+}
+// does an expression read any name (a constant expression reads none)?
+fn mentions_name(e: &Rc<Expr>) -> bool {
+    let mut exprs: Vec<Rc<Expr>> = vec![];
+    let mut types: Vec<&TypeAst> = vec![];
+    collect_expr(e, &mut exprs, &mut types);
+    matches!(&**e, Expr::Name(_) | Expr::Ctx(_) | Expr::Referrers { .. }) || exprs.iter().any(|x| matches!(&**x, Expr::Name(_) | Expr::Ctx(_) | Expr::Referrers { .. }))
+}
+fn leading_spaces(line: &str) -> String {
+    line.chars().take_while(|c| *c == ' ').collect()
 }
 fn code_actions(st: &mut State, uri: &str, range: (Pos, Pos), diagnostics: &[Value]) -> J {
     let Some(text) = st.text(uri).cloned() else { return J::Arr(vec![]) };
@@ -2829,9 +3069,19 @@ fn code_actions(st: &mut State, uri: &str, range: (Pos, Pos), diagnostics: &[Val
     let Some(m) = module_of(&a, &path_of(uri)) else { return J::Arr(out) };
     let t = tables_of(&a, &m);
     let re_unknown = Regex::new(r"^unknown name ([A-Za-z_][A-Za-z0-9_]*)").unwrap();
+    let re_undeclared = Regex::new(r"^member ([A-Za-z_][A-Za-z0-9_]*) is not declared on ([A-Za-z_][A-Za-z0-9_]*)$").unwrap();
     let re_missing = Regex::new(r"^required member ([A-Za-z_][A-Za-z0-9_]*) missing").unwrap();
-    for d in diagnostics {
+    let re_ctx_undeclared = Regex::new(r"^(\$[a-z]+) used without a context declaration in ([A-Za-z_][A-Za-z0-9_]*)$").unwrap();
+    let re_ctx_ref = Regex::new(r"^(\$[a-z]+) declaration must be ref<\.\.\.> \(([A-Za-z_][A-Za-z0-9_]*)\)$").unwrap();
+    let re_override = Regex::new(r"^(?:illegal member-kind transition for|override widens inherited member) ([A-Za-z_][A-Za-z0-9_]*)[^(]*\(([A-Za-z_][A-Za-z0-9_]*)\)$").unwrap();
+    let re_union = Regex::new(r"^record union arms not discriminable in ([A-Za-z_][A-Za-z0-9_]*)$").unwrap();
+    let re_restated = Regex::new(r"^derived member ([A-Za-z_][A-Za-z0-9_]*) restated with a differing value").unwrap();
+    let trailing_comma = Regex::new(r",\s*$").unwrap();
+    // the fixes of the diagnostics that touch the range (a client may send more)
+    let touches = |d: &Value| get(d, "range").is_some() && !(diag_pos(d, "end").line < range.0.line || diag_pos(d, "start").line > range.1.line);
+    for d in diagnostics.iter().filter(|d| touches(d)) {
         let message = as_str(get(d, "message")).unwrap_or("").to_string();
+        let dpos = diag_pos(d, "start");
         if let Some(cap) = re_unknown.captures(&message) {
             let name = cap[1].to_string();
             for other in exporters_of(st, &a, &m, &name) {
@@ -2849,9 +3099,6 @@ fn code_actions(st: &mut State, uri: &str, range: (Pos, Pos), diagnostics: &[Val
                         if let DeclBody::Import { from, .. } = &x.body {
                             spec = from.clone();
                         }
-                        let c = if close < 0 { 0 } else { close as usize };
-                        // JS `indexOf` returns -1 when absent; the position keeps that value
-                        let _ = c;
                         edit_json(Loc { sl: l.sl, sc: close.max(0) as usize, el: l.sl, ec: close.max(0) as usize }, &format!(", {name} "))
                     }
                     None => {
@@ -2862,16 +3109,245 @@ fn code_actions(st: &mut State, uri: &str, range: (Pos, Pos), diagnostics: &[Val
                 };
                 out.push(action_json(format!("import {name} from \"{spec}\""), "quickfix", Some(value_to_j(d)), true, uri, edit));
             }
+            // a namespace import that exports it: qualify the name (namespaces in declaration order)
+            let mut nss: Vec<String> = vec![];
+            for x in &parsed.decls {
+                if let DeclBody::Import { ns: Some(ns), .. } = &x.body {
+                    if !nss.contains(ns) {
+                        nss.push(ns.clone());
+                    }
+                }
+            }
+            for ns in nss {
+                let exports = m.env.namespaces.borrow().get(&ns).map(|(_, ex)| ex.clone());
+                let Some(exports) = exports else { continue };
+                if !exports.borrow().contains_key(&name) {
+                    continue;
+                }
+                let Some(hit) = node_at(&parsed.decls, dpos) else { continue };
+                let chain = chain_of(&hit);
+                let n = chain_expr(&chain, |x| matches!(x, Expr::Name(nm) if *nm == name));
+                if let Some(l) = n.as_ref().and_then(expr_loc) {
+                    out.push(action_json(format!("qualify as {ns}.{name}"), "quickfix", Some(value_to_j(d)), false, uri, edit_json(l, &format!("{ns}.{name}"))));
+                }
+            }
+        }
+        if let Some(cap) = re_undeclared.captures(&message) {
+            // declare the member on the type, with the supplied value's inferred type
+            let (name, type_name) = (cap[1].to_string(), cap[2].to_string());
+            let site = site_of_target(st, &a, resolve_in(&m.env, &type_name).as_ref());
+            if let Some(site) = site {
+                let sm = site.module.clone();
+                let body: Option<(&[MemberAst], Loc)> = decl_by_id(&sm, site.decl).and_then(|decl| match &decl.body {
+                    DeclBody::Type { ty, .. } => match ty {
+                        TypeAst::Record { members, loc: Some(l), .. } => Some((members.as_slice(), *l)),
+                        TypeAst::Named { ext: Some(ext), .. } => match &**ext {
+                            TypeAst::Record { members, loc: Some(l), .. } => Some((members.as_slice(), *l)),
+                            _ => None,
+                        },
+                        _ => None,
+                    },
+                    _ => None,
+                });
+                if let Some((members, body_loc)) = body {
+                    let hit = node_at(&parsed.decls, dpos);
+                    let mut entry: Option<Rc<Expr>> = None;
+                    if let Some(hit) = &hit {
+                        let chain = chain_of(hit);
+                        if let Some(obj) = chain_expr(&chain, |x| matches!(x, Expr::Obj(_))) {
+                            if let Expr::Obj(entries) = &*obj {
+                                entry = entries.iter().find(|(k, _)| *k == name).map(|(_, v)| v.clone());
+                            }
+                        }
+                        if entry.is_none() {
+                            for o in exprs_under(&hit.node) {
+                                if let Expr::Obj(entries) = &*o {
+                                    if let Some((_, v)) = entries.iter().find(|(k, _)| *k == name) {
+                                        entry = Some(v.clone());
+                                        break;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    let ty = entry.as_ref().and_then(|v| t.types.get(&key_of(v))).and_then(|x| x.rt.clone());
+                    let member_type = ty.map(|rt| type_text(Some(&widen(&rt)))).unwrap_or_else(|| "any".into());
+                    let last = members.last().and_then(|x| x.loc());
+                    let (at, new_text) = match last {
+                        Some(l) => (Pos { line: l.el, character: l.ec }, format!("\n    {name}: {member_type}")),
+                        None => (Pos { line: body_loc.sl, character: body_loc.sc + 1 }, format!(" {name}: {member_type}")),
+                    };
+                    out.push(action_json(format!("declare {name}: {member_type} on {type_name}"), "quickfix", Some(value_to_j(d)), true, &uri_of(&sm.path), insert_json(at, &new_text)));
+                }
+            }
+        }
+        if message.starts_with("member access on a maybe-absent expression") {
+            if let Some(hit) = node_at(&parsed.decls, dpos) {
+                let chain = chain_of(&hit);
+                if let Some(n) = chain_expr(&chain, |x| matches!(x, Expr::Member { safe: false, .. })) {
+                    if let (Expr::Member { name, .. }, Some(_)) = (&*n, expr_loc(&n)) {
+                        let tok = member_token_loc(&text, &n, name);
+                        out.push(action_json("use ?.".into(), "quickfix", Some(value_to_j(d)), true, uri, edit_json(Loc { sl: tok.sl, sc: tok.sc - 1, el: tok.sl, ec: tok.sc }, "?.")));
+                    }
+                }
+            }
+        }
+        if message.starts_with("maybe-absent expression consumed") {
+            if let Some(hit) = node_at(&parsed.decls, dpos) {
+                if let NodeRef::Expr(e) = &hit.node {
+                    if let Some(l) = expr_loc(e) {
+                        out.push(action_json("supply a fallback with ??".into(), "quickfix", Some(value_to_j(d)), false, uri, insert_json(Pos { line: l.el, character: l.ec }, " ?? null")));
+                    }
+                }
+            }
+        }
+        if message.starts_with("`??` mixed with") {
+            // parenthesize the `??` operand of the mixed expression
+            if let Some(hit) = node_at(&parsed.decls, dpos) {
+                if let Some(target) = mixed_in_node(&hit.node) {
+                    let l = expr_loc(&target).unwrap();
+                    out.push(action_edits_json("parenthesize the ?? expression".into(), "quickfix", Some(value_to_j(d)), true, uri, vec![insert_json(Pos { line: l.sl, character: l.sc }, "("), insert_json(Pos { line: l.el, character: l.ec }, ")")]));
+                }
+            }
+        }
+        if message.starts_with("`match` is not exhaustive") {
+            if let Some(hit) = node_at(&parsed.decls, dpos) {
+                let chain = chain_of(&hit);
+                if let Some(n) = chain_expr(&chain, |x| matches!(x, Expr::Match { .. })) {
+                    let Expr::Match { subject, arms: match_arms } = &*n else { unreachable!() };
+                    let subject_rt = t.types.get(&key_of(subject)).and_then(|x| x.rt.clone());
+                    let arms: Vec<String> = match subject_rt.as_ref().map(|r| &r.k) {
+                        Some(RTk::Union(us)) => us.iter().filter_map(|r| if let RTk::Rec(_) = &r.k { rec_name(Some(r)) } else { None }).collect(),
+                        _ => vec![],
+                    };
+                    let covered: Vec<String> = match_arms.iter().map(|arm| match &arm.ty { Some(TypeAst::Named { name, .. }) => name.clone(), _ => String::new() }).collect();
+                    let missing: Vec<String> = arms.into_iter().filter(|x| !covered.contains(x)).collect();
+                    if let (Some(l), false) = (expr_loc(&n), missing.is_empty()) {
+                        let at = Pos { line: l.el, character: l.ec - 1 };
+                        let indent = format!("{}    ", leading_spaces(lines.get(l.sl).copied().unwrap_or("")));
+                        let new_text = format!("{}{}", missing.iter().map(|x| format!("{indent}(v: {x}) => null\n")).collect::<String>(), &indent[4..]);
+                        out.push(action_json(format!("add the missing arm{}: {}", if missing.len() > 1 { "s" } else { "" }, missing.join(", ")), "quickfix", Some(value_to_j(d)), true, uri, insert_json(at, &new_text)));
+                    }
+                }
+            }
+        }
+        if let Some(cap) = re_ctx_undeclared.captures(&message) {
+            // declare the context variable on the type: `$parent: ref<{ ... }>`, `$root: ref<{ ... }>`, `$key: string`
+            let (variable, type_name) = (cap[1].to_string(), cap[2].to_string());
+            if let Some(site) = site_of_target(st, &a, resolve_in(&m.env, &type_name).as_ref()) {
+                let sm = site.module.clone();
+                if let Some((members, body_loc, _)) = decl_by_id(&sm, site.decl).and_then(record_body_of).and_then(record_parts) {
+                    let bound = if variable == "$key" { "string" } else { "ref<{ ... }>" };
+                    let first = members.first().and_then(|x| x.loc());
+                    let at = match first {
+                        Some(l) => Pos { line: l.sl, character: l.sc },
+                        None => Pos { line: body_loc.sl, character: body_loc.sc + 1 },
+                    };
+                    let new_text = match first {
+                        Some(l) if l.sl > body_loc.sl => format!("{variable}: {bound}\n{}", " ".repeat(l.sc)),
+                        Some(_) => format!("{variable}: {bound}, "),
+                        None => format!(" {variable}: {bound}, "),
+                    };
+                    out.push(action_json(format!("declare {variable}: {bound} on {type_name}"), "quickfix", Some(value_to_j(d)), true, &uri_of(&sm.path), insert_json(at, &new_text)));
+                }
+            }
+        }
+        if let Some(cap) = re_ctx_ref.captures(&message) {
+            // the declared bound wrapped in ref<…>
+            let (variable, type_name) = (cap[1].to_string(), cap[2].to_string());
+            if let Some(site) = site_of_target(st, &a, resolve_in(&m.env, &type_name).as_ref()) {
+                let sm = site.module.clone();
+                let tl = decl_by_id(&sm, site.decl).and_then(record_body_of).map(record_members).and_then(|members| members.iter().find_map(|x| match x {
+                    MemberAst::Context { variable: v, ty, .. } if *v == variable => ty.loc(),
+                    _ => None,
+                }));
+                if let Some(tl) = tl {
+                    let src = src_of(&text_of(st, &sm), tl);
+                    out.push(action_json(format!("declare {variable} as ref<{src}>"), "quickfix", Some(value_to_j(d)), true, &uri_of(&sm.path), edit_json(tl, &format!("ref<{src}>"))));
+                }
+            }
+        }
+        if let Some(cap) = re_override.captures(&message) {
+            // the override replaced by the parent's declaration of the member
+            let (member, type_name) = (cap[1].to_string(), cap[2].to_string());
+            if let Some(site) = site_of_target(st, &a, resolve_in(&m.env, &type_name).as_ref()) {
+                let sm = site.module.clone();
+                if let Some(decl) = decl_by_id(&sm, site.decl) {
+                    let own = record_body_of(decl).map(record_members).and_then(|members| members.iter().find(|x| x.name() == Some(member.as_str()) && x.loc().is_some())).and_then(|x| x.loc());
+                    let base = match &decl.body {
+                        DeclBody::Type { ty: TypeAst::Named { name, .. }, .. } => Some(name.clone()),
+                        _ => None,
+                    };
+                    let parent = base.and_then(|b| member_site(st, &a, &sm, safe_resolve(&sm, &b).as_ref(), &member));
+                    if let (Some(own_loc), Some(parent)) = (own, parent) {
+                        if let Some(pl) = parent.member_loc {
+                            let parent_text = trailing_comma.replace(&src_of(&text_of(st, &parent.module), pl), "").to_string();
+                            out.push(action_json(format!("use the parent's declaration: {parent_text}"), "quickfix", Some(value_to_j(d)), true, &uri_of(&sm.path), edit_json(own_loc, &parent_text)));
+                        }
+                    }
+                }
+            }
+        }
+        if let Some(cap) = re_union.captures(&message) {
+            // a literal-typed `kind` member on every arm that is a local record type
+            let uname = cap[1].to_string();
+            if let Some(site) = site_of_target(st, &a, resolve_in(&m.env, &uname).as_ref()) {
+                let sm = site.module.clone();
+                let arms: Vec<String> = match decl_by_id(&sm, site.decl).map(|d| &d.body) {
+                    Some(DeclBody::Type { ty: TypeAst::Union { arms, .. }, .. }) => arms.iter().filter_map(|t| match t { TypeAst::Named { name, .. } => Some(name.clone()), _ => None }).collect(),
+                    _ => vec![],
+                };
+                let mut changes: Vec<(String, Vec<J>)> = vec![];
+                for arm in arms {
+                    let Some(as_) = site_of_target(st, &a, resolve_in(&sm.env, &arm).as_ref()) else { continue };
+                    let am = as_.module.clone();
+                    let Some((members, body_loc, _)) = decl_by_id(&am, as_.decl).and_then(record_body_of).and_then(record_parts) else { continue };
+                    if members.iter().any(|x| x.name() == Some("kind")) {
+                        continue;
+                    }
+                    let first = members.first().and_then(|x| x.loc());
+                    let at = match first {
+                        Some(l) => Pos { line: l.sl, character: l.sc },
+                        None => Pos { line: body_loc.sl, character: body_loc.sc + 1 },
+                    };
+                    let new_text = match first {
+                        Some(l) if l.sl > body_loc.sl => format!("kind: \"{arm}\"\n{}", " ".repeat(l.sc)),
+                        Some(_) => format!("kind: \"{arm}\", "),
+                        None => format!(" kind: \"{arm}\", "),
+                    };
+                    let u = uri_of(&am.path);
+                    match changes.iter_mut().find(|(k, _)| *k == u) {
+                        Some((_, v)) => v.push(insert_json(at, &new_text)),
+                        None => changes.push((u, vec![insert_json(at, &new_text)])),
+                    }
+                }
+                if !changes.is_empty() {
+                    out.push(J::obj(vec![
+                        ("title", J::s(format!("add a discriminant `kind` to the arms of {uname}"))),
+                        ("kind", J::s("quickfix")),
+                        ("diagnostics", J::Arr(vec![value_to_j(d)])),
+                        ("isPreferred", J::Bool(true)),
+                        ("edit", J::obj(vec![("changes", J::Obj(changes.into_iter().map(|(k, v)| (k, J::Arr(v))).collect()))])),
+                    ]));
+                }
+            }
+        }
+        if let Some(cap) = re_restated.captures(&message) {
+            // a document supplies it: make it defaulted (`x?: T = e`) where it is declared with a type
+            let member = cap[1].to_string();
+            for decl in &m.decls {
+                let Some(members) = record_body_of(decl).map(record_members) else { continue };
+                let Some(own) = members.iter().find(|x| matches!(x, MemberAst::Derived { name, ty: Some(_), loc: Some(_), .. } if *name == member)) else { continue };
+                let r = member_range(&text, own, &member);
+                out.push(action_json(format!("make {}.{member} defaulted (x?: T = e)", decl.name().unwrap_or("")), "quickfix", Some(value_to_j(d)), false, uri, insert_json(Pos { line: r.el, character: r.ec }, "?")));
+            }
         }
         if let Some(cap) = re_missing.captures(&message) {
             let name = cap[1].to_string();
-            let start = get(d, "range").and_then(|r| get(r, "start"));
-            let dpos = Pos { line: as_usize(start.and_then(|s| get(s, "line"))).unwrap_or(0), character: as_usize(start.and_then(|s| get(s, "character"))).unwrap_or(0) };
             // the construction: the literal at the diagnostic, or the root's literal when the diagnostic names the declaration
             let Some(hit) = node_at(&parsed.decls, dpos) else { continue };
-            let mut chain: Vec<NodeRef> = vec![hit.node.clone()];
-            chain.extend(hit.parents.iter().rev().cloned());
-            let mut obj: Option<Rc<Expr>> = chain.iter().find_map(|n| match n { NodeRef::Expr(e) if matches!(&***e, Expr::Obj(_)) => Some((*e).clone()), _ => None });
+            let chain = chain_of(&hit);
+            let mut obj: Option<Rc<Expr>> = chain_expr(&chain, |x| matches!(x, Expr::Obj(_)));
             if obj.is_none() {
                 obj = chain.iter().filter_map(|n| match n { NodeRef::Decl(d) => Some(*d), _ => None }).filter_map(|d| match &d.body {
                     DeclBody::Output { expr, .. } => Some(expr.clone()),
@@ -2897,37 +3373,569 @@ fn code_actions(st: &mut State, uri: &str, range: (Pos, Pos), diagnostics: &[Val
             let value = placeholder_for(mem.as_ref().and_then(|x| x.ty.as_ref()));
             let Expr::Obj(entries) = &*obj else { continue };
             let edit = match entries.last().and_then(|(_, v)| expr_loc(v)) {
-                Some(vl) => edit_json(Loc { sl: vl.el, sc: vl.ec, el: vl.el, ec: vl.ec }, &format!(", {name}: {value}")),
+                Some(vl) => insert_json(Pos { line: vl.el, character: vl.ec }, &format!(", {name}: {value}")),
                 None => {
                     let ol = expr_loc(&obj).unwrap();
-                    edit_json(Loc { sl: ol.sl, sc: ol.sc + 1, el: ol.sl, ec: ol.sc + 1 }, &format!(" {name}: {value}"))
+                    insert_json(Pos { line: ol.sl, character: ol.sc + 1 }, &format!(" {name}: {value}"))
                 }
             };
             out.push(action_json(format!("add {name}: {value}"), "quickfix", Some(value_to_j(d)), true, uri, edit));
         }
     }
-    // assists at the range: annotate an unannotated derived member or constant with its inferred type
-    if let Some(hit) = node_at(&parsed.decls, range.0) {
-        let mut chain: Vec<NodeRef> = vec![hit.node.clone()];
-        chain.extend(hit.parents.iter().rev().cloned());
-        for n in &chain {
-            let (expr, r, hidden) = match n {
-                NodeRef::Member(mm @ MemberAst::Derived { name, ty: None, expr, hidden, .. }) => (expr.clone(), member_range(&text, mm, name), *hidden),
-                NodeRef::Decl(d) => match &d.body {
-                    DeclBody::Const { name, ty: None, expr } => (expr.clone(), name_range(&text, d, name), false),
-                    _ => continue,
-                },
+    // assists at the range
+    let Some(hit) = node_at(&parsed.decls, range.0) else { return J::Arr(out) };
+    let chain = chain_of(&hit);
+    let mut one = |title: String, kind: &str, edits: Vec<J>| out.push(J::obj(vec![("title", J::s(title)), ("kind", J::s(kind)), ("edit", J::obj(vec![("changes", J::Obj(vec![(uri.to_string(), J::Arr(edits))]))]))]));
+    // annotate an unannotated derived member or constant with its inferred type
+    for n in &chain {
+        let (expr, r, hidden) = match n {
+            NodeRef::Member(mm @ MemberAst::Derived { name, ty: None, expr, hidden, .. }) => (expr.clone(), member_range(&text, mm, name), *hidden),
+            NodeRef::Decl(d) => match &d.body {
+                DeclBody::Const { name, ty: None, expr } => (expr.clone(), name_range(&text, d, name), false),
                 _ => continue,
-            };
-            if let Some(rt) = t.types.get(&key_of(&expr)).and_then(|x| x.rt.clone()) {
-                let tt = type_text(Some(&rt));
-                let at = Loc { sl: r.el, sc: r.ec + if hidden { 1 } else { 0 }, el: r.el, ec: r.ec + if hidden { 1 } else { 0 } };
-                out.push(action_json(format!("annotate: {tt}"), "refactor.rewrite", None, false, uri, edit_json(at, &format!(": {tt}"))));
+            },
+            _ => continue,
+        };
+        if let Some(rt) = t.types.get(&key_of(&expr)).and_then(|x| x.rt.clone()) {
+            let tt = type_text(Some(&rt));
+            let at = Pos { line: r.el, character: r.ec + if hidden { 1 } else { 0 } };
+            one(format!("annotate: {tt}"), "refactor.rewrite", vec![insert_json(at, &format!(": {tt}"))]);
+        }
+        break;
+    }
+    // convert a member's kind: derived <-> hidden, defaulted <-> derived, optional <-> required
+    let member = chain.iter().find_map(|n| match n {
+        NodeRef::Member(mm @ (MemberAst::Derived { loc: Some(_), .. } | MemberAst::Value { loc: Some(_), .. })) => Some(*mm),
+        _ => None,
+    });
+    if let Some(mm) = member {
+        let name = mm.name().unwrap_or("");
+        let r = member_range(&text, mm, name);
+        let after_name = Pos { line: r.el, character: r.ec };
+        let remove_next = edit_json(Loc { sl: r.el, sc: r.ec, el: r.el, ec: r.ec + 1 }, "");
+        match mm {
+            MemberAst::Derived { hidden, ty, .. } => {
+                if *hidden {
+                    one("make visible (derived)".into(), "refactor.rewrite", vec![remove_next.clone()]);
+                } else {
+                    one("make hidden (x$)".into(), "refactor.rewrite", vec![insert_json(after_name, "$")]);
+                }
+                if ty.is_some() {
+                    one("make defaulted (x?: T = e)".into(), "refactor.rewrite", vec![insert_json(after_name, "?")]);
+                }
             }
-            break;
+            MemberAst::Value { dflt: Some(_), .. } => one("make derived (x: T = e)".into(), "refactor.rewrite", vec![remove_next]),
+            MemberAst::Value { opt: true, .. } => one("make required".into(), "refactor.rewrite", vec![remove_next]),
+            _ => one("make optional".into(), "refactor.rewrite", vec![insert_json(after_name, "?")]),
+        }
+    }
+    // generate: export, an output or input skeleton for a type, the fixture header
+    let decl = chain.iter().find_map(|n| match n { NodeRef::Decl(d) => Some(*d), _ => None });
+    if let Some(d) = decl {
+        if let (Some(l), Some(name), false) = (d.loc, d.name(), d.exported) {
+            if !matches!(d.body, DeclBody::Import { .. } | DeclBody::ReExport { .. }) {
+                one(format!("export {name}"), "refactor.rewrite", vec![insert_json(Pos { line: l.sl, character: l.sc }, "export ")]);
+            }
+        }
+        if let DeclBody::Type { name, ty, .. } = &d.body {
+            if let Ok(rt) = m.env.resolve(ty, None) {
+                if is_rec(&rt) {
+                    let req: Vec<String> = rec_members(&rt).iter().filter(|x| x.kind == MKind::Req).map(|x| format!("{}: {}", x.name, placeholder_for(x.ty.as_ref()))).collect();
+                    let last = lines.last().copied().unwrap_or("");
+                    let end = Pos { line: lines.len() - 1, character: u16len(last) };
+                    let lead = if last.is_empty() { "" } else { "\n" };
+                    let mut chars = name.chars();
+                    let lower = match chars.next() { Some(c) => format!("{}{}", c.to_lowercase(), chars.as_str()), None => String::new() };
+                    one(format!("generate an output of {name}"), "refactor.rewrite", vec![insert_json(end, &format!("{lead}output {lower}: {name} = {{ {}{}}}\n", req.join(", "), if req.is_empty() { "" } else { " " }))]);
+                    one(format!("generate an input of {name}"), "refactor.rewrite", vec![insert_json(end, &format!("{lead}input {lower}: {name}\n"))]);
+                }
+            }
+        }
+    }
+    if !diagnostics.is_empty() && !lines.first().copied().unwrap_or("").starts_with("// @expect-") {
+        let first = diagnostics.iter().find(|d| matches!(get(d, "severity"), Some(Value::Int(i)) if i.to_string() == "1")).unwrap_or(&diagnostics[0]);
+        let code = match get(first, "code") {
+            Some(Value::Str(c)) => c.clone(),
+            Some(Value::Int(i)) => i.to_string(),
+            Some(Value::Float(f)) => crate::semantics::js_num_str(*f),
+            _ => String::new(),
+        };
+        let assert_id = Regex::new(r"^[A-Z][A-Za-z0-9_]*\.").unwrap();
+        let phase = if code.starts_with("E1") || code.starts_with("E2") { "parsing" } else if code.starts_with("E5") || code.starts_with("E6") || assert_id.is_match(&code) { "binding" } else { "checking" };
+        one("generate the fixture header (@expect-phase / @expect-error)".into(), "refactor.rewrite", vec![insert_json(Pos { line: 0, character: 0 }, &format!("// @expect-phase: {phase}\n// @expect-error: {code}\n"))]);
+    }
+    // fill the missing required members of a literal
+    if let Some(obj) = chain_expr(&chain, |x| matches!(x, Expr::Obj(_))) {
+        if let (Some(ol), Expr::Obj(entries)) = (expr_loc(&obj), &*obj) {
+            let owner = chain.iter().find_map(|n| match n {
+                NodeRef::Decl(d) => match &d.body {
+                    DeclBody::Output { ty, expr, .. } if Rc::ptr_eq(expr, &obj) => Some(ty.clone()),
+                    DeclBody::Input { ty, .. } => Some(ty.clone()),
+                    _ => None,
+                },
+                _ => None,
+            });
+            // the reference: `owner && owner.expr === obj` — an input's fallback is never `expr`
+            let owner = match (&owner, chain.iter().find_map(|n| match n { NodeRef::Decl(d) => Some(*d), _ => None })) {
+                (Some(_), Some(d)) if matches!(&d.body, DeclBody::Input { .. }) => None,
+                _ => owner,
+            };
+            let rt: Option<RT> = match owner {
+                Some(ty) => m.env.resolve(&ty, None).ok(),
+                None => t.types.get(&key_of(&obj)).and_then(|x| x.rt.clone()),
+            };
+            if let Some(rt) = rt.filter(is_rec) {
+                let have: Vec<&str> = entries.iter().map(|(k, _)| k.as_str()).collect();
+                let missing: Vec<crate::semantics::Member> = rec_members(&rt).into_iter().filter(|x| x.kind == MKind::Req && !have.contains(&x.name.as_str())).collect();
+                if !missing.is_empty() {
+                    let fill = missing.iter().map(|x| format!("{}: {}", x.name, placeholder_for(x.ty.as_ref()))).collect::<Vec<_>>().join(", ");
+                    let edit = match entries.last().and_then(|(_, v)| expr_loc(v)) {
+                        Some(vl) => insert_json(Pos { line: vl.el, character: vl.ec }, &format!(", {fill}")),
+                        None => insert_json(Pos { line: ol.sl, character: ol.sc + 1 }, &format!(" {fill}")),
+                    };
+                    one(format!("fill the required members: {}", missing.iter().map(|x| x.name.clone()).collect::<Vec<_>>().join(", ")), "refactor.rewrite", vec![edit]);
+                }
+            }
+        }
+    }
+    // inline a constant: its expression at every use, the declaration gone
+    if let Some(d) = decl {
+        if let (DeclBody::Const { name, expr, .. }, Some(dl), Some(el)) = (&d.body, d.loc, d.body.const_expr_loc()) {
+            let nr = name_range(&text, d, name);
+            let refs: Vec<Loc> = references(st, uri, Pos { line: nr.sl, character: nr.sc }, false).into_iter().filter(|(rm, _)| rm.path == m.path).map(|(_, l)| l).collect();
+            if !refs.is_empty() {
+                let src = src_of(&text, el);
+                let plain = matches!(&**expr, Expr::Name(_) | Expr::Lit(_) | Expr::UnitLit { .. } | Expr::Call { .. } | Expr::Member { .. } | Expr::Paren(_));
+                let new_text = if plain { src.clone() } else { format!("({src})") };
+                let mut edits: Vec<J> = refs.iter().map(|l| edit_json(*l, &new_text)).collect();
+                edits.push(edit_json(Loc { sl: dl.sl, sc: 0, el: dl.el + 1, ec: 0 }, ""));
+                one(format!("inline {name}"), "refactor.inline", edits);
+            }
+        }
+    }
+    // extract an inline record type into a named type
+    let own_body: Option<*const TypeAst> = decl.and_then(record_body_of).map(|t| t as *const TypeAst);
+    let inline_record: Option<Loc> = chain.iter().find_map(|n| match n {
+        NodeRef::Type(t @ TypeAst::Record { loc: Some(l), .. }) if own_body != Some(*t as *const TypeAst) => Some(*l),
+        _ => None,
+    }).or_else(|| chain.iter().find_map(|n| match n {
+        NodeRef::Member(MemberAst::Value { ty: TypeAst::Record { loc: Some(l), .. }, .. }) => Some(*l),
+        _ => None,
+    }));
+    if let (Some(rl), Some(dl)) = (inline_record, decl.and_then(|d| d.loc)) {
+        one("extract to a named type".into(), "refactor.extract", vec![insert_json(Pos { line: dl.sl, character: 0 }, &format!("type Extracted = {}\n", src_of(&text, rl))), edit_json(rl, "Extracted")]);
+    }
+    // a unit literal in its base unit
+    if let Some(ul) = chain_expr(&chain, |x| matches!(x, Expr::UnitLit { .. })) {
+        if let (Expr::UnitLit { num, unit }, Some(l)) = (&*ul, expr_loc(&ul)) {
+            if let Ok((key, to_base)) = m.env.unit_info(unit) {
+                let base = m.env.base_unit_of.borrow().get(&key).cloned().unwrap_or(key);
+                if base != *unit {
+                    let converted = format!("{}{base}", crate::semantics::js_num_str(num * to_base));
+                    one(format!("convert to {converted}"), "refactor.rewrite", vec![edit_json(l, &converted)]);
+                }
+            }
+        }
+    }
+    // reorder a record's members into the canonical order
+    let type_decl = chain.iter().find_map(|n| match n { NodeRef::Decl(d) if matches!(d.body, DeclBody::Type { .. }) => Some(*d), _ => None });
+    if let Some((members, bl, open)) = type_decl.and_then(record_body_of).and_then(record_parts) {
+        if members.len() > 1 && members.iter().all(|x| x.loc().is_some()) {
+            let rank = |x: &MemberAst| match x {
+                MemberAst::Context { .. } => 0,
+                MemberAst::Value { dflt: Some(_), .. } => 3,
+                MemberAst::Value { opt: true, .. } => 2,
+                MemberAst::Value { .. } => 1,
+                MemberAst::Derived { hidden: true, .. } => 5,
+                MemberAst::Derived { .. } => 4,
+                _ => 6,
+            };
+            let mut sorted: Vec<(usize, &MemberAst)> = members.iter().enumerate().collect();
+            sorted.sort_by_key(|(i, x)| (rank(x), *i));
+            if sorted.iter().enumerate().any(|(i, (j, _))| i != *j) {
+                let lead = leading_spaces(lines.get(bl.sl).copied().unwrap_or(""));
+                let indent = format!("{lead}    ");
+                let body: Vec<String> = sorted.iter().map(|(_, x)| format!("{indent}{}", trailing_comma.replace(&src_of(&text, x.loc().unwrap()), ""))).collect();
+                let trailing = if open { format!("\n{indent}...") } else { String::new() };
+                one("reorder the members canonically".into(), "refactor.rewrite", vec![edit_json(bl, &format!("{{\n{}{trailing}\n{lead}}}", body.join("\n")))]);
+            }
+        }
+    }
+    // flip the operands of a comparison
+    let cmp = chain_expr(&chain, |x| matches!(x, Expr::Bin { op, l, r } if ["<", ">", "<=", ">=", "==", "!="].contains(&op.as_str()) && expr_loc(l).is_some() && expr_loc(r).is_some()));
+    if let Some(c) = cmp {
+        if let (Expr::Bin { op, l, r }, Some(cl)) = (&*c, expr_loc(&c)) {
+            let flipped = match op.as_str() { "<" => ">", ">" => "<", "<=" => ">=", ">=" => "<=", other => other };
+            one("flip the comparison".into(), "refactor.rewrite", vec![edit_json(cl, &format!("{} {} {}", src_of(&text, expr_loc(r).unwrap()), flipped, src_of(&text, expr_loc(l).unwrap())))]);
+        }
+    }
+    // extract the selected expression: into a constant (a constant expression), or a derived member (inside a record body)
+    let selected = if range.0.line != range.1.line || range.0.character != range.1.character {
+        chain_expr(&chain, |_| true).and_then(|_| chain.iter().find_map(|n| match n {
+            NodeRef::Expr(e) => expr_loc(e).filter(|l| l.sl == range.0.line && l.sc == range.0.character && l.el == range.1.line && l.ec == range.1.character).map(|_| (*e).clone()),
+            _ => None,
+        }))
+    } else {
+        None
+    };
+    if let Some(sel) = selected.filter(|e| !matches!(&**e, Expr::Name(_))) {
+        let src = src_of(&text, expr_loc(&sel).unwrap());
+        let enclosing_member = chain.iter().find_map(|n| match n { NodeRef::Member(mm) if mm.loc().is_some() => Some(*mm), _ => None });
+        let enclosing_decl = chain.iter().find_map(|n| match n { NodeRef::Decl(d) => Some(*d), _ => None });
+        if let (false, Some(dl)) = (mentions_name(&sel), enclosing_decl.and_then(|d| d.loc)) {
+            one("extract to a constant".into(), "refactor.extract", vec![insert_json(Pos { line: dl.sl, character: 0 }, &format!("const extracted = {src}\n")), edit_json(expr_loc(&sel).unwrap(), "extracted")]);
+        }
+        if let Some(mm) = enclosing_member.filter(|mm| !matches!(mm, MemberAst::Context { .. })) {
+            let ml = mm.loc().unwrap();
+            let indent = leading_spaces(lines.get(ml.sl).copied().unwrap_or(""));
+            one("extract to a derived member".into(), "refactor.extract", vec![insert_json(Pos { line: ml.sl, character: 0 }, &format!("{indent}extracted = {src}\n")), edit_json(expr_loc(&sel).unwrap(), "extracted")]);
         }
     }
     J::Arr(out)
+}
+
+// ---------------- local variables: linked editing, rename ----------------
+// a comprehension variable, a lambda parameter, a match arm's variable, or
+// a function parameter: its binding token and its uses in its scope
+fn binds_name(n: &NodeRef, name: &str) -> bool {
+    match n {
+        NodeRef::Expr(e) => match &***e {
+            Expr::Comp { clauses, .. } | Expr::MapComp { clauses, .. } => clauses.iter().any(|c| c.v == name),
+            Expr::Lambda { params, .. } => params.iter().any(|p| p == name),
+            Expr::Match { arms, .. } => arms.iter().any(|a| a.v == name),
+            _ => false,
+        },
+        NodeRef::Decl(d) => matches!(&d.body, DeclBody::Func { params, .. } if params.iter().any(|p| p.name == name)),
+        _ => false,
+    }
+}
+fn expr_binds_name(e: &Rc<Expr>, name: &str) -> bool {
+    binds_name(&NodeRef::Expr(e), name)
+}
+// an offset into the scope's source text (UTF-16 units) -> a Loc of `name`
+fn loc_in(scope: Loc, src: &str, byte: usize, name: &str) -> Loc {
+    let before = &src[..byte];
+    let (line, col) = match before.rfind('\n') {
+        Some(nl) => (scope.sl + before.matches('\n').count(), u16len(&before[nl + 1..])),
+        None => (scope.sl, scope.sc + u16len(before)),
+    };
+    Loc { sl: line, sc: col, el: line, ec: col + u16len(name) }
+}
+fn binding_locs(text: &str, scope: &NodeRef, scope_loc: Loc, name: &str) -> Vec<Loc> {
+    let src = src_of(text, scope_loc);
+    let esc = regex::escape(name);
+    let mut out: Vec<Loc> = vec![];
+    match scope {
+        NodeRef::Decl(_) => {
+            let re = Regex::new(&format!(r"\(([^)]*)(?-u:\b)({esc})(?-u:\b)")).unwrap();
+            if let Some(m) = re.find(&src) {
+                // the pattern ends with the name itself: the token is the tail of the match
+                out.push(loc_in(scope_loc, &src, m.end() - name.len(), name));
+            }
+        }
+        NodeRef::Expr(e) if matches!(&***e, Expr::Lambda { .. }) => {
+            // `\b(name)\b(?=[^=]*=>)`: the first whole-word occurrence whose next `=` opens `=>`
+            let re = Regex::new(&format!(r"(?-u:\b)({esc})(?-u:\b)")).unwrap();
+            for m in re.find_iter(&src) {
+                let rest = &src[m.end()..];
+                let ok = match rest.find('=') {
+                    Some(i) => rest[i..].starts_with("=>"),
+                    None => false,
+                };
+                if ok {
+                    out.push(loc_in(scope_loc, &src, m.start(), name));
+                    break;
+                }
+            }
+        }
+        NodeRef::Expr(e) if matches!(&***e, Expr::Match { .. }) => {
+            let re = Regex::new(&format!(r"\(\s*({esc})(?-u:\b)")).unwrap();
+            for m in re.find_iter(&src) {
+                out.push(loc_in(scope_loc, &src, m.end() - name.len(), name));
+            }
+        }
+        _ => {
+            let re = Regex::new(&format!(r"(?-u:\b)for\s+({esc})(?-u:\b)")).unwrap();
+            for m in re.find_iter(&src) {
+                out.push(loc_in(scope_loc, &src, m.end() - name.len(), name));
+            }
+        }
+    }
+    out
+}
+// the uses of a local in its scope: name expressions, shadowing scopes skipped
+fn uses_in_expr(e: &Rc<Expr>, name: &str, scope_key: usize, out: &mut Vec<Loc>) {
+    if key_of(e) != scope_key && expr_binds_name(e, name) {
+        return;
+    }
+    match &**e {
+        Expr::Name(n) => {
+            if n == name {
+                if let Some(l) = expr_loc(e) {
+                    out.push(l);
+                }
+            }
+        }
+        Expr::Template(parts) => {
+            for p in parts {
+                if let TPart::Expr(x) = p {
+                    uses_in_expr(x, name, scope_key, out);
+                }
+            }
+        }
+        Expr::Obj(entries) => {
+            for (_, v) in entries {
+                uses_in_expr(v, name, scope_key, out);
+            }
+        }
+        Expr::Arr(items) => {
+            for (_, v) in items {
+                uses_in_expr(v, name, scope_key, out);
+            }
+        }
+        Expr::Comp { head, clauses } => {
+            uses_in_expr(head, name, scope_key, out);
+            for c in clauses {
+                uses_in_expr(&c.iter, name, scope_key, out);
+                for f in &c.filters {
+                    uses_in_expr(f, name, scope_key, out);
+                }
+            }
+        }
+        Expr::MapComp { key, val, clauses } => {
+            uses_in_expr(key, name, scope_key, out);
+            uses_in_expr(val, name, scope_key, out);
+            for c in clauses {
+                uses_in_expr(&c.iter, name, scope_key, out);
+                for f in &c.filters {
+                    uses_in_expr(f, name, scope_key, out);
+                }
+            }
+        }
+        Expr::Bin { l, r, .. } => {
+            uses_in_expr(l, name, scope_key, out);
+            uses_in_expr(r, name, scope_key, out);
+        }
+        Expr::Un { x, .. } | Expr::Paren(x) => uses_in_expr(x, name, scope_key, out),
+        Expr::If { c, t, f } => {
+            uses_in_expr(c, name, scope_key, out);
+            uses_in_expr(t, name, scope_key, out);
+            uses_in_expr(f, name, scope_key, out);
+        }
+        Expr::Lambda { body, .. } => uses_in_expr(body, name, scope_key, out),
+        Expr::Call { fun, args } => {
+            uses_in_expr(fun, name, scope_key, out);
+            for a in args {
+                uses_in_expr(a, name, scope_key, out);
+            }
+        }
+        Expr::Member { x, .. } => uses_in_expr(x, name, scope_key, out),
+        Expr::Index { x, i } => {
+            uses_in_expr(x, name, scope_key, out);
+            uses_in_expr(i, name, scope_key, out);
+        }
+        Expr::With { base, patch } => {
+            uses_in_expr(base, name, scope_key, out);
+            uses_in_expr(patch, name, scope_key, out);
+        }
+        Expr::Match { subject, arms } => {
+            uses_in_expr(subject, name, scope_key, out);
+            for a in arms {
+                if let Some(t) = &a.ty {
+                    uses_in_type(t, name, scope_key, out);
+                }
+                uses_in_expr(&a.body, name, scope_key, out);
+            }
+        }
+        _ => {}
+    }
+}
+fn uses_in_type(t: &TypeAst, name: &str, scope_key: usize, out: &mut Vec<Loc>) {
+    match t {
+        TypeAst::Record { members, .. } => {
+            for m in members {
+                uses_in_member(m, name, scope_key, out);
+            }
+        }
+        TypeAst::Map { key, val, .. } => {
+            uses_in_type(key, name, scope_key, out);
+            uses_in_type(val, name, scope_key, out);
+        }
+        TypeAst::Array { elem, .. } => uses_in_type(elem, name, scope_key, out),
+        TypeAst::Union { arms, .. } | TypeAst::Isect { arms, .. } => {
+            for a in arms {
+                uses_in_type(a, name, scope_key, out);
+            }
+        }
+        TypeAst::Func { params, ret, .. } => {
+            for a in params {
+                uses_in_type(a, name, scope_key, out);
+            }
+            uses_in_type(ret, name, scope_key, out);
+        }
+        TypeAst::Named { args, preds, ext, .. } => {
+            for a in args {
+                uses_in_type(a, name, scope_key, out);
+            }
+            for x in preds.iter().flatten() {
+                uses_in_expr(x, name, scope_key, out);
+            }
+            if let Some(x) = ext {
+                uses_in_type(x, name, scope_key, out);
+            }
+        }
+        _ => {}
+    }
+}
+fn uses_in_member(m: &MemberAst, name: &str, scope_key: usize, out: &mut Vec<Loc>) {
+    match m {
+        MemberAst::Value { ty, dflt, .. } => {
+            uses_in_type(ty, name, scope_key, out);
+            if let Some(d) = dflt {
+                uses_in_expr(d, name, scope_key, out);
+            }
+        }
+        MemberAst::Derived { ty, expr, .. } => {
+            if let Some(t) = ty {
+                uses_in_type(t, name, scope_key, out);
+            }
+            uses_in_expr(expr, name, scope_key, out);
+        }
+        MemberAst::Context { ty, .. } => uses_in_type(ty, name, scope_key, out),
+        MemberAst::Assert { cond, tail, .. } => {
+            uses_in_expr(cond, name, scope_key, out);
+            if let Some(t) = tail {
+                uses_in_tail(t, name, scope_key, out);
+            }
+        }
+        MemberAst::When { cond, body, .. } => {
+            uses_in_expr(cond, name, scope_key, out);
+            for b in body {
+                uses_in_member(b, name, scope_key, out);
+            }
+        }
+    }
+}
+fn uses_in_tail(t: &Tail, name: &str, scope_key: usize, out: &mut Vec<Loc>) {
+    match t {
+        Tail::Inline { template, .. } => {
+            for p in template {
+                if let TPart::Expr(x) = p {
+                    uses_in_expr(x, name, scope_key, out);
+                }
+            }
+        }
+        Tail::Ref { args, .. } => {
+            for a in args {
+                uses_in_expr(a, name, scope_key, out);
+            }
+        }
+    }
+}
+fn local_ranges(st: &State, uri: &str, pos: Pos) -> Option<Vec<Loc>> {
+    let text = st.text(uri)?.clone();
+    let parsed = parse_source(&text);
+    if !parsed.errors.is_empty() {
+        return None;
+    }
+    let hit = node_at(&parsed.decls, pos)?;
+    let mut chain: Vec<NodeRef> = vec![hit.node.clone()];
+    chain.extend(hit.parents.iter().rev().cloned());
+    let (name, scope): (String, Option<NodeRef>) = match &hit.node {
+        NodeRef::Expr(e) if matches!(&***e, Expr::Name(_)) => {
+            let Expr::Name(n) = &***e else { unreachable!() };
+            let scope = hit.parents.iter().rev().find(|p| binds_name(p, n)).cloned();
+            (n.clone(), scope)
+        }
+        _ => {
+            // on a binding token: the scope node itself, the name under the cursor
+            let line = text.split('\n').nth(pos.line).unwrap_or("");
+            let re = Regex::new(r"[A-Za-z_][A-Za-z0-9_]*").unwrap();
+            let mut found: Option<String> = None;
+            for m in re.find_iter(line) {
+                let a = u16_col(line, m.start());
+                let b = a + u16len(m.as_str());
+                if a <= pos.character && pos.character <= b {
+                    found = Some(m.as_str().to_string());
+                    break;
+                }
+            }
+            let n = found?;
+            let scope = chain.iter().find(|p| binds_name(p, &n)).cloned();
+            (n, scope)
+        }
+    };
+    let scope = scope?;
+    let scope_loc = scope.loc()?;
+    let mut locs = binding_locs(&text, &scope, scope_loc, &name);
+    match &scope {
+        NodeRef::Expr(e) => {
+            // the scope's own children, the scope itself not counted as shadowing
+            let key = key_of(e);
+            match &***e {
+                Expr::Comp { head, clauses } => {
+                    uses_in_expr(head, &name, key, &mut locs);
+                    for c in clauses {
+                        uses_in_expr(&c.iter, &name, key, &mut locs);
+                        for f in &c.filters {
+                            uses_in_expr(f, &name, key, &mut locs);
+                        }
+                    }
+                }
+                Expr::MapComp { key: k, val, clauses } => {
+                    uses_in_expr(k, &name, key, &mut locs);
+                    uses_in_expr(val, &name, key, &mut locs);
+                    for c in clauses {
+                        uses_in_expr(&c.iter, &name, key, &mut locs);
+                        for f in &c.filters {
+                            uses_in_expr(f, &name, key, &mut locs);
+                        }
+                    }
+                }
+                Expr::Lambda { body, .. } => uses_in_expr(body, &name, key, &mut locs),
+                Expr::Match { subject, arms } => {
+                    uses_in_expr(subject, &name, key, &mut locs);
+                    for a in arms {
+                        if let Some(t) = &a.ty {
+                            uses_in_type(t, &name, key, &mut locs);
+                        }
+                        uses_in_expr(&a.body, &name, key, &mut locs);
+                    }
+                }
+                _ => {}
+            }
+        }
+        NodeRef::Decl(d) => {
+            if let DeclBody::Func { params, ret, body, .. } = &d.body {
+                for p in params {
+                    if let Some(t) = &p.ty {
+                        uses_in_type(t, &name, 0, &mut locs);
+                    }
+                }
+                if let Some(t) = ret {
+                    uses_in_type(t, &name, 0, &mut locs);
+                }
+                uses_in_expr(body, &name, 0, &mut locs);
+            }
+        }
+        _ => {}
+    }
+    let mut seen: Vec<(usize, usize)> = vec![];
+    let mut out: Vec<Loc> = vec![];
+    for l in locs {
+        if !seen.contains(&(l.sl, l.sc)) {
+            seen.push((l.sl, l.sc));
+            out.push(l);
+        }
+    }
+    out.sort_by(|p, q| p.sl.cmp(&q.sl).then(p.sc.cmp(&q.sc)));
+    Some(out)
+}
+fn linked_editing_range(st: &State, uri: &str, pos: Pos) -> J {
+    match local_ranges(st, uri, pos) {
+        Some(locs) if !locs.is_empty() => J::obj(vec![("ranges", J::Arr(locs.iter().map(|l| range_json(*l)).collect())), ("wordPattern", J::s("[A-Za-z_][A-Za-z0-9_]*"))]),
+        _ => J::Null,
+    }
 }
 
 // ---------------- the syntax tree ----------------
@@ -2982,7 +3990,8 @@ fn handle(st: &mut State, msg: &Value) -> Option<i32> {
                 ("inlayHintProvider", J::Bool(true)),
                 ("callHierarchyProvider", J::Bool(true)),
                 ("typeHierarchyProvider", J::Bool(true)),
-                ("codeActionProvider", J::obj(vec![("codeActionKinds", J::Arr(vec![J::s("quickfix"), J::s("refactor.rewrite")]))])),
+                ("codeActionProvider", J::obj(vec![("codeActionKinds", J::Arr(vec![J::s("quickfix"), J::s("refactor.rewrite"), J::s("refactor.extract"), J::s("refactor.inline")]))])),
+                ("linkedEditingRangeProvider", J::Bool(true)),
                 ("executeCommandProvider", J::obj(vec![("commands", J::Arr(["decl.evaluate", "decl.validate", "decl.trace", "decl.showSyntaxTree", "decl.reloadWorkspace"].iter().map(|c| J::s(*c)).collect()))])),
             ]);
             reply(id, J::obj(vec![("capabilities", caps), ("serverInfo", J::obj(vec![("name", J::s("decl-lsp")), ("version", J::s("0.3.0"))]))]));
@@ -2999,9 +4008,29 @@ fn handle(st: &mut State, msg: &Value) -> Option<i32> {
             if let Some(b) = as_bool(hints.and_then(|h| get(h, "parameterNames"))) { st.hint_parameter_names = b; }
             if let Some(b) = as_bool(hints.and_then(|h| get(h, "values"))) { st.hint_values = b; }
             if let Some(b) = as_bool(hints.and_then(|h| get(h, "units"))) { st.hint_units = b; }
+            if let Some(b) = as_bool(hints.and_then(|h| get(h, "contextVariables"))) { st.hint_context_variables = b; }
             reanalyze(st);
         }
         "workspace/didChangeWatchedFiles" => reanalyze(st),
+        "decl/files" => {
+            // a browser client's workspace files (the reference's web worker): the host here is the
+            // file system, so they become overlay texts — never written to disk
+            if let Some(Value::JArr(files)) = params.and_then(|p| get(p, "files")) {
+                for f in files.iter() {
+                    if let (Some(u), Some(text)) = (as_str(get(f, "uri")), as_str(get(f, "text"))) {
+                        st.overlay.insert(path_of(u), text.to_string());
+                    }
+                }
+            }
+            if let Some(Value::JArr(removed)) = params.and_then(|p| get(p, "remove")) {
+                for u in removed.iter() {
+                    if let Some(u) = as_str(Some(u)) {
+                        st.overlay.remove(&path_of(u));
+                    }
+                }
+            }
+            reanalyze(st);
+        }
         "textDocument/didOpen" => {
             let uri = td_uri();
             let text = as_str(params.and_then(|p| get(p, "textDocument")).and_then(|t| get(t, "text"))).unwrap_or("").to_string();
@@ -3122,6 +4151,7 @@ fn handle(st: &mut State, msg: &Value) -> Option<i32> {
             let r = code_actions(st, &td_uri(), range, &diags);
             reply(id, r);
         }
+        "textDocument/linkedEditingRange" => reply(id, linked_editing_range(st, &td_uri(), position())),
         "workspace/executeCommand" => {
             let command = as_str(params.and_then(|p| get(p, "command"))).unwrap_or("").to_string();
             let r = execute_command(st, &command, params.and_then(|p| get(p, "arguments")));
@@ -3135,6 +4165,7 @@ fn handle(st: &mut State, msg: &Value) -> Option<i32> {
 }
 
 pub fn main() -> i32 {
+    std::panic::set_hook(Box::new(|_| {}));   // the error reply carries the message; nothing on stderr
     let mut st = State::default();
     let mut stdin = std::io::stdin().lock();
     let mut buf: Vec<u8> = vec![];
@@ -3159,8 +4190,18 @@ pub fn main() -> i32 {
             let body = String::from_utf8_lossy(&buf[header_end + 4..header_end + 4 + len]).to_string();
             buf.drain(..header_end + 4 + len);
             if let Ok(msg) = read_json(&body) {
-                if let Some(code) = handle(&mut st, &msg) {
-                    return code;
+                // a request whose handler panics is answered with an error, never left waiting
+                let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| handle(&mut st, &msg)));
+                match outcome {
+                    Ok(Some(code)) => return code,
+                    Ok(None) => {}
+                    Err(payload) => {
+                        let message = payload.downcast_ref::<String>().cloned().or_else(|| payload.downcast_ref::<&str>().map(|x| x.to_string())).unwrap_or_else(|| "internal error".into());
+                        notify("window/logMessage", J::obj(vec![("type", J::Num(1)), ("message", J::s(message.clone()))]));
+                        if let Some(id) = get(&msg, "id") {
+                            send(&format!("{{\"jsonrpc\":\"2.0\",\"id\":{},\"error\":{{\"code\":-32603,\"message\":{}}}}}", json_of(id), json_str(&message)));
+                        }
+                    }
                 }
             }
         }

@@ -23,7 +23,7 @@ from .checker import check_module
 from .fmt import format_source, u16
 from .infer import STD, _std_path, js_str, resolve_in, type_text
 from .parse import parse_source
-from .semantics import js_num_str, parse_path, seg_text
+from .semantics import ArrV, MapV, RecInst, js_num_str, parse_path, seg_text
 from .session import Session, SessionError, fmt_diag
 
 _out = None
@@ -726,7 +726,14 @@ def formatting(uri: str) -> list:
 def prepare_rename(uri: str, pos: dict) -> Any:
     a = analysis_of(uri)
     s = site_at(a, uri, _pos_of(uri, pos)) if a else None
-    if not s or s["site"] is None or not s["hit"] or not s["hit"]["node"].get("loc"):
+    if not s or s["site"] is None:
+        text = docs.get(uri) or ""
+        lines = text.split("\n")
+        bp = pos_bytes(pos, lines)
+        locs = local_ranges(uri, bp)
+        here = next((l for l in locs if contains(l, bp)), None) if locs else None
+        return {"range": range_of(here, lines), "placeholder": _bslice(_line(lines, here["sl"]), here["sc"], here["ec"])} if here else None
+    if not s["hit"] or not s["hit"]["node"].get("loc"):
         return None
     n = s["hit"]["node"]
     text = text_of(a, s["module"])
@@ -744,7 +751,9 @@ def prepare_rename(uri: str, pos: dict) -> Any:
 def rename(uri: str, pos: dict, new_name: str) -> Any:
     refs = references(uri, pos, True)
     if not refs:
-        return None
+        lines = (docs.get(uri) or "").split("\n")
+        locs = local_ranges(uri, pos_bytes(pos, lines))
+        return {"changes": {uri: [{"range": range_of(l, lines), "newText": new_name} for l in locs]}} if locs else None
     a = analysis_of(uri)
     changes: dict = {}
     for m, loc in refs:
@@ -1031,7 +1040,7 @@ def semantic_tokens(uri: str) -> dict:
 
 
 # ---------------- inlay hints ----------------
-hints: dict = {"types": True, "parameterNames": True, "values": False, "units": True}
+hints: dict = {"types": True, "parameterNames": True, "values": False, "units": True, "contextVariables": False}
 
 
 def inlay_hints(uri: str, range_: dict) -> list:
@@ -1080,6 +1089,42 @@ def inlay_hints(uri: str, range_: dict) -> list:
                     p = decl["params"][i] if i < len(decl["params"]) else None
                     if p and arg.get("loc") and in_range(arg["loc"]["sl"]):
                         out.append({"position": at(arg["loc"]["sl"], arg["loc"]["sc"]), "label": f"{p['name']}:", "kind": 2, "paddingRight": True})
+        if hints["values"] and is_decl(x) and x["d"] == "output" and x.get("loc") and a.run.eng is not None and a.run.entry is not None:
+            # the evaluated derived members of a literal, at the end of the literal
+            eng = a.run.eng
+
+            def walk(v: Any, e: Any) -> None:
+                if v is None or not e:
+                    return
+                if isinstance(v, RecInst) and e.get("e") == "obj":
+                    parts: list = []
+                    for mem in v.rt["members"]:
+                        sl = v.slots.get(mem["name"])
+                        if sl is None or mem.get("kind") != "der" or sl.hidden or sl.state != "ok":
+                            continue
+                        txt = eng.serialize(sl.value, x["name"]) or ""
+                        parts.append(f"{mem['name']} = {txt[:37] + '…' if len(txt) > 40 else txt}")
+                    if parts and in_range(e["loc"]["el"]):
+                        out.append({"position": at(e["loc"]["el"], e["loc"]["ec"]), "label": f"// {', '.join(parts)}", "paddingLeft": True})
+                    for en in e["entries"]:
+                        sl = v.slots.get(en["key"])
+                        if sl is not None and sl.state == "ok":
+                            walk(sl.value, en["val"])
+                elif isinstance(v, ArrV) and e.get("e") == "arr":
+                    for i, it in enumerate(v.items):
+                        walk(it, e["items"][i]["expr"] if i < len(e["items"]) else None)
+                elif isinstance(v, MapV) and e.get("e") == "obj":
+                    for en in e["entries"]:
+                        walk(v.entries.get(en["key"]), en["val"])
+
+            walk(a.run.entry.env.roots.get(x["name"]), x["expr"])
+        if hints["contextVariables"] and is_expr(x) and x["e"] == "ctx" and x.get("loc") and x["name"] in ("$parent", "$root", "$key"):
+            # the bound the enclosing type declares for the variable
+            decl = next((d for d in m.decls if d["d"] == "type" and d.get("loc") and d["loc"]["sl"] <= x["loc"]["sl"] and x["loc"]["el"] <= d["loc"]["el"]), None)
+            body = record_body_of(decl) if decl is not None else None
+            ctxm = next((mm for mm in body["members"] if mm["m"] == "context" and mm.get("variable") == x["name"]), None) if body is not None else None
+            if ctxm is not None and ctxm.get("type") and ctxm["type"].get("loc") and in_range(x["loc"]["el"]):
+                out.append({"position": at(x["loc"]["el"], x["loc"]["ec"]), "label": f": {_src_of(text, ctxm['type']['loc'])}", "kind": 1})
         if hints["units"] and is_expr(x) and x["e"] == "unitlit" and x.get("loc"):
             try:
                 u = m.env.unit_info(x["unit"])
@@ -1095,6 +1140,25 @@ def inlay_hints(uri: str, range_: dict) -> list:
     visit(m.decls)
     out.sort(key=lambda h: (h["position"]["line"], h["position"]["character"]))
     return out
+
+
+def record_body_of(decl: Optional[dict]) -> Optional[dict]:
+    """the record body of a type declaration: its own, or its extension's"""
+    if decl is None or decl.get("d") != "type":
+        return None
+    ty = decl["type"]
+    if ty["k"] == "record":
+        return ty
+    if ty["k"] == "named" and ty.get("ext") and ty["ext"]["k"] == "record":
+        return ty["ext"]
+    return None
+
+
+def safe_resolve(m, type_name: str) -> Optional[dict]:
+    try:
+        return m.env.resolve({"k": "named", "name": type_name, "args": []})
+    except Exception:
+        return None
 
 
 # ---------------- hierarchies ----------------
@@ -1302,6 +1366,37 @@ def exporters_of(a: Analysis, m, name: str) -> list:
     return out
 
 
+def _find_all(x: Any, pred: Callable[[Any], bool], out: list) -> None:
+    if not x or not isinstance(x, (dict, list)):
+        return
+    if isinstance(x, list):
+        for y in x:
+            _find_all(y, pred, out)
+        return
+    if pred(x):
+        out.append(x)
+    for k, v in x.items():
+        if k != "loc" and v and isinstance(v, (dict, list)):
+            _find_all(v, pred, out)
+
+
+def _widen(rt: Any) -> Any:
+    """a literal's type widened to its primitive: a declaration wants `bool`, not `true`"""
+    if rt and rt.get("t") == "lit":
+        v = rt["v"]
+        name = "string" if isinstance(v, str) else "bool" if isinstance(v, bool) else "int" if isinstance(v, int) else "float" if isinstance(v, float) else "null"
+        return {"t": "prim", "name": name}
+    return rt
+
+
+def _mentions_name(x: Any) -> bool:
+    if not x or not isinstance(x, (dict, list)):
+        return False
+    if isinstance(x, list):
+        return any(_mentions_name(y) for y in x)
+    return (is_expr(x) and x["e"] in ("name", "ctx", "referrers")) or any(k != "loc" and _mentions_name(v) for k, v in x.items())
+
+
 def code_actions(uri: str, range_: dict, diagnostics: list) -> list:
     text = docs.get(uri)
     if text is None:
@@ -1311,11 +1406,29 @@ def code_actions(uri: str, range_: dict, diagnostics: list) -> list:
     parsed = parse_source(text)
     decls, errors = parsed["decls"], parsed["errors"]
     lines = text.split("\n")
+
+    def at(line: int, byte_col: int) -> dict:
+        return {"line": line, "character": _u16_col(_line(lines, line), byte_col)}
+
+    def insert_at(p: dict, new_text: str) -> dict:
+        return {"range": {"start": p, "end": p}, "newText": new_text}
+
+    def chain_at(p: dict) -> list:
+        hit = node_at(decls, p)
+        return [hit["node"]] + hit["parents"][::-1] if hit else []
+
     if a is not None and not errors:
         m = module_of(a, path_of(uri))
         t = tables_of(a, m)
-        for d in diagnostics or []:
-            mm = re.match(r"^unknown name ([A-Za-z_][A-Za-z0-9_]*)", d.get("message") or "")
+
+        # the fixes of the diagnostics that touch the range (a client may send more)
+        def touches(d: dict) -> bool:
+            return bool(d.get("range")) and not (d["range"]["end"]["line"] < range_["start"]["line"] or d["range"]["start"]["line"] > range_["end"]["line"])
+
+        for d in [d for d in (diagnostics or []) if touches(d)]:
+            msg = d.get("message") or ""
+            dstart = pos_bytes(d["range"]["start"], lines)
+            mm = re.match(r"^unknown name ([A-Za-z_][A-Za-z0-9_]*)", msg)
             if mm:
                 name = mm.group(1)
                 for other in exporters_of(a, m, name):
@@ -1323,20 +1436,199 @@ def code_actions(uri: str, range_: dict, diagnostics: list) -> list:
                     existing = next((x for x in decls if x["d"] == "import" and x.get("names") and os.path.normpath(os.path.join(os.path.dirname(m.path), x["from"])) == other), None)
                     if existing is not None:
                         close = _bfind(_line(lines, existing["loc"]["sl"]), "}", existing["loc"]["sc"])
-                        p = {"line": existing["loc"]["sl"], "character": _u16_col(_line(lines, existing["loc"]["sl"]), close)}
-                        edit = {"range": {"start": p, "end": p}, "newText": f", {name} "}
+                        edit = insert_at(at(existing["loc"]["sl"], close), f", {name} ")
                         spec = existing["from"]
                     else:
                         last_import = next((x for x in reversed(decls) if x["d"] in ("import", "re_export")), None)
                         at_line = last_import["loc"]["el"] + 1 if last_import is not None and last_import.get("loc") else 0
-                        p = {"line": at_line, "character": 0}
-                        edit = {"range": {"start": p, "end": p}, "newText": f'import {{ {name} }} from "{spec}"\n'}
+                        edit = insert_at({"line": at_line, "character": 0}, f'import {{ {name} }} from "{spec}"\n')
                     out.append({"title": f'import {name} from "{spec}"', "kind": "quickfix", "diagnostics": [d], "isPreferred": True, "edit": {"changes": {uri: [edit]}}})
-            mm = re.match(r"^required member ([A-Za-z_][A-Za-z0-9_]*) missing", d.get("message") or "")
+            mm = re.match(r"^unknown name ([A-Za-z_][A-Za-z0-9_]*)", msg)
+            if mm:
+                # a namespace import that exports it: qualify the name
+                name = mm.group(1)
+                for ns, entry in m.env.namespaces.items():
+                    if name not in entry["exports"]:
+                        continue
+                    n = next((x for x in chain_at(dstart) if is_expr(x) and x["e"] == "name" and x["name"] == name), None)
+                    if n is not None and n.get("loc"):
+                        out.append({"title": f"qualify as {ns}.{name}", "kind": "quickfix", "diagnostics": [d], "edit": {"changes": {uri: [{"range": range_of(n["loc"], lines), "newText": f"{ns}.{name}"}]}}})
+            mm = re.match(r"^member ([A-Za-z_][A-Za-z0-9_]*) is not declared on ([A-Za-z_][A-Za-z0-9_]*)$", msg)
+            if mm:
+                # declare the member on the type, with the supplied value's inferred type
+                name, type_name = mm.group(1), mm.group(2)
+                site = site_of_target(a, resolve_in(m.env, type_name))
+                decl = site.decl if site is not None else None
+                body = None
+                if decl is not None and decl["d"] == "type":
+                    ty0 = decl["type"]
+                    body = ty0 if ty0["k"] == "record" else ty0["ext"] if ty0["k"] == "named" and ty0.get("ext") and ty0["ext"]["k"] == "record" else None
+                if site is not None and body is not None:
+                    hit = node_at(decls, dstart)
+                    chain = [hit["node"]] + hit["parents"][::-1] if hit else []
+                    obj0 = next((n for n in chain if is_expr(n) and n["e"] == "obj"), None)
+                    entry = next((en for en in obj0["entries"] if en["key"] == name), None) if obj0 is not None else None
+                    if entry is None and hit is not None:
+                        objs: list = []
+                        _find_all(hit["node"], lambda n: is_expr(n) and n["e"] == "obj", objs)
+                        entry = next((en for o in objs for en in o["entries"] if en["key"] == name), None)
+                    ty = t["types"].get(id(entry["val"])) if entry is not None else None
+                    member_type = type_text(_widen(ty["rt"])) if ty and ty.get("rt") else "any"
+                    last = body["members"][-1] if body["members"] else None
+                    tlines = text_of(a, site.module).split("\n")
+                    if last is not None and last.get("loc"):
+                        p = {"line": last["loc"]["el"], "character": _u16_col(_line(tlines, last["loc"]["el"]), last["loc"]["ec"])}
+                        new_text = f"\n    {name}: {member_type}"
+                    else:
+                        p = {"line": body["loc"]["sl"], "character": _u16_col(_line(tlines, body["loc"]["sl"]), body["loc"]["sc"] + 1)}
+                        new_text = f" {name}: {member_type}"
+                    out.append({"title": f"declare {name}: {member_type} on {type_name}", "kind": "quickfix", "diagnostics": [d], "isPreferred": True,
+                                "edit": {"changes": {uri_of(site.module.path): [insert_at(p, new_text)]}}})
+            if msg.startswith("member access on a maybe-absent expression"):
+                n = next((x for x in chain_at(dstart) if is_expr(x) and x["e"] == "member" and not x.get("safe")), None)
+                if n is not None and n.get("loc"):
+                    tok = member_token_loc(text, n)
+                    out.append({"title": "use ?.", "kind": "quickfix", "diagnostics": [d], "isPreferred": True,
+                                "edit": {"changes": {uri: [{"range": {"start": at(tok["sl"], tok["sc"] - 1), "end": at(tok["sl"], tok["sc"])}, "newText": "?."}]}}})
+            if msg.startswith("maybe-absent expression consumed"):
+                hit = node_at(decls, dstart)
+                n = hit["node"] if hit else None
+                if n is not None and is_expr(n) and n.get("loc"):
+                    end = at(n["loc"]["el"], n["loc"]["ec"])
+                    out.append({"title": "supply a fallback with ??", "kind": "quickfix", "diagnostics": [d], "edit": {"changes": {uri: [insert_at(end, " ?? null")]}}})
+            if msg.startswith("`??` mixed with"):
+                # parenthesize the `??` operand of the mixed expression
+                hit = node_at(decls, dstart)
+                found: dict = {"target": None}
+
+                def logical(op: Any) -> bool:
+                    return op in ("&&", "||")
+
+                def find(x: Any, parent_op: Any) -> None:
+                    if not x or not isinstance(x, (dict, list)) or found["target"] is not None:
+                        return
+                    if isinstance(x, list):
+                        for y in x:
+                            find(y, parent_op)
+                        return
+                    if is_expr(x) and x["e"] == "bin" and x.get("loc") and parent_op and ((x["op"] == "??" and logical(parent_op)) or (logical(x["op"]) and parent_op == "??")):
+                        found["target"] = x
+                        return
+                    op = x["op"] if is_expr(x) and x["e"] == "bin" else None
+                    for k, v in x.items():
+                        if k != "loc" and v and isinstance(v, (dict, list)):
+                            find(v, op)
+
+                if hit is not None:
+                    find(hit["node"], None)
+                target = found["target"]
+                if target is not None:
+                    tl = target["loc"]
+                    out.append({"title": "parenthesize the ?? expression", "kind": "quickfix", "diagnostics": [d], "isPreferred": True,
+                                "edit": {"changes": {uri: [insert_at(at(tl["sl"], tl["sc"]), "("), insert_at(at(tl["el"], tl["ec"]), ")")]}}})
+            if msg.startswith("`match` is not exhaustive"):
+                n = next((x for x in chain_at(dstart) if is_expr(x) and x["e"] == "match"), None)
+                subject = (t["types"].get(id(n["subject"])) or {}).get("rt") if n is not None else None
+                arms = [r["name"] for r in subject["arms"] if r.get("t") == "rec" and r.get("name")] if subject and subject.get("t") == "union" else []
+                covered = set((arm["type"]["name"] if arm.get("type") and arm["type"].get("k") == "named" else "") for arm in n["arms"]) if n is not None else set()
+                missing = [x for x in arms if x not in covered]
+                if n is not None and n.get("loc") and missing:
+                    nl = n["loc"]
+                    p = at(nl["el"], nl["ec"] - 1)
+                    indent = " " * (len(re.match(r"^ *", _line(lines, nl["sl"])).group(0)) + 4)
+                    out.append({"title": f"add the missing arm{'s' if len(missing) > 1 else ''}: {', '.join(missing)}", "kind": "quickfix", "diagnostics": [d], "isPreferred": True,
+                                "edit": {"changes": {uri: [insert_at(p, "".join(f"{indent}(v: {x}) => null\n" for x in missing) + indent[4:])]}}})
+            mm = re.match(r"^(\$[a-z]+) used without a context declaration in ([A-Za-z_][A-Za-z0-9_]*)$", msg)
+            if mm:
+                # declare the context variable on the type: `$parent: ref<{ ... }>`, `$root: ref<{ ... }>`, `$key: string`
+                variable, type_name = mm.group(1), mm.group(2)
+                site = site_of_target(a, resolve_in(m.env, type_name))
+                body = record_body_of(site.decl) if site is not None else None
+                if site is not None and body is not None and body.get("loc"):
+                    bound = "string" if variable == "$key" else "ref<{ ... }>"
+                    first = body["members"][0] if body["members"] else None
+                    tlines = text_of(a, site.module).split("\n")
+                    if first is not None and first.get("loc"):
+                        p = {"line": first["loc"]["sl"], "character": _u16_col(_line(tlines, first["loc"]["sl"]), first["loc"]["sc"])}
+                    else:
+                        p = {"line": body["loc"]["sl"], "character": _u16_col(_line(tlines, body["loc"]["sl"]), body["loc"]["sc"] + 1)}
+                    indent = "" if first is not None and first.get("loc") else " "
+                    if first is not None and first.get("loc") and first["loc"]["sl"] > body["loc"]["sl"]:
+                        new_text = f"{variable}: {bound}\n{' ' * first['loc']['sc']}"
+                    else:
+                        new_text = f"{indent}{variable}: {bound}, "
+                    out.append({"title": f"declare {variable}: {bound} on {type_name}", "kind": "quickfix", "diagnostics": [d], "isPreferred": True,
+                                "edit": {"changes": {uri_of(site.module.path): [insert_at(p, new_text)]}}})
+            mm = re.match(r"^(\$[a-z]+) declaration must be ref<\.\.\.> \(([A-Za-z_][A-Za-z0-9_]*)\)$", msg)
+            if mm:
+                # the declared bound wrapped in ref<…>
+                variable, type_name = mm.group(1), mm.group(2)
+                site = site_of_target(a, resolve_in(m.env, type_name))
+                body = record_body_of(site.decl) if site is not None else None
+                ctxm = next((x for x in body["members"] if x["m"] == "context" and x.get("variable") == variable), None) if body is not None else None
+                if site is not None and ctxm is not None and ctxm.get("type") and ctxm["type"].get("loc"):
+                    tl = ctxm["type"]["loc"]
+                    ttext = text_of(a, site.module)
+                    tsrc = _src_of(ttext, tl)
+                    out.append({"title": f"declare {variable} as ref<{tsrc}>", "kind": "quickfix", "diagnostics": [d], "isPreferred": True,
+                                "edit": {"changes": {uri_of(site.module.path): [{"range": range_of(tl, ttext.split("\n")), "newText": f"ref<{tsrc}>"}]}}})
+            mm = re.match(r"^(?:illegal member-kind transition for|override widens inherited member) ([A-Za-z_][A-Za-z0-9_]*)[^(]*\(([A-Za-z_][A-Za-z0-9_]*)\)$", msg)
+            if mm:
+                # the override replaced by the parent's declaration of the member
+                member_name, type_name = mm.group(1), mm.group(2)
+                site = site_of_target(a, resolve_in(m.env, type_name))
+                decl = site.decl if site is not None else None
+                body = record_body_of(decl)
+                own = next((x for x in body["members"] if x.get("name") == member_name and x.get("loc")), None) if body is not None else None
+                parent = member_site(a, site.module, safe_resolve(site.module, decl["type"]["name"]), member_name) if decl is not None and decl["type"]["k"] == "named" else None
+                if site is not None and own is not None and parent is not None and parent.member is not None and parent.member.get("loc"):
+                    parent_text = re.sub(r",\s*$", "", _src_of(text_of(a, parent.module), parent.member["loc"]))
+                    out.append({"title": f"use the parent's declaration: {parent_text}", "kind": "quickfix", "diagnostics": [d], "isPreferred": True,
+                                "edit": {"changes": {uri_of(site.module.path): [{"range": range_of(own["loc"], text_of(a, site.module).split("\n")), "newText": parent_text}]}}})
+            mm = re.match(r"^record union arms not discriminable in ([A-Za-z_][A-Za-z0-9_]*)$", msg)
+            if mm:
+                # a literal-typed `kind` member on every arm that is a local record type
+                site = site_of_target(a, resolve_in(m.env, mm.group(1)))
+                u = site.decl if site is not None else None
+                arms = u["type"]["arms"] if u is not None and u.get("type") and u["type"]["k"] == "union" else []
+                changes: dict = {}
+                n = 0
+                for arm in arms:
+                    if arm["k"] != "named":
+                        continue
+                    as_ = site_of_target(a, resolve_in(site.module.env, arm["name"]))
+                    body = record_body_of(as_.decl) if as_ is not None else None
+                    first = body["members"][0] if body is not None and body["members"] else None
+                    if as_ is None or body is None or not body.get("loc") or any(x.get("name") == "kind" for x in body["members"]):
+                        continue
+                    tlines = text_of(a, as_.module).split("\n")
+                    if first is not None and first.get("loc"):
+                        p = {"line": first["loc"]["sl"], "character": _u16_col(_line(tlines, first["loc"]["sl"]), first["loc"]["sc"])}
+                    else:
+                        p = {"line": body["loc"]["sl"], "character": _u16_col(_line(tlines, body["loc"]["sl"]), body["loc"]["sc"] + 1)}
+                    multi = first is not None and first.get("loc") and first["loc"]["sl"] > body["loc"]["sl"]
+                    new_text = f'kind: "{arm["name"]}"\n{" " * first["loc"]["sc"]}' if multi else f'{"" if first is not None and first.get("loc") else " "}kind: "{arm["name"]}", '
+                    changes.setdefault(uri_of(as_.module.path), []).append(insert_at(p, new_text))
+                    n += 1
+                if n:
+                    out.append({"title": f"add a discriminant `kind` to the arms of {mm.group(1)}", "kind": "quickfix", "diagnostics": [d], "isPreferred": True, "edit": {"changes": changes}})
+            mm = re.match(r"^derived member ([A-Za-z_][A-Za-z0-9_]*) restated with a differing value", msg)
+            if mm:
+                # a document supplies it: make it defaulted (`x?: T = e`) where it is declared with a type
+                member_name = mm.group(1)
+                for decl in m.decls:
+                    body = record_body_of(decl)
+                    own = next((x for x in body["members"] if x["m"] == "derived" and x.get("name") == member_name and x.get("type") and x.get("loc")), None) if body is not None else None
+                    if own is None:
+                        continue
+                    r = member_range(text, own, member_name)
+                    out.append({"title": f"make {decl['name']}.{member_name} defaulted (x?: T = e)", "kind": "quickfix", "diagnostics": [d],
+                                "edit": {"changes": {uri: [insert_at(at(r["el"], r["ec"]), "?")]}}})
+            mm = re.match(r"^required member ([A-Za-z_][A-Za-z0-9_]*) missing", msg)
             if mm:
                 name = mm.group(1)
                 # the construction: the literal at the diagnostic, or the root's literal when the diagnostic names the declaration
-                hit = node_at(decls, pos_bytes(d["range"]["start"], lines))
+                hit = node_at(decls, dstart)
                 chain = [hit["node"]] + hit["parents"][::-1] if hit else []
                 obj = next((n for n in chain if is_expr(n) and n["e"] == "obj"), None)
                 if obj is None:
@@ -1358,25 +1650,263 @@ def code_actions(uri: str, range_: dict, diagnostics: list) -> list:
                     last = obj["entries"][-1] if obj["entries"] else None
                     if last is not None and last.get("val") and last["val"].get("loc"):
                         vl = last["val"]["loc"]
-                        p = {"line": vl["el"], "character": _u16_col(_line(lines, vl["el"]), vl["ec"])}
-                        edit = {"range": {"start": p, "end": p}, "newText": f", {name}: {value}"}
+                        edit = insert_at(at(vl["el"], vl["ec"]), f", {name}: {value}")
                     else:
                         ol = obj["loc"]
-                        p = {"line": ol["sl"], "character": _u16_col(_line(lines, ol["sl"]), ol["sc"] + 1)}
-                        edit = {"range": {"start": p, "end": p}, "newText": f" {name}: {value}"}
+                        edit = insert_at(at(ol["sl"], ol["sc"] + 1), f" {name}: {value}")
                     out.append({"title": f"add {name}: {value}", "kind": "quickfix", "diagnostics": [d], "isPreferred": True, "edit": {"changes": {uri: [edit]}}})
-        # assists at the range: annotate an unannotated derived member or constant with its inferred type
-        hit = node_at(decls, pos_bytes(range_["start"], lines))
-        chain = [hit["node"]] + hit["parents"][::-1] if hit else []
-        target = next((n for n in chain if (is_member(n) and n["m"] == "derived" and not n.get("type")) or (is_decl(n) and n["d"] == "const" and not n.get("type"))), None)
-        if target is not None:
-            ty = t["types"].get(id(target["expr"]))
+
+        # assists at the range
+        rstart = pos_bytes(range_["start"], lines)
+        rend = pos_bytes(range_["end"], lines)
+        chain = chain_at(rstart)
+
+        def one(title: str, kind: str, edits: list, target: str = uri) -> None:
+            out.append({"title": title, "kind": kind, "edit": {"changes": {target: edits}}})
+
+        # annotate an unannotated derived member or constant with its inferred type
+        unannotated = next((n for n in chain if (is_member(n) and n["m"] == "derived" and not n.get("type")) or (is_decl(n) and n["d"] == "const" and not n.get("type"))), None)
+        if unannotated is not None:
+            ty = t["types"].get(id(unannotated["expr"]))
             if ty and ty.get("rt"):
-                r = member_range(text, target, target["name"]) if is_member(target) else name_range(text, target, target["name"])
-                p = {"line": r["el"], "character": _u16_col(_line(lines, r["el"]), r["ec"] + (1 if target.get("hidden") else 0))}
-                out.append({"title": f"annotate: {type_text(ty['rt'])}", "kind": "refactor.rewrite",
-                            "edit": {"changes": {uri: [{"range": {"start": p, "end": p}, "newText": f": {type_text(ty['rt'])}"}]}}})
+                r = member_range(text, unannotated, unannotated["name"]) if is_member(unannotated) else name_range(text, unannotated, unannotated["name"])
+                one(f"annotate: {type_text(ty['rt'])}", "refactor.rewrite", [insert_at(at(r["el"], r["ec"] + (1 if unannotated.get("hidden") else 0)), f": {type_text(ty['rt'])}")])
+        # convert a member's kind: derived <-> hidden, defaulted <-> derived, optional <-> required
+        member = next((n for n in chain if is_member(n) and n["m"] in ("derived", "value") and n.get("loc")), None)
+        if member is not None:
+            r = member_range(text, member, member["name"])
+            after_name = at(r["el"], r["ec"])
+            after_next = at(r["el"], r["ec"] + 1)
+            if member["m"] == "derived":
+                if member.get("hidden"):
+                    one("make visible (derived)", "refactor.rewrite", [{"range": {"start": after_name, "end": after_next}, "newText": ""}])
+                else:
+                    one("make hidden (x$)", "refactor.rewrite", [insert_at(after_name, "$")])
+                if member.get("type"):
+                    one("make defaulted (x?: T = e)", "refactor.rewrite", [insert_at(after_name, "?")])
+            elif member.get("dflt"):
+                one("make derived (x: T = e)", "refactor.rewrite", [{"range": {"start": after_name, "end": after_next}, "newText": ""}])
+            elif member.get("opt"):
+                one("make required", "refactor.rewrite", [{"range": {"start": after_name, "end": after_next}, "newText": ""}])
+            else:
+                one("make optional", "refactor.rewrite", [insert_at(after_name, "?")])
+        # generate: export, an output or input skeleton for a type, the fixture header
+        decl = next((n for n in chain if is_decl(n)), None)
+        if decl is not None and decl.get("loc") and isinstance(decl.get("name"), str) and not decl.get("exported") and decl["d"] not in ("import", "re_export"):
+            one(f"export {decl['name']}", "refactor.rewrite", [insert_at(at(decl["loc"]["sl"], decl["loc"]["sc"]), "export ")])
+        if decl is not None and decl["d"] == "type":
+            try:
+                rt = m.env.resolve(decl["type"])
+            except Exception:
+                rt = None
+            if rt and rt.get("t") == "rec":
+                req = [f"{x['name']}: {placeholder_for(x.get('type'))}" for x in rt["members"] if x.get("kind") == "req"]
+                end = {"line": len(lines) - 1, "character": u16(lines[-1])}
+                lead = "" if lines[-1] == "" else "\n"
+                lower = decl["name"][0].lower() + decl["name"][1:]
+                one(f"generate an output of {decl['name']}", "refactor.rewrite", [insert_at(end, f"{lead}output {lower}: {decl['name']} = {{ {', '.join(req)}{' ' if req else ''}}}\n")])
+                one(f"generate an input of {decl['name']}", "refactor.rewrite", [insert_at(end, f"{lead}input {lower}: {decl['name']}\n")])
+        if diagnostics and not re.match(r"^// @expect-", _line(lines, 0)):
+            first = next((d for d in diagnostics if d.get("severity") == 1), diagnostics[0])
+            code = str(first["code"]) if first.get("code") is not None else ""
+            phase = "parsing" if code.startswith(("E1", "E2")) else "binding" if code.startswith(("E5", "E6")) or re.match(r"^[A-Z][A-Za-z0-9_]*\.", code) else "checking"
+            one("generate the fixture header (@expect-phase / @expect-error)", "refactor.rewrite", [insert_at({"line": 0, "character": 0}, f"// @expect-phase: {phase}\n// @expect-error: {code}\n")])
+        # fill the missing required members of a literal
+        obj = next((n for n in chain if is_expr(n) and n["e"] == "obj"), None)
+        if obj is not None and obj.get("loc"):
+            owner = next((n for n in chain if is_decl(n) and n["d"] in ("output", "input") and n.get("type")), None)
+            try:
+                rt = m.env.resolve(owner["type"]) if owner is not None and owner.get("expr") is obj else ((t["types"].get(id(obj)) or {}).get("rt"))
+            except Exception:
+                rt = None
+            if rt and rt.get("t") == "rec":
+                have = set(en["key"] for en in obj["entries"])
+                missing = [x for x in rt["members"] if x.get("kind") == "req" and x["name"] not in have]
+                if missing:
+                    last = obj["entries"][-1] if obj["entries"] else None
+                    fill = ", ".join(f"{x['name']}: {placeholder_for(x.get('type'))}" for x in missing)
+                    if last is not None and last.get("val") and last["val"].get("loc"):
+                        edit = insert_at(at(last["val"]["loc"]["el"], last["val"]["loc"]["ec"]), f", {fill}")
+                    else:
+                        edit = insert_at(at(obj["loc"]["sl"], obj["loc"]["sc"] + 1), f" {fill}")
+                    one(f"fill the required members: {', '.join(x['name'] for x in missing)}", "refactor.rewrite", [edit])
+        # inline a constant: its expression at every use, the declaration gone
+        if decl is not None and decl["d"] == "const" and decl.get("loc") and decl.get("expr") and decl["expr"].get("loc"):
+            nr = name_range(text, decl, decl["name"])
+            refs = [r for r in references(uri, at(nr["sl"], nr["sc"]), False) if r[0].path == m.path]
+            if refs:
+                src = _src_of(text, decl["expr"]["loc"])
+                plain = is_expr(decl["expr"]) and decl["expr"]["e"] in ("name", "lit", "unitlit", "call", "member", "paren")
+                edits = [{"range": range_of(r[1], lines), "newText": src if plain else f"({src})"} for r in refs]
+                edits.append({"range": {"start": {"line": decl["loc"]["sl"], "character": 0}, "end": {"line": decl["loc"]["el"] + 1, "character": 0}}, "newText": ""})
+                one(f"inline {decl['name']}", "refactor.inline", edits)
+        # extract an inline record type into a named type
+        own_body = record_body_of(decl) if decl is not None else None
+        inline_record = next((n for n in chain if is_type(n) and n["k"] == "record" and n.get("loc") and n is not own_body), None)
+        if inline_record is None:
+            mem = next((n for n in chain if is_member(n) and n["m"] == "value" and n.get("type") and n["type"].get("k") == "record" and n["type"].get("loc")), None)
+            inline_record = mem["type"] if mem is not None else None
+        if inline_record is not None and decl is not None and decl.get("loc"):
+            one("extract to a named type", "refactor.extract", [
+                {"range": {"start": {"line": decl["loc"]["sl"], "character": 0}, "end": {"line": decl["loc"]["sl"], "character": 0}}, "newText": f"type Extracted = {_src_of(text, inline_record['loc'])}\n"},
+                {"range": range_of(inline_record["loc"], lines), "newText": "Extracted"}])
+        # a unit literal in its base unit
+        unit_lit = next((n for n in chain if is_expr(n) and n["e"] == "unitlit" and n.get("loc")), None)
+        if unit_lit is not None:
+            try:
+                u = m.env.unit_info(unit_lit["unit"])
+                base = m.env.base_unit_of.get(u["key"], u["key"])
+                if base != unit_lit["unit"]:
+                    converted = f"{js_num_str(unit_lit['num'] * u['to_base'])}{base}"
+                    one(f"convert to {converted}", "refactor.rewrite", [{"range": range_of(unit_lit["loc"], lines), "newText": converted}])
+            except Exception:
+                pass   # an unknown unit is a diagnostic
+        # reorder a record's members into the canonical order
+        type_decl = next((n for n in chain if is_decl(n) and n["d"] == "type"), None)
+        body = record_body_of(type_decl) if type_decl is not None else None
+        if body is not None and body.get("loc") and len(body["members"]) > 1 and all(x.get("loc") for x in body["members"]):
+            def rank(x: dict) -> int:
+                if x["m"] == "context":
+                    return 0
+                if x["m"] == "value":
+                    return 3 if x.get("dflt") else 2 if x.get("opt") else 1
+                if x["m"] == "derived":
+                    return 5 if x.get("hidden") else 4
+                return 6
+            ordered = sorted(enumerate(body["members"]), key=lambda p: (rank(p[1]), p[0]))
+            if any(s[0] != i for i, s in enumerate(ordered)):
+                lead = len(re.match(r"^ *", _line(lines, body["loc"]["sl"])).group(0))
+                indent = " " * (lead + 4)
+                close = " " * lead
+                members = [indent + re.sub(r",\s*$", "", _src_of(text, s[1]["loc"])) for s in ordered]
+                trailing = f"\n{indent}..." if body.get("open") else ""
+                one("reorder the members canonically", "refactor.rewrite", [{"range": range_of(body["loc"], lines), "newText": "{\n" + "\n".join(members) + trailing + "\n" + close + "}"}])
+        # flip the operands of a comparison
+        cmp = next((n for n in chain if is_expr(n) and n["e"] == "bin" and n["op"] in ("<", ">", "<=", ">=", "==", "!=") and n["l"].get("loc") and n["r"].get("loc")), None)
+        if cmp is not None:
+            flipped = {"<": ">", ">": "<", "<=": ">=", ">=": "<=", "==": "==", "!=": "!="}
+            one("flip the comparison", "refactor.rewrite", [{"range": range_of(cmp["loc"], lines), "newText": f"{_src_of(text, cmp['r']['loc'])} {flipped[cmp['op']]} {_src_of(text, cmp['l']['loc'])}"}])
+        # extract the selected expression: into a constant (a constant expression), or a derived member (inside a record body)
+        selected = None
+        if rstart["line"] != rend["line"] or rstart["character"] != rend["character"]:
+            selected = next((n for n in chain if is_expr(n) and n.get("loc") and n["loc"]["sl"] == rstart["line"] and n["loc"]["sc"] == rstart["character"] and n["loc"]["el"] == rend["line"] and n["loc"]["ec"] == rend["character"]), None)
+        if selected is not None and not (is_expr(selected) and selected["e"] == "name"):
+            src = _src_of(text, selected["loc"])
+            enclosing_member = next((n for n in chain if is_member(n) and n.get("loc")), None)
+            enclosing_decl = next((n for n in chain if is_decl(n)), None)
+            if not _mentions_name(selected) and enclosing_decl is not None and enclosing_decl.get("loc"):
+                one("extract to a constant", "refactor.extract", [insert_at({"line": enclosing_decl["loc"]["sl"], "character": 0}, f"const extracted = {src}\n"), {"range": range_of(selected["loc"], lines), "newText": "extracted"}])
+            if enclosing_member is not None and enclosing_member["m"] != "context":
+                indent = re.match(r"^ *", _line(lines, enclosing_member["loc"]["sl"])).group(0)
+                one("extract to a derived member", "refactor.extract", [insert_at({"line": enclosing_member["loc"]["sl"], "character": 0}, f"{indent}extracted = {src}\n"), {"range": range_of(selected["loc"], lines), "newText": "extracted"}])
     return out
+
+
+# ---------------- local variables: linked editing, rename ----------------
+# a comprehension variable, a lambda parameter, a match arm's variable, or
+# a function parameter: its binding token and its uses in its scope
+def binds_name(n: Any, name: str) -> bool:
+    if is_expr(n):
+        e = n["e"]
+        return ((e in ("comp", "mapcomp") and any(c["v"] == name for c in n["clauses"]))
+                or (e == "lambda" and name in n["params"])
+                or (e == "match" and any(arm.get("v") == name for arm in n["arms"])))
+    return is_decl(n) and n["d"] == "func" and any(p["name"] == name for p in n["params"])
+
+
+def binding_locs(text: str, scope: dict, name: str) -> list:
+    src = _src_of(text, scope["loc"]).encode("utf-8")
+    loc = scope["loc"]
+    out: list = []
+    nb = name.encode("utf-8")
+
+    def at(offset: int) -> dict:   # an offset in `src` -> a Loc
+        line, col = loc["sl"], loc["sc"]
+        for i in range(offset):
+            if src[i:i + 1] == b"\n":
+                line += 1
+                col = 0
+            else:
+                col += 1
+        return {"sl": line, "sc": col, "el": line, "ec": col + len(nb)}
+
+    esc = re.escape(nb)
+    if is_decl(scope):
+        m = re.search(rb"\(([^)]*)\b(" + esc + rb")\b", src)
+        if m:
+            out.append(at(m.start() + len(m.group(0)) - len(nb)))
+    elif scope["e"] == "lambda":
+        m = re.search(rb"\b(" + esc + rb")\b(?=[^=]*=>)", src)
+        if m:
+            out.append(at(m.start() + len(m.group(0)) - len(nb)))
+    elif scope["e"] == "match":
+        for m in re.finditer(rb"\(\s*(" + esc + rb")\b", src):
+            out.append(at(m.start() + len(m.group(0)) - len(nb)))
+    else:
+        for m in re.finditer(rb"\bfor\s+(" + esc + rb")\b", src):
+            out.append(at(m.start() + len(m.group(0)) - len(nb)))
+    return out
+
+
+def local_ranges(uri: str, pos: dict) -> Optional[list]:
+    """the binding and the uses of the local variable at a position (bytes), or None"""
+    text = docs.get(uri)
+    if text is None:
+        return None
+    parsed = parse_source(text)
+    if parsed["errors"]:
+        return None
+    decls = parsed["decls"]
+    hit = node_at(decls, pos)
+    if not hit:
+        return None
+    name: Optional[str] = None
+    scope: Any = None
+    node = hit["node"]
+    if is_expr(node) and node["e"] == "name":
+        name = node["name"]
+        scope = next((p for p in hit["parents"][::-1] if binds_name(p, name)), None)
+    else:
+        # on a binding token: the scope node itself, the name under the cursor
+        line = _line(text.split("\n"), pos["line"]).encode("utf-8")
+        for mm in re.finditer(rb"[A-Za-z_][A-Za-z0-9_]*", line):
+            if mm.start() <= pos["character"] <= mm.end():
+                name = mm.group(0).decode("utf-8")
+                break
+        if not name:
+            return None
+        scope = next((p for p in [node] + hit["parents"][::-1] if binds_name(p, name)), None)
+    if not name or scope is None or not scope.get("loc"):
+        return None
+    locs = binding_locs(text, scope, name)
+
+    def uses(x: Any) -> None:
+        if not x or not isinstance(x, (dict, list)):
+            return
+        if isinstance(x, list):
+            for y in x:
+                uses(y)
+            return
+        if x is not scope and binds_name(x, name):
+            return               # shadowed below
+        if is_expr(x) and x["e"] == "name" and x["name"] == name and x.get("loc"):
+            locs.append(x["loc"])
+        for k, v in x.items():
+            if k != "loc" and v and isinstance(v, (dict, list)):
+                uses(v)
+
+    for k, v in scope.items():
+        if k != "loc" and v and isinstance(v, (dict, list)):
+            uses(v)
+    seen: set = set()
+    uniq = [l for l in locs if (l["sl"], l["sc"]) not in seen and not seen.add((l["sl"], l["sc"]))]
+    return sorted(uniq, key=lambda l: (l["sl"], l["sc"]))
+
+
+def linked_editing_range(uri: str, pos: dict) -> Any:
+    lines = (docs.get(uri) or "").split("\n")
+    locs = local_ranges(uri, pos_bytes(pos, lines))
+    return {"ranges": [range_of(l, lines) for l in locs], "wordPattern": "[A-Za-z_][A-Za-z0-9_]*"} if locs else None
 
 
 # ---------------- the syntax tree ----------------
@@ -1414,13 +1944,30 @@ def handle(msg: dict) -> None:
                 "inlayHintProvider": True,
                 "callHierarchyProvider": True,
                 "typeHierarchyProvider": True,
-                "codeActionProvider": {"codeActionKinds": ["quickfix", "refactor.rewrite"]},
+                "codeActionProvider": {"codeActionKinds": ["quickfix", "refactor.rewrite", "refactor.extract", "refactor.inline"]},
+                "linkedEditingRangeProvider": True,
                 "executeCommandProvider": {"commands": ["decl.evaluate", "decl.validate", "decl.trace", "decl.showSyntaxTree", "decl.reloadWorkspace"]},
             },
             "serverInfo": {"name": "decl-lsp", "version": "0.3.0"},
         })
     elif method == "initialized":
         pass
+    elif method == "decl/files":
+        # a browser client's workspace files (the reference's lsp-web.ts): here the host is the file system
+        for f in params.get("files") or []:
+            try:
+                with open(path_of(f["uri"]), "w", encoding="utf-8") as fh:
+                    fh.write(f["text"])
+            except OSError:
+                pass
+        for u in params.get("remove") or []:
+            try:
+                os.remove(path_of(u))
+            except OSError:
+                pass
+        analyses.clear()
+        for u in list(docs):
+            analyze(u)
     elif method == "workspace/didChangeConfiguration":
         decl_settings = (params.get("settings") or {}).get("decl") or {}
         config["inputs"] = decl_settings.get("inputs") or {}
@@ -1510,6 +2057,8 @@ def handle(msg: dict) -> None:
         reply(id_, subtypes(params["item"]))
     elif method == "textDocument/codeAction":
         reply(id_, code_actions(params["textDocument"]["uri"], params["range"], (params.get("context") or {}).get("diagnostics") or []))
+    elif method == "textDocument/linkedEditingRange":
+        reply(id_, linked_editing_range(params["textDocument"]["uri"], params["position"]))
     elif method == "workspace/executeCommand":
         # a refused command (an unknown root, an unreadable binding) answers null, never silence
         try:
@@ -1549,12 +2098,16 @@ def main(argv: Optional[list] = None) -> int:
                 break
             body = buf[header_end + 4:header_end + 4 + length]
             buf = buf[header_end + 4 + length:]
+            msg = json.loads(body.decode("utf-8"))
+            # a request whose handler throws is answered with an error, never left waiting
             try:
-                handle(json.loads(body.decode("utf-8")))
+                handle(msg)
             except SystemExit:
                 raise
             except Exception as e:   # pragma: no cover
                 log_err(f"{type(e).__name__}: {e}")
+                if msg.get("id") is not None:
+                    send({"jsonrpc": "2.0", "id": msg["id"], "error": {"code": -32603, "message": str(e)}})
 
 
 if __name__ == "__main__":

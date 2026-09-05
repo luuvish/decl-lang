@@ -432,8 +432,27 @@ asset); then the Test Explorer for fixture corpora, the trace view, the
 syntax-tree document, and the release workflow
 (`.github/workflows/release.yml`: the prebuilt `decl-lsp` assets per
 platform, the `.vsix`, publication when the tokens are configured).
-Open: the web extension, the extension tests, the first release, the
-grammar's TextMate generation.
+The extension tests (`test/`: the runner on `@vscode/test-electron`, a
+suite over `test/fixtures` checking the language contribution, the
+commands, positioned diagnostics, hover/definition/completion/formatting
+through the client, and the output preview's bytes) pass inside a
+downloaded VS Code against the bundled server (`npm test -w
+vscode-decl`; `.github/workflows/extension.yml` runs them under xvfb,
+and its `vscode-rust` job runs the same suite against the Rust server
+through `DECL_SERVER_PATH`). The server's `decl.*` commands are
+registered by the language client and given their editor face through
+its execute-command middleware (a lens, a palette entry, or a keybinding
+all open the preview). The web extension (`src/web.ts`, the `browser`
+entry) runs the server's core in a worker (`server/lsp-web.mjs`) over an
+in-memory host — the reference implementation's modules, packages,
+session, and server no longer touch a file system directly but a host
+(`decl-ts/src/host.ts`), which Node binds to the disk and the worker to
+the files the extension pushes with `decl/files` — with the output
+preview and the syntax tree; it is built and bundled, not yet exercised
+in vscode.dev. The TextMate grammar is checked against the tree-sitter
+grammar's keywords at build (`site/scripts/check-grammar.mjs`). Open:
+the web extension in vscode.dev, the first release, generating the
+TextMate grammar rather than checking it.
 
 ## 21. Verification
 

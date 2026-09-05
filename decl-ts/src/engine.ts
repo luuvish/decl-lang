@@ -16,9 +16,28 @@ type PreVal = { __expr: Expr; scope: Scope } | any;
 export class Engine {
   env: Env;
   deferredSlots: { inst: RecInst; name: string }[] = [];
+  // a root whose top-level expression mentions `$referrers` (directly, or
+  // through a member it reads) defers like a slot: bound again in phase 2
+  deferredRoots: { name: string; raw: any; rt: RT; sc: Scope; viaExpr: boolean }[] = [];
+  // ---- dependency tracking (Phase 6 foundations; docs/tooling/02_repl.md §6) ----
+  // every evaluation step — a slot being computed (`path.member`), a root
+  // being bound (`root:name`), an instance's asserts (`assert:path`) —
+  // records what it read: slots, roots, and `$referrers` queries by type
+  // (`referrers:Type`); diagnostics carry the step that produced them
+  reads = new Map<string, Set<string>>();
+  computing: string[] = [];
+  slotsByKey = new Map<string, { inst: RecInst; name: string }>();
+  static slotKey(inst: RecInst, name: string): string { return `${pathStr(inst.path)}.${name}`; }
+  record(read: string) { const top = this.computing[this.computing.length - 1]; if (top) this.reads.get(top)!.add(read); }
+  step<T>(key: string, f: () => T): T {
+    this.computing.push(key);
+    this.reads.set(key, new Set());
+    try { return f(); } finally { this.computing.pop(); }
+  }
   noReg = 0;                     // >0: binding for comparison only — do not register instances
   phase = 1;                     // 1: materialization; 2: universe complete, $referrers answers
   constructor(env: Env) {
+    env.tagger = () => this.computing[this.computing.length - 1];
     this.env = env;
     env.constEval = (name: string) => this.forceConst(name, '');   // §4.13 elaboration-time constants
     env.exprEval = (e: Expr) => this.ev(e, { inst: null, locals: new Map(), rootName: '' });
@@ -69,7 +88,7 @@ export class Engine {
         const bound = this.moduleValue(menv, e.name, sc.rootName);
         if (bound !== undefined) return bound;
         if (e.name === 'std') return { __std: true, path: [] };
-        if (this.env.roots.has(e.name)) return this.env.roots.get(e.name);
+        if (this.env.roots.has(e.name)) { this.record(`root:${e.name}`); return this.env.roots.get(e.name); }
         const inp = this.demandInput(menv, e.name);
         if (inp !== undefined) return inp;
         throw new EvalErr(`unknown name ${e.name}`);
@@ -247,7 +266,7 @@ export class Engine {
     if (im) {
       const v = this.moduleValue(im.env, im.name, rootName);
       if (v !== undefined) return v;
-      if (this.env.roots.has(im.name)) return this.env.roots.get(im.name);   // imported output/input root
+      if (this.env.roots.has(im.name)) { this.record(`root:${im.name}`); return this.env.roots.get(im.name); }   // imported output/input root
       return this.demandInput(im.env, im.name);
     }
     const ns = menv.namespaces.get(name);
@@ -259,7 +278,7 @@ export class Engine {
     if (!ex) throw new EvalErr(`namespace has no export ${name}`);
     const v = this.moduleValue(ex.env, ex.name, sc.rootName);
     if (v !== undefined) return v;
-    if (this.env.roots.has(ex.name)) return this.env.roots.get(ex.name);
+    if (this.env.roots.has(ex.name)) { this.record(`root:${ex.name}`); return this.env.roots.get(ex.name); }
     const inp = this.demandInput(ex.env, ex.name);
     if (inp !== undefined) return inp;
     throw new EvalErr(`${name} is not a value`);
@@ -272,12 +291,13 @@ export class Engine {
   demandInput(menv: Env, name: string): any {
     const decl = menv.inputs.get(name);
     if (!decl) return undefined;
+    this.record(`root:${name}`);
     if (this.env.roots.has(name)) return this.env.roots.get(name);
     if (this.failedInputs.has(name)) throw new Taint();
     if (!decl.fallback) throw new EvalErr(`input ${name} is not bound`, 'E5006');
     const sc: Scope = { inst: null, locals: new Map(), rootName: name, menv };
     try {
-      const v = this.bind(this.ev(decl.fallback, sc), menv.resolve(decl.type), [name], null, sc);
+      const v = this.step(`root:${name}`, () => this.bind(this.ev(decl.fallback!, sc), menv.resolve(decl.type), [name], null, sc));
       this.env.roots.set(name, v);
       return v;
     } catch (e) {
@@ -290,13 +310,18 @@ export class Engine {
   // left unset — its demanders are tainted, nothing else is
   bindRoot(name: string, raw: any, rt: RT, sc: Scope, viaExpr: boolean) {
     try {
-      const v = viaExpr ? this.bind(this.ev(raw, sc), rt, [name], null, sc) : this.bind(raw, rt, [name], null, sc);
+      const v = this.step(`root:${name}`, () => viaExpr ? this.bind(this.ev(raw, sc), rt, [name], null, sc) : this.bind(raw, rt, [name], null, sc));
       this.env.roots.set(name, v);
     } catch (e) {
       if (e instanceof EvalErr)
         this.env.report({ severity: 'error', message: e.message, path: name, code: (e as any).code });
-      else if (!(e instanceof Taint) && !(e instanceof DeferSig)) throw e;
+      else if (e instanceof DeferSig) { if (this.phase < 2) this.deferredRoots.push({ name, raw, rt, sc, viaExpr }); }
+      else if (!(e instanceof Taint)) throw e;
     }
+  }
+  /** phase 2: the roots that deferred are bound again (after the deferred slots) */
+  bindDeferredRoots() {
+    for (const d of this.deferredRoots.splice(0)) this.bindRoot(d.name, d.raw, d.rt, d.sc, d.viaExpr);
   }
   // quantity arithmetic (§3.16): +/-/compare need equal dimensions;
   // * and / compose exponent vectors; a vector cancelling to zero is a
@@ -614,6 +639,7 @@ export class Engine {
   // ---------- referrers ----------
   referrers(typeName: string, member: string, sc: Scope): any {
     if (this.phase < 2) throw new DeferSig();   // universe not fully materialized yet
+    this.record(`referrers:${typeName}`);
     const self = sc.inst!;
     const out: RecInst[] = [];
     for (const cand of this.env.registry) {
@@ -965,6 +991,8 @@ export class Engine {
   forceSlot(inst: RecInst, name: string): any {
     const s = inst.slots.get(name);
     if (!s) throw new EvalErr(`no member ${name}`);
+    const key = Engine.slotKey(inst, name);
+    this.record(key);
     if (s.state === 'ok') return s.value;
     if (s.state === 'absent') return ABSENT;
     if (s.state === 'invalid') throw new Taint();
@@ -973,8 +1001,9 @@ export class Engine {
       s.state = 'invalid'; throw new Taint();
     }
     s.state = 'forcing';
+    this.slotsByKey.set(key, { inst, name });
     try {
-      const v = s.compute!();
+      const v = this.step(key, () => s.compute!());
       s.state = 'ok'; s.value = v; return v;
     } catch (e) {
       if (e instanceof DeferSig) {
@@ -1017,7 +1046,18 @@ export class Engine {
     else if (isMap(v)) [...v.entries.values()].forEach((x: any) => this.forceAll(x, _deferredToo));
   }
   validateAll(rootName: string) {
-    for (const inst of this.env.registry) this.runAsserts(inst, inst.rt.asserts, rootName);
+    for (const inst of this.env.registry) this.validateInst(inst, rootName);
+  }
+  validateInst(inst: RecInst, rootName: string) {
+    this.step(`assert:${pathStr(inst.path)}`, () => this.runAsserts(inst, inst.rt.asserts, rootName));
+  }
+  /** reset a computed slot so that it is computed again (dependency tracking) */
+  resetSlot(key: string): boolean {
+    const s = this.slotsByKey.get(key);
+    const slot = s?.inst.slots.get(s.name);
+    if (!slot || !slot.compute) return false;
+    if (slot.state === 'ok' || slot.state === 'invalid') { slot.state = 'unforced'; delete slot.value; }
+    return true;
   }
   runAsserts(inst: RecInst, asserts: any[], rootName: string) {
     const sc0: Scope = { inst, locals: new Map(), rootName, menv: (inst as any).menv };

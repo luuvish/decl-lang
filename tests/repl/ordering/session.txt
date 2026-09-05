@@ -1,0 +1,7 @@
+:evaluate
+:validate
+:validate n o
+:bind doc { "zz": 9, "aa": 1 }
+:validate doc
+:update doc.zz = 4
+:validate doc

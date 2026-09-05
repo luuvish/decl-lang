@@ -21,7 +21,8 @@ Phase 2 conformance runner picks them up).
 | declarations | 4 | 4 | 8 |
 | constraints | 2 | 1 | 4 |
 | stdlib | 7 | 0 | 4 |
-| **total** | **46** | **15** | **59** |
+| relationships | 1 | 0 | 0 |
+| **total** | **47** | **15** | **59** |
 
 Update this table in the same change whenever fixtures are added or
 removed (AGENTS.md rule).

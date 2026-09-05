@@ -129,7 +129,11 @@ change.
 
 ## 4. Diagnostics and `--json`
 
-On standard error a diagnostic is one line:
+Diagnostics are reported in the specification's order (§6.7, §12.3):
+compile-time diagnostics first, by source position, then evaluation-
+and validation-time diagnostics by `(path, id)`, the path in canonical
+path order — not in the order evaluation happened to reach them. On
+standard error a diagnostic is one line:
 
 ```
 <file>: <severity> [<code>] <id> at <path>: <message>

@@ -223,12 +223,18 @@ definition / type definition / references / highlights, rename, symbols,
 folding, formatting, lenses, and the `decl.*` commands, one scripted
 editor session in the harness — then signature help, workspace
 symbols, selection ranges, semantic tokens, inlay hints, the call and
-type hierarchies, code actions, and the syntax tree; the VS Code and
-Zed extensions scaffolded (`extension/vscode/`, `extension/zed/`,
+type hierarchies, code actions (quick fixes and assists), linked
+editing and rename of locals, value hints, and the syntax tree; the VS
+Code and Zed extensions scaffolded (`extension/vscode/`, `extension/zed/`,
 unpublished) with the output preview, the trace view, the syntax-tree
-document, the Test Explorer, and the release workflow. Open: dependency
-tracking (the session recomputes fully today), the remaining quick
-fixes, the extensions' tests and first release.
+document, the Test Explorer, the release workflow, and the extension
+tests (passing in a downloaded VS Code); dependency tracking in the session (an operation recomputes only
+what read the changed documents, cross-checked against full
+recomputation over the corpus), and diagnostics ordered as §6.7 says.
+The web extension's entry and worker server (the reference core over
+a host abstraction), the remaining quick fixes and assists, the
+context-variable hints. Open: the first release, the web extension in
+vscode.dev, on-type formatting and the last conversions.
 
 **Exit criteria**: scripted REPL and LSP sessions in the parity harness,
 identical bytes from the three implementations · the reference scratch

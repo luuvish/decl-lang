@@ -49,6 +49,8 @@ input   extra            bound        main.decl        (expression)
 output  site             exported     main.decl
 output  mirror           local        main.decl
 > // editing a document
+> :diff deployed
+(no changes)
 > :update deployed.port = 9100
 > :create deployed.replicas = 9
 > :create deployed.replicas = 10

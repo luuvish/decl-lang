@@ -528,7 +528,13 @@ impl Repl {
                 no_args(&rest)?;
                 match self.session.last_timing.get() {
                     None => self.out("nothing evaluated yet"),
-                    Some(t) => self.out(&format!("total {:.1} ms (load {:.1} ms, check {:.1} ms, bind {:.1} ms, evaluate {:.1} ms)", t.total, t.load, t.check, t.bind, t.evaluate)),
+                    Some(t) => {
+                        let step = match (t.recomputed, t.slots) {
+                            (Some(n), Some(m)) => format!(", recomputed {n} of {m} slots"),
+                            _ => String::new(),
+                        };
+                        self.out(&format!("total {:.1} ms (load {:.1} ms, check {:.1} ms, bind {:.1} ms, evaluate {:.1} ms){step}", t.total, t.load, t.check, t.bind, t.evaluate))
+                    }
                 }
                 Ok(())
             }

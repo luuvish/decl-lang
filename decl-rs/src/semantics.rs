@@ -275,10 +275,12 @@ pub struct Diag {
     pub code: Option<String>,
     /// the source range the checker reported at (the declaration, or the expression under inference)
     pub loc: Option<Loc>,
+    /// the evaluation step that produced it (a slot, a root, an assert): dependency tracking's tag
+    pub by: Option<String>,
 }
 impl Diag {
     pub fn error(message: impl Into<String>, path: String, code: Option<&str>) -> Diag {
-        Diag { severity: "error".into(), id: None, message: message.into(), path, code: code.map(|c| c.to_string()), loc: None }
+        Diag { severity: "error".into(), id: None, message: message.into(), path, code: code.map(|c| c.to_string()), loc: None, by: None }
     }
     pub fn to_json(&self, file: Option<&str>) -> String {
         let mut parts = Vec::new();
@@ -482,6 +484,25 @@ pub struct Env {
     pub unit_order: RefCell<Vec<String>>,
     /// installed by the checker: constant-evaluation errors go here instead of the report
     pub const_diag_sink: RefCell<Option<Rc<RefCell<Vec<Diag>>>>>,
+    /// installed by the engine: the evaluation step a report is attributed to
+    pub tagger: RefCell<Option<Rc<dyn Fn() -> Option<String>>>>,
+}
+
+/// §6.7: evaluation- and validation-time diagnostics sort by (path, id), path in canonical order; stable
+pub fn sort_diags(diags: Vec<Diag>) -> Vec<Diag> {
+    let segs_of = |p: &str| -> SegPath {
+        if p.is_empty() {
+            return vec![];
+        }
+        parse_path(p, "").unwrap_or_else(|_| vec![Seg::Name(p.to_string())])
+    };
+    let mut keyed: Vec<(usize, SegPath, Diag)> = diags.into_iter().enumerate().map(|(i, d)| (i, segs_of(&d.path), d)).collect();
+    keyed.sort_by(|a, b| {
+        cmp_path(&a.1, &b.1)
+            .then_with(|| a.2.id.as_deref().unwrap_or("").cmp(b.2.id.as_deref().unwrap_or("")))
+            .then_with(|| a.0.cmp(&b.0))
+    });
+    keyed.into_iter().map(|(_, _, d)| d).collect()
 }
 
 const SI_PREFIXES: [(&str, f64); 20] = [
@@ -519,6 +540,7 @@ impl Env {
             type_order: RefCell::new(vec![]),
             unit_order: RefCell::new(vec![]),
             const_diag_sink: RefCell::new(None),
+            tagger: RefCell::new(None),
         };
         env.seed_units();
         Rc::new(env)
@@ -639,7 +661,28 @@ impl Env {
     }
 
     pub fn report(&self, d: Diag) {
+        let by = self.tagger.borrow().as_ref().and_then(|t| t());
+        let mut d = d;
+        if by.is_some() {
+            d.by = by;
+        }
         self.diagnostics.borrow().borrow_mut().push(d);
+    }
+    /// replace every diagnostic (the run entry points sort them, §6.7)
+    pub fn diag_set(&self, diags: Vec<Diag>) {
+        let rc = self.diagnostics.borrow().clone();
+        *rc.borrow_mut() = diags;
+    }
+    pub fn remove_root(&self, name: &str) {
+        let rc = self.roots.borrow().clone();
+        rc.borrow_mut().retain(|(n, _)| n != name);
+    }
+    pub fn root_names(&self) -> Vec<String> {
+        self.roots.borrow().borrow().iter().map(|(n, _)| n.clone()).collect()
+    }
+    pub fn registry_retain(&self, mut pred: impl FnMut(&Rc<RefCell<RecInst>>) -> bool) {
+        let rc = self.registry.borrow().clone();
+        rc.borrow_mut().retain(|i| pred(i));
     }
     pub fn diagnostics_vec(&self) -> Vec<Diag> {
         self.diagnostics.borrow().borrow().clone()

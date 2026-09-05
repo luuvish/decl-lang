@@ -15,7 +15,7 @@ use crate::infer::{infer, make_ctx, std_names, type_text, Ctx, Ty};
 use crate::module::{load_modules, Module};
 use crate::package::{open_package_universe, verify_lock};
 use crate::parse::parse_source;
-use crate::semantics::{json_str, parse_path, path_str, read_json, rec_members, seg_text, Diag, Env, Fail, MKind, RTk, Scope, Seg, SegPath, SlotState, Value, RT};
+use crate::semantics::{json_str, parse_path, path_str, read_json, rec_members, seg_text, sort_diags, Diag, Env, Fail, MKind, RTk, Scope, Seg, SegPath, SlotState, Value, RT};
 use regex::Regex;
 use std::cell::{Cell, RefCell};
 use std::collections::{HashMap, HashSet};
@@ -144,6 +144,14 @@ pub struct Timing {
     pub bind: f64,
     pub evaluate: f64,
     pub total: f64,
+    /// the incremental step: how many slots were recomputed, and out of how many (a full run: None)
+    pub recomputed: Option<usize>,
+    pub slots: Option<usize>,
+}
+
+/// full recomputation on every question (the harness's cross-check)
+pub fn full_recompute() -> bool {
+    std::env::var("DECL_FULL_RECOMPUTE").map(|v| !v.is_empty()).unwrap_or(false)
 }
 
 #[derive(Clone, Copy, PartialEq)]
@@ -153,12 +161,14 @@ pub enum Mode {
     Full,
 }
 
+#[derive(Clone)]
 pub struct Run {
     pub modules: Vec<Rc<Module>>,
     pub entry: Option<Rc<Module>>,
     pub load_diags: Vec<Diag>,
     pub checks: Vec<(String, Diag)>,
     pub session_checks: Vec<Diag>, // session outputs whose expressions do not check (path: the output)
+    pub session_roots: Vec<(String, Rc<Expr>, RT)>, // the session outputs bound, as bound
     pub eng: Option<Rc<Engine>>,
     pub diags: Vec<Diag>,
     pub timing: Timing,
@@ -328,11 +338,26 @@ pub struct Session {
     pub last_timing: Cell<Option<Timing>>,
     snapshot0: HashMap<PathBuf, String>,
     state: State,
+    // the last full run, kept for the incremental step (§6): reused as long
+    // as the universe's texts and declarations are the same, its engine
+    // rebinding the documents that changed and recomputing what read them
+    last: RefCell<Option<Last>>,
     /// texts that override the disk (the language server's open buffers), by absolute path
     pub overlay: HashMap<PathBuf, String>,
 }
 
 pub const SCRATCH: &str = "<session>";
+
+#[derive(Clone)]
+struct Last {
+    key: String,
+    docs: Vec<(String, String)>,
+    run: Run,
+}
+
+fn under(path: &str, root: &str) -> bool {
+    path == root || path.starts_with(&format!("{root}.")) || path.starts_with(&format!("{root}["))
+}
 
 impl Session {
     pub fn new(entry: Option<&str>) -> Session {
@@ -341,7 +366,7 @@ impl Session {
     /// `overlay`: texts that override the disk (the language server's open buffers), by absolute path
     pub fn with_overlay(entry: Option<&str>, overlay: Option<&HashMap<PathBuf, String>>) -> Session {
         let entry_path = entry.map(|e| std::path::absolute(e).unwrap_or_else(|_| PathBuf::from(e)));
-        let mut s = Session { entry_path, log: vec![], cursor: 0, last_timing: Cell::new(None), snapshot0: HashMap::new(), state: State::default(), overlay: overlay.cloned().unwrap_or_default() };
+        let mut s = Session { entry_path, log: vec![], cursor: 0, last_timing: Cell::new(None), snapshot0: HashMap::new(), state: State::default(), last: RefCell::new(None), overlay: overlay.cloned().unwrap_or_default() };
         s.snapshot0 = s.snapshot_from_disk();
         s.state = s.initial_state();
         s
@@ -475,26 +500,30 @@ impl Session {
     // ---- documents and edits (§3) ----
     fn eval_to_doc(&self, st: &State, expr_text: &str) -> SResult<Value> {
         let expr = parse_expr(expr_text)?;
-        let r = self.run_state(st, Mode::Lazy);
-        let (Some(eng), Some(entry)) = (&r.eng, &r.entry) else { return Err(SessionError::new(self.load_failure(&r))) };
-        let sc = Scope::new("", Some(entry.env.clone()));
-        let result = (|| -> Result<Value, Fail> {
-            let v = eng.ev(&expr, &sc)?;
-            let v = eng.materialize(v, &[Seg::Name("_".into())])?;
-            eng.force_all(&v);
-            Ok(v)
-        })();
-        match result {
-            Ok(v) => {
-                let text = eng.serialize(&v, "", false);
-                if text.is_empty() {
-                    return Err(SessionError::new("the value is not data"));
-                }
-                read_json(&text).map_err(|_| SessionError::new("the value is not data"))
-            }
-            Err(Fail::Eval(e)) => Err(SessionError::new(e.msg)),
-            Err(_) => Err(SessionError::new("the value is invalid")),
+        let r = self.engine_for(st);
+        if r.eng.is_none() || r.entry.is_none() {
+            return Err(SessionError::new(self.load_failure(&r)));
         }
+        let sc = Scope::new("", Some(r.entry.as_ref().unwrap().env.clone()));
+        self.scratch(&r, |eng, _| {
+            let result = (|| -> Result<Value, Fail> {
+                let v = eng.ev(&expr, &sc)?;
+                let v = eng.materialize(v, &[Seg::Name("_".into())])?;
+                eng.force_all(&v);
+                Ok(v)
+            })();
+            match result {
+                Ok(v) => {
+                    let text = eng.serialize(&v, "", false);
+                    if text.is_empty() {
+                        return Err(SessionError::new("the value is not data"));
+                    }
+                    read_json(&text).map_err(|_| SessionError::new("the value is not data"))
+                }
+                Err(Fail::Eval(e)) => Err(SessionError::new(e.msg)),
+                Err(_) => Err(SessionError::new("the value is invalid")),
+            }
+        })
     }
 
     fn edit(&self, st: &mut State, kind: EditKind, path: &str, expr: Option<&str>) -> SResult<()> {
@@ -614,10 +643,257 @@ impl Session {
         self.run_state(&self.state, mode)
     }
     fn run_state(&self, st: &State, mode: Mode) -> Run {
+        if mode == Mode::Full && !full_recompute() {
+            if let Some(r) = self.step_from(st) {
+                return r;
+            }
+        }
+        let r = self.run_fresh(st, mode);
+        if mode == Mode::Full {
+            *self.last.borrow_mut() = if r.eng.is_some() { Some(Last { key: self.universe_key(st), docs: self.doc_keys(st), run: r.clone() }) } else { None };
+        }
+        r
+    }
+    fn universe_key(&self, st: &State) -> String {
+        let mut snap: Vec<(String, &String)> = st.snapshot.iter().map(|(p, t)| (p.display().to_string(), t)).collect();
+        snap.sort();
+        let mut detached: Vec<&String> = st.documents.iter().filter(|(_, d)| d.origin == Origin::Detached).map(|(n, _)| n).collect();
+        detached.sort();
+        format!("{:?}|{:?}|{:?}|{:?}|{:?}", self.entry_abs(), snap, st.decls, st.outputs, detached)
+    }
+    fn doc_keys(&self, st: &State) -> Vec<(String, String)> {
+        st.documents.iter().map(|(n, d)| (n.clone(), doc_json(&d.doc))).collect()
+    }
+    // the incremental step: the same universe, some documents changed
+    fn step_from(&self, st: &State) -> Option<Run> {
+        let last = self.last.borrow().clone()?;
+        let (Some(eng), Some(entry)) = (last.run.eng.clone(), last.run.entry.clone()) else { return None };
+        if last.key != self.universe_key(st) {
+            return None;
+        }
+        let docs = self.doc_keys(st);
+        let mut changed: Vec<String> = vec![];
+        for (n, k) in &docs {
+            if last.docs.iter().find(|(m, _)| m == n).map(|(_, v)| v) != Some(k) {
+                changed.push(n.clone());
+            }
+        }
+        for (n, _) in &last.docs {
+            if !docs.iter().any(|(m, _)| m == n) {
+                changed.push(n.clone());
+            }
+        }
+        if changed.is_empty() {
+            self.last_timing.set(Some(last.run.timing));
+            return Some(last.run.clone());
+        }
+        let t0 = Instant::now();
+        let r = &last.run;
+        let env = entry.env.clone();
+        // 1. what the change touches: the roots themselves, every slot under
+        //    them, and the `$referrers` queries over types instantiated under them
+        let mut seeds: Vec<String> = vec![];
+        let read_keys: Vec<String> = eng.reads.borrow().keys().cloned().collect();
+        let registry = env.registry_snapshot();
+        for root in &changed {
+            seeds.push(format!("root:{root}"));
+            for k in &read_keys {
+                if !k.starts_with("root:") && under(k.strip_prefix("assert:").unwrap_or(k), root) {
+                    seeds.push(k.clone());
+                }
+            }
+            for inst in &registry {
+                let b = inst.borrow();
+                if under(&path_str(&b.path, None), root) {
+                    if let Some(tn) = &b.type_name {
+                        seeds.push(format!("referrers:{tn}"));
+                    }
+                }
+            }
+        }
+        // 2. everything that read them, transitively
+        let mut readers: HashMap<String, HashSet<String>> = HashMap::new();
+        for (reader, set) in eng.reads.borrow().iter() {
+            for k in set {
+                readers.entry(k.clone()).or_default().insert(reader.clone());
+            }
+        }
+        let mut invalid: HashSet<String> = HashSet::new();
+        let mut queue: Vec<String> = seeds;
+        while let Some(k) = queue.pop() {
+            if !invalid.insert(k.clone()) {
+                continue;
+            }
+            if let Some(rs) = readers.get(&k) {
+                for rd in rs {
+                    if !invalid.contains(rd) {
+                        queue.push(rd.clone());
+                    }
+                }
+            }
+        }
+        // the roots to rebind: the changed ones, and every root that read them at binding
+        let mut rebind: HashSet<String> = invalid.iter().filter_map(|k| k.strip_prefix("root:").map(|s| s.to_string())).collect();
+        loop {
+            let mut grew = false;
+            for root in rebind.clone() {
+                for inst in &registry {
+                    let (p, tn) = {
+                        let b = inst.borrow();
+                        (path_str(&b.path, None), b.type_name.clone())
+                    };
+                    let Some(tn) = tn else { continue };
+                    if !under(&p, &root) {
+                        continue;
+                    }
+                    let rk = format!("referrers:{tn}");
+                    if invalid.insert(rk.clone()) {
+                        if let Some(rs) = readers.get(&rk) {
+                            for rd in rs {
+                                if !invalid.contains(rd) {
+                                    invalid.insert(rd.clone());
+                                    queue.push(rd.clone());
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            while let Some(k) = queue.pop() {
+                if let Some(rs) = readers.get(&k) {
+                    for rd in rs {
+                        if !invalid.contains(rd) {
+                            invalid.insert(rd.clone());
+                            queue.push(rd.clone());
+                        }
+                    }
+                }
+            }
+            for k in &invalid {
+                if let Some(r) = k.strip_prefix("root:") {
+                    if rebind.insert(r.to_string()) {
+                        grew = true;
+                    }
+                }
+            }
+            if !grew {
+                break;
+            }
+        }
+        // 3. forget: the diagnostics of the invalidated steps and of the rebound roots, the slots, the instances
+        let gone = |d: &Diag| d.by.as_ref().map(|b| invalid.contains(b)).unwrap_or(false) || rebind.iter().any(|root| under(&d.path, root));
+        env.diag_set(env.diagnostics_vec().into_iter().filter(|d| !gone(d)).collect());
+        let mut recomputed = 0usize;
+        for k in &invalid {
+            if k.starts_with("root:") || k.starts_with("assert:") || k.starts_with("referrers:") {
+                continue;
+            }
+            if rebind.iter().any(|root| under(k, root)) {
+                eng.slots_by_key.borrow_mut().remove(k);
+                eng.reads.borrow_mut().remove(k);
+                continue;
+            }
+            if eng.reset_slot(k) {
+                recomputed += 1;
+            }
+            eng.reads.borrow_mut().remove(k);
+        }
+        let mut dropped: Vec<crate::engine::Inst> = vec![];
+        env.registry_retain(|inst| {
+            let g = rebind.iter().any(|root| under(&path_str(&inst.borrow().path, None), root));
+            if g {
+                dropped.push(inst.clone());
+            }
+            !g
+        });
+        for root in &rebind {
+            env.remove_root(root);
+            eng.failed_inputs.borrow_mut().remove(root);
+            eng.reads.borrow_mut().remove(&format!("root:{root}"));
+        }
+        eng.deferred_slots.borrow_mut().retain(|(i, _)| !dropped.iter().any(|d| Rc::ptr_eq(d, i)));
+        let assert_keys: Vec<String> = eng.reads.borrow().keys().filter(|k| k.starts_with("assert:")).cloned().collect();
+        for k in assert_keys {
+            if rebind.iter().any(|root| under(&k[7..], root)) {
+                eng.reads.borrow_mut().remove(&k);
+            }
+        }
+        // 4. rebind the roots in the fresh run's order — the documents in the
+        //    state's order, the modules' outputs in declaration order, the
+        //    session's outputs — then force everything: what is `ok` stays
+        //    (an unbound input is demanded through its fallback on first read)
+        eng.set_phase(1);
+        for (name, d) in &st.documents {
+            if !rebind.contains(name) {
+                continue;
+            }
+            let m = r.modules.iter().find(|x| x.env.inputs.borrow().contains_key(name)).cloned().unwrap_or_else(|| entry.clone());
+            let decl = m.env.inputs.borrow().get(name).cloned();
+            let Some((ty_ast, _)) = decl else { continue };
+            let sc = Scope::new(name, Some(m.env.clone()));
+            match m.env.resolve(&ty_ast, None) {
+                Ok(rt) => eng.bind_root(name, RootSrc::Doc(d.doc.clone()), &rt, &sc),
+                Err(e) => env.report(Diag::error(e, name.clone(), None)),
+            }
+        }
+        for m in &r.modules {
+            let outs = m.env.outputs.borrow().clone();
+            for (name, ty_ast, expr) in outs {
+                if !rebind.contains(&name) {
+                    continue;
+                }
+                let sc = Scope::new(&name, Some(m.env.clone()));
+                match m.env.resolve(&ty_ast, None) {
+                    Ok(rt) => eng.bind_root(&name, RootSrc::Expr(&expr), &rt, &sc),
+                    Err(e) => env.report(Diag::error(e, name.clone(), None)),
+                }
+            }
+        }
+        for (name, expr, rt) in &r.session_roots {
+            if !rebind.contains(name) {
+                continue;
+            }
+            let sc = Scope::new(name, Some(entry.env.clone()));
+            eng.bind_root(name, RootSrc::Expr(expr), rt, &sc);
+        }
+        eng.force_roots(&env);
+        eng.set_phase(2);
+        let mut i = 0;
+        loop {
+            let item = {
+                let d = eng.deferred_slots.borrow();
+                if i >= d.len() {
+                    break;
+                }
+                d[i].clone()
+            };
+            eng.force_slot_safe(&item.0, &item.1);
+            i += 1;
+        }
+        eng.bind_deferred_roots();
+        eng.force_roots(&env);
+        // 5. the asserts of the instances that are new or whose asserts read what changed
+        for inst in env.registry_snapshot() {
+            let key = format!("assert:{}", path_str(&inst.borrow().path, None));
+            let fresh = !eng.reads.borrow().contains_key(&key);
+            if fresh || invalid.contains(&key) {
+                eng.validate_inst(&inst, "");
+            }
+        }
+        let sorted = sort_diags(env.diagnostics_vec());
+        env.diag_set(sorted.clone());
+        let elapsed = ms(t0);
+        let timing = Timing { load: 0.0, check: 0.0, bind: 0.0, evaluate: elapsed, total: elapsed, recomputed: Some(recomputed), slots: Some(eng.slots_by_key.borrow().len()) };
+        let run = Run { diags: sorted, timing, ..r.clone() };
+        *self.last.borrow_mut() = Some(Last { key: last.key.clone(), docs, run: run.clone() });
+        self.last_timing.set(Some(timing));
+        Some(run)
+    }
+    fn run_fresh(&self, st: &State, mode: Mode) -> Run {
         let t0 = Instant::now();
         let (modules, entry, load_diags) = self.build(st);
         let load = ms(t0);
-        let mut out = Run { modules, entry, load_diags, checks: vec![], session_checks: vec![], eng: None, diags: vec![], timing: Timing { load, check: 0.0, bind: 0.0, evaluate: 0.0, total: 0.0 } };
+        let mut out = Run { modules, entry, load_diags, checks: vec![], session_checks: vec![], session_roots: vec![], eng: None, diags: vec![], timing: Timing { load, check: 0.0, bind: 0.0, evaluate: 0.0, total: 0.0, recomputed: None, slots: None } };
         let finish = |mut out: Run| -> Run {
             out.timing.total = ms(t0);
             self.last_timing.set(Some(out.timing));
@@ -639,20 +915,20 @@ impl Session {
         for (name, ty_text, expr_text) in &st.outputs {
             let taken = out.modules.iter().any(|m| m.env.inputs.borrow().contains_key(name) || m.env.outputs.borrow().iter().any(|(o, _, _)| o == name));
             if taken {
-                out.session_checks.push(Diag { severity: "error".into(), id: None, code: Some("E3018".into()), message: format!("root {name} is already declared by the universe"), path: name.clone(), loc: None });
+                out.session_checks.push(Diag { severity: "error".into(), id: None, code: Some("E3018".into()), message: format!("root {name} is already declared by the universe"), path: name.clone(), loc: None, by: None });
                 continue;
             }
             let expr = match parse_expr(expr_text) {
                 Ok(e) => e,
                 Err(e) => {
-                    out.session_checks.push(Diag { severity: "error".into(), id: None, code: None, message: e.0, path: name.clone(), loc: None });
+                    out.session_checks.push(Diag { severity: "error".into(), id: None, code: None, message: e.0, path: name.clone(), loc: None, by: None });
                     continue;
                 }
             };
             let sink: Rc<RefCell<Vec<Diag>>> = Rc::new(RefCell::new(vec![]));
             let sink2 = sink.clone();
             let n2 = name.clone();
-            let cx = self.session_ctx(st, &entry.env, Rc::new(move |code, msg| sink2.borrow_mut().push(Diag { severity: "error".into(), id: None, code: Some(code.to_string()), message: msg, path: n2.clone(), loc: None })), Some(name));
+            let cx = self.session_ctx(st, &entry.env, Rc::new(move |code, msg| sink2.borrow_mut().push(Diag { severity: "error".into(), id: None, code: Some(code.to_string()), message: msg, path: n2.clone(), loc: None, by: None })), Some(name));
             let ty = infer(&cx, &expr);
             let found: Vec<Diag> = sink.borrow().clone();
             if !found.is_empty() {
@@ -668,7 +944,7 @@ impl Session {
                     match resolved {
                         Ok(rt) => rt,
                         Err(e) => {
-                            out.session_checks.push(Diag { severity: "error".into(), id: None, code: None, message: e.0, path: name.clone(), loc: None });
+                            out.session_checks.push(Diag { severity: "error".into(), id: None, code: None, message: e.0, path: name.clone(), loc: None, by: None });
                             continue;
                         }
                     }
@@ -716,51 +992,116 @@ impl Session {
             let sc = Scope::new(name, Some(entry.env.clone()));
             eng.bind_root(name, RootSrc::Expr(expr), rt, &sc);
         }
+        out.session_roots = session_roots;
         out.eng = Some(eng.clone());
         out.timing.bind = ms(t2);
         if mode == Mode::Lazy {
+            eng.set_phase(2);
             out.diags = entry.env.diagnostics_vec();
             return finish(out);
         }
         let t3 = Instant::now();
         eng.drive(&entry.env);
-        out.diags = entry.env.diagnostics_vec();
+        out.diags = entry.env.diagnostics_vec(); // sorted by drive's caller? no: sorted here (§6.7)
+        let sorted = sort_diags(out.diags.clone());
+        entry.env.diag_set(sorted.clone());
+        out.diags = sorted;
         out.timing.evaluate = ms(t3);
         finish(out)
+    }
+
+    // ---- questions ----
+    // the engine an expression evaluates over: the last full run's when the
+    // universe evaluates (complete, so `$referrers` answers over every
+    // instance, and nothing is rebuilt), else a lazy run's (bound, unforced)
+    fn engine_for(&self, st: &State) -> Run {
+        let full = self.run_state(st, Mode::Full);
+        if full.eng.is_some() {
+            full
+        } else {
+            self.run_state(st, Mode::Lazy)
+        }
+    }
+    // evaluate `f` over the run's engine and leave the run as it was: the
+    // diagnostics the expression added and the instances it materialized
+    // under `_` are removed, forced slots keep the values a full run gives
+    fn scratch<T>(&self, r: &Run, f: impl FnOnce(&Rc<Engine>, &Rc<Env>) -> T) -> T {
+        let (eng, env) = (r.eng.clone().unwrap(), r.entry.clone().unwrap().env.clone());
+        let n = env.diag_len();
+        let reg = env.registry_snapshot().len();
+        let roots: HashSet<String> = env.root_names().into_iter().collect();
+        let out = f(&eng, &env);
+        // an input demanded through its fallback by the expression alone is not a root of the run
+        let demanded: Vec<String> = env.root_names().into_iter().filter(|k| !roots.contains(k)).collect();
+        let under_demanded = |p: &str| demanded.iter().any(|k| under(p, k));
+        for k in &demanded {
+            env.remove_root(k);
+            eng.failed_inputs.borrow_mut().remove(k);
+            eng.reads.borrow_mut().remove(&format!("root:{k}"));
+        }
+        let keys: Vec<String> = eng.reads.borrow().keys().cloned().collect();
+        for k in keys {
+            if under_demanded(k.strip_prefix("assert:").unwrap_or(&k)) {
+                eng.reads.borrow_mut().remove(&k);
+            }
+        }
+        let skeys: Vec<String> = eng.slots_by_key.borrow().keys().cloned().collect();
+        for k in skeys {
+            if under_demanded(&k) {
+                eng.slots_by_key.borrow_mut().remove(&k);
+            }
+        }
+        env.diag_truncate(n);
+        let mut i = 0usize;
+        env.registry_retain(|inst| {
+            let idx = i;
+            i += 1;
+            let p = path_str(&inst.borrow().path, None);
+            let scratch_root = matches!(inst.borrow().path.first(), Some(Seg::Name(n)) if n == "_");
+            if idx < reg {
+                !under_demanded(&p)
+            } else {
+                !scratch_root && !under_demanded(&p)
+            }
+        });
+        eng.computing.borrow_mut().clear();
+        out
     }
 
     // ---- questions ----
     /// partial evaluation of one expression (§2.1)
     pub fn evaluate_expr(&self, text: &str) -> SResult<ExprResult> {
         let expr = parse_expr(text)?;
-        let r = self.run(Mode::Lazy);
-        let (Some(eng), Some(entry)) = (&r.eng, &r.entry) else {
+        let r = self.engine_for(&self.state);
+        if r.eng.is_none() || r.entry.is_none() {
             return Ok(ExprResult { value: None, diags: r.load_diags.clone(), error: Some((None, String::new())) });
-        };
-        let sc = Scope::new("", Some(entry.env.clone()));
-        // binding the roots may already have reported (a root whose top-level
-        // expression fails); the expression's own diagnostics are the ones
-        // that arise from here on, plus the failed roots it names
-        let from = entry.env.diag_len();
+        }
+        let entry_env = r.entry.as_ref().unwrap().env.clone();
+        let sc = Scope::new("", Some(entry_env.clone()));
         let named = identifiers(text);
-        let arising = |env: &Env| -> Vec<Diag> {
-            let all = env.diagnostics_vec();
-            let mut out: Vec<Diag> = all[..from.min(all.len())].iter().filter(|d| named.contains(&d.path)).cloned().collect();
-            out.extend(all[from.min(all.len())..].iter().cloned());
-            out
-        };
-        let result = (|| -> Result<Value, Fail> {
-            let v = eng.ev(&expr, &sc)?;
-            let v = eng.materialize(v, &[Seg::Name("_".into())])?;
-            eng.set_phase(2);
-            eng.force_all(&v);
-            Ok(v)
-        })();
-        Ok(match result {
-            Ok(v) => ExprResult { value: Some(self.value_text(eng, &v)), diags: arising(&entry.env), error: None },
-            Err(Fail::Eval(e)) => ExprResult { value: None, diags: arising(&entry.env), error: Some((e.code, e.msg)) },
-            Err(_) => ExprResult { value: None, diags: arising(&entry.env), error: Some((None, String::new())) },
-        })
+        Ok(self.scratch(&r, |eng, env| {
+            // the run may already have reported (a root whose binding failed); the
+            // expression's own diagnostics are the ones that arise from here on,
+            // plus the diagnostics of the roots it names
+            let from = env.diag_len();
+            let arising = |env: &Env| -> Vec<Diag> {
+                let all = env.diagnostics_vec();
+                let mut out: Vec<Diag> = all[..from.min(all.len())].iter().filter(|d| named.contains(&d.path)).cloned().collect();
+                out.extend(all[from.min(all.len())..].iter().cloned());
+                sort_diags(out)
+            };
+            let result = (|| -> Result<Value, Fail> {
+                let v = eng.ev(&expr, &sc)?;
+                let v = eng.materialize(v, &[Seg::Name("_".into())])?;
+                eng.force_all(&v);
+                Ok(v)
+            })();
+            match result {
+                Ok(v) => ExprResult { value: Some(self.value_text(eng, &v)), diags: arising(env), error: None },
+                Err(Fail::Eval(e)) => ExprResult { value: None, diags: arising(env), error: Some((e.code, e.msg)) },
+                Err(_) => ExprResult { value: None, diags: arising(env), error: Some((None, String::new())) },
+            }
+        }))
     }
     fn value_text(&self, eng: &Engine, v: &Value) -> String {
         match v {
@@ -912,7 +1253,7 @@ impl Session {
         let Some(entry) = entry else { return Err(SessionError::new(diags.first().map(|d| d.message.clone()).unwrap_or_else(|| "the universe did not load".into()))) };
         let sink: Rc<RefCell<Vec<Diag>>> = Rc::new(RefCell::new(vec![]));
         let sink2 = sink.clone();
-        let cx = self.session_ctx(&self.state, &entry.env, Rc::new(move |code, message| sink2.borrow_mut().push(Diag { severity: "error".into(), id: None, code: Some(code.to_string()), message, path: String::new(), loc: None })), None);
+        let cx = self.session_ctx(&self.state, &entry.env, Rc::new(move |code, message| sink2.borrow_mut().push(Diag { severity: "error".into(), id: None, code: Some(code.to_string()), message, path: String::new(), loc: None, by: None })), None);
         let ty = infer(&cx, &expr);
         let found = sink.borrow().clone();
         Ok((type_text(ty.rt.as_ref()), ty.abs, found))
@@ -921,9 +1262,13 @@ impl Session {
     /// the canonical path of the place a navigation names (`:path`)
     pub fn path_of(&self, text: &str) -> SResult<String> {
         let expr = parse_expr(text)?;
-        let r = self.run(Mode::Lazy);
-        let (Some(eng), Some(entry)) = (&r.eng, &r.entry) else { return Err(SessionError::new(self.load_failure(&r))) };
+        let r = self.engine_for(&self.state);
+        if r.eng.is_none() || r.entry.is_none() {
+            return Err(SessionError::new(self.load_failure(&r)));
+        }
+        let entry = r.entry.clone().unwrap();
         let sc = Scope::new("", Some(entry.env.clone()));
+        self.scratch(&r, |eng, _| {
         let result = (|| -> Result<Option<SegPath>, Fail> {
             let mut segs = eng.eval_place(&expr, &sc)?;
             // a scalar member or element is a place too: its container's place, one step down
@@ -958,6 +1303,7 @@ impl Session {
             Err(Fail::Eval(e)) => Err(SessionError::new(e.msg)),
             Err(_) => Err(SessionError::new("the place is invalid")),
         }
+        })
     }
 
     /// the declaration a name resolves to, with its documentation (`:doc`)
@@ -1370,8 +1716,12 @@ impl Session {
         let Some(d) = self.state.document(name) else {
             return Err(SessionError::new(if self.has_root(name) { format!("{name} holds no document") } else { format!("no root named {name}") }));
         };
-        let a: Vec<String> = pretty_json(&doc_json(&d.base)).split('\n').map(|s| s.to_string()).collect();
-        let b: Vec<String> = pretty_json(&doc_json(&d.doc)).split('\n').map(|s| s.to_string()).collect();
+        let (before, after) = (doc_json(&d.base), doc_json(&d.doc));
+        if before == after {
+            return Ok(vec!["(no changes)".to_string()]);
+        }
+        let a: Vec<String> = pretty_json(&before).split('\n').map(|s| s.to_string()).collect();
+        let b: Vec<String> = pretty_json(&after).split('\n').map(|s| s.to_string()).collect();
         Ok(line_diff(&a, &b))
     }
 

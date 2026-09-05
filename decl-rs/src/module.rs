@@ -306,7 +306,9 @@ pub fn run_universe(mods: &[Rc<Module>], entry: &Rc<Module>, binds: Vec<Bind>) -
         }
     }
     eng.drive(&entry.env);
-    let diags = entry.env.diagnostics_vec();
+    // §6.7: evaluation- and validation-time diagnostics in (path, id) order
+    let diags = sort_diags(entry.env.diagnostics_vec());
+    entry.env.diag_set(diags.clone());
     (eng, diags)
 }
 

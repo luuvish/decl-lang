@@ -1,0 +1,5 @@
+// diagnostics are reported in canonical (path, id) order (§6.7), not in evaluation order
+type T = { zz: 1..5, aa: 1..5, assert z: zz > 3 else error `z`, assert a: aa > 3 else error `a` }
+output o: T = { zz: 9, aa: 9 }
+output n: T = { zz: 1, aa: 1 }
+input doc: T = { zz: 2, aa: 2 }

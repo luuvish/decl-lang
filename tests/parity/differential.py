@@ -285,7 +285,8 @@ class LspSession:
             m = self._recv()
             self.log.append(m)
             if m.get("id") == self.next_id:
-                return m.get("result")
+                # a server error is an answer too (and a parity difference if only one server gives it)
+                return m["result"] if "result" in m else {"error": m.get("error")}
 
     def notify(self, method: str, params: dict) -> None:
         self._send({"jsonrpc": "2.0", "method": method, "params": params})
@@ -384,6 +385,68 @@ def lsp_transcript(cmd: list[str]) -> list:
     ask("code action: add the missing member", "textDocument/codeAction", {"textDocument": {"uri": uri}, "range": {"start": {"line": 11, "character": 27}, "end": {"line": 11, "character": 30}}, "context": {"diagnostics": ds}})
     change(22, MAIN)
     ask("decl.showSyntaxTree", "workspace/executeCommand", {"command": "decl.showSyntaxTree", "arguments": [uri]})
+    # linked editing, local rename, value hints, the remaining quick fixes and the assists
+    ACTIONS = ('import { Service, MAX as LIMIT } from "./lib.decl"\nimport * as lib from "./lib.decl"\n'
+               'type Pair = {\n    a: int,\n    r: string,\n    b?: int,\n    s?: Service,\n    c = a + 1,\n    d$ = a * 2,\n    e?: int = 3\n}\n'
+               'const xs = [x * 2 for x in [1, 2] if x > 0]\nconst f = (y) => y + 1\n'
+               'export output p: Pair = { a: 1, r: "x", zz: true }\nconst cmp = LIMIT < 3\nconst k = cap(1)\n'
+               'const q1 = p.s.name\nconst q2 = p.b + 1\nconst mixed = true && null ?? false\n')
+    def pos(needle: str, nth: int = 0, offset: int = 0):
+        i = -1
+        for _ in range(nth + 1):
+            i = ACTIONS.index(needle, i + 1)
+        line = ACTIONS.count("\n", 0, i)
+        col = i - (ACTIONS.rfind("\n", 0, i) + 1) + offset
+        return {"line": line, "character": col}
+    def span(needle: str, nth: int = 0):
+        a = pos(needle, nth); b = dict(a); b["character"] += len(needle)
+        return {"start": a, "end": b}
+    ads = change(50, ACTIONS)
+    out.append(("diagnostics of the actions text", ads))
+    ask("linked editing of a comprehension variable", "textDocument/linkedEditingRange", {"textDocument": {"uri": uri}, "position": pos("x * 2")})
+    ask("linked editing of a lambda parameter", "textDocument/linkedEditingRange", {"textDocument": {"uri": uri}, "position": pos("y + 1")})
+    ask("prepare rename of a local", "textDocument/prepareRename", {"textDocument": {"uri": uri}, "position": pos("x * 2")})
+    ask("rename of a local", "textDocument/rename", {"textDocument": {"uri": uri}, "position": pos("x * 2"), "newName": "n"})
+    change(51, MAIN)
+    s.notify("workspace/didChangeConfiguration", {"settings": {"decl": {"inlayHints": {"values": True}}}})
+    s.diagnostics(uri)
+    ask("inlay hints with values", "textDocument/inlayHint", {"textDocument": {"uri": uri}, "range": {"start": {"line": 0, "character": 0}, "end": {"line": 30, "character": 0}}})
+    s.notify("workspace/didChangeConfiguration", {"settings": {"decl": {"inlayHints": {"values": False}}}})
+    s.diagnostics(uri)
+    ads = change(52, ACTIONS)
+    ctx = {"diagnostics": ads}
+    for label, needle, nth in [("derived member c", "c = a + 1", 0), ("hidden member d$", "d$ = a * 2", 0), ("optional member b", "b?: int", 0), ("required member a", "a: int", 0), ("defaulted member e", "e?: int = 3", 0), ("the type Pair", "type Pair", 0), ("the comparison", "LIMIT < 3", 0), ("the unknown name cap", "cap(1)", 0), ("the undeclared member zz", "zz: true", 0), ("the maybe-absent access", "p.s.name", 0), ("the maybe-absent operand", "p.b + 1", 0), ("the mixed ?? expression", "true && null", 0)]:
+        ask(f"code actions at {label}", "textDocument/codeAction", {"textDocument": {"uri": uri}, "range": {"start": pos(needle, nth), "end": pos(needle, nth)}, "context": ctx})
+    ask("code actions on a selected constant expression", "textDocument/codeAction", {"textDocument": {"uri": uri}, "range": span("[1, 2]"), "context": {"diagnostics": []}})
+    ask("code actions on a selected member expression", "textDocument/codeAction", {"textDocument": {"uri": uri}, "range": span("a + 1"), "context": {"diagnostics": []}})
+    ask("code actions in the literal (fill)", "textDocument/codeAction", {"textDocument": {"uri": uri}, "range": {"start": pos("a: 1"), "end": pos("a: 1")}, "context": ctx})
+    # the remaining quick fixes (E4094, E4030/E4032, E4013, E4005), the inline / extract-type / unit / reorder assists, the context-variable hints
+    ACTIONS2 = ('type Parent = { name: string, port: 1..65535, x?: int }\n'
+                'type Child = Parent { port: int, x = 1 }\n'
+                'type Item = { label = $parent.name }\n'
+                'type Bad = { $parent: Owner, t = $parent.name }\n'
+                'type Owner = { name: string, items: Item[], bad: Bad }\n'
+                'type A = { a: int }\ntype B = { b: int }\ntype U = A | B\n'
+                'const K = 2\nconst twice = K + K\n'
+                'type W = { inner: { q: int } }\n'
+                'const dur = 250ms\n'
+                'type R = {\n    d = 1,\n    a: int,\n    b?: int\n}\n'
+                'type Ctx = { $parent: ref<Owner2>, tag = $parent.name }\ntype Owner2 = { name: string, c: Ctx }\n')
+    ACTIONS = ACTIONS2
+    ads = change(60, ACTIONS2)
+    out.append(("diagnostics of the second actions text", ads))
+    ctx = {"diagnostics": ads}
+    for label, needle in [("the widened override", "port: int"), ("the kind transition", "x = 1"), ("the undeclared $parent", "$parent.name"), ("the non-ref $parent declaration", "$parent: Owner"), ("the union U", "type U"), ("the constant K", "const K"), ("the inline record type", "inner: {"), ("the unit literal", "250ms"), ("the type R", "type R")]:
+        ask(f"code actions at {label}", "textDocument/codeAction", {"textDocument": {"uri": uri}, "range": {"start": pos(needle), "end": pos(needle)}, "context": ctx})
+    s.notify("workspace/didChangeConfiguration", {"settings": {"decl": {"inlayHints": {"contextVariables": True}}}})
+    s.diagnostics(uri)
+    ask("inlay hints with context variables", "textDocument/inlayHint", {"textDocument": {"uri": uri}, "range": {"start": {"line": 0, "character": 0}, "end": {"line": 30, "character": 0}}})
+    s.notify("workspace/didChangeConfiguration", {"settings": {"decl": {"inlayHints": {"contextVariables": False}}}})
+    s.diagnostics(uri)
+    ACTIONS = 'type T = { n: int, m: int = n + 1 }\nexport output o: T = { n: 1, m: 5 }\n'
+    ads = change(61, ACTIONS)
+    out.append(("diagnostics of a restated derived member", ads))
+    ask("code actions at the restated member", "textDocument/codeAction", {"textDocument": {"uri": uri}, "range": {"start": pos("m: 5"), "end": pos("m: 5")}, "context": {"diagnostics": ads}})
     ask("document symbols", "textDocument/documentSymbol", {"textDocument": {"uri": uri}})
     ask("folding ranges", "textDocument/foldingRange", {"textDocument": {"uri": uri}})
     out.append(("diagnostics of an unformatted text", change(12, "const x=1\nconst y = [s for s in [1, 2]]\n")))

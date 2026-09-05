@@ -1,0 +1,3 @@
+import { Service, MAX as LIMIT } from "./lib.decl"
+const top = LIMIT
+export output s: Service = { name: "a" }

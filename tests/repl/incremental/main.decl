@@ -1,0 +1,25 @@
+/// A graph whose nodes count the edges that point at them through $referrers
+type Node = {
+    name: string,
+    weight?: int = 1,
+    incoming = $referrers(Edge, "target"),
+    fan_in = std.array.count(incoming),
+    load = fan_in * weight,
+    assert bounded: fan_in <= 2 else error `${name} has ${fan_in} incoming edges`
+}
+type Edge = {
+    source: ref<Node>,
+    target: ref<Node>,
+    label = `${source.name}->${target.name}`
+}
+type Graph = {
+    nodes: { [/[a-z][a-z0-9]*/]: Node },
+    edges: Edge[],
+    total = std.array.sum([n.load for n in std.map.values(nodes)])
+}
+input g: Graph = {
+    nodes: { a: { name: "a" }, b: { name: "b", weight: 3 } },
+    edges: [{ source: nodes["a"], target: nodes["b"] }]
+}
+export output total_direct: int = g.total
+export output report: { total: int, loads: map<string, int> } = { total: g.total, loads: { n.name: n.load for n in std.map.values(g.nodes) } }

@@ -1,0 +1,29 @@
+> :evaluate
+error [E6001] T.a at n: a
+error [E6001] T.z at n: z
+error [E4001] at o.aa: out of range 1..5
+error [E4001] at o.zz: out of range 1..5
+{}
+> :validate
+error [E6001] T.a at n: a
+error [E6001] T.z at n: z
+error [E4001] at o.aa: out of range 1..5
+error [E4001] at o.zz: out of range 1..5
+o: 2 errors
+n: 2 errors
+> :validate n o
+error [E6001] T.a at n: a
+error [E6001] T.z at n: z
+error [E4001] at o.aa: out of range 1..5
+error [E4001] at o.zz: out of range 1..5
+n: 2 errors
+o: 2 errors
+> :bind doc { "zz": 9, "aa": 1 }
+> :validate doc
+error [E6001] T.a at doc: a
+error [E4001] at doc.zz: out of range 1..5
+doc: 2 errors
+> :update doc.zz = 4
+> :validate doc
+error [E6001] T.a at doc: a
+doc: 1 error

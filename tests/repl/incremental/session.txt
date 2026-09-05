@@ -1,0 +1,33 @@
+// $referrers and derived members under edits: every answer must match a full recomputation
+:evaluate g
+g.nodes["b"].fan_in
+:create g.nodes["c"] = { name: "c" }
+:create g.edges[1] = { source: "$.nodes[\"c\"]", target: "$.nodes[\"b\"]" }
+g.nodes["b"].incoming
+g.nodes["b"].load
+:validate g
+:create g.edges[2] = { source: "$.nodes[\"a\"]", target: "$.nodes[\"b\"]" }
+:validate g
+g.total
+:remove g.edges[2]
+:validate g
+:update g.nodes["b"].weight = 5
+g.nodes["b"].load
+g.total
+:undo 2
+g.total
+:redo
+:evaluate g
+:bind g { "nodes": { "x": { "name": "x" } }, "edges": [] }
+:validate g
+g.nodes["x"].fan_in
+:unbind g
+g.total
+// a session output over the document is rebound when the document changes
+t = g.total
+:evaluate t
+:update g.nodes["b"].weight = 7
+:evaluate t
+t
+:undo
+:evaluate t

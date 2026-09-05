@@ -56,7 +56,7 @@ fn print_diag(file: &str, d: &Diag, json: bool, collected: &mut Vec<String>) {
 /// not well-formed JSON is returned as one E6004 diagnostic (exit 1)
 pub fn input_binds(modules: &[Rc<Module>], specs: &[String]) -> Result<Vec<Bind>, (i32, Option<Diag>)> {
     let doc_error = |name: &str, message: String| -> (i32, Option<Diag>) {
-        (1, Some(Diag { severity: "error".into(), id: None, message, path: name.to_string(), code: Some("E6004".into()), loc: None }))
+        (1, Some(Diag { severity: "error".into(), id: None, message, path: name.to_string(), code: Some("E6004".into()), loc: None, by: None }))
     };
     let mut binds = vec![];
     for spec in specs {

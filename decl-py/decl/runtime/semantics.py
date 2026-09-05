@@ -275,6 +275,8 @@ class Env:
         self.registry: list = []
         self.roots: dict = {}
         self.diagnostics: list = []
+        # installed by the engine: the evaluation step a report is attributed to
+        self.tagger: Optional[Callable[[], Optional[str]]] = None
         self.const_eval: Optional[Callable[[str], Any]] = None
         self.expr_eval: Optional[Callable[[dict], Any]] = None
         self.imports: dict = {}
@@ -375,6 +377,9 @@ class Env:
                 self.diags[name] = d
 
     def report(self, d: dict) -> None:
+        by = self.tagger() if self.tagger is not None else None
+        if by is not None:
+            d["by"] = by
         self.diagnostics.append(d)
 
     def finalize_unit_space(self) -> list:
@@ -1057,6 +1062,30 @@ def cmp_path(a: list, b: list) -> int:
         elif str(x) != str(y):
             return -1 if str(x) < str(y) else 1
     return len(a) - len(b)
+
+
+def sort_diags(diags: list) -> list:
+    """§6.7: evaluation- and validation-time diagnostics sort by (path, id),
+    path in canonical order; stable."""
+    import functools
+
+    def segs_of(p: str) -> list:
+        try:
+            return parse_path(p, "") if p else []
+        except Exception:
+            return [p]
+
+    items = [(d, i, segs_of(d.get("path") or "")) for i, d in enumerate(diags)]
+
+    def cmp(a, b) -> int:
+        c = cmp_path(a[2], b[2])
+        if c:
+            return c
+        ai, bi = a[0].get("id") or "", b[0].get("id") or ""
+        if ai != bi:
+            return -1 if ai < bi else 1
+        return a[1] - b[1]
+    return [x[0] for x in sorted(items, key=functools.cmp_to_key(cmp))]
 
 
 def _place_of(v: Any) -> Optional[list]:

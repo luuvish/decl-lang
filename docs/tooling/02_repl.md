@@ -138,7 +138,7 @@ the session does not have is reported on one line and changes nothing.
 | `:create path = expr` | add a member, map entry, or array element at a canonical path of a document; an error if the path already holds a value |
 | `:update path = expr` | replace the value at a canonical path of a document; an error if there is none |
 | `:remove path` | remove the member, entry, or element at a canonical path of a document; an error if there is none |
-| `:diff name` | the document of root `name` as the session holds it against the file it was bound from, or the source literal it came from |
+| `:diff name` | the document of root `name` as the session holds it against the file it was bound from, or the source literal it came from (`(no changes)` when they agree) |
 | `:save name=file` | write the document of root `name`, as the session holds it, to a file |
 
 **Session declarations** (§4)
@@ -289,10 +289,18 @@ operation of a scripted session, the session's answers are compared with
 a fresh session that replayed the log from the start. `:time` reports
 what the last step recomputed.
 
-Status: the implementations recompute the whole universe after every
-operation today — the contract above holds trivially — and the
-dependency tracking that makes the step incremental is Phase 6's open
-work item (ROADMAP).
+Status: delivered. The engine records, for every step — a slot being
+computed, a root being bound, an instance's asserts — the slots, roots,
+and `$referrers` queries it read, and tags the diagnostics it produced;
+a document operation rebinds the roots that changed (and the roots that
+read them at binding), resets the slots that read anything under them
+transitively, drops their diagnostics and instances, and forces the
+universe again — what stayed `ok` is not recomputed — then re-runs the
+asserts of the instances that are new or read what changed. Questions
+without an operation reuse the last run; a bare expression evaluates
+over it and leaves it as it was. `DECL_FULL_RECOMPUTE=1` makes every
+question a full recomputation: the test suites run the corpus both ways
+and require the same bytes.
 
 ## 7. Completion
 
@@ -375,7 +383,8 @@ is what a transcript diffs (§9).
   session changed; `:session` one line per declaration and document;
   `:history` the operations numbered from `0  (start)`, the cursor marked
   `*`; `:time` milliseconds with one decimal, `total … (load …, check …,
-  bind …, evaluate …)`.
+  bind …, evaluate …)`, and after an incremental step `, recomputed N of
+  M slots`.
 - A command that cannot be carried out — an unknown command, wrong
   arguments, a root or path the session does not have, a file that cannot
   be read or written — prints one line, `error: <message>`, and changes

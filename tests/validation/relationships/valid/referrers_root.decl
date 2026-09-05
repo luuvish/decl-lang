@@ -1,0 +1,12 @@
+// a root whose top-level expression reads a member computed through
+// $referrers defers like a slot and is bound in phase 2 (§7.6, §9.4)
+type Node = { name: string, incoming = $referrers(Edge, "target"), fan_in = std.array.count(incoming) }
+type Edge = { source: ref<Node>, target: ref<Node> }
+type Graph = {
+    nodes: { [/[a-z]+/]: Node },
+    edges: Edge[],
+    total = std.array.sum([n.fan_in for n in std.map.values(nodes)])
+}
+input g: Graph = { nodes: { a: { name: "a" }, b: { name: "b" } }, edges: [{ source: nodes["a"], target: nodes["b"] }] }
+export output direct: int = g.total
+export output wrapped: { t: int } = { t: g.total }

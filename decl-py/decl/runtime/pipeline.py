@@ -7,7 +7,7 @@ from __future__ import annotations
 from .checker import check_module
 from .engine import Engine
 from .parse import parse_source
-from .semantics import Env, Scope
+from .semantics import sort_diags, Env, Scope
 
 
 def run_pipeline(decls: list) -> dict:
@@ -18,17 +18,17 @@ def run_pipeline(decls: list) -> dict:
     for o in env.outputs:
         sc = Scope(None, {}, o["name"])
         eng.bind_root(o["name"], o["expr"], env.resolve(o["type"]), sc, True)
-    for v in list(env.roots.values()):
-        eng.force_all(v, False)
+    eng.force_all_roots(False)
     eng.phase = 2
     i = 0
     while i < len(eng.deferred_slots):
         inst, name = eng.deferred_slots[i]
         eng.force_slot_safe(inst, name)
         i += 1
-    for v in list(env.roots.values()):
-        eng.force_all(v, True)
+    eng.bind_deferred_roots()
+    eng.force_all_roots(True)
     eng.validate_all("")
+    env.diagnostics[:] = sort_diags(env.diagnostics)   # §6.7
     return {"env": env, "eng": eng, "diags": env.diagnostics}
 
 

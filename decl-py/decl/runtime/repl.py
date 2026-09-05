@@ -412,7 +412,8 @@ class Repl:
 
             def ms(x: float) -> str:
                 return f"{x:.1f} ms"
-            self._out(f"total {ms(t['total'])} (load {ms(t['load'])}, check {ms(t['check'])}, bind {ms(t['bind'])}, evaluate {ms(t['evaluate'])})")
+            step = f", recomputed {t['recomputed']} of {t['slots']} slots" if "recomputed" in t else ""
+            self._out(f"total {ms(t['total'])} (load {ms(t['load'])}, check {ms(t['check'])}, bind {ms(t['bind'])}, evaluate {ms(t['evaluate'])}){step}")
             return
         if cmd == ":set":
             if rest == "pretty":

@@ -6,15 +6,14 @@
 // and a scripted session reproducible. The REPL (repl.ts) and the
 // language server drive it; nothing here prints, and every answer is the
 // same checker, inference, and engine the command line runs.
-import { readFileSync, writeFileSync, readdirSync, statSync } from 'node:fs';
-import { resolve as absPath, basename, dirname, relative } from 'node:path';
+import { host, resolvePath as absPath, basename, dirname, relative } from './host.ts';
 import { parseSource } from './parse.ts';
 import { checkModule } from './checker.ts';
 import { loadModules } from './module.ts';
 import type { Module } from './module.ts';
 import { openPackageUniverse, verifyLock } from './package.ts';
 import { Engine } from './engine.ts';
-import { Env, EvalErr, Taint, readJson, pathStr, parsePath, mapKey, segText, isRec, isArr, isMap, isRef, isClo, isQ, ABSENT } from './semantics.ts';
+import { Env, EvalErr, Taint, DeferSig, readJson, pathStr, parsePath, mapKey, segText, isRec, isArr, isMap, isRef, isClo, isQ, ABSENT, sortDiags } from './semantics.ts';
 import type { Diag, Seg, RT } from './semantics.ts';
 import { makeCtx, infer, typeText, STD } from './infer.ts';
 import type { Decl, Expr, TypeAst } from './ast.ts';
@@ -54,7 +53,9 @@ type State = {
 
 export class SessionError extends Error {}
 
-export type Timing = { load: number; check: number; bind: number; evaluate: number; total: number };
+export type Timing = { load: number; check: number; bind: number; evaluate: number; total: number;
+  /** the incremental step: how many slots were recomputed, and out of how many (a full run: undefined) */
+  recomputed?: number; slots?: number };
 
 export type Run = {
   modules: Module[];
@@ -62,6 +63,7 @@ export type Run = {
   loadDiags: Diag[];
   checks: { file: string; diag: Diag }[];
   sessionChecks: Diag[];          // session outputs whose expressions do not check (path: the output)
+  sessionRoots: { name: string; expr: Expr; rt: RT }[];   // the session outputs bound, as bound
   eng: Engine | null;
   diags: Diag[];
   timing: Timing;
@@ -157,6 +159,12 @@ export class Session {
   lastTiming: Timing | null = null;
   private snapshot0: Map<string, string>;
   private state: State;
+  // the last full run, kept for the incremental step (§6): reused as long
+  // as the universe's texts and declarations are the same, its engine
+  // rebinding the documents that changed and recomputing what read them
+  private last: { key: string; docs: Map<string, string>; run: Run } | null = null;
+  /** full recomputation on every question (the harness's cross-check) */
+  static fullRecompute = !!host.env('DECL_FULL_RECOMPUTE');
 
   /** texts that override the disk (the language server's open buffers), by absolute path */
   readonly overlay: Map<string, string>;
@@ -181,7 +189,8 @@ export class Session {
     const { modules } = loadModules(this.entryPath, pkg?.resolver, this.overlay);
     for (const p of new Set([this.entryPath, ...modules.map(m => m.path)])) {
       if (this.overlay.has(p)) { snap.set(p, this.overlay.get(p)!); continue; }
-      try { snap.set(p, readFileSync(p, 'utf8')); } catch { /* absent */ }
+      const text = host.readFile(p);
+      if (text !== null) snap.set(p, text);
     }
     return snap;
   }
@@ -248,22 +257,24 @@ export class Session {
   // ---- documents and edits (§3) ----
   private evalToDoc(st: State, exprText: string): any {
     const expr = parseExpr(exprText);
-    const r = this.run(st, 'lazy');
+    const r = this.engineFor(st);
     if (!r.eng || !r.entry) throw new SessionError(this.loadFailure(r));
     const sc: any = { inst: null, locals: new Map(), rootName: '', menv: r.entry.env };
-    try {
-      let v = r.eng.ev(expr, sc);
-      v = r.eng.materialize(v, ['_'], null, sc);
-      r.eng.forceAll(v, true);
-      const text = r.eng.serialize(v, '');
-      if (text === undefined) throw new SessionError('the value is not data');
-      return readJson(text);
-    } catch (e: any) {
-      if (e instanceof SessionError) throw e;
-      if (e instanceof EvalErr) throw new SessionError(e.message);
-      if (e instanceof Taint) throw new SessionError('the value is invalid');
-      throw e;
-    }
+    return this.scratch(r, eng => {
+      try {
+        let v = eng.ev(expr, sc);
+        v = eng.materialize(v, ['_'], null, sc);
+        eng.forceAll(v, true);
+        const text = eng.serialize(v, '');
+        if (text === undefined) throw new SessionError('the value is not data');
+        return readJson(text);
+      } catch (e: any) {
+        if (e instanceof SessionError) throw e;
+        if (e instanceof EvalErr) throw new SessionError(e.message);
+        if (e instanceof Taint || e instanceof DeferSig) throw new SessionError('the value is invalid');
+        throw e;
+      }
+    });
   }
 
   private edit(st: State, op: Extract<Op, { op: 'edit' }>) {
@@ -346,10 +357,117 @@ export class Session {
 
   /** load, check, and (unless `mode` says otherwise) evaluate the state */
   run(st: State = this.state, mode: 'check' | 'lazy' | 'full' = 'full'): Run {
+    if (mode === 'full' && !Session.fullRecompute) {
+      const stepped = this.stepFrom(st);
+      if (stepped) return stepped;
+    }
+    const r = this.runFresh(st, mode);
+    if (mode === 'full') this.last = r.eng ? { key: this.universeKey(st), docs: this.docKeys(st), run: r } : null;
+    return r;
+  }
+  private universeKey(st: State): string {
+    const detached = [...st.documents.entries()].filter(([, d]) => d.origin === 'detached').map(([n]) => n).sort();
+    return JSON.stringify([this.entryAbs, [...st.snapshot.entries()], [...st.decls.entries()], [...st.outputs.entries()], detached]);
+  }
+  private docKeys(st: State): Map<string, string> {
+    return new Map([...st.documents.entries()].map(([n, d]) => [n, docJson(d.doc)]));
+  }
+  // the incremental step: the same universe, some documents changed
+  private stepFrom(st: State): Run | null {
+    const last = this.last;
+    if (!last || !last.run.eng || !last.run.entry || last.key !== this.universeKey(st)) return null;
+    const docs = this.docKeys(st);
+    const changed = new Set<string>();
+    for (const [n, k] of docs) if (last.docs.get(n) !== k) changed.add(n);
+    for (const n of last.docs.keys()) if (!docs.has(n)) changed.add(n);
+    if (!changed.size) { this.lastTiming = last.run.timing; return last.run; }
+    const t0 = now();
+    const r = last.run;
+    const eng = r.eng!, entry = r.entry!, env = entry.env;
+    // 1. what the change touches: the roots themselves, every slot under
+    //    them, and the `$referrers` queries over types instantiated under them
+    const under = (path: string, root: string) => path === root || path.startsWith(root + '.') || path.startsWith(root + '[');
+    const seeds = new Set<string>();
+    for (const root of changed) {
+      seeds.add(`root:${root}`);
+      for (const k of eng.reads.keys()) if (k.startsWith('root:') ? false : under(k.replace(/^assert:/, ''), root)) seeds.add(k);
+      for (const inst of env.registry) if (under(pathStr(inst.path), root) && inst.typeName) seeds.add(`referrers:${inst.typeName}`);
+    }
+    // 2. everything that read them, transitively
+    const readers = new Map<string, Set<string>>();
+    for (const [reader, set] of eng.reads) for (const k of set) (readers.get(k) ?? readers.set(k, new Set()).get(k)!).add(reader);
+    const invalid = new Set<string>();
+    const queue = [...seeds];
+    while (queue.length) {
+      const k = queue.pop()!;
+      if (invalid.has(k)) continue;
+      invalid.add(k);
+      for (const rd of readers.get(k) ?? []) if (!invalid.has(rd)) queue.push(rd);
+    }
+    // the roots to rebind: the changed ones, and every root that read them at binding
+    const rebind = new Set<string>();
+    for (const k of invalid) if (k.startsWith('root:')) rebind.add(k.slice(5));
+    for (const root of rebind) for (const inst of env.registry) if (under(pathStr(inst.path), root) && inst.typeName) {
+      const rk = `referrers:${inst.typeName}`;
+      if (!invalid.has(rk)) { invalid.add(rk); for (const rd of readers.get(rk) ?? []) if (!invalid.has(rd)) { invalid.add(rd); queue.push(rd); } }
+    }
+    while (queue.length) { const k = queue.pop()!; for (const rd of readers.get(k) ?? []) if (!invalid.has(rd)) { invalid.add(rd); queue.push(rd); } }
+    // 3. forget: the diagnostics of the invalidated steps and of the rebound roots, the slots, the instances
+    const gone = (d: any) => (d.by !== undefined && invalid.has(d.by)) || [...rebind].some(root => under(d.path, root));
+    env.diagnostics.splice(0, env.diagnostics.length, ...env.diagnostics.filter(d => !gone(d)));
+    let recomputed = 0;
+    for (const k of invalid) {
+      if (k.startsWith('root:') || k.startsWith('assert:') || k.startsWith('referrers:')) continue;
+      if ([...rebind].some(root => under(k, root))) { eng.slotsByKey.delete(k); eng.reads.delete(k); continue; }
+      if (eng.resetSlot(k)) recomputed++;
+      eng.reads.delete(k);
+    }
+    const dropped = new Set<any>();
+    env.registry.splice(0, env.registry.length, ...env.registry.filter(inst => { const g = [...rebind].some(root => under(pathStr(inst.path), root)); if (g) dropped.add(inst); return !g; }));
+    for (const root of rebind) { env.roots.delete(root); eng.failedInputs.delete(root); eng.reads.delete(`root:${root}`); }
+    eng.deferredSlots = eng.deferredSlots.filter(d => !dropped.has(d.inst));
+    for (const k of [...eng.reads.keys()]) if (k.startsWith('assert:') && [...rebind].some(root => under(k.slice(7), root))) eng.reads.delete(k);
+    // 4. rebind the roots in the fresh run's order — the documents in the
+    //    state's order, the modules' outputs in declaration order, the
+    //    session's outputs — then force everything: what is `ok` stays
+    //    (an unbound input is demanded through its fallback on first read)
+    eng.phase = 1;
+    for (const [name, d] of st.documents) {
+      if (!rebind.has(name)) continue;
+      const m = r.modules.find(x => x.env.inputs.has(name)) ?? entry;
+      const sc: any = { inst: null, locals: new Map(), rootName: name, menv: m.env };
+      eng.bindRoot(name, d.doc, m.env.resolve(m.env.inputs.get(name)!.type), sc, false);
+    }
+    for (const om of r.modules) for (const o of om.env.outputs) {
+      if (!rebind.has(o.name)) continue;
+      eng.bindRoot(o.name, o.expr, om.env.resolve(o.type), { inst: null, locals: new Map(), rootName: o.name, menv: om.env } as any, true);
+    }
+    for (const s of r.sessionRoots) {
+      if (!rebind.has(s.name)) continue;
+      eng.bindRoot(s.name, s.expr, s.rt, { inst: null, locals: new Map(), rootName: s.name, menv: entry.env } as any, true);
+    }
+    for (const v of env.roots.values()) eng.forceAll(v, false);
+    eng.phase = 2;
+    for (let i = 0; i < eng.deferredSlots.length; i++) eng.forceSlotSafe(eng.deferredSlots[i].inst, eng.deferredSlots[i].name);
+    eng.bindDeferredRoots();
+    for (const v of env.roots.values()) eng.forceAll(v, true);
+    // 5. the asserts of the instances that are new or whose asserts read what changed
+    for (const inst of env.registry) {
+      const key = `assert:${pathStr(inst.path)}`;
+      if (!eng.reads.has(key) || invalid.has(key)) eng.validateInst(inst, '');
+    }
+    env.diagnostics.splice(0, env.diagnostics.length, ...sortDiags(env.diagnostics));
+    const timing: Timing = { load: 0, check: 0, bind: 0, evaluate: now() - t0, total: now() - t0, recomputed, slots: eng.slotsByKey.size };
+    const run: Run = { ...r, diags: env.diagnostics, timing };
+    this.last = { key: last.key, docs, run };
+    this.lastTiming = timing;
+    return run;
+  }
+  private runFresh(st: State, mode: 'check' | 'lazy' | 'full'): Run {
     const t0 = now();
     const b = this.build(st);
     const t1 = now();
-    const out: Run = { modules: b.modules, entry: b.entry, loadDiags: b.diags, checks: [], sessionChecks: [], eng: null, diags: [],
+    const out: Run = { modules: b.modules, entry: b.entry, loadDiags: b.diags, checks: [], sessionChecks: [], sessionRoots: [], eng: null, diags: [],
       timing: { load: t1 - t0, check: 0, bind: 0, evaluate: 0, total: 0 } };
     const finish = () => { out.timing.total = now() - t0; this.lastTiming = out.timing; return out; };
     if (b.diags.length || !b.entry) return finish();
@@ -407,15 +525,18 @@ export class Session {
       const sc: any = { inst: null, locals: new Map(), rootName: s.name, menv: entry.env };
       eng.bindRoot(s.name, s.expr, s.rt, sc, true);
     }
+    out.sessionRoots = sessionRoots;
     out.eng = eng;
     out.timing.bind = now() - t2;
-    if (mode === 'lazy') { out.diags = entry.env.diagnostics; return finish(); }
+    if (mode === 'lazy') { eng.phase = 2; out.diags = entry.env.diagnostics; return finish(); }
     const t3 = now();
     for (const v of entry.env.roots.values()) eng.forceAll(v, false);
     eng.phase = 2;
     for (let i = 0; i < eng.deferredSlots.length; i++) eng.forceSlotSafe(eng.deferredSlots[i].inst, eng.deferredSlots[i].name);
+    eng.bindDeferredRoots();
     for (const v of entry.env.roots.values()) eng.forceAll(v, true);
     eng.validateAll('');
+    entry.env.diagnostics.splice(0, entry.env.diagnostics.length, ...sortDiags(entry.env.diagnostics));   // §6.7
     out.diags = entry.env.diagnostics;
     out.timing.evaluate = now() - t3;
     return finish();
@@ -439,30 +560,59 @@ export class Session {
   }
 
   // ---- questions ----
+  // the engine an expression evaluates over: the last full run's when the
+  // universe evaluates (complete, so `$referrers` answers over every
+  // instance, and nothing is rebuilt), else a lazy run's (bound, unforced)
+  private engineFor(st: State): Run {
+    const full = this.run(st, 'full');
+    return full.eng ? full : this.run(st, 'lazy');
+  }
+  // evaluate `f` over the run's engine and leave the run as it was: the
+  // diagnostics the expression added and the instances it materialized
+  // under `_` are removed, forced slots keep the values a full run gives
+  private scratch<T>(r: Run, f: (eng: Engine, env: Env) => T): T {
+    const env = r.entry!.env, eng = r.eng!;
+    const n = env.diagnostics.length;
+    const reg = env.registry.length;
+    const roots = new Set(env.roots.keys());
+    try { return f(eng, env); }
+    finally {
+      // an input demanded through its fallback by the expression alone is not a root of the run
+      const demanded = [...env.roots.keys()].filter(k => !roots.has(k));
+      const under = (p: string) => demanded.some(k => p === k || p.startsWith(k + '.') || p.startsWith(k + '['));
+      for (const k of demanded) { env.roots.delete(k); eng.failedInputs.delete(k); eng.reads.delete(`root:${k}`); }
+      for (const k of [...eng.reads.keys()]) if (under(k.replace(/^assert:/, ''))) eng.reads.delete(k);
+      for (const k of [...eng.slotsByKey.keys()]) if (under(k)) eng.slotsByKey.delete(k);
+      env.diagnostics.splice(n);
+      env.registry.splice(0, env.registry.length, ...env.registry.filter((inst, i) => (i < reg && !under(pathStr(inst.path))) || (i >= reg && inst.path[0] !== '_' && !under(pathStr(inst.path)))));
+      eng.computing.length = 0;
+    }
+  }
   /** partial evaluation of one expression (§2.1) */
   evaluateExpr(text: string): { value: string | null; diags: Diag[]; error?: { code?: string; message: string } } {
     const expr = parseExpr(text);
-    const r = this.run(this.state, 'lazy');
+    const r = this.engineFor(this.state);
     if (!r.eng || !r.entry) return { value: null, diags: r.loadDiags, error: { message: '' } };
     const sc: any = { inst: null, locals: new Map(), rootName: '', menv: r.entry.env };
-    // binding the roots may already have reported (a root whose top-level
-    // expression fails); the expression's own diagnostics are the ones
-    // that arise from here on, plus the failed roots it names
-    const all = r.entry.env.diagnostics;
-    const from = all.length;
-    const named = new Set((text.match(/[A-Za-z_][A-Za-z0-9_]*/g) ?? []));
-    const arising = () => [...all.slice(0, from).filter(d => named.has(d.path)), ...all.slice(from)];
-    try {
-      let v = r.eng.ev(expr, sc);
-      v = r.eng.materialize(v, ['_'], null, sc);
-      r.eng.phase = 2;
-      r.eng.forceAll(v, true);
-      return { value: this.valueText(r.eng, v), diags: arising() };
-    } catch (e: any) {
-      if (e instanceof EvalErr) return { value: null, diags: arising(), error: { code: e.code, message: e.message } };
-      if (e instanceof Taint) return { value: null, diags: arising(), error: { message: '' } };
-      throw e;
-    }
+    return this.scratch(r, (eng, env) => {
+      // the run may already have reported (a root whose binding failed); the
+      // expression's own diagnostics are the ones that arise from here on,
+      // plus the diagnostics of the roots it names
+      const all = env.diagnostics;
+      const from = all.length;
+      const named = new Set((text.match(/[A-Za-z_][A-Za-z0-9_]*/g) ?? []));
+      const arising = () => sortDiags([...all.slice(0, from).filter(d => named.has(d.path)), ...all.slice(from)]);
+      try {
+        let v = eng.ev(expr, sc);
+        v = eng.materialize(v, ['_'], null, sc);
+        eng.forceAll(v, true);
+        return { value: this.valueText(eng, v), diags: arising() };
+      } catch (e: any) {
+        if (e instanceof EvalErr) return { value: null, diags: arising(), error: { code: e.code, message: e.message } };
+        if (e instanceof Taint || e instanceof DeferSig) return { value: null, diags: arising(), error: { message: '' } };
+        throw e;
+      }
+    });
   }
   private valueText(eng: Engine, v: any): string {
     if (v === ABSENT) return 'absent';
@@ -552,10 +702,10 @@ export class Session {
   /** the canonical path of the place a navigation names (`:path`) */
   pathOf(text: string): string {
     const expr = parseExpr(text);
-    const r = this.run(this.state, 'lazy');
+    const r = this.engineFor(this.state);
     if (!r.eng || !r.entry) throw new SessionError(this.loadFailure(r));
     const sc: any = { inst: null, locals: new Map(), rootName: '', menv: r.entry.env };
-    try {
+    return this.scratch(r, () => { try {
       let segs = r.eng.evalPlace(expr, sc);
       // a scalar member or element is a place too: its container's place, one step down
       if (!segs && (expr.e === 'member' || expr.e === 'index')) {
@@ -565,14 +715,14 @@ export class Session {
           segs = [...base, step];
         }
       }
-      if (!segs && expr.e === 'name' && r.entry.env.roots.has(expr.name)) segs = [expr.name];
+      if (!segs && expr.e === 'name' && r.entry!.env.roots.has(expr.name)) segs = [expr.name];
       if (!segs) throw new SessionError('the expression does not name a place');
       return pathStr(segs);
     } catch (e: any) {
       if (e instanceof EvalErr) throw new SessionError(e.message);
-      if (e instanceof Taint) throw new SessionError('the place is invalid');
+      if (e instanceof Taint || e instanceof DeferSig) throw new SessionError('the place is invalid');
       throw e;
-    }
+    } });
   }
 
   /** the declaration a name resolves to, with its documentation (`:doc`) */
@@ -779,7 +929,7 @@ export class Session {
   }
   fmt(): string { const t = this.scratchText(); return t ? format(t) : ''; }
   write(file: string): void {
-    try { writeFileSync(file, this.moduleText()); } catch { throw new SessionError(`cannot write ${file}`); }
+    try { host.writeFile(file, this.moduleText()); } catch { throw new SessionError(`cannot write ${file}`); }
   }
 
   // ---- documents out (§3) ----
@@ -793,12 +943,14 @@ export class Session {
   }
   save(name: string, file: string): void {
     const text = this.documentText(name);
-    try { writeFileSync(file, text + '\n'); } catch { throw new SessionError(`cannot write ${file}`); }
+    try { host.writeFile(file, text + '\n'); } catch { throw new SessionError(`cannot write ${file}`); }
   }
   diff(name: string): string[] {
     const d = this.state.documents.get(name);
     if (!d) throw new SessionError(this.hasRoot(name) ? `${name} holds no document` : `no root named ${name}`);
-    return lineDiff(prettyJson(docJson(d.base)).split('\n'), prettyJson(docJson(d.doc)).split('\n'));
+    const before = docJson(d.base), after = docJson(d.doc);
+    if (before === after) return ['(no changes)'];
+    return lineDiff(prettyJson(before).split('\n'), prettyJson(after).split('\n'));
   }
 
   // ---- introspection ----
@@ -912,9 +1064,8 @@ function completeFile(partial: string): string[] {
   const slash = partial.lastIndexOf('/');
   const dir = slash >= 0 ? partial.slice(0, slash + 1) : '';
   const base = slash >= 0 ? partial.slice(slash + 1) : partial;
-  let names: string[];
-  try { names = readdirSync(dir || '.'); } catch { return []; }
-  const isDir = (n: string) => { try { return statSync(dir + n).isDirectory(); } catch { return false; } };
+  const names = host.readDir(dir || '.');
+  const isDir = (n: string) => host.isDir(dir + n);
   const rank = (n: string) => /\.decl$/.test(n) ? 0 : /\.json$/.test(n) ? 1 : isDir(n) ? 2 : 3;
   return names.filter(n => n.startsWith(base) && !n.startsWith('.'))
     .sort((a, b) => rank(a) - rank(b) || (a < b ? -1 : a > b ? 1 : 0))

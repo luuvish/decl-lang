@@ -1,0 +1,2 @@
+export type Service = { name: string, port: 1..65535 = 8080 }
+export const MAX = 16

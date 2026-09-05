@@ -1,10 +1,9 @@
 // Module loading and linking (§8.1–8.5, §8.8): files are modules, the
 // import graph is acyclic, exports are explicit, `std` stays ambient.
 // Packages (§8.6–8.7) plug in through the `resolvePackage` hook.
-import { readFileSync } from 'node:fs';
-import { dirname, resolve as absPath } from 'node:path';
+import { host, dirname, resolvePath as absPath } from './host.ts';
 import { parseSource } from './parse.ts';
-import { Env } from './semantics.ts';
+import { Env, sortDiags } from './semantics.ts';
 import type { Diag } from './semantics.ts';
 import type { Decl } from './ast.ts';
 import { Engine } from './engine.ts';
@@ -48,8 +47,9 @@ export function loadModules(entryPath: string, resolvePackage?: PackageResolver,
     let src: string;
     if (sourceOverride?.has(abs)) src = sourceOverride.get(abs)!;
     else {
-      try { src = readFileSync(abs, 'utf8'); }
-      catch { report('E3004', `module not found: ${abs}`); return null; }
+      const text = host.readFile(abs);
+      if (text === null) { report('E3004', `module not found: ${abs}`); return null; }
+      src = text;
     }
     const { decls, errors } = parseSource(src);
     if (errors.length) { report('E2001', `${abs}: ${errors.length} parse error(s)`); return null; }
@@ -178,7 +178,10 @@ export function runUniverse(mods: Module[], entry: Module,
   for (const v of entry.env.roots.values()) eng.forceAll(v, false);
   eng.phase = 2;
   for (let i = 0; i < eng.deferredSlots.length; i++) eng.forceSlotSafe(eng.deferredSlots[i].inst, eng.deferredSlots[i].name);
+  eng.bindDeferredRoots();
   for (const v of entry.env.roots.values()) eng.forceAll(v, true);
   eng.validateAll('');
+  // §6.7: evaluation- and validation-time diagnostics in (path, id) order
+  entry.env.diagnostics.splice(0, entry.env.diagnostics.length, ...sortDiags(entry.env.diagnostics));
   return { eng, diags: entry.env.diagnostics };
 }

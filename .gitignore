@@ -34,3 +34,4 @@ extension/vscode/syntaxes/
 extension/vscode/*.vsix
 extension/zed/target/
 extension/zed/grammars/
+extension/vscode/.vscode-test/

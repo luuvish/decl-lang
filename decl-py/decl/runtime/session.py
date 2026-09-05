@@ -9,6 +9,7 @@ every answer is the same checker, inference, and engine the command line
 runs."""
 from __future__ import annotations
 
+import json
 import os
 import re
 import time
@@ -22,8 +23,8 @@ from .module import Module, load_modules
 from .package import open_package_universe, verify_lock
 from .parse import parse_source
 from .semantics import (
-    ABSENT, ArrV, Closure, Env, EvalErr, JObj, Key, MapV, NatFn, NsRef, Pattern, RecInst, Scope, StdRef, Taint,
-    is_bool, is_float, is_int, is_str, js_num_str, json_str, parse_path, path_str, read_json, seg_text,
+    ABSENT, ArrV, Closure, DeferSig, Env, EvalErr, JObj, Key, MapV, NatFn, NsRef, Pattern, RecInst, Scope, StdRef, Taint,
+    is_bool, is_float, is_int, is_str, js_num_str, json_str, parse_path, path_str, read_json, seg_text, sort_diags,
 )
 
 
@@ -178,12 +179,13 @@ class State:
 
 
 class Run:
-    __slots__ = ("modules", "entry", "load_diags", "checks", "session_checks", "eng", "diags", "timing")
+    __slots__ = ("modules", "entry", "load_diags", "checks", "session_checks", "session_roots", "eng", "diags", "timing")
 
     def __init__(self, modules: list, entry: Optional[Module], load_diags: list, timing: dict):
         self.modules, self.entry, self.load_diags, self.timing = modules, entry, load_diags, timing
         self.checks: list = []            # [{"file", "diag"}]
         self.session_checks: list = []    # session outputs whose expressions do not check (path: the output)
+        self.session_roots: list = []     # the session outputs bound, as bound: (name, expr, rt)
         self.eng: Optional[Engine] = None
         self.diags: list = []
 
@@ -199,6 +201,8 @@ class RootInfo:
 # ---------------- the session ----------------
 class Session:
     SCRATCH = "<session>"
+    # full recomputation on every question (the harness's cross-check)
+    full_recompute = bool(os.environ.get("DECL_FULL_RECOMPUTE"))
 
     def __init__(self, entry: Optional[str] = None, overlay: Optional[dict] = None):
         self.entry_path: Optional[str] = os.path.abspath(entry) if entry else None
@@ -207,6 +211,10 @@ class Session:
         self.log: list = []
         self.cursor = 0
         self.last_timing: Optional[dict] = None
+        # the last full run, kept for the incremental step (§6): reused as long
+        # as the universe's texts and declarations are the same, its engine
+        # rebinding the documents that changed and recomputing what read them
+        self._last: Optional[dict] = None   # {"key", "docs", "run"}
         self._snapshot0 = self._snapshot_from_disk()
         self.state = self._initial_state()
 
@@ -320,24 +328,27 @@ class Session:
     # ---- documents and edits (§3) ----
     def _eval_to_doc(self, st: State, expr_text: str) -> Any:
         expr = parse_expr(expr_text)
-        r = self.run(st, "lazy")
+        r = self._engine_for(st)
         if r.eng is None or r.entry is None:
             raise SessionError(self._load_failure(r))
         sc = Scope(None, {}, "", r.entry.env)
-        try:
-            v = r.eng.ev(expr, sc)
-            v = r.eng.materialize(v, ["_"], None, sc)
-            r.eng.force_all(v, True)
-            text = r.eng.serialize(v, "")
-            if not text:
-                raise SessionError("the value is not data")
-            return read_json(text)
-        except SessionError:
-            raise
-        except EvalErr as e:
-            raise SessionError(e.msg)
-        except Taint:
-            raise SessionError("the value is invalid")
+
+        def go(eng: Engine, env: Env) -> Any:
+            try:
+                v = eng.ev(expr, sc)
+                v = eng.materialize(v, ["_"], None, sc)
+                eng.force_all(v, True)
+                text = eng.serialize(v, "")
+                if not text:
+                    raise SessionError("the value is not data")
+                return read_json(text)
+            except SessionError:
+                raise
+            except EvalErr as e:
+                raise SessionError(e.msg)
+            except (Taint, DeferSig):
+                raise SessionError("the value is invalid")
+        return self._scratch(r, go)
 
     def _edit(self, st: State, op: dict) -> None:
         try:
@@ -438,6 +449,165 @@ class Session:
         """load, check, and (unless `mode` says otherwise) evaluate the state"""
         if st is None:
             st = self.state
+        if mode == "full" and not Session.full_recompute:
+            stepped = self._step_from(st)
+            if stepped is not None:
+                return stepped
+        r = self._run_fresh(st, mode)
+        if mode == "full":
+            self._last = {"key": self._universe_key(st), "docs": self._doc_keys(st), "run": r} if r.eng is not None else None
+        return r
+
+    def _universe_key(self, st: State) -> str:
+        detached = sorted(n for n, d in st.documents.items() if d.origin == "detached")
+        return json.dumps([self.entry_abs, list(st.snapshot.items()), list(st.decls.items()), list(st.outputs.items()), detached])
+
+    def _doc_keys(self, st: State) -> dict:
+        return {n: doc_json(d.doc) for n, d in st.documents.items()}
+
+    # the incremental step: the same universe, some documents changed
+    def _step_from(self, st: State) -> Optional[Run]:
+        last = self._last
+        if last is None or last["run"].eng is None or last["run"].entry is None or last["key"] != self._universe_key(st):
+            return None
+        docs = self._doc_keys(st)
+        changed: dict = {}
+        for n, k in docs.items():
+            if last["docs"].get(n) != k:
+                changed[n] = True
+        for n in last["docs"]:
+            if n not in docs:
+                changed[n] = True
+        if not changed:
+            self.last_timing = last["run"].timing
+            return last["run"]
+        t0 = _now()
+        r: Run = last["run"]
+        eng, entry = r.eng, r.entry
+        env = entry.env
+
+        # 1. what the change touches: the roots themselves, every slot under
+        #    them, and the `$referrers` queries over types instantiated under them
+        def under(path: str, root: str) -> bool:
+            return path == root or path.startswith(root + ".") or path.startswith(root + "[")
+        seeds: dict = {}
+        for root in changed:
+            seeds[f"root:{root}"] = True
+            for k in list(eng.reads.keys()):
+                if not k.startswith("root:") and under(re.sub(r"^assert:", "", k), root):
+                    seeds[k] = True
+            for inst in env.registry:
+                if under(path_str(inst.path), root) and inst.type_name:
+                    seeds[f"referrers:{inst.type_name}"] = True
+        # 2. everything that read them, transitively
+        readers: dict = {}
+        for reader, rs in eng.reads.items():
+            for k in rs:
+                readers.setdefault(k, {})[reader] = True
+        invalid: dict = {}
+        queue = list(seeds)
+        while queue:
+            k = queue.pop()
+            if k in invalid:
+                continue
+            invalid[k] = True
+            for rd in readers.get(k, {}):
+                if rd not in invalid:
+                    queue.append(rd)
+        # the roots to rebind: the changed ones, and every root that read them at binding
+        rebind = [k[5:] for k in invalid if k.startswith("root:")]
+        for root in rebind:
+            for inst in env.registry:
+                if under(path_str(inst.path), root) and inst.type_name:
+                    rk = f"referrers:{inst.type_name}"
+                    if rk not in invalid:
+                        invalid[rk] = True
+                        for rd in readers.get(rk, {}):
+                            if rd not in invalid:
+                                invalid[rd] = True
+                                queue.append(rd)
+        while queue:
+            k = queue.pop()
+            for rd in readers.get(k, {}):
+                if rd not in invalid:
+                    invalid[rd] = True
+                    queue.append(rd)
+        # 3. forget: the diagnostics of the invalidated steps and of the rebound roots, the slots, the instances
+        def gone(d: dict) -> bool:
+            by = d.get("by")
+            return (by is not None and by in invalid) or any(under(d.get("path") or "", root) for root in rebind)
+        env.diagnostics[:] = [d for d in env.diagnostics if not gone(d)]
+        recomputed = 0
+        for k in invalid:
+            if k.startswith(("root:", "assert:", "referrers:")):
+                continue
+            if any(under(k, root) for root in rebind):
+                eng.slots_by_key.pop(k, None)
+                eng.reads.pop(k, None)
+                continue
+            if eng.reset_slot(k):
+                recomputed += 1
+            eng.reads.pop(k, None)
+        dropped: set = set()
+        kept: list = []
+        for inst in env.registry:
+            if any(under(path_str(inst.path), root) for root in rebind):
+                dropped.add(id(inst))
+            else:
+                kept.append(inst)
+        env.registry[:] = kept
+        for root in rebind:
+            env.roots.pop(root, None)
+            eng.failed_inputs.discard(root)
+            eng.reads.pop(f"root:{root}", None)
+        eng.deferred_slots = [d for d in eng.deferred_slots if id(d[0]) not in dropped]
+        for k in list(eng.reads.keys()):
+            if k.startswith("assert:") and any(under(k[7:], root) for root in rebind):
+                eng.reads.pop(k, None)
+        # 4. rebind the roots in the fresh run's order — the documents in the
+        #    state's order, the modules' outputs in declaration order, the
+        #    session's outputs — then force everything: what is `ok` stays
+        #    (an unbound input is demanded through its fallback on first read)
+        rebinding = set(rebind)
+        eng.phase = 1
+        for name, d in st.documents.items():
+            if name not in rebinding:
+                continue
+            m = next((x for x in r.modules if name in x.env.inputs), entry)
+            eng.bind_root(name, d.doc, m.env.resolve(m.env.inputs[name]["type"]), Scope(None, {}, name, m.env), False)
+        for om in r.modules:
+            for o in om.env.outputs:
+                if o["name"] not in rebinding:
+                    continue
+                eng.bind_root(o["name"], o["expr"], om.env.resolve(o["type"]), Scope(None, {}, o["name"], om.env), True)
+        for name, expr, rt in r.session_roots:
+            if name not in rebinding:
+                continue
+            eng.bind_root(name, expr, rt, Scope(None, {}, name, entry.env), True)
+        eng.force_all_roots(False)
+        eng.phase = 2
+        i = 0
+        while i < len(eng.deferred_slots):
+            inst, name = eng.deferred_slots[i]
+            eng.force_slot_safe(inst, name)
+            i += 1
+        eng.bind_deferred_roots()
+        eng.force_all_roots(True)
+        # 5. the asserts of the instances that are new or whose asserts read what changed
+        for inst in list(env.registry):
+            key = f"assert:{path_str(inst.path)}"
+            if key not in eng.reads or key in invalid:
+                eng.validate_inst(inst, "")
+        env.diagnostics[:] = sort_diags(env.diagnostics)
+        timing = {"load": 0.0, "check": 0.0, "bind": 0.0, "evaluate": _now() - t0, "total": _now() - t0,
+                  "recomputed": recomputed, "slots": len(eng.slots_by_key)}
+        run = Run(r.modules, r.entry, r.load_diags, timing)
+        run.checks, run.session_checks, run.session_roots, run.eng, run.diags = r.checks, r.session_checks, r.session_roots, eng, env.diagnostics
+        self._last = {"key": last["key"], "docs": docs, "run": run}
+        self.last_timing = timing
+        return run
+
+    def _run_fresh(self, st: State, mode: str) -> Run:
         t0 = _now()
         b = self._build(st)
         t1 = _now()
@@ -505,23 +675,25 @@ class Session:
                 eng.bind_root(o["name"], o["expr"], m.env.resolve(o["type"]), Scope(None, {}, o["name"], m.env), True)
         for name, expr, rt in session_roots:
             eng.bind_root(name, expr, rt, Scope(None, {}, name, entry.env), True)
+        out.session_roots = session_roots
         out.eng = eng
         out.timing["bind"] = _now() - t2
         if mode == "lazy":
+            eng.phase = 2
             out.diags = entry.env.diagnostics
             return finish()
         t3 = _now()
-        for v in list(entry.env.roots.values()):
-            eng.force_all(v, False)
+        eng.force_all_roots(False)
         eng.phase = 2
         i = 0
         while i < len(eng.deferred_slots):
             inst, name = eng.deferred_slots[i]
             eng.force_slot_safe(inst, name)
             i += 1
-        for v in list(entry.env.roots.values()):
-            eng.force_all(v, True)
+        eng.bind_deferred_roots()
+        eng.force_all_roots(True)
         eng.validate_all("")
+        entry.env.diagnostics[:] = sort_diags(entry.env.diagnostics)   # §6.7
         out.diags = entry.env.diagnostics
         out.timing["evaluate"] = _now() - t3
         return finish()
@@ -547,33 +719,72 @@ class Session:
         return cx
 
     # ---- questions ----
+    # the engine an expression evaluates over: the last full run's when the
+    # universe evaluates (complete, so `$referrers` answers over every
+    # instance, and nothing is rebuilt), else a lazy run's (bound, unforced)
+    def _engine_for(self, st: State) -> Run:
+        full = self.run(st, "full")
+        return full if full.eng is not None else self.run(st, "lazy")
+
+    # evaluate `f` over the run's engine and leave the run as it was: the
+    # diagnostics the expression added and the instances it materialized
+    # under `_` are removed, forced slots keep the values a full run gives
+    def _scratch(self, r: Run, f: Callable[[Engine, Env], Any]) -> Any:
+        env, eng = r.entry.env, r.eng
+        n = len(env.diagnostics)
+        reg = len(env.registry)
+        roots = set(env.roots.keys())
+        try:
+            return f(eng, env)
+        finally:
+            # an input demanded through its fallback by the expression alone is not a root of the run
+            demanded = [k for k in env.roots if k not in roots]
+
+            def under(p: str) -> bool:
+                return any(p == k or p.startswith(k + ".") or p.startswith(k + "[") for k in demanded)
+            for k in demanded:
+                env.roots.pop(k, None)
+                eng.failed_inputs.discard(k)
+                eng.reads.pop(f"root:{k}", None)
+            for k in list(eng.reads.keys()):
+                if under(re.sub(r"^assert:", "", k)):
+                    eng.reads.pop(k, None)
+            for k in list(eng.slots_by_key.keys()):
+                if under(k):
+                    eng.slots_by_key.pop(k, None)
+            del env.diagnostics[n:]
+            env.registry[:] = [inst for i, inst in enumerate(env.registry)
+                               if (i < reg and not under(path_str(inst.path))) or (i >= reg and inst.path[0] != "_" and not under(path_str(inst.path)))]
+            eng.computing.clear()
+
     def evaluate_expr(self, text: str) -> dict:
         """partial evaluation of one expression (§2.1): {"value", "diags", "error"}"""
         expr = parse_expr(text)
-        r = self.run(self.state, "lazy")
+        r = self._engine_for(self.state)
         if r.eng is None or r.entry is None:
             return {"value": None, "diags": r.load_diags, "error": {"code": None, "message": ""}}
         sc = Scope(None, {}, "", r.entry.env)
-        # binding the roots may already have reported (a root whose top-level
-        # expression fails); the expression's own diagnostics are the ones
-        # that arise from here on, plus the failed roots it names
-        all_ = r.entry.env.diagnostics
-        frm = len(all_)
-        named = set(re.findall(r"[A-Za-z_][A-Za-z0-9_]*", text))
 
-        def arising() -> list:
-            return [d for d in all_[:frm] if d.get("path") in named] + list(all_[frm:])
+        def go(eng: Engine, env: Env) -> dict:
+            # the run may already have reported (a root whose binding failed); the
+            # expression's own diagnostics are the ones that arise from here on,
+            # plus the diagnostics of the roots it names
+            all_ = env.diagnostics
+            frm = len(all_)
+            named = set(re.findall(r"[A-Za-z_][A-Za-z0-9_]*", text))
 
-        try:
-            v = r.eng.ev(expr, sc)
-            v = r.eng.materialize(v, ["_"], None, sc)
-            r.eng.phase = 2
-            r.eng.force_all(v, True)
-            return {"value": self._value_text(r.eng, v), "diags": arising(), "error": None}
-        except EvalErr as e:
-            return {"value": None, "diags": arising(), "error": {"code": e.code, "message": e.msg}}
-        except Taint:
-            return {"value": None, "diags": arising(), "error": {"code": None, "message": ""}}
+            def arising() -> list:
+                return sort_diags([d for d in all_[:frm] if d.get("path") in named] + list(all_[frm:]))
+            try:
+                v = eng.ev(expr, sc)
+                v = eng.materialize(v, ["_"], None, sc)
+                eng.force_all(v, True)
+                return {"value": self._value_text(eng, v), "diags": arising(), "error": None}
+            except EvalErr as e:
+                return {"value": None, "diags": arising(), "error": {"code": e.code, "message": e.msg}}
+            except (Taint, DeferSig):
+                return {"value": None, "diags": arising(), "error": {"code": None, "message": ""}}
+        return self._scratch(r, go)
 
     def _value_text(self, eng: Engine, v: Any) -> str:
         if v is ABSENT or v is _UNDEF:
@@ -678,31 +889,34 @@ class Session:
     def path_of(self, text: str) -> str:
         """the canonical path of the place a navigation names (`:path`)"""
         expr = parse_expr(text)
-        r = self.run(self.state, "lazy")
+        r = self._engine_for(self.state)
         if r.eng is None or r.entry is None:
             raise SessionError(self._load_failure(r))
         sc = Scope(None, {}, "", r.entry.env)
-        try:
-            segs = r.eng.eval_place(expr, sc)
-            # a scalar member or element is a place too: its container's place, one step down
-            if segs is None and expr["e"] in ("member", "index"):
-                base = r.eng.eval_place(expr["x"], sc)
-                if base is not None:
-                    if expr["e"] == "member":
-                        step: Any = expr["name"]
-                    else:
-                        i = r.eng.ev(expr["i"], sc)
-                        step = int(i) if is_int(i) else Key(i)
-                    segs = base + [step]
-            if segs is None and expr["e"] == "name" and expr["name"] in r.entry.env.roots:
-                segs = [expr["name"]]
-            if segs is None:
-                raise SessionError("the expression does not name a place")
-            return path_str(segs)
-        except EvalErr as e:
-            raise SessionError(e.msg)
-        except Taint:
-            raise SessionError("the place is invalid")
+
+        def go(eng: Engine, env: Env) -> str:
+            try:
+                segs = eng.eval_place(expr, sc)   # (the last run, phase 2: a `$referrers` on the way answers)
+                # a scalar member or element is a place too: its container's place, one step down
+                if segs is None and expr["e"] in ("member", "index"):
+                    base = eng.eval_place(expr["x"], sc)
+                    if base is not None:
+                        if expr["e"] == "member":
+                            step: Any = expr["name"]
+                        else:
+                            i = eng.ev(expr["i"], sc)
+                            step = int(i) if is_int(i) else Key(i)
+                        segs = base + [step]
+                if segs is None and expr["e"] == "name" and expr["name"] in env.roots:
+                    segs = [expr["name"]]
+                if segs is None:
+                    raise SessionError("the expression does not name a place")
+                return path_str(segs)
+            except EvalErr as e:
+                raise SessionError(e.msg)
+            except (Taint, DeferSig):
+                raise SessionError("the place is invalid")
+        return self._scratch(r, go)
 
     def doc_of(self, name: str) -> list:
         """the declaration a name resolves to, with its documentation (`:doc`)"""
@@ -1034,7 +1248,10 @@ class Session:
         d = self.state.documents.get(name)
         if d is None:
             raise SessionError(f"{name} holds no document" if self.has_root(name) else f"no root named {name}")
-        return line_diff(pretty_json(doc_json(d.base)).split("\n"), pretty_json(doc_json(d.doc)).split("\n"))
+        before, after = doc_json(d.base), doc_json(d.doc)
+        if before == after:
+            return ["(no changes)"]
+        return line_diff(pretty_json(before).split("\n"), pretty_json(after).split("\n"))
 
     # ---- introspection ----
     def session_lines(self) -> list:

@@ -3,9 +3,7 @@
 // Implementation conventions (documented in decl-ts/README.md): dependency
 // packages live under <root>/decl_modules/<name>/ in a flat layout, and
 // the lock file is line-based `name version sha256` in name order.
-import { readFileSync, readdirSync, statSync, existsSync, writeFileSync } from 'node:fs';
-import { join, dirname, resolve as absPath, relative, sep } from 'node:path';
-import { createHash } from 'node:crypto';
+import { host, join, dirname, resolvePath as absPath, relative, sha256Hex } from './host.ts';
 import type { Diag } from './semantics.ts';
 import type { PackageResolver } from './module.ts';
 
@@ -17,9 +15,8 @@ const METADATA = ['description', 'license', 'authors', 'repository', 'keywords']
 export type Manifest = { name: string; version: string; dependencies: Map<string, string> };
 
 export function parseManifest(path: string, report: (c: string, m: string) => void): Manifest | null {
-  let src: string;
-  try { src = readFileSync(path, 'utf8'); }
-  catch { report('E3004', `manifest not found: ${path}`); return null; }
+  const src = host.readFile(path);
+  if (src === null) { report('E3004', `manifest not found: ${path}`); return null; }
   const fields = new Map<string, string>();
   const deps = new Map<string, string>();
   let section: string | null = null;
@@ -63,22 +60,17 @@ export function parseManifest(path: string, report: (c: string, m: string) => vo
 export function packageHash(dir: string): string {
   const files: string[] = [];
   const walk = (d: string) => {
-    for (const e of readdirSync(d).sort()) {
+    for (const e of host.readDir(d).sort()) {
       const p = join(d, e);
       if (e === 'decl_modules') continue;
-      if (statSync(p).isDirectory()) walk(p);
+      if (host.isDir(p)) walk(p);
       else if (p.endsWith('.decl')) files.push(p);
     }
   };
   walk(dir);
-  const h = createHash('sha256');
-  for (const f of files.sort((a, b) => a < b ? -1 : 1)) {
-    h.update(relative(dir, f).split(sep).join('/'));
-    h.update('\0');
-    h.update(readFileSync(f));
-    h.update('\0');
-  }
-  return h.digest('hex');
+  const chunks: string[] = [];
+  for (const f of files.sort((a, b) => a < b ? -1 : 1)) chunks.push(relative(dir, f), '\0', host.readFile(f) ?? '', '\0');
+  return sha256Hex(chunks);
 }
 
 export type ResolvedPackage = { name: string; version: string; dir: string; hash: string };
@@ -95,7 +87,7 @@ export type PackageUniverse = {
 export function findPackageRoot(fromFile: string): string | null {
   let dir = dirname(absPath(fromFile));
   for (; ;) {
-    if (existsSync(join(dir, 'decl.toml'))) return dir;
+    if (host.exists(join(dir, 'decl.toml'))) return dir;
     const up = dirname(dir);
     if (up === dir) return null;
     dir = up;
@@ -159,18 +151,19 @@ export function lockText(u: PackageUniverse): string {
 }
 export function writeLock(u: PackageUniverse): string {
   const path = join(u.rootDir, 'decl.lock');
-  writeFileSync(path, lockText(u));
+  host.writeFile(path, lockText(u));
   return path;
 }
 // fail-closed verification: missing entry, version drift, or hash
 // mismatch stops resolution — never a silent re-resolve
 export function verifyLock(u: PackageUniverse): Diag[] {
   const path = join(u.rootDir, 'decl.lock');
-  if (!existsSync(path)) return [];
+  const text = host.readFile(path);
+  if (text === null) return [];
   const out: Diag[] = [];
   const report = (code: string, message: string) => out.push({ severity: 'error', code, message, path: '' });
   const locked = new Map<string, { version: string; hash: string }>();
-  for (const line of readFileSync(path, 'utf8').split('\n')) {
+  for (const line of text.split('\n')) {
     if (!line.trim()) continue;
     const [name, version, hash] = line.trim().split(/\s+/);
     locked.set(name, { version, hash });

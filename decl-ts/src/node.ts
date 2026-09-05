@@ -2,11 +2,29 @@
 // (beside the bundled dist/ files in the published package, under
 // tree-sitter-decl/ in the source tree) and initialize the platform-
 // neutral parser with it. Browsers call core's initParser with URLs.
-import { existsSync } from 'node:fs';
+import { existsSync, readFileSync, readdirSync, statSync, writeFileSync } from 'node:fs';
 import { join, dirname } from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import { initParser as initCore } from './parse.ts';
 import type { ParserOptions } from './parse.ts';
+import { setHost } from './host.ts';
+import type { Host } from './host.ts';
+
+// the Node host: the file system, the working directory, file URIs (paths
+// are POSIX strings in the core; backslashes are translated on the way in)
+const posix = (p: string) => p.replace(/\\/g, '/');
+export const nodeHost: Host = {
+  readFile: p => { try { return readFileSync(p, 'utf8'); } catch { return null; } },
+  readDir: p => { try { return readdirSync(p); } catch { return []; } },
+  isDir: p => { try { return statSync(p).isDirectory(); } catch { return false; } },
+  exists: p => existsSync(p),
+  writeFile: (p, text) => writeFileSync(p, text),
+  cwd: () => posix(process.cwd()),
+  pathOf: uri => posix(fileURLToPath(uri)),
+  uriOf: p => pathToFileURL(p).toString(),
+  env: name => process.env[name],
+};
+setHost(nodeHost);
 
 const here = dirname(fileURLToPath(import.meta.url));
 

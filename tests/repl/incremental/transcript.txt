@@ -1,0 +1,133 @@
+> // $referrers and derived members under edits: every answer must match a full recomputation
+> :evaluate g
+{
+  "nodes": {
+    "a": {
+      "name": "a",
+      "weight": 1,
+      "incoming": [],
+      "fan_in": 0,
+      "load": 0
+    },
+    "b": {
+      "name": "b",
+      "weight": 3,
+      "incoming": [
+        "$.edges[0]"
+      ],
+      "fan_in": 1,
+      "load": 3
+    }
+  },
+  "edges": [
+    {
+      "source": "$.nodes[\"a\"]",
+      "target": "$.nodes[\"b\"]",
+      "label": "a->b"
+    }
+  ],
+  "total": 3
+}
+> g.nodes["b"].fan_in
+1
+(partial)
+> :create g.nodes["c"] = { name: "c" }
+> :create g.edges[1] = { source: "$.nodes[\"c\"]", target: "$.nodes[\"b\"]" }
+> g.nodes["b"].incoming
+[
+  "g.edges[0]",
+  "g.edges[1]"
+]
+(partial)
+> g.nodes["b"].load
+6
+(partial)
+> :validate g
+g: ok
+> :create g.edges[2] = { source: "$.nodes[\"a\"]", target: "$.nodes[\"b\"]" }
+> :validate g
+error [E6001] Node.bounded at g.nodes["b"]: b has 3 incoming edges
+g: 1 error
+> g.total
+9
+(partial)
+> :remove g.edges[2]
+> :validate g
+g: ok
+> :update g.nodes["b"].weight = 5
+> g.nodes["b"].load
+10
+(partial)
+> g.total
+10
+(partial)
+> :undo 2
+> g.total
+9
+(partial)
+> :redo
+> :evaluate g
+{
+  "nodes": {
+    "a": {
+      "name": "a",
+      "weight": 1,
+      "incoming": [],
+      "fan_in": 0,
+      "load": 0
+    },
+    "b": {
+      "name": "b",
+      "weight": 3,
+      "incoming": [
+        "$.edges[0]",
+        "$.edges[1]"
+      ],
+      "fan_in": 2,
+      "load": 6
+    },
+    "c": {
+      "name": "c",
+      "weight": 1,
+      "incoming": [],
+      "fan_in": 0,
+      "load": 0
+    }
+  },
+  "edges": [
+    {
+      "source": "$.nodes[\"a\"]",
+      "target": "$.nodes[\"b\"]",
+      "label": "a->b"
+    },
+    {
+      "source": "$.nodes[\"c\"]",
+      "target": "$.nodes[\"b\"]",
+      "label": "c->b"
+    }
+  ],
+  "total": 6
+}
+> :bind g { "nodes": { "x": { "name": "x" } }, "edges": [] }
+> :validate g
+g: ok
+> g.nodes["x"].fan_in
+0
+(partial)
+> :unbind g
+> g.total
+3
+(partial)
+> // a session output over the document is rebound when the document changes
+> t = g.total
+> :evaluate t
+3
+> :update g.nodes["b"].weight = 7
+> :evaluate t
+7
+> t
+7
+(partial)
+> :undo
+> :evaluate t
+3

@@ -320,11 +320,45 @@ fn lsp_editor_session() {
     let dz = c.next_diagnostics(&main_uri);
     let diags = dz.split("\"diagnostics\":").nth(1).unwrap().trim_end_matches("}}").to_string();
     let ca = c.request("textDocument/codeAction", &format!("{{\"textDocument\":{{\"uri\":\"{main_uri}\"}},\"range\":{{\"start\":{{\"line\":0,\"character\":10}},\"end\":{{\"line\":0,\"character\":13}}}},\"context\":{{\"diagnostics\":{diags}}}}}"));
-    assert!(ca.contains("\"title\":\"import cap from \\\"./lib.decl\\\"\"") && ca.matches("\"title\":").count() == 1, "code action: import the unknown name from the module beside: {ca}");
+    assert!(ca.contains("\"title\":\"import cap from \\\"./lib.decl\\\"\""), "code action: import the unknown name from the module beside: {ca}");
     c.notify("textDocument/didChange", &format!("{{\"textDocument\":{{\"uri\":\"{main_uri}\",\"version\":41}},\"contentChanges\":[{{\"text\":\"{main_src}\"}}]}}"));
     c.next_diagnostics(&main_uri);
     let tree = c.request("workspace/executeCommand", &format!("{{\"command\":\"decl.showSyntaxTree\",\"arguments\":[\"{main_uri}\"]}}"));
     assert!(tree.contains("\"tree\":\"(module (import_declaration"), "decl.showSyntaxTree returns the tree: {}", &tree[..tree.len().min(160)]);
+    // the language server's fourth round: linked editing and rename of a local variable, the member-kind conversions, flipping a comparison
+    let actions_src = "type Pair = {\\n    a: int,\\n    b?: int,\\n    c = a + 1\\n}\\nconst xs = [x * 2 for x in [1, 2] if x > 0]\\nconst cmp = 3 < 4\\n";
+    c.notify("textDocument/didChange", &format!("{{\"textDocument\":{{\"uri\":\"{main_uri}\",\"version\":50}},\"contentChanges\":[{{\"text\":\"{actions_src}\"}}]}}"));
+    c.next_diagnostics(&main_uri);
+    let le = c.request("textDocument/linkedEditingRange", &at(5, 12));
+    assert_eq!(le.matches("\"start\":").count(), 3, "linked editing of a comprehension variable: {le}");
+    let lr = c.request("textDocument/rename", &format!("{{\"textDocument\":{{\"uri\":\"{main_uri}\"}},\"position\":{{\"line\":5,\"character\":12}},\"newName\":\"y\"}}"));
+    assert_eq!(lr.matches("\"newText\":\"y\"").count(), 3, "rename of a local variable: {lr}");
+    let conv = c.request("textDocument/codeAction", &format!("{{\"textDocument\":{{\"uri\":\"{main_uri}\"}},\"range\":{{\"start\":{{\"line\":3,\"character\":4}},\"end\":{{\"line\":3,\"character\":4}}}},\"context\":{{\"diagnostics\":[]}}}}"));
+    for t in ["annotate: int", "make hidden (x$)", "export Pair"] {
+        assert!(conv.contains(&format!("\"title\":\"{t}\"")), "assists on a derived member ({t}): {conv}");
+    }
+    let flip = c.request("textDocument/codeAction", &format!("{{\"textDocument\":{{\"uri\":\"{main_uri}\"}},\"range\":{{\"start\":{{\"line\":6,\"character\":14}},\"end\":{{\"line\":6,\"character\":14}}}},\"context\":{{\"diagnostics\":[]}}}}"));
+    assert!(flip.contains("\"title\":\"flip the comparison\"") && flip.contains("\"newText\":\"4 > 3\""), "assist: flip the comparison: {flip}");
+    // the language server's sixth round: the remaining quick fixes, the inline / extract-type / unit / reorder assists, the context-variable hints
+    let actions2_src = "type Parent = { name: string, port: 1..65535 }\ntype Child = Parent { port: int }\ntype Item = { label = $parent.name }\nconst K = 2\nconst twice = K + K\nconst dur = 250ms\ntype R = {\n    d = 1,\n    a: int\n}\ntype Ctx = { $parent: ref<Owner2>, tag = $parent.name }\ntype Owner2 = { name: string, c: Ctx }\n";
+    c.notify("textDocument/didChange", &format!("{{\"textDocument\":{{\"uri\":\"{main_uri}\",\"version\":60}},\"contentChanges\":[{{\"text\":\"{actions2_src}\"}}]}}"));
+    let d2 = c.next_diagnostics(&main_uri);
+    let diags2 = d2.split("\"diagnostics\":").nth(1).unwrap().trim_end_matches("}}").to_string();
+    let action_at = |c: &mut Client, line: usize, ch: usize, diags: &str| c.request("textDocument/codeAction", &format!("{{\"textDocument\":{{\"uri\":\"{main_uri}\"}},\"range\":{{\"start\":{{\"line\":{line},\"character\":{ch}}},\"end\":{{\"line\":{line},\"character\":{ch}}}}},\"context\":{{\"diagnostics\":{diags}}}}}"));
+    let ov = action_at(&mut c, 1, 22, &diags2);
+    assert!(ov.contains("\"title\":\"use the parent's declaration: port: 1..65535\""), "quick fix: the widened override: {ov}");
+    let cv = action_at(&mut c, 2, 22, &diags2);
+    assert!(cv.contains("\"title\":\"declare $parent: ref<{ ... }> on Item\""), "quick fix: the undeclared context variable: {cv}");
+    let inl = action_at(&mut c, 3, 6, "[]");
+    assert!(inl.contains("\"title\":\"inline K\"") && inl.matches("\"newText\":\"2\"").count() == 2, "assist: inline the constant: {inl}");
+    let un = action_at(&mut c, 5, 12, "[]");
+    assert!(un.contains("\"title\":\"convert to 0.25s\""), "assist: the unit literal in its base unit: {un}");
+    let ro = action_at(&mut c, 6, 5, "[]");
+    assert!(ro.contains("\"title\":\"reorder the members canonically\"") && ro.contains("\"newText\":\"{\\n    a: int\\n    d = 1\\n}\""), "assist: reorder the members: {ro}");
+    c.notify("workspace/didChangeConfiguration", "{\"settings\":{\"decl\":{\"inlayHints\":{\"contextVariables\":true}}}}");
+    c.next_diagnostics(&main_uri);
+    let ch = c.request("textDocument/inlayHint", &format!("{{\"textDocument\":{{\"uri\":\"{main_uri}\"}},\"range\":{{\"start\":{{\"line\":0,\"character\":0}},\"end\":{{\"line\":30,\"character\":0}}}}}}"));
+    assert!(ch.contains("\"label\":\": ref<Owner2>\""), "inlay hint: the context variable's bound: {ch}");
     c.request("shutdown", "{}");
     c.notify("exit", "{}");
     drop(c.stdin);
@@ -371,4 +405,42 @@ fn api_matches_the_command_line() {
     assert_eq!(format_source("const x=1+2\n").unwrap(), "const x = 1 + 2\n");
     assert!(format_source("type T = {").is_err());
     let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// The REPL corpus (tests/repl/<case>/): every session's transcript, byte for
+/// byte, and the incremental step's contract (docs/tooling/02_repl.md §6) —
+/// a session replayed with DECL_FULL_RECOMPUTE=1 prints the same bytes.
+#[test]
+fn repl_corpus_incremental_equals_full() {
+    let root = root();
+    let mut cases: Vec<PathBuf> = std::fs::read_dir(root.join("tests/repl")).unwrap().flatten().map(|e| e.path()).filter(|p| p.join("session.txt").exists()).collect();
+    cases.sort();
+    assert!(!cases.is_empty());
+    for case in cases {
+        let name = case.file_name().unwrap().to_string_lossy().to_string();
+        let mut args: Vec<String> = vec!["repl".into()];
+        if case.join("main.decl").exists() {
+            args.push(format!("tests/repl/{name}/main.decl"));
+        }
+        args.push("--script".into());
+        args.push(format!("tests/repl/{name}/session.txt"));
+        let run = |full: bool| {
+            let mut cmd = Command::new(env!("CARGO_BIN_EXE_decl"));
+            cmd.args(&args).current_dir(&root);
+            if full {
+                cmd.env("DECL_FULL_RECOMPUTE", "1");
+            } else {
+                cmd.env_remove("DECL_FULL_RECOMPUTE");
+            }
+            let out = cmd.output().unwrap();
+            (out.status.code(), String::from_utf8_lossy(&out.stdout).to_string())
+        };
+        let (code, inc) = run(false);
+        let (code_full, full) = run(true);
+        let want = std::fs::read_to_string(case.join("transcript.txt")).unwrap();
+        assert_eq!(inc, want, "{name}: the transcript");
+        assert_eq!(code, Some(if want.lines().any(|l| l.starts_with("error: ")) { 1 } else { 0 }), "{name}: the exit status");
+        assert_eq!(inc, full, "{name}: incremental == full recomputation");
+        assert_eq!(code, code_full, "{name}: the exit status under full recomputation");
+    }
 }

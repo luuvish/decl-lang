@@ -8,12 +8,13 @@ import type { Decl, ElseTail, Expr, Loc, MemberAst, TemplateParts, TypeAst } fro
 // wasm lives. Node callers use node.ts (which locates it on disk);
 // browsers pass URLs. Everything else here runs anywhere.
 let language: Language | null = null;
-/** `grammar`: the tree-sitter-decl.wasm path or URL; `runtime`: web-tree-sitter's own tree-sitter.wasm (optional) */
-export type ParserOptions = { grammar: string; runtime?: string };
+/** `grammar`: the tree-sitter-decl.wasm path, URL, or bytes; `runtime`: web-tree-sitter's own tree-sitter.wasm (a path or URL, or its bytes) */
+export type ParserOptions = { grammar: string | Uint8Array; runtime?: string | Uint8Array };
 export async function initParser(opts: ParserOptions): Promise<void> {
   if (language) return;
-  await Parser.init(opts.runtime ? { locateFile: () => opts.runtime! } : undefined);
-  language = await Language.load(opts.grammar);
+  const rt = opts.runtime;
+  await Parser.init(rt === undefined ? undefined : typeof rt === 'string' ? { locateFile: () => rt } : { wasmBinary: rt });
+  language = await Language.load(opts.grammar as any);
 }
 /** the loaded grammar (the formatter and the language server parse with it too) */
 export function getLanguage(): Language {

@@ -37,14 +37,25 @@ function firstDiff(a: string, b: string): string {
   return '';
 }
 
+console.log('== repl: the incremental step is observationally identical to a full recomputation ==');
+for (const c of readdirSync(join(root, 'tests/repl')).sort()) {
+  const dir = join(root, 'tests/repl', c);
+  if (!existsSync(join(dir, 'session.txt'))) continue;
+  const entry = existsSync(join(dir, 'main.decl')) ? [`tests/repl/${c}/main.decl`] : [];
+  const inc = run([...entry, '--script', `tests/repl/${c}/session.txt`]);
+  const full = spawnSync('node', [cli, 'repl', ...entry, '--script', `tests/repl/${c}/session.txt`], { encoding: 'utf8', cwd: root, env: { ...process.env, DECL_FULL_RECOMPUTE: '1' } });
+  check(`${c}: incremental == full`, inc.out === full.stdout && inc.code === (full.status ?? -1), firstDiff(full.stdout, inc.out));
+}
+
 console.log('== repl: files, the clock, and the command line ==');
 {
   const dir = mkdtempSync(join(tmpdir(), 'decl-repl-'));
   for (const f of ['main.decl', 'doc.json']) copyFileSync(join(root, 'tests/repl/documents', f), join(dir, f));
   const session = [
     ':bind deployed=doc.json',
-    ':update deployed.port = 9100',
     'y = deployed.port + 1',
+    ':update deployed.port = 9100',
+    'deployed.port',                    // a question after the edit: the incremental step
     ':save deployed=saved.json',
     ':write scratch.decl',
     ':history log.txt',
@@ -55,8 +66,8 @@ console.log('== repl: files, the clock, and the command line ==');
   check('files: session runs clean', r.code === 0, r.out + r.err);
   check(':save writes the edited document', readFileSync(join(dir, 'saved.json'), 'utf8') === '{"port":9100,"name":"doc"}\n');
   check(':write writes the scratch module', readFileSync(join(dir, 'scratch.decl'), 'utf8') === 'output y: 2..65536 = deployed.port + 1\n', readFileSync(join(dir, 'scratch.decl'), 'utf8'));
-  check(':history file writes a replayable session', readFileSync(join(dir, 'log.txt'), 'utf8') === ':bind deployed=doc.json\n:update deployed.port = 9100\ny = deployed.port + 1\n');
-  check(':time reports milliseconds', /^total \d+\.\d ms \(load \d+\.\d ms, check \d+\.\d ms, bind \d+\.\d ms, evaluate \d+\.\d ms\)$/m.test(r.out), r.out);
+  check(':history file writes a replayable session', readFileSync(join(dir, 'log.txt'), 'utf8') === ':bind deployed=doc.json\ny = deployed.port + 1\n:update deployed.port = 9100\n');
+  check(':time reports milliseconds and the incremental step', /^total \d+\.\d ms \(load \d+\.\d ms, check \d+\.\d ms, bind \d+\.\d ms, evaluate \d+\.\d ms\), recomputed \d+ of \d+ slots$/m.test(r.out), r.out);
   // the written log replays to the same state
   const again = run(['main.decl', '--script', 'log.txt'], { cwd: dir });
   check('the written log replays', again.code === 0 && again.out.split('\n').every(l => !l.startsWith('error')), again.out);

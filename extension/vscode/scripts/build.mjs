@@ -16,12 +16,25 @@ await build({
   outfile: join(root, 'dist/extension.js'),
   sourcemap: true,
 });
+// the browser entry (vscode.dev / github.dev): the worker server beside it
+await build({
+  entryPoints: [join(root, 'src/web.ts')],
+  bundle: true, platform: 'browser', format: 'cjs', target: 'es2022',
+  external: ['vscode'],
+  outfile: join(root, 'dist/web.js'),
+  sourcemap: true,
+});
+// the TextMate grammar is the site's; it must agree with the tree-sitter grammar's keywords
+const { checkGrammar } = await import(join(root, '../../site/scripts/check-grammar.mjs'));
+console.log(`grammar check: ${checkGrammar()} keywords agree`);
 mkdirSync(join(root, 'syntaxes'), { recursive: true });
 copyFileSync(join(root, '../../site/grammars/decl.tmLanguage.json'), join(root, 'syntaxes/decl.tmLanguage.json'));
 mkdirSync(join(root, 'server'), { recursive: true });
-for (const f of ['lsp.js', 'cli.js', 'tree-sitter-decl.wasm', 'tree-sitter.wasm']) {
+// the bundles are ES modules: they keep that as .mjs inside this
+// CommonJS package (the client forks the server with node)
+for (const [f, to] of [['lsp.js', 'lsp.mjs'], ['cli.js', 'cli.mjs'], ['lsp-web.js', 'lsp-web.mjs'], ['tree-sitter-decl.wasm', 'tree-sitter-decl.wasm'], ['tree-sitter.wasm', 'tree-sitter.wasm']]) {
   const src = join(root, '../../decl-ts/dist', f);
   if (!existsSync(src)) throw new Error(`${src} missing: run \`npm run build -w decl-lang\` first`);
-  copyFileSync(src, join(root, 'server', f));
+  copyFileSync(src, join(root, 'server', to));
 }
-console.log('built dist/extension.js, syntaxes/, server/');
+console.log('built dist/extension.js, dist/web.js, syntaxes/, server/');

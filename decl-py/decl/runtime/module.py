@@ -8,7 +8,7 @@ from typing import Any, Optional
 
 from .engine import Engine
 from .parse import parse_source
-from .semantics import Env, Scope
+from .semantics import Env, Scope, sort_diags
 
 
 class Module:
@@ -197,19 +197,16 @@ def run_universe(mods: list, entry: Module, binds: Optional[list] = None) -> dic
         for o in m.env.outputs:
             sc = Scope(None, {}, o["name"], m.env)
             eng.bind_root(o["name"], o["expr"], m.env.resolve(o["type"]), sc, True)
-    for v in list(entry.env.roots.values()):
-        eng.force_all(v, False)
+    eng.force_all_roots(False)
     eng.phase = 2
     i = 0
     while i < len(eng.deferred_slots):
         inst, name = eng.deferred_slots[i]
         eng.force_slot_safe(inst, name)
         i += 1
-    for v in list(entry.env.roots.values()):
-        eng.force_all(v, True)
+    eng.bind_deferred_roots()
+    eng.force_all_roots(True)
     eng.validate_all("")
+    # §6.7: evaluation- and validation-time diagnostics in (path, id) order
+    entry.env.diagnostics[:] = sort_diags(entry.env.diagnostics)
     return {"eng": eng, "diags": entry.env.diagnostics}
-
-
-def sort_diags(diags: list) -> list:
-    return sorted(diags, key=lambda d: (d.get("path", ""), d.get("id") or ""))

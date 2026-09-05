@@ -19,16 +19,19 @@ const previewEmitter = new vscode.EventEmitter<vscode.Uri>();
 const cfg = () => vscode.workspace.getConfiguration('decl');
 
 // ---------------- the server ----------------
-function serverCommand(context: vscode.ExtensionContext): { command: string; args: string[] } {
-  const configured = (cfg().get<string>('server.path') ?? '').trim();
+// the bundled server is a JavaScript module run by the extension host's
+// Node (VS Code forks it as node); a configured server is an executable
+function serverOptionsOf(context: vscode.ExtensionContext): { options: ServerOptions; label: string } {
+  // DECL_SERVER_PATH (the tests): the same suite against another implementation's decl-lsp
+  const configured = (process.env.DECL_SERVER_PATH ?? cfg().get<string>('server.path') ?? '').trim();
   const args = cfg().get<string[]>('server.args') ?? [];
-  if (configured) return { command: configured, args };
-  return { command: process.execPath, args: [context.asAbsolutePath(path.join('server', 'lsp.js')), ...args] };
+  if (configured) return { options: { command: configured, args, transport: TransportKind.stdio }, label: configured };
+  const module = context.asAbsolutePath(path.join('server', 'lsp.mjs'));
+  return { options: { module, args, transport: TransportKind.stdio }, label: `bundled ${module}` };
 }
 
 async function startClient(context: vscode.ExtensionContext) {
-  const { command, args } = serverCommand(context);
-  const serverOptions: ServerOptions = { command, args, transport: TransportKind.stdio };
+  const { options: serverOptions, label: command } = serverOptionsOf(context);
   const clientOptions: LanguageClientOptions = {
     documentSelector: [{ scheme: 'file', language: 'decl' }],
     outputChannel: output,
@@ -37,6 +40,21 @@ async function startClient(context: vscode.ExtensionContext) {
       fileEvents: vscode.workspace.createFileSystemWatcher('**/{*.decl,decl.toml,decl.lock,*.json}'),
     },
     initializationOptions: { inputs: cfg().get('inputs') ?? {} },
+    // the server's commands are registered by the client; the editor-side
+    // behavior of the ones the extension gives a face to lives here, so a
+    // lens, a palette entry, or a keybinding all open the preview
+    middleware: {
+      executeCommand: async (command, args, next) => {
+        switch (command) {
+          case 'decl.evaluate': return openPreview(typeof args?.[1] === 'string' ? args[1] : null);
+          case 'decl.validate': return validate();
+          case 'decl.trace': return trace();
+          case 'decl.showSyntaxTree': return showSyntaxTree();
+          case 'decl.reloadWorkspace': { const r = await next(command, args); refreshPreviews(); return r; }
+          default: return next(command, args);
+        }
+      },
+    },
   };
   client = new LanguageClient('decl', 'Decl Language Server', serverOptions, clientOptions);
   status.text = '$(sync~spin) Decl';
@@ -48,6 +66,7 @@ async function startClient(context: vscode.ExtensionContext) {
   } catch (e: any) {
     status.text = '$(error) Decl';
     status.tooltip = String(e?.message ?? e);
+    if (process.env.DECL_EXTENSION_LOG) { try { fs.appendFileSync(process.env.DECL_EXTENSION_LOG, `start failed (${command}): ${e?.stack ?? e}\n`); } catch { /* the log is best effort */ } }
     vscode.window.showErrorMessage(`Decl: the language server did not start (${command}): ${e?.message ?? e}`, 'Show Output').then(pick => { if (pick) output.show(); });
   }
 }
@@ -267,7 +286,7 @@ function declCli(context: vscode.ExtensionContext): string[] {
     if (fs.existsSync(beside)) return [beside];
     return ['decl'];
   }
-  return [process.execPath, context.asAbsolutePath(path.join('server', 'cli.js'))];
+  return [process.execPath, context.asAbsolutePath(path.join('server', 'cli.mjs'))];
 }
 let repl: vscode.Terminal | undefined;
 function openRepl(context: vscode.ExtensionContext) {
@@ -343,18 +362,13 @@ export async function activate(context: vscode.ExtensionContext) {
     vscode.workspace.registerTextDocumentContentProvider(SYNTAX_SCHEME, new SyntaxTreeProvider()),
     vscode.window.registerTreeDataProvider('decl.trace', traceProvider),
     fixtureController(context),
-    vscode.commands.registerCommand('decl.showSyntaxTree', showSyntaxTree),
     vscode.tasks.registerTaskProvider('decl', new DeclTaskProvider(context)),
     vscode.commands.registerCommand('decl.openOutputPreview', () => openPreview(null)),
-    vscode.commands.registerCommand('decl.evaluate', (_uri?: string, root?: string) => openPreview(root ?? null)),
-    vscode.commands.registerCommand('decl.validate', validate),
     vscode.commands.registerCommand('decl.bindInput', bindInput),
     vscode.commands.registerCommand('decl.unbindInput', unbindInput),
-    vscode.commands.registerCommand('decl.trace', trace),
     vscode.commands.registerCommand('decl.runFixtures', () => runFixtures(context)),
     vscode.commands.registerCommand('decl.openRepl', () => openRepl(context)),
     vscode.commands.registerCommand('decl.sendToRepl', () => sendToRepl(context)),
-    vscode.commands.registerCommand('decl.reloadWorkspace', async () => { await execute('decl.reloadWorkspace'); refreshPreviews(); }),
     vscode.commands.registerCommand('decl.restartServer', async () => { await stopClient(); await startClient(context); }),
     vscode.commands.registerCommand('decl.selectServer', () => selectServer(context)),
     vscode.commands.registerCommand('decl.showOutput', () => output.show()),

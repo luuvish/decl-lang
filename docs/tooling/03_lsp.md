@@ -148,8 +148,12 @@ evaluation:
   them), imports and their `as` names, units. It refuses a rename that
   would shadow (D27) or collide within a record's single name space
   (D19), and it renames a `Type.assert` id with its assert.
-- **Linked editing**: a map key and the `name` restating it in the same
-  literal; a type and the `else` diagnostic id derived from it.
+- **Linked editing**: a local variable — a comprehension variable, a
+  lambda parameter, a match arm's variable, a function parameter — with
+  its uses in its scope, so retyping the binding retypes the uses;
+  rename covers the same locals. (A map key and the `name` restating it,
+  and a type with the diagnostic id derived from it, are candidates for
+  later.)
 
 ## 9. Formatting, folding, and typing
 
@@ -292,9 +296,23 @@ then signature help and workspace symbols (§5, §7), selection ranges
 inlay hints — inferred types, parameter names, base-unit values (§11) —
 the call and type hierarchies (§7), the quick fixes *import the name*
 and *add the missing member* and the assist *annotate* (§10), and
-`decl.showSyntaxTree` (§12). Open: linked editing, on-type formatting,
-the remaining quick fixes and assists, the value and context-variable
-hints, `$/progress`, the virtual documents beyond the syntax tree.
+`decl.showSyntaxTree` (§12); then linked editing and rename of local
+variables (§8), the value hints (§11), the quick fixes *qualify as
+ns.X*, *declare X on T*, *use ?.*, *supply a fallback with ??*,
+*parenthesize the ?? expression*, *add the missing arms*, and the
+assists — the member-kind conversions, *export*, *generate an output /
+an input*, *the fixture header*, *fill the required members*, *flip the
+comparison*, *extract to a constant / a derived member* (§10) — and
+error replies for a request whose handler fails; then the quick fixes
+*declare $x on T* / *declare $x as ref<T>* (E4094), *use the parent's
+declaration* (E4030/E4032), *add a discriminant `kind`* (E4013), *make
+T.m defaulted* (E4005), the assists *inline* (a constant), *extract to a
+named type*, *convert to the base unit*, *reorder the members
+canonically*, and the context-variable hints (§11). The server's core
+is transport-neutral (`lsp-core.ts`): stdio under Node, a web worker in
+the browser (§1). Open: on-type formatting, the `else error` ↔
+`diagnostic` and `if` ↔ `match` conversions, inlining a member,
+`$/progress`, the virtual documents beyond the syntax tree.
 
 ## 18. Verification
 

@@ -20,7 +20,29 @@ pub struct Engine {
     no_reg: Cell<u32>,
     phase: Cell<u8>,
     /// inputs whose fallback failed to bind: later demands are tainted, not re-reported
-    failed_inputs: RefCell<HashSet<String>>,
+    pub failed_inputs: RefCell<HashSet<String>>,
+    // ---- dependency tracking (Phase 6 foundations; docs/tooling/02_repl.md §6) ----
+    // every evaluation step — a slot being computed (`path.member`), a root
+    // being bound (`root:name`), an instance's asserts (`assert:path`) —
+    // records what it read: slots, roots, and `$referrers` queries by type
+    // (`referrers:Type`); diagnostics carry the step that produced them
+    pub reads: RefCell<HashMap<String, HashSet<String>>>,
+    pub computing: RefCell<Vec<String>>,
+    pub slots_by_key: RefCell<HashMap<String, (Inst, String)>>,
+    /// roots whose binding deferred through `$referrers` in phase 1: bound again after the deferred slots
+    pub deferred_roots: RefCell<Vec<DeferredRoot>>,
+}
+
+/// a root binding kept for phase 2 (its source owned)
+pub struct DeferredRoot {
+    pub name: String,
+    pub src: OwnedRootSrc,
+    pub rt: RT,
+    pub sc: Scope,
+}
+pub enum OwnedRootSrc {
+    Expr(Rc<Expr>),
+    Doc(Value),
 }
 
 /// what an evaluation root is bound from: an output's expression, or an
@@ -136,7 +158,39 @@ pub fn fmt_f(n: f64) -> String {
 impl Engine {
     /// an engine without registering itself as the environment's evaluator
     pub fn bare(env: Rc<Env>) -> Rc<Engine> {
-        Rc::new(Engine { env, deferred_slots: RefCell::new(vec![]), no_reg: Cell::new(0), phase: Cell::new(1), failed_inputs: RefCell::new(HashSet::new()) })
+        let eng = Rc::new(Engine {
+            env: env.clone(),
+            deferred_slots: RefCell::new(vec![]),
+            no_reg: Cell::new(0),
+            phase: Cell::new(1),
+            failed_inputs: RefCell::new(HashSet::new()),
+            reads: RefCell::new(HashMap::new()),
+            computing: RefCell::new(vec![]),
+            slots_by_key: RefCell::new(HashMap::new()),
+            deferred_roots: RefCell::new(vec![]),
+        });
+        let w = Rc::downgrade(&eng);
+        *env.tagger.borrow_mut() = Some(Rc::new(move || w.upgrade().and_then(|e| e.computing.borrow().last().cloned())));
+        eng
+    }
+    pub fn slot_key(inst: &Inst, name: &str) -> String {
+        format!("{}.{}", path_str(&inst.borrow().path, None), name)
+    }
+    pub fn record(&self, read: String) {
+        let top = self.computing.borrow().last().cloned();
+        if let Some(top) = top {
+            self.reads.borrow_mut().entry(top).or_default().insert(read);
+        }
+    }
+    pub fn step<T>(&self, key: &str, f: impl FnOnce() -> T) -> T {
+        self.computing.borrow_mut().push(key.to_string());
+        self.reads.borrow_mut().insert(key.to_string(), HashSet::new());
+        let r = f();
+        self.computing.borrow_mut().pop();
+        r
+    }
+    pub fn phase(&self) -> u8 {
+        self.phase.get()
     }
     pub fn new(env: Rc<Env>) -> Rc<Engine> {
         let eng = Self::bare(env.clone());
@@ -192,6 +246,7 @@ impl Engine {
                     return Ok(Value::Std(Rc::new(vec![])));
                 }
                 if let Some(v) = self.env.root(name) {
+                    self.record(format!("root:{name}"));
                     return Ok(v);
                 }
                 if let Some(v) = self.demand_input(&menv, name)? {
@@ -481,6 +536,7 @@ impl Engine {
                 return Ok(Some(v));
             }
             if let Some(v) = self.env.root(&im.name) {
+                self.record(format!("root:{}", im.name));
                 return Ok(Some(v)); // imported output/input root
             }
             return self.demand_input(&im.env, &im.name);
@@ -499,6 +555,7 @@ impl Engine {
             return Ok(v);
         }
         if let Some(v) = self.env.root(&ex.name) {
+            self.record(format!("root:{}", ex.name));
             return Ok(v);
         }
         if let Some(v) = self.demand_input(&ex.env, &ex.name)? {
@@ -513,6 +570,7 @@ impl Engine {
     pub fn demand_input(&self, menv: &Rc<Env>, name: &str) -> R<Option<Value>> {
         let decl = menv.inputs.borrow().get(name).cloned();
         let Some((ty_ast, fallback)) = decl else { return Ok(None) };
+        self.record(format!("root:{name}"));
         if let Some(v) = self.env.root(name) {
             return Ok(Some(v));
         }
@@ -521,11 +579,11 @@ impl Engine {
         }
         let Some(fallback) = fallback else { return err_code(format!("input {name} is not bound"), "E5006") };
         let sc = Scope::new(name, Some(menv.clone()));
-        let bound = (|| -> R<Value> {
+        let bound = self.step(&format!("root:{name}"), || -> R<Value> {
             let v = self.ev(&fallback, &sc)?;
             let rt = menv.resolve(&ty_ast, None).or_else(err)?;
             self.bind(v, &rt, &[Seg::Name(name.to_string())], None, &sc)
-        })();
+        });
         match bound {
             Ok(v) => {
                 self.env.set_root(name, v.clone());
@@ -543,17 +601,36 @@ impl Engine {
     // document / fallback): a failing root is reported at its own path and
     // left unset — its demanders are tainted, nothing else is
     pub fn bind_root(&self, name: &str, src: RootSrc, rt: &RT, sc: &Scope) {
-        let bound = (|| -> R<Value> {
+        let keep = match &src {
+            RootSrc::Expr(e) => OwnedRootSrc::Expr((*e).clone()),
+            RootSrc::Doc(v) => OwnedRootSrc::Doc(v.clone()),
+        };
+        let bound = self.step(&format!("root:{name}"), || -> R<Value> {
             let raw = match src {
                 RootSrc::Expr(e) => self.ev(e, sc)?,
                 RootSrc::Doc(v) => v,
             };
             self.bind(raw, rt, &[Seg::Name(name.to_string())], None, sc)
-        })();
+        });
         match bound {
             Ok(v) => self.env.set_root(name, v),
-            Err(Fail::Eval(e)) => self.env.report(Diag { severity: "error".into(), id: None, message: e.msg, path: name.to_string(), code: e.code, loc: None }),
-            Err(Fail::Taint) | Err(Fail::Defer) => {}
+            Err(Fail::Eval(e)) => self.env.report(Diag { severity: "error".into(), id: None, message: e.msg, path: name.to_string(), code: e.code, loc: None, by: None }),
+            Err(Fail::Defer) => {
+                if self.phase.get() < 2 {
+                    self.deferred_roots.borrow_mut().push(DeferredRoot { name: name.to_string(), src: keep, rt: rt.clone(), sc: sc.clone() });
+                }
+            }
+            Err(Fail::Taint) => {}
+        }
+    }
+    /// phase 2: the roots that deferred are bound again (after the deferred slots)
+    pub fn bind_deferred_roots(&self) {
+        let pending: Vec<DeferredRoot> = self.deferred_roots.borrow_mut().drain(..).collect();
+        for d in pending {
+            match &d.src {
+                OwnedRootSrc::Expr(e) => self.bind_root(&d.name, RootSrc::Expr(e), &d.rt, &d.sc),
+                OwnedRootSrc::Doc(v) => self.bind_root(&d.name, RootSrc::Doc(v.clone()), &d.rt, &d.sc),
+            }
         }
     }
 
@@ -1167,6 +1244,7 @@ impl Engine {
         if self.phase.get() < 2 {
             return Err(Fail::Defer);
         }
+        self.record(format!("referrers:{type_name}"));
         let Some(self_inst) = &sc.inst else { return err("$referrers outside a record") };
         let target = self_inst.borrow().path.clone();
         let mut out: Vec<Inst> = vec![];
@@ -1223,7 +1301,7 @@ impl Engine {
             match &*tail {
                 Some(Tail::Inline { template, .. }) => {
                     let text: String = template.iter().filter_map(|p| if let TPart::Text(t) = p { Some(t.as_str()) } else { None }).collect();
-                    self.env.report(Diag { severity: "error".into(), id: rt.name.borrow().clone(), message: text, path: path_str(path, None), code: Some("E4001".into()), loc: None });
+                    self.env.report(Diag { severity: "error".into(), id: rt.name.borrow().clone(), message: text, path: path_str(path, None), code: Some("E4001".into()), loc: None, by: None });
                 }
                 _ => self.env.report(Diag::error(msg, path_str(path, None), Some(code.unwrap_or("E4001")))),
             }
@@ -1856,14 +1934,16 @@ impl Engine {
         let (state, compute) = {
             let b = inst.borrow();
             let Some(s) = b.slot(name) else { return err(format!("no member {name}")) };
-            match s.state {
-                SlotState::Ok => return Ok(s.value.clone()),
-                SlotState::Absent => return Ok(Value::Absent),
-                SlotState::Invalid => return Err(Fail::Taint),
-                _ => {}
-            }
             (s.state, s.compute.clone())
         };
+        let key = Engine::slot_key(inst, name);
+        self.record(key.clone());
+        match state {
+            SlotState::Ok => return Ok(inst.borrow().slot(name).unwrap().value.clone()),
+            SlotState::Absent => return Ok(Value::Absent),
+            SlotState::Invalid => return Err(Fail::Taint),
+            _ => {}
+        }
         let mut mp = inst.borrow().path.clone();
         mp.push(Seg::Name(name.to_string()));
         if state == SlotState::Forcing {
@@ -1872,8 +1952,9 @@ impl Engine {
             return Err(Fail::Taint);
         }
         inst.borrow_mut().slot_mut(name).unwrap().state = SlotState::Forcing;
+        self.slots_by_key.borrow_mut().insert(key.clone(), (inst.clone(), name.to_string()));
         let res = match &compute {
-            Some(c) => self.run_compute(inst, c),
+            Some(c) => self.step(&key, || self.run_compute(inst, c)),
             None => Ok(Value::Null),
         };
         match res {
@@ -1897,7 +1978,7 @@ impl Engine {
                         s.state = SlotState::Invalid;
                     }
                 }
-                self.env.report(Diag { severity: "error".into(), id: None, message: e.msg, path: path_str(&mp, None), code: e.code, loc: None });
+                self.env.report(Diag { severity: "error".into(), id: None, message: e.msg, path: path_str(&mp, None), code: e.code, loc: None, by: None });
                 Err(Fail::Taint)
             }
             Err(Fail::Taint) => {
@@ -1971,10 +2052,27 @@ impl Engine {
     }
 
     /// force every root, run the $referrers phase, then the assertion pass
-    pub fn drive(&self, env: &Env) {
-        for v in env.root_values() {
+    /// force every root, the roots demanded on the way included (an input
+    /// bound through its fallback while another root is forced becomes a
+    /// root too, and is forced in the same pass — the reference walks the
+    /// live root map)
+    pub fn force_roots(&self, env: &Env) {
+        let mut i = 0;
+        loop {
+            let v = {
+                let rc = env.roots.borrow().clone();
+                let roots = rc.borrow();
+                if i >= roots.len() {
+                    break;
+                }
+                roots[i].1.clone()
+            };
             self.force_all(&v);
+            i += 1;
         }
+    }
+    pub fn drive(&self, env: &Env) {
+        self.force_roots(env);
         self.phase.set(2);
         let mut i = 0;
         loop {
@@ -1988,20 +2086,38 @@ impl Engine {
             self.force_slot_safe(&item.0, &item.1);
             i += 1;
         }
-        for v in env.root_values() {
-            self.force_all(&v);
-        }
+        self.bind_deferred_roots();
+        self.force_roots(env);
         self.validate_all("");
     }
 
     pub fn validate_all(&self, root_name: &str) {
         for inst in self.env.registry_snapshot() {
-            let asserts = match &inst.borrow().rt.k {
-                RTk::Rec(r) => r.asserts.borrow().clone(),
-                _ => vec![],
-            };
-            self.run_asserts(&inst, &asserts, root_name);
+            self.validate_inst(&inst, root_name);
         }
+    }
+    pub fn validate_inst(&self, inst: &Inst, root_name: &str) {
+        let asserts = match &inst.borrow().rt.k {
+            RTk::Rec(r) => r.asserts.borrow().clone(),
+            _ => vec![],
+        };
+        let key = format!("assert:{}", path_str(&inst.borrow().path, None));
+        self.step(&key, || self.run_asserts(inst, &asserts, root_name));
+    }
+    /// reset a computed slot so that it is computed again (dependency tracking)
+    pub fn reset_slot(&self, key: &str) -> bool {
+        let entry = self.slots_by_key.borrow().get(key).cloned();
+        let Some((inst, name)) = entry else { return false };
+        let mut b = inst.borrow_mut();
+        let Some(s) = b.slot_mut(&name) else { return false };
+        if s.compute.is_none() {
+            return false;
+        }
+        if s.state == SlotState::Ok || s.state == SlotState::Invalid {
+            s.state = SlotState::Unforced;
+            s.value = Value::Null;
+        }
+        true
     }
 
     fn run_asserts(&self, inst: &Inst, asserts: &[AssertItem], root_name: &str) {
@@ -2031,7 +2147,7 @@ impl Engine {
             let ok = match self.ev(&a.cond, &sc) {
                 Ok(v) => v,
                 Err(Fail::Eval(e)) => {
-                    self.env.report(Diag { severity: "error".into(), id: None, message: format!("{}: {}", a.name, e.msg), path: ipath.clone(), code: e.code, loc: None });
+                    self.env.report(Diag { severity: "error".into(), id: None, message: format!("{}: {}", a.name, e.msg), path: ipath.clone(), code: e.code, loc: None, by: None });
                     continue;
                 }
                 Err(_) => continue,
@@ -2041,7 +2157,7 @@ impl Engine {
             }
             let id = format!("{}.{}", a.origin.clone().or_else(|| type_name.clone()).unwrap_or_default(), a.name);
             match &a.tail {
-                None => self.env.report(Diag { severity: "error".into(), id: Some(id), message: format!("assert {} failed", a.name), path: ipath.clone(), code: Some("E6001".into()), loc: None }),
+                None => self.env.report(Diag { severity: "error".into(), id: Some(id), message: format!("assert {} failed", a.name), path: ipath.clone(), code: Some("E6001".into()), loc: None, by: None }),
                 Some(Tail::Inline { severity, template }) => {
                     let msg = self.render_lenient(template, &sc);
                     let code = match severity.as_str() {
@@ -2049,7 +2165,7 @@ impl Engine {
                         "warn" => "W6001",
                         _ => "I6001",
                     };
-                    self.env.report(Diag { severity: severity.clone(), id: Some(id), message: msg, path: ipath.clone(), code: Some(code.into()), loc: None });
+                    self.env.report(Diag { severity: severity.clone(), id: Some(id), message: msg, path: ipath.clone(), code: Some(code.into()), loc: None, by: None });
                 }
                 Some(Tail::Ref { name, args }) => {
                     let d = menv0.as_ref().and_then(|e| e.diags.borrow().get(name).cloned()).or_else(|| self.env.diags.borrow().get(name).cloned());
@@ -2065,7 +2181,7 @@ impl Engine {
                     let psc = Scope { inst: None, locals: Rc::new(locals), root_name: root_name.to_string(), menv: menv0.clone() };
                     let msg = self.render_lenient(&d.template, &psc);
                     let code = if d.severity == "error" { "E6001" } else { "W6001" };
-                    self.env.report(Diag { severity: d.severity.clone(), id: Some(id), message: msg, path: ipath.clone(), code: Some(code.into()), loc: None });
+                    self.env.report(Diag { severity: d.severity.clone(), id: Some(id), message: msg, path: ipath.clone(), code: Some(code.into()), loc: None, by: None });
                 }
             }
         }

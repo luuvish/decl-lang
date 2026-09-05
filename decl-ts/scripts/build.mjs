@@ -34,13 +34,13 @@ await build({
 // glue mentions Node built-ins inside `if (isNode)` branches, which stay
 // external and are never reached in a browser
 await build({
-  entryPoints: ['src/core.ts'],
+  entryPoints: ['src/core.ts', 'src/lsp-web.ts'],
   bundle: true,
   platform: 'browser',
   format: 'esm',
   target: 'es2022',
   minify: true,
-  outfile: 'dist/core.js',
+  outdir: 'dist',
   logLevel: 'info',
   external: ['fs', 'fs/promises', 'path', 'url', 'crypto', 'module', 'worker_threads', 'perf_hooks', 'os', 'util', 'child_process'],
 });

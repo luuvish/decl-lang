@@ -1,0 +1,45 @@
+# The VS Code extension's tests (docs/tooling/04_extension.md §20): the
+# suite runs inside a downloaded VS Code against the bundled reference
+# server. Separate from the gate (`verify`): it downloads an editor.
+name: extension
+
+on:
+  push:
+    branches: [main]
+    paths: ['extension/**', 'decl-ts/**', 'site/grammars/**', '.github/workflows/extension.yml']
+  pull_request:
+    paths: ['extension/**', 'decl-ts/**', 'site/grammars/**', '.github/workflows/extension.yml']
+  workflow_dispatch:
+
+jobs:
+  vscode:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - run: npm run build -w decl-lang
+      - run: xvfb-run -a npm test -w vscode-decl
+      - if: always()
+        run: cat extension/vscode/dist/test/results.txt || true
+  # the same suite against the Rust server (on demand: it builds the crate)
+  vscode-rust:
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - run: npm ci
+      - run: npm run build -w decl-lang
+      - run: cargo build --release --bin decl-lsp
+      - run: DECL_SERVER_PATH=target/release/decl-lsp xvfb-run -a npm test -w vscode-decl
+      - if: always()
+        run: cat extension/vscode/dist/test/results.txt || true
