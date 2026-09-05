@@ -273,10 +273,12 @@ and `decl-py/decl/__init__.py`, `extension/vscode/package.json`,
 Homebrew formula follows the npm publication (url and sha256).
 
 **The order**: bump, `make verify` and `make lint` green, the package
-smokes (`npm run smoke:dist`, `scripts/smoke.py`), publish the language
-packages by hand (`npm publish`, `twine upload`, `cargo publish`), then
-tag — `git tag v0.3.0 && git push origin v0.3.0` — which runs
-`release.yml`:
+smokes (`npm run smoke:dist`, `scripts/smoke.py`), then tag —
+`git tag v0.3.0 && git push origin v0.3.0` — which runs `release.yml`;
+the registries are published by the workflow itself through trusted
+publishing (no tokens: each site trusts this repository, this file, and
+an environment — `npm`, `pypi`, `crates-io`), so after the tag only the
+Homebrew formula is by hand:
 
 | Job | Builds |
 |---|---|
@@ -284,6 +286,8 @@ tag — `git tag v0.3.0 && git push origin v0.3.0` — which runs
 | `wheels` (six runners) | `cibuildwheel` for every CPython `requires-python` admits; `decl --version` in each wheel |
 | `sdist` | the source distribution, checked with twine |
 | `publish-pypi` | every wheel and the sdist to PyPI through trusted publishing (the `pypi` environment; no token), on a tag or a dispatch asking for it |
+| `publish-npm` | `decl-lang` to npm through trusted publishing, with provenance (`npm` environment); `prepublishOnly` builds, tests, and smokes the tarball first |
+| `publish-crates` | the crate to crates.io through trusted publishing (`crates-io` environment; `rust-lang/crates-io-auth-action` mints the one-time token) |
 | `vsix` | the VS Code extension; published to the Marketplace and Open VSX when the tokens exist |
 | `release` | the GitHub release with every asset, notes generated |
 

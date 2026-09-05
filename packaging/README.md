@@ -8,10 +8,10 @@ import name in Python is `decl`, and the binary is `decl` everywhere.
 | Channel | Package | Install | Status |
 |---|---|---|---|
 | GitHub release | `v0.3.0`: `decl` and `decl-lsp` for six platforms, the wheels, the `.vsix` | [releases/tag/v0.3.0](https://github.com/luuvish/decl-lang/releases/tag/v0.3.0) | **published 2026-09-05** by `release.yml` |
-| npm | `decl-lang` | `npm install -g decl-lang` | **published 2026-09-05** (0.3.0; `decl-ts/`) |
+| npm | `decl-lang` | `npm install -g decl-lang` | **published 2026-09-05** (0.3.0, by hand; from the next tag `release.yml` through trusted publishing; `decl-ts/`) |
 | PyPI | `decl-lang` | `pip install decl-lang` | **published 2026-09-05** (0.3.0: 39 wheels and the sdist, by `release.yml` through trusted publishing; `decl-py/`) |
 | Homebrew | tap `luuvish/tap`, formula `decl-lang` | `brew install luuvish/tap/decl-lang` | **published 2026-09-05**: [luuvish/homebrew-tap](https://github.com/luuvish/homebrew-tap), the formula mirrored from `homebrew/` |
-| crates.io | `decl-lang` (bins `decl`, `decl-lsp`) | `cargo install decl-lang` | **published 2026-09-05** (0.3.0; `decl-rs/`) |
+| crates.io | `decl-lang` (bins `decl`, `decl-lsp`) | `cargo install decl-lang` | **published 2026-09-05** (0.3.0, by hand; from the next tag `release.yml` through trusted publishing; `decl-rs/`) |
 | Visual Studio Marketplace, Open VSX | `luuvish.vscode-decl` (the VS Code extension, bundling npm `decl-lang`) | Extensions view: "Decl" | packaged: the `.vsix` is on the v0.3.0 release (`extension/vscode/`, [docs/tooling/04_extension.md](../docs/tooling/04_extension.md); the marketplaces need `VSCE_PAT` / `OVSX_PAT` |
 | Zed extension registry | `decl` (the Zed extension: grammar, queries, `decl-lsp` pointer) | Zed: extensions, "Decl" | packaged: the `decl-lsp` binaries are on the v0.3.0 release (`extension/zed/`, [docs/tooling/04_extension.md](../docs/tooling/04_extension.md); the registry and the download need a public repository |
 
@@ -135,17 +135,19 @@ in core as of 2026-09-02).
 2. `make verify` — every implementation's tests and the parity harness
    (`tests/parity/differential.py`): every line `same`.
 3. `cd decl-ts && npm run smoke:dist`; `cd decl-py && python scripts/smoke.py`.
-4. `npm publish` (first time: `npm login`; the name `decl-lang` is
-   unclaimed as of 2026-09-02); PyPI is published by `release.yml`
-   through trusted publishing (the `publish-pypi` job: every wheel and
-   the sdist, on a tag or on a dispatch with `publish_pypi`), so nothing
-   to run by hand — `python -m twine upload dist/*` remains the manual
-   way;
-   `cargo publish -p decl-lang --locked --allow-dirty` from the root, after
-   `npm run build -w decl-lang` (the crate packages the grammar sources and
-   the LICENSE that build copies into `decl-rs/`; they are ignored files,
-   hence `--allow-dirty`). `--dry-run` first: it packages and verifies
-   the build.
+4. The registries are published by `release.yml` through trusted
+   publishing — no tokens: npm (`publish-npm`; `prepublishOnly` builds,
+   tests, and smokes the tarball), PyPI (`publish-pypi`: every wheel and
+   the sdist), crates.io (`publish-crates`: the crate with the grammar
+   sources and LICENSE the reference build copies in, hence
+   `--allow-dirty`). Each runs on a tag, or on a dispatch that asks for
+   it (`publish_npm`, `publish_pypi`, `publish_crates`). The identities
+   are registered on each site for `luuvish/decl-lang`, `release.yml`,
+   and the environments `npm`, `pypi`, `crates-io`. By hand, when
+   needed: `npm publish --access public` in `decl-ts/` (2FA),
+   `python -m twine upload dist/*`, and `cargo publish -p decl-lang
+   --locked --allow-dirty` after `npm run build -w decl-lang`
+   (`--dry-run` first).
 5. Tag the repository: `git tag v0.3.0 && git push --tags` — the tag
    runs `.github/workflows/release.yml`, which attaches to the GitHub
    release:
