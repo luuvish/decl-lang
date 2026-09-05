@@ -423,6 +423,22 @@ ch2 = request("textDocument/inlayHint", {"textDocument": {"uri": main_uri}, "ran
 check("inlay hints: the context variable's declared bound", any(h["label"] == ": ref<Owner2>" for h in ch2), json.dumps(ch2))
 notify_server("workspace/didChangeConfiguration", {"settings": {"decl": {"inlayHints": {"contextVariables": False}}}})
 next_diagnostics(main_uri)
+# the conversions, inlining a derived member, on-type formatting
+conv_src = ('type Circle = { kind: "circle", r: int }\ntype Rect = { kind: "rect", w: int, h: int }\ntype Shape = Circle | Rect\ninput shape: Shape\n'
+            'const area = if shape.kind == "circle" then shape.r * 2 else if shape.kind == "rect" then shape.w * shape.h else 0\n'
+            'type Box = {\n    w: int,\n    h: int,\n    area = w * h,\n    big = area > 10,\n    assert fits: w <= 100 else error `too wide: ${w}`\n}\n')
+notify_server("textDocument/didChange", {"textDocument": {"uri": main_uri, "version": 70}, "contentChanges": [{"text": conv_src}]})
+next_diagnostics(main_uri)
+conv = request("textDocument/codeAction", {"textDocument": {"uri": main_uri}, "range": {"start": {"line": 4, "character": 13}, "end": {"line": 4, "character": 13}}, "context": {"diagnostics": []}})
+check("assist: convert the if chain to match", any(x["title"] == "convert to match" and x["edit"]["changes"][main_uri][0]["newText"].startswith("match shape {\n    (s: Circle) => s.r * 2") for x in conv), json.dumps([x["title"] for x in conv]))
+inl2 = request("textDocument/codeAction", {"textDocument": {"uri": main_uri}, "range": {"start": {"line": 8, "character": 4}, "end": {"line": 8, "character": 4}}, "context": {"diagnostics": []}})
+check("assist: inline the derived member", any(x["title"] == "inline area" and len(x["edit"]["changes"][main_uri]) == 2 and x["edit"]["changes"][main_uri][0]["newText"] == "(w * h)" for x in inl2), json.dumps([x["title"] for x in inl2]))
+dg = request("textDocument/codeAction", {"textDocument": {"uri": main_uri}, "range": {"start": {"line": 10, "character": 4}, "end": {"line": 10, "character": 4}}, "context": {"diagnostics": []}})
+check("assist: declare a diagnostic for the assert", any(x["title"] == "declare a diagnostic for fits" and x["edit"]["changes"][main_uri][1]["newText"] == "else fits(w)" for x in dg), json.dumps([x["title"] for x in dg]))
+notify_server("textDocument/didChange", {"textDocument": {"uri": main_uri, "version": 71}, "contentChanges": [{"text": "type T = {\nx: int,\n    }\n"}]})
+next_diagnostics(main_uri)
+otf = request("textDocument/onTypeFormatting", {"textDocument": {"uri": main_uri}, "position": {"line": 1, "character": 0}, "ch": "\n", "options": {"tabSize": 4, "insertSpaces": True}})
+check("on-type formatting indents after an opening brace", otf == [{"range": {"start": {"line": 1, "character": 0}, "end": {"line": 1, "character": 0}}, "newText": "    "}], json.dumps(otf))
 notify_server("textDocument/didChange", {"textDocument": {"uri": main_uri, "version": 41}, "contentChanges": [{"text": main_src}]})
 next_diagnostics(main_uri)
 tree = request("workspace/executeCommand", {"command": "decl.showSyntaxTree", "arguments": [main_uri]})

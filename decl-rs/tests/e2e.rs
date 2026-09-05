@@ -359,6 +359,22 @@ fn lsp_editor_session() {
     c.next_diagnostics(&main_uri);
     let ch = c.request("textDocument/inlayHint", &format!("{{\"textDocument\":{{\"uri\":\"{main_uri}\"}},\"range\":{{\"start\":{{\"line\":0,\"character\":0}},\"end\":{{\"line\":30,\"character\":0}}}}}}"));
     assert!(ch.contains("\"label\":\": ref<Owner2>\""), "inlay hint: the context variable's bound: {ch}");
+    c.notify("workspace/didChangeConfiguration", "{\"settings\":{\"decl\":{\"inlayHints\":{\"contextVariables\":false}}}}");
+    c.next_diagnostics(&main_uri);
+    // the language server's seventh round: the conversions, inlining a member, on-type formatting
+    let src3 = "type Circle = { kind: \\\"circle\\\", r: int }\\ntype Rect = { kind: \\\"rect\\\", w: int }\\ninput shape: Circle | Rect\\nconst area = if shape.kind == \\\"circle\\\" then shape.r else 0\\ntype Box = {\\n    w: int,\\n    area = w * 2,\\n    big = area > 10,\\n    assert fits: w <= 100 else error `too wide: ${w}`\\n}\\n";
+    c.notify("textDocument/didChange", &format!("{{\"textDocument\":{{\"uri\":\"{main_uri}\",\"version\":70}},\"contentChanges\":[{{\"text\":\"{src3}\"}}]}}"));
+    c.next_diagnostics(&main_uri);
+    let cm = action_at(&mut c, 3, 15, "[]");
+    assert!(cm.contains("\"title\":\"convert to match\"") && cm.contains("\"newText\":\"match shape {\\n"), "assist: convert an if chain over a discriminant to match: {cm}");
+    let im = action_at(&mut c, 6, 6, "[]");
+    assert!(im.contains("\"title\":\"inline area\"") && im.contains("\"newText\":\"(w * 2)\""), "assist: inline a derived member into its sibling uses: {im}");
+    let dg = action_at(&mut c, 8, 12, "[]");
+    assert!(dg.contains("\"title\":\"declare a diagnostic for fits\"") && dg.contains("\"newText\":\"else fits(w)\""), "assist: declare a diagnostic for an inline else: {dg}");
+    c.notify("textDocument/didChange", &format!("{{\"textDocument\":{{\"uri\":\"{main_uri}\",\"version\":71}},\"contentChanges\":[{{\"text\":\"type T = {{\\nx: int\\n}}\\n\"}}]}}"));
+    c.next_diagnostics(&main_uri);
+    let ot = c.request("textDocument/onTypeFormatting", &format!("{{\"textDocument\":{{\"uri\":\"{main_uri}\"}},\"position\":{{\"line\":1,\"character\":0}},\"ch\":\"\\n\",\"options\":{{\"tabSize\":4,\"insertSpaces\":true}}}}"));
+    assert!(ot.contains("\"newText\":\"    \"") && ot.matches("\"newText\"").count() == 1, "on-type formatting indents after an opening brace: {ot}");
     c.request("shutdown", "{}");
     c.notify("exit", "{}");
     drop(c.stdin);

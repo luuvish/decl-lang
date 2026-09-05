@@ -25,6 +25,19 @@ jobs:
       - run: xvfb-run -a npm test -w vscode-decl
       - if: always()
         run: cat extension/vscode/dist/test/results.txt || true
+  # the web extension: the browser suite in VS Code for the Web (a headless Chromium)
+  web:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - run: npx playwright install --with-deps chromium
+      - run: npm run build -w decl-lang
+      - run: npm run test:web -w vscode-decl
   # the same suite against the Rust server (on demand: it builds the crate)
   vscode-rust:
     if: github.event_name == 'workflow_dispatch'

@@ -222,10 +222,13 @@ struct State {
     hint_values: bool,
     hint_units: bool,
     hint_context_variables: bool,
+    /// a client that accepts work-done progress sees an analysis as a progress item (03_lsp.md §14)
+    progress_supported: bool,
+    progress_seq: usize,
 }
 impl Default for State {
     fn default() -> Self {
-        State { docs: vec![], overlay: HashMap::new(), analyses: HashMap::new(), last_good: HashMap::new(), inputs: vec![], hint_types: true, hint_parameter_names: true, hint_values: false, hint_units: true, hint_context_variables: false }
+        State { docs: vec![], overlay: HashMap::new(), analyses: HashMap::new(), last_good: HashMap::new(), inputs: vec![], hint_types: true, hint_parameter_names: true, hint_values: false, hint_units: true, hint_context_variables: false, progress_supported: false, progress_seq: 0 }
     }
 }
 impl State {
@@ -252,7 +255,20 @@ impl State {
             return None;
         }
         let session = Session::with_overlay(Some(&path.to_string_lossy()), Some(&self.overlay));
+        let title = format!("Decl: evaluating {}", path.file_name().map(|f| f.to_string_lossy().to_string()).unwrap_or_default());
+        let token = if self.progress_supported {
+            self.progress_seq += 1;
+            let token = format!("decl-{}", self.progress_seq);
+            send(&format!("{{\"jsonrpc\":\"2.0\",\"id\":{},\"method\":\"window/workDoneProgress/create\",\"params\":{{\"token\":{}}}}}", json_str(&format!("progress-{token}")), json_str(&token)));
+            notify("$/progress", J::obj(vec![("token", J::s(token.clone())), ("value", J::obj(vec![("kind", J::s("begin")), ("title", J::s(title)), ("cancellable", J::Bool(false))]))]));
+            Some(token)
+        } else {
+            None
+        };
         let run = session.run(Mode::Full);
+        if let Some(token) = token {
+            notify("$/progress", J::obj(vec![("token", J::s(token)), ("value", J::obj(vec![("kind", J::s("end"))]))]));
+        }
         let a = Rc::new(Analysis { text, session, run, tables: RefCell::new(HashMap::new()) });
         self.analyses.insert(uri.to_string(), a.clone());
         self.last_good.insert(uri.to_string(), a.clone());
@@ -3171,6 +3187,59 @@ fn mentions_name(e: &Rc<Expr>) -> bool {
 fn leading_spaces(line: &str) -> String {
     line.chars().take_while(|c| *c == ' ').collect()
 }
+// ---------------- on-type formatting ----------------
+// `\n`: the new line takes the previous line's indentation, one level
+// deeper after an opening bracket or a continuation point (§2.9); `}`:
+// the line dedents to the opening brace's line
+fn on_type_formatting(st: &State, uri: &str, pos: Pos, ch: &str) -> J {
+    let Some(text) = st.text(uri) else { return J::Arr(vec![]) };
+    let lines: Vec<&str> = text.split('\n').collect();
+    let line = |i: usize| lines.get(i).copied().unwrap_or("");
+    let indent_of = |s: &str| s.chars().take_while(|c| *c == ' ').count();
+    let edit = |l: usize, have: usize, want: usize| if have == want { J::Arr(vec![]) } else { J::Arr(vec![edit_json(Loc { sl: l, sc: 0, el: l, ec: have }, &" ".repeat(want))]) };
+    if ch == "\n" {
+        let prev = if pos.line >= 1 { line(pos.line - 1) } else { "" };
+        let cur = line(pos.line);
+        let body = Regex::new(r"//.*$").unwrap().replace(prev, "").trim_end().to_string();
+        let mut want = indent_of(prev);
+        if Regex::new(r"[{\[(]$").unwrap().is_match(&body) || Regex::new(r"(?:[+\-*/%<>=!&|?:,]|\bthen|\belse|\bin|\bwith|=>)$").unwrap().is_match(&body) {
+            want += 4;
+        }
+        if Regex::new(r"^\s*[}\])]").unwrap().is_match(cur) {
+            want = want.saturating_sub(4);
+        }
+        return edit(pos.line, indent_of(cur), want);
+    }
+    if ch == "}" || ch == "]" || ch == ")" {
+        let cur = line(pos.line);
+        if cur.trim() != ch {
+            return J::Arr(vec![]);
+        }
+        let close = ch.chars().next().unwrap();
+        let open = match ch { "}" => '{', "]" => '[', _ => '(' };
+        // the opening bracket's line: scan back with a depth count
+        let mut depth = 0i64;
+        for l in (0..=pos.line).rev() {
+            let s = line(l);
+            let chars: Vec<char> = s.chars().collect();
+            let end = if l == pos.line { cur.find(ch).map(|b| cur[..b].chars().count()).unwrap_or(0) } else { chars.len() };
+            for i in (0..end).rev() {
+                let c = chars[i];
+                if c == close {
+                    depth += 1;
+                } else if c == open {
+                    if depth == 0 {
+                        return edit(pos.line, indent_of(cur), indent_of(s));
+                    }
+                    depth -= 1;
+                }
+            }
+        }
+        return J::Arr(vec![]);
+    }
+    J::Arr(vec![])
+}
+
 fn code_actions(st: &mut State, uri: &str, range: (Pos, Pos), diagnostics: &[Value]) -> J {
     let Some(text) = st.text(uri).cloned() else { return J::Arr(vec![]) };
     let a = st.analysis_of(uri);
@@ -3673,6 +3742,179 @@ fn code_actions(st: &mut State, uri: &str, range: (Pos, Pos), diagnostics: &[Val
             }
         }
     }
+    // an assert's inline `else error …` into a diagnostic declaration, and back
+    let assert_member = chain.iter().find_map(|n| match n { NodeRef::Member(mm @ MemberAst::Assert { loc: Some(_), .. }) => Some(*mm), _ => None });
+    if let (Some(MemberAst::Assert { name: aname, tail: Some(tail), loc: Some(al), .. }), Some(tdl)) = (assert_member, type_decl.and_then(|d| d.loc)) {
+        let asrc = src_of(&text, *al);
+        if let Some(em) = Regex::new(r"\belse\b").unwrap().find(&asrc) {
+            let (mut line, mut col) = (al.sl, al.sc);
+            for u in asrc[..em.start()].encode_utf16() {
+                if u == '\n' as u16 { line += 1; col = 0; } else { col += 1; }
+            }
+            let tail_loc = Loc { sl: line, sc: col, el: al.el, ec: al.ec };
+            match tail {
+                Tail::Inline { severity, template } => {
+                    // the names the template reads become the parameters, typed as inferred
+                    let mut names: Vec<String> = vec![];
+                    let mut params: Vec<String> = vec![];
+                    for part in template {
+                        if let TPart::Expr(e) = part {
+                            for n in exprs_under(&NodeRef::Expr(e)) {
+                                if let Expr::Name(nm) = &*n {
+                                    if !names.contains(nm) {
+                                        names.push(nm.clone());
+                                        let ty = t.types.get(&key_of(&n)).and_then(|x| x.rt.as_ref()).map(|rt| crate::infer::type_text(Some(rt))).unwrap_or_else(|| "any".to_string());
+                                        params.push(format!("{nm}: {ty}"));
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    let tmpl = template.iter().map(|p| match p { TPart::Text(s) => s.clone(), TPart::Expr(e) => format!("${{{}}}", crate::session::expr_text(e)) }).collect::<String>();
+                    one(format!("declare a diagnostic for {aname}"), "refactor.extract", vec![
+                        insert_json(Pos { line: tdl.sl, character: 0 }, &format!("diagnostic {aname}({}) {{\n    severity = {severity}\n    message = `{tmpl}`\n}}\n", params.join(", "))),
+                        edit_json(tail_loc, &format!("else {aname}({})", names.join(", "))),
+                    ]);
+                }
+                Tail::Ref { name: dname, args } => {
+                    let dd = m.env.diags.borrow().get(dname).cloned();
+                    let declared = m.decls.iter().any(|d| matches!(&d.body, DeclBody::Diagnostic { name, .. } if name == dname));
+                    if let (Some(dd), true) = (dd, declared) {
+                        let arg_text: Vec<String> = args.iter().map(|a| expr_loc(a).map(|l| src_of(&text, l)).unwrap_or_else(|| crate::session::expr_text(a))).collect();
+                        let mut message = String::from("`");
+                        for p in &dd.template {
+                            match p {
+                                TPart::Text(s) => message.push_str(s),
+                                TPart::Expr(e) => {
+                                    let i = match &**e { Expr::Name(nm) => dd.params.iter().position(|q| &q.name == nm), _ => None };
+                                    message.push_str("${");
+                                    message.push_str(&i.and_then(|i| arg_text.get(i).cloned()).unwrap_or_else(|| crate::session::expr_text(e)));
+                                    message.push('}');
+                                }
+                            }
+                        }
+                        message.push('`');
+                        one(format!("inline the diagnostic {dname}"), "refactor.inline", vec![edit_json(tail_loc, &format!("else {} {message}", dd.severity))]);
+                    }
+                }
+            }
+        }
+    }
+    // an `if` chain over a discriminant into a `match`, and back
+    if let Some(if_expr) = chain_expr(&chain, |x| matches!(x, Expr::If { .. })) {
+        if let Some(il) = expr_loc(&if_expr) {
+            // conditions `subject.member == "lit"` on one subject and member, the union's arms telling which record each literal picks
+            let mut arms: Vec<(String, Rc<Expr>)> = vec![];
+            let mut subject: Option<Rc<Expr>> = None;
+            let mut member: Option<String> = None;
+            let mut tail_expr: Option<Rc<Expr>> = None;
+            let mut ok = true;
+            let mut cur = if_expr.clone();
+            loop {
+                let (c, tt, f) = match &*cur {
+                    Expr::If { c, t, f } => (c.clone(), t.clone(), f.clone()),
+                    _ => { tail_expr = Some(cur.clone()); break; }
+                };
+                let mut matched = false;
+                if let Expr::Bin { op, l, r } = &*c {
+                    if op == "==" {
+                        if let (Expr::Member { x, name, .. }, Expr::Lit(Value::Str(lit))) = (&**l, &**r) {
+                            match &subject {
+                                None => { subject = Some(x.clone()); member = Some(name.clone()); }
+                                Some(s) => {
+                                    if crate::session::expr_text(s) != crate::session::expr_text(x) || member.as_deref() != Some(name.as_str()) { ok = false; break; }
+                                }
+                            }
+                            arms.push((lit.clone(), tt.clone()));
+                            matched = true;
+                        }
+                    }
+                }
+                if !matched { ok = false; break; }
+                cur = f;
+            }
+            let srt = subject.as_ref().and_then(|s| t.types.get(&key_of(s))).and_then(|x| x.rt.clone());
+            if let (true, false, Some(subj), Some(mem), Some(srt)) = (ok, arms.is_empty(), subject.as_ref(), member.as_ref(), srt.as_ref()) {
+                if let RTk::Union(uarms) = &srt.k {
+                    let arm_name = |lit: &str| -> Option<String> {
+                        uarms.iter()
+                            .find(|r| matches!(r.k, RTk::Rec(_)) && rec_members(r).iter().any(|mm| &mm.name == mem && matches!(mm.ty.as_ref().map(|t| &t.k), Some(RTk::Lit(Value::Str(v))) if v == lit)))
+                            .and_then(|r| r.name.borrow().clone())
+                    };
+                    let names: Vec<Option<String>> = arms.iter().map(|(lit, _)| arm_name(lit)).collect();
+                    if names.iter().all(|n| n.is_some()) && arms.iter().all(|(_, b)| expr_loc(b).is_some()) {
+                        let lead = leading_spaces(lines.get(il.sl).copied().unwrap_or(""));
+                        let indent = format!("{lead}    ");
+                        let subj_text = crate::session::expr_text(subj);
+                        let v: String = match &**subj { Expr::Name(n) => n.chars().next().map(|c| c.to_string()).unwrap_or_else(|| "v".into()), _ => "v".into() };
+                        let subj_re = Regex::new(&format!(r"\b{}\b", regex::escape(&subj_text))).unwrap();
+                        let mut cases: Vec<String> = arms.iter().zip(names.iter())
+                            .map(|((_, body), n)| format!("{indent}({v}: {}) => {}", n.as_ref().unwrap(), subj_re.replace_all(&src_of(&text, expr_loc(body).unwrap()), v.as_str())))
+                            .collect();
+                        if let Some(tl) = tail_expr.as_ref().and_then(expr_loc) {
+                            cases.push(format!("{indent}(other) => {}", src_of(&text, tl)));
+                        }
+                        one("convert to match".into(), "refactor.rewrite", vec![edit_json(il, &format!("match {subj_text} {{\n{}\n{lead}}}", cases.join("\n")))]);
+                    }
+                }
+            }
+        }
+    }
+    if let Some(mx) = chain_expr(&chain, |x| matches!(x, Expr::Match { .. })) {
+        if let (Expr::Match { subject, arms }, Some(ml)) = (&*mx, expr_loc(&mx)) {
+            // arms typed by records that a literal member discriminates: `if subject.kind == "lit" then … else …`
+            let srt = t.types.get(&key_of(subject)).and_then(|x| x.rt.clone());
+            let recs: Vec<RT> = match srt.as_ref().map(|r| &r.k) {
+                Some(RTk::Union(us)) => us.iter().filter(|r| matches!(r.k, RTk::Rec(_))).cloned().collect(),
+                _ => vec![],
+            };
+            let is_lit = |m: &crate::semantics::Member| matches!(m.ty.as_ref().map(|t| &t.k), Some(RTk::Lit(_)));
+            let disc: Option<String> = recs.first().and_then(|r0| rec_members(r0).into_iter().find(|mm| is_lit(mm) && recs.iter().all(|r| rec_members(r).iter().any(|x| x.name == mm.name && is_lit(x)))).map(|mm| mm.name));
+            if let Some(disc) = disc {
+                let subj_text = crate::session::expr_text(subject);
+                let mut parts: Vec<String> = vec![];
+                let mut fallback: Option<String> = None;
+                let mut ok = true;
+                for arm in arms {
+                    let Some(bl) = expr_loc(&arm.body) else { ok = false; break };
+                    let var_re = Regex::new(&format!(r"\b{}\b", regex::escape(&arm.v))).unwrap();
+                    let body = var_re.replace_all(&src_of(&text, bl), subj_text.as_str()).to_string();
+                    let rec = match &arm.ty { Some(TypeAst::Named { name, .. }) => recs.iter().find(|r| r.name.borrow().as_deref() == Some(name.as_str())), _ => None };
+                    let lit = rec.and_then(|r| rec_members(r).into_iter().find(|x| x.name == disc)).and_then(|x| x.ty).and_then(|ty| match &ty.k { RTk::Lit(Value::Str(s)) => Some(s.clone()), _ => None });
+                    match lit {
+                        Some(l) => parts.push(format!("if {subj_text}.{disc} == {} then {body}", json_str(&l))),
+                        None => fallback = Some(body),
+                    }
+                }
+                if ok && !parts.is_empty() {
+                    one("convert to if".into(), "refactor.rewrite", vec![edit_json(ml, &format!("{} else {}", parts.join(" else "), fallback.unwrap_or_else(|| "null".into())))]);
+                }
+            }
+        }
+    }
+    // inline a derived member into its sibling uses
+    let derived = chain.iter().find_map(|n| match n { NodeRef::Member(mm @ MemberAst::Derived { loc: Some(_), expr, .. }) if expr_loc(expr).is_some() => Some(*mm), _ => None });
+    if let (Some(dm @ MemberAst::Derived { name: dname, expr: dexpr, loc: Some(dl), .. }), Some((members, _, _))) = (derived, type_decl.and_then(record_body_of).and_then(record_parts)) {
+        let mut uses: Vec<Loc> = vec![];
+        for other in members {
+            if std::ptr::eq(other, dm) { continue; }
+            for e in exprs_under(&NodeRef::Member(other)) {
+                if let Expr::Name(nm) = &*e {
+                    if nm == dname {
+                        if let Some(l) = expr_loc(&e) { uses.push(l); }
+                    }
+                }
+            }
+        }
+        if !uses.is_empty() {
+            let src = src_of(&text, expr_loc(dexpr).unwrap());
+            let plain = matches!(&**dexpr, Expr::Name(_) | Expr::Lit(_) | Expr::UnitLit { .. } | Expr::Call { .. } | Expr::Member { .. } | Expr::Paren(_));
+            let wrapped = if plain { src } else { format!("({src})") };
+            let mut edits: Vec<J> = uses.iter().map(|l| edit_json(*l, &wrapped)).collect();
+            edits.push(edit_json(Loc { sl: dl.sl, sc: 0, el: dl.el + 1, ec: 0 }, ""));
+            one(format!("inline {dname}"), "refactor.inline", edits);
+        }
+    }
     // flip the operands of a comparison
     let cmp = chain_expr(&chain, |x| matches!(x, Expr::Bin { op, l, r } if ["<", ">", "<=", ">=", "==", "!="].contains(&op.as_str()) && expr_loc(l).is_some() && expr_loc(r).is_some()));
     if let Some(c) = cmp {
@@ -4082,6 +4324,7 @@ fn handle(st: &mut State, msg: &Value) -> Option<i32> {
     };
     match method {
         "initialize" => {
+            st.progress_supported = as_bool(params.and_then(|p| get(p, "capabilities")).and_then(|c| get(c, "window")).and_then(|w| get(w, "workDoneProgress"))).unwrap_or(false);
             let caps = J::obj(vec![
                 ("textDocumentSync", J::Num(1)),
                 ("hoverProvider", J::Bool(true)),
@@ -4104,6 +4347,7 @@ fn handle(st: &mut State, msg: &Value) -> Option<i32> {
                 ("typeHierarchyProvider", J::Bool(true)),
                 ("codeActionProvider", J::obj(vec![("codeActionKinds", J::Arr(vec![J::s("quickfix"), J::s("refactor.rewrite"), J::s("refactor.extract"), J::s("refactor.inline")]))])),
                 ("linkedEditingRangeProvider", J::Bool(true)),
+                ("documentOnTypeFormattingProvider", J::obj(vec![("firstTriggerCharacter", J::s("\n")), ("moreTriggerCharacter", J::Arr(vec![J::s("}"), J::s("]"), J::s(")")]))])),
                 ("executeCommandProvider", J::obj(vec![("commands", J::Arr(["decl.evaluate", "decl.validate", "decl.trace", "decl.showSyntaxTree", "decl.reloadWorkspace"].iter().map(|c| J::s(*c)).collect()))])),
             ]);
             reply(id, J::obj(vec![("capabilities", caps), ("serverInfo", J::obj(vec![("name", J::s("decl-lsp")), ("version", J::s("0.3.0"))]))]));
@@ -4264,6 +4508,10 @@ fn handle(st: &mut State, msg: &Value) -> Option<i32> {
             reply(id, r);
         }
         "textDocument/linkedEditingRange" => reply(id, linked_editing_range(st, &td_uri(), position())),
+        "textDocument/onTypeFormatting" => {
+            let ch = as_str(params.and_then(|p| get(p, "ch"))).unwrap_or("").to_string();
+            reply(id, on_type_formatting(st, &td_uri(), position(), &ch));
+        }
         "workspace/executeCommand" => {
             let command = as_str(params.and_then(|p| get(p, "command"))).unwrap_or("").to_string();
             let r = execute_command(st, &command, params.and_then(|p| get(p, "arguments")));

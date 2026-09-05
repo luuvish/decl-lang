@@ -14,7 +14,7 @@ import { checkModule } from './checker.ts';
 import { format } from './fmt.ts';
 import { typeText, resolveIn, stdPath, STD } from './infer.ts';
 import type { Ty, Target } from './infer.ts';
-import { Session, SessionError, fmtDiag } from './session.ts';
+import { Session, SessionError, fmtDiag, exprText } from './session.ts';
 import type { Run } from './session.ts';
 import type { Module } from './module.ts';
 import type { Decl, Expr, Loc, MemberAst, TypeAst } from './ast.ts';
@@ -75,7 +75,7 @@ function analysisOf(uri: string): Analysis | null {
   const path = pathOf(uri);
   if (parseSource(text).errors.length) return null;
   const session = new Session(path, overlay);
-  const run = session.run(undefined, 'full');
+  const run = withProgress(`Decl: evaluating ${path.split('/').pop()}`, () => session.run(undefined, 'full'));
   const a: Analysis = { path, text, session, run, tables: new Map() };
   analyses.set(uri, a);
   lastGood.set(uri, a);
@@ -1266,6 +1266,117 @@ function codeActions(uri: string, range: Range, diagnostics: any[]): any[] {
         one('reorder the members canonically', 'refactor.rewrite', [{ range: rangeOf(body.loc), newText: `{\n${members.join('\n')}${trailing}\n${close}}` }]);
       }
     }
+    // an assert's inline `else error …` into a diagnostic declaration, and back
+    const assertMember = chain.find(n => isMember(n) && n.m === 'assert' && n.loc);
+    if (assertMember?.tail && typeDecl?.loc) {
+      const tail = assertMember.tail;
+      if (tail.t === 'inline') {
+        // the names the template reads become the parameters, typed as inferred
+        const names: string[] = [];
+        const params: string[] = [];
+        for (const part of tail.template) {
+          if (typeof part === 'string') continue;
+          const found: any[] = [];
+          findAll(part, n => isExpr(n) && n.e === 'name', found);
+          for (const n of found) if (!names.includes(n.name)) {
+            names.push(n.name);
+            const ty = t.types.get(n);
+            params.push(`${n.name}: ${ty?.rt ? typeText(ty.rt) : 'any'}`);
+          }
+        }
+        const template = '`' + tail.template.map((p: any) => typeof p === 'string' ? p : '${' + exprText(p) + '}').join('') + '`';
+        const src = srcOf(text, assertMember.loc);
+        const elseAt = src.search(/\belse\b/);
+        if (elseAt >= 0) {
+          const tailStart = (() => { let line = assertMember.loc.sl, col = assertMember.loc.sc; for (let i = 0; i < elseAt; i++) { if (src[i] === '\n') { line++; col = 0; } else col++; } return { line, character: col }; })();
+          one(`declare a diagnostic for ${assertMember.name}`, 'refactor.extract', [
+            { range: { start: { line: typeDecl.loc.sl, character: 0 }, end: { line: typeDecl.loc.sl, character: 0 } }, newText: `diagnostic ${assertMember.name}(${params.join(', ')}) {\n    severity = ${tail.severity}\n    message = ${template}\n}\n` },
+            { range: { start: tailStart, end: { line: assertMember.loc.el, character: assertMember.loc.ec } }, newText: `else ${assertMember.name}(${names.join(', ')})` }]);
+        }
+      } else if (tail.t === 'ref') {
+        const dd = m.env.diags.get(tail.name);
+        const ddecl: any = m.decls.find(d => d.d === 'diagnostic' && d.name === tail.name);
+        if (dd && ddecl) {
+          const argText = tail.args.map((a: any) => a.loc ? srcOf(text, a.loc) : exprText(a));
+          const message = '`' + dd.template.map((p: any) => {
+            if (typeof p === 'string') return p;
+            const i = p.e === 'name' ? dd.params.findIndex((q: any) => q.name === p.name) : -1;
+            return '${' + (i >= 0 ? argText[i] : exprText(p)) + '}';
+          }).join('') + '`';
+          const src = srcOf(text, assertMember.loc);
+          const elseAt = src.search(/\belse\b/);
+          if (elseAt >= 0) {
+            const tailStart = (() => { let line = assertMember.loc.sl, col = assertMember.loc.sc; for (let i = 0; i < elseAt; i++) { if (src[i] === '\n') { line++; col = 0; } else col++; } return { line, character: col }; })();
+            one(`inline the diagnostic ${tail.name}`, 'refactor.inline', [{ range: { start: tailStart, end: { line: assertMember.loc.el, character: assertMember.loc.ec } }, newText: `else ${dd.severity} ${message}` }]);
+          }
+        }
+      }
+    }
+    // an `if` chain over a discriminant into a `match`, and back
+    const ifChain = chain.find(n => isExpr(n) && n.e === 'if' && n.loc);
+    if (ifChain) {
+      // conditions `subject.member == "lit"` on one subject and member, the union's arms telling which record each literal picks
+      const arms: { lit: string; body: any }[] = [];
+      let subject: any = null, member: string | null = null, tailExpr: any = null, ok = true;
+      for (let n: any = ifChain; ; n = n.f) {
+        if (n.e !== 'if') { tailExpr = n; break; }
+        const c = n.c;
+        if (c.e === 'bin' && c.op === '==' && c.l.e === 'member' && c.r.e === 'lit' && typeof c.r.v === 'string') {
+          if (!subject) { subject = c.l.x; member = c.l.name; }
+          else if (exprText(subject) !== exprText(c.l.x) || member !== c.l.name) { ok = false; break; }
+          arms.push({ lit: c.r.v, body: n.t });
+        } else { ok = false; break; }
+      }
+      const srt = subject ? t.types.get(subject)?.rt : null;
+      if (ok && arms.length && srt?.t === 'union') {
+        const armName = (lit: string) => srt.arms.find((r: any) => r.t === 'rec' && r.members.some((mm: any) => mm.name === member && mm.type?.t === 'lit' && mm.type.v === lit))?.name;
+        const names = arms.map(a => armName(a.lit));
+        if (names.every(Boolean)) {
+          const indent = ' '.repeat((lines[ifChain.loc.sl].match(/^ */)?.[0].length ?? 0) + 4);
+          const v = subject.e === 'name' ? subject.name[0] : 'v';
+          const cases = arms.map((a, i) => `${indent}(${v}: ${names[i]}) => ${srcOf(text, a.body.loc).replace(new RegExp(`\\b${exprText(subject).replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\b`, 'g'), v)}`);
+          if (tailExpr?.loc) cases.push(`${indent}(other) => ${srcOf(text, tailExpr.loc)}`);
+          one('convert to match', 'refactor.rewrite', [{ range: rangeOf(ifChain.loc), newText: `match ${exprText(subject)} {\n${cases.join('\n')}\n${indent.slice(4)}}` }]);
+        }
+      }
+    }
+    const matchExpr = chain.find(n => isExpr(n) && n.e === 'match' && n.loc);
+    if (matchExpr) {
+      // arms typed by records that a literal member discriminates: `if subject.kind == "lit" then … else …`
+      const srt = t.types.get(matchExpr.subject)?.rt;
+      const recs: any[] = srt?.t === 'union' ? srt.arms.filter((r: any) => r.t === 'rec') : [];
+      const disc = recs.length ? recs[0].members.find((mm: any) => mm.type?.t === 'lit' && recs.every((r: any) => r.members.some((x: any) => x.name === mm.name && x.type?.t === 'lit'))) : null;
+      if (disc) {
+        const parts: string[] = [];
+        let fallback: string | null = null;
+        let ok = true;
+        for (const arm of matchExpr.arms) {
+          const body = arm.body?.loc ? srcOf(text, arm.body.loc).replace(new RegExp(`\\b${arm.v}\\b`, 'g'), exprText(matchExpr.subject)) : null;
+          if (!body) { ok = false; break; }
+          const rec = arm.type?.k === 'named' ? recs.find((r: any) => r.name === arm.type.name) : null;
+          const lit = rec?.members.find((x: any) => x.name === disc.name)?.type?.v;
+          if (typeof lit === 'string') parts.push(`if ${exprText(matchExpr.subject)}.${disc.name} == ${JSON.stringify(lit)} then ${body}`);
+          else fallback = body;
+        }
+        if (ok && parts.length) one('convert to if', 'refactor.rewrite', [{ range: rangeOf(matchExpr.loc), newText: `${parts.join(' else ')} else ${fallback ?? 'null'}` }]);
+      }
+    }
+    // inline a derived member into its sibling uses
+    const derived = chain.find(n => isMember(n) && n.m === 'derived' && n.loc && n.expr?.loc);
+    if (derived && body?.loc) {
+      const uses: any[] = [];
+      for (const other of body.members) {
+        if (other === derived) continue;
+        findAll(other, n => isExpr(n) && n.e === 'name' && n.name === derived.name && n.loc, uses);
+      }
+      if (uses.length) {
+        const src = srcOf(text, derived.expr.loc);
+        const wrapped = isExpr(derived.expr) && ['name', 'lit', 'unitlit', 'call', 'member', 'paren'].includes(derived.expr.e) ? src : `(${src})`;
+        const edits = uses.map(u => ({ range: rangeOf(u.loc), newText: wrapped }));
+        edits.push({ range: { start: { line: derived.loc.sl, character: 0 }, end: { line: derived.loc.el + 1, character: 0 } }, newText: '' });
+        one(`inline ${derived.name}`, 'refactor.inline', edits);
+      }
+    }
     // flip the operands of a comparison
     const cmp = chain.find(n => isExpr(n) && n.e === 'bin' && ['<', '>', '<=', '>=', '==', '!='].includes(n.op) && n.l.loc && n.r.loc);
     if (cmp) {
@@ -1399,6 +1510,59 @@ function linkedEditingRange(uri: string, pos: Pos): any {
   return locs && locs.length ? { ranges: locs.map(rangeOf), wordPattern: '[A-Za-z_][A-Za-z0-9_]*' } : null;
 }
 
+// ---------------- on-type formatting ----------------
+// `\n`: the new line takes the previous line's indentation, one level
+// deeper after an opening bracket or a continuation point (§2.9); `}`:
+// the line dedents to the opening brace's line
+function onTypeFormatting(uri: string, pos: Pos, ch: string): any[] {
+  const text = docs.get(uri);
+  if (text === undefined) return [];
+  const lines = text.split('\n');
+  const indentOf = (s: string) => s.match(/^ */)?.[0].length ?? 0;
+  if (ch === '\n') {
+    const prev = lines[pos.line - 1] ?? '';
+    const cur = lines[pos.line] ?? '';
+    const body = prev.replace(/\/\/.*$/, '').trimEnd();
+    let want = indentOf(prev);
+    if (/[{[(]$/.test(body) || /(?:[+\-*/%<>=!&|?:,]|\bthen|\belse|\bin|\bwith|=>)$/.test(body)) want += 4;
+    if (/^\s*[}\])]/.test(cur)) want = Math.max(0, want - 4);
+    const have = indentOf(cur);
+    if (have === want) return [];
+    return [{ range: { start: { line: pos.line, character: 0 }, end: { line: pos.line, character: have } }, newText: ' '.repeat(want) }];
+  }
+  if (ch === '}' || ch === ']' || ch === ')') {
+    const cur = lines[pos.line] ?? '';
+    if (cur.trim() !== ch) return [];
+    // the opening bracket's line: scan back with a depth count
+    const opens: Record<string, string> = { '}': '{', ']': '[', ')': '(' };
+    let depth = 0;
+    for (let l = pos.line; l >= 0; l--) {
+      const s = lines[l];
+      for (let i = (l === pos.line ? cur.indexOf(ch) : s.length) - 1; i >= 0; i--) {
+        const c = s[i];
+        if (c === ch) depth++;
+        else if (c === opens[ch]) { if (depth === 0) { const want = indentOf(s); const have = indentOf(cur); return have === want ? [] : [{ range: { start: { line: pos.line, character: 0 }, end: { line: pos.line, character: have } }, newText: ' '.repeat(want) }]; } depth--; }
+      }
+    }
+    return [];
+  }
+  return [];
+}
+
+// ---------------- progress ----------------
+// a client that accepts work-done progress sees an analysis of a large
+// universe as a progress item (03_lsp.md §14)
+let progressSupported = false;
+let progressSeq = 0;
+function withProgress<T>(title: string, f: () => T): T {
+  if (!progressSupported) return f();
+  const token = `decl-${++progressSeq}`;
+  send({ jsonrpc: '2.0', id: `progress-${token}`, method: 'window/workDoneProgress/create', params: { token } });
+  notify('$/progress', { token, value: { kind: 'begin', title, cancellable: false } });
+  try { return f(); }
+  finally { notify('$/progress', { token, value: { kind: 'end' } }); }
+}
+
 // ---------------- the syntax tree ----------------
 function syntaxTree(uri: string): any {
   const text = docs.get(uri);
@@ -1414,6 +1578,7 @@ async function handle(msg: any) {
   switch (method) {
     case 'initialize':
       await io.init(params?.initializationOptions);
+      progressSupported = !!params?.capabilities?.window?.workDoneProgress;
       reply(id, {
         capabilities: {
           textDocumentSync: 1,
@@ -1437,6 +1602,7 @@ async function handle(msg: any) {
           typeHierarchyProvider: true,
           codeActionProvider: { codeActionKinds: ['quickfix', 'refactor.rewrite', 'refactor.extract', 'refactor.inline'] },
           linkedEditingRangeProvider: true,
+          documentOnTypeFormattingProvider: { firstTriggerCharacter: '\n', moreTriggerCharacter: ['}', ']', ')'] },
           executeCommandProvider: { commands: ['decl.evaluate', 'decl.validate', 'decl.trace', 'decl.showSyntaxTree', 'decl.reloadWorkspace'] },
         },
         serverInfo: { name: 'decl-lsp', version: '0.3.0' },
@@ -1512,6 +1678,7 @@ async function handle(msg: any) {
     case 'typeHierarchy/subtypes': reply(id, subtypes(params.item)); break;
     case 'textDocument/codeAction': reply(id, codeActions(params.textDocument.uri, params.range, params.context?.diagnostics ?? [])); break;
     case 'textDocument/linkedEditingRange': reply(id, linkedEditingRange(params.textDocument.uri, params.position)); break;
+    case 'textDocument/onTypeFormatting': reply(id, onTypeFormatting(params.textDocument.uri, params.position, params.ch)); break;
     case 'workspace/executeCommand': {
       // a refused command (an unknown root, an unreadable binding) answers null, never silence
       let result: any = null;

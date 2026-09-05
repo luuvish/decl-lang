@@ -448,11 +448,14 @@ in-memory host — the reference implementation's modules, packages,
 session, and server no longer touch a file system directly but a host
 (`decl-ts/src/host.ts`), which Node binds to the disk and the worker to
 the files the extension pushes with `decl/files` — with the output
-preview and the syntax tree; it is built and bundled, not yet exercised
-in vscode.dev. The TextMate grammar is checked against the tree-sitter
-grammar's keywords at build (`site/scripts/check-grammar.mjs`). Open:
-the web extension in vscode.dev, the first release, generating the
-TextMate grammar rather than checking it.
+preview and the syntax tree; a browser suite (`test/web/`, run by
+`npm run test:web -w vscode-decl` through `@vscode/test-web` in a
+headless Chromium) exercises it. The TextMate grammar is hand-written
+and checked against the tree-sitter grammar's keywords at build
+(`site/scripts/check-grammar.mjs`) — the check, not generation, is the
+mechanism that keeps them together. Open: the first release; the
+extension in vscode.dev with a real workspace (the suite covers the
+mechanism, not the site).
 
 ## 21. Verification
 

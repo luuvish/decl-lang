@@ -210,6 +210,22 @@ const mainSrc = 'import { Service, MAX as LIMIT, cap, Level } from "./lib.decl"\
   check('hint: the context variable\'s bound', cvh.some((h: any) => h.label === ': ref<Parent>'), JSON.stringify(cvh));
   notifyServer('workspace/didChangeConfiguration', { settings: { decl: { inlayHints: { contextVariables: false } } } });
   await nextDiagnostics(mainUri);
+  // the conversions, inlining a member, on-type formatting
+  const src3 = 'type Circle = { kind: "circle", r: int }\ntype Rect = { kind: "rect", w: int }\ninput shape: Circle | Rect\nconst area = if shape.kind == "circle" then shape.r else 0\ntype Box = {\n    w: int,\n    area = w * 2,\n    big = area > 10,\n    assert fits: w <= 100 else error `too wide: ${w}`\n}\n';
+  p = nextDiagnostics(mainUri);
+  notifyServer('textDocument/didChange', { textDocument: { uri: mainUri, version: 70 }, contentChanges: [{ text: src3 }] });
+  await p;
+  const cm = await at(3, 15, []);
+  check('assist: convert an if chain over a discriminant to match', cm.some((x: any) => x.title === 'convert to match' && x.edit.changes[mainUri][0].newText.startsWith('match shape {')), JSON.stringify(titles(cm)));
+  const im = await at(6, 6, []);
+  check('assist: inline a derived member into its sibling uses', im.some((x: any) => x.title === 'inline area' && x.edit.changes[mainUri][0].newText === '(w * 2)'), JSON.stringify(titles(im)));
+  const dg = await at(8, 12, []);
+  check('assist: declare a diagnostic for an inline else', dg.some((x: any) => x.title === 'declare a diagnostic for fits' && x.edit.changes[mainUri][1].newText === 'else fits(w)'), JSON.stringify(titles(dg)));
+  p = nextDiagnostics(mainUri);
+  notifyServer('textDocument/didChange', { textDocument: { uri: mainUri, version: 71 }, contentChanges: [{ text: 'type T = {\nx: int\n}\n' }] });
+  await p;
+  const ot = await request('textDocument/onTypeFormatting', { textDocument: { uri: mainUri }, position: { line: 1, character: 0 }, ch: '\n', options: { tabSize: 4, insertSpaces: true } });
+  check('on-type formatting indents after an opening brace', ot.length === 1 && ot[0].newText === '    ', JSON.stringify(ot));
   p = nextDiagnostics(mainUri);
   notifyServer('textDocument/didChange', { textDocument: { uri: mainUri, version: 41 }, contentChanges: [{ text: mainSrc }] });
   await p;

@@ -232,9 +232,10 @@ tests (passing in a downloaded VS Code); dependency tracking in the session (an 
 what read the changed documents, cross-checked against full
 recomputation over the corpus), and diagnostics ordered as §6.7 says.
 The web extension's entry and worker server (the reference core over
-a host abstraction), the remaining quick fixes and assists, the
-context-variable hints. Open: the first release, the web extension in
-vscode.dev, on-type formatting and the last conversions.
+a host abstraction) with a browser suite, every quick fix and assist of
+the language-server plan, on-type formatting, progress, the
+context-variable hints. Open: the first release (the tag runs the
+workflow), manual smoke in Neovim and Helix.
 
 **Exit criteria**: scripted REPL and LSP sessions in the parity harness,
 identical bytes from the three implementations · the reference scratch

@@ -24,7 +24,7 @@ from .fmt import format_source, u16
 from .infer import STD, _std_path, js_str, resolve_in, type_text
 from .parse import parse_source
 from .semantics import ArrV, MapV, RecInst, js_num_str, parse_path, seg_text
-from .session import Session, SessionError, fmt_diag
+from .session import Session, SessionError, expr_text, fmt_diag
 
 _out = None
 
@@ -141,7 +141,7 @@ def analysis_of(uri: str) -> Optional[Analysis]:
     if parse_source(text)["errors"]:
         return None
     session = Session(path, overlay)
-    run = session.run(None, "full")
+    run = with_progress(f"Decl: evaluating {path.split('/')[-1]}", lambda: session.run(None, "full"))
     a = Analysis(path, text, session, run)
     analyses[uri] = a
     last_good[uri] = a
@@ -1865,6 +1865,136 @@ def code_actions(uri: str, range_: dict, diagnostics: list) -> list:
                 members = [indent + re.sub(r",\s*$", "", _src_of(text, s[1]["loc"])) for s in ordered]
                 trailing = f"\n{indent}..." if body.get("open") else ""
                 one("reorder the members canonically", "refactor.rewrite", [{"range": range_of(body["loc"], lines), "newText": "{\n" + "\n".join(members) + trailing + "\n" + close + "}"}])
+        # an assert's inline `else error …` into a diagnostic declaration, and back
+        def pos_in(src: str, loc: dict, offset: int) -> dict:
+            # the LSP position `offset` characters into a node's source text
+            head = src[:offset]
+            nl = head.count("\n")
+            if nl:
+                return at(loc["sl"] + nl, len(head[head.rfind("\n") + 1:].encode("utf-8")))
+            return at(loc["sl"], loc["sc"] + len(head.encode("utf-8")))
+
+        assert_member = next((n for n in chain if is_member(n) and n["m"] == "assert" and n.get("loc")), None)
+        if assert_member is not None and assert_member.get("tail") and type_decl is not None and type_decl.get("loc"):
+            tail = assert_member["tail"]
+            if tail["t"] == "inline":
+                # the names the template reads become the parameters, typed as inferred
+                names: list = []
+                params: list = []
+                for part in tail["template"]:
+                    if isinstance(part, str):
+                        continue
+                    found: list = []
+                    _find_all(part, lambda n: is_expr(n) and n["e"] == "name", found)
+                    for n in found:
+                        if n["name"] not in names:
+                            names.append(n["name"])
+                            ty = t["types"].get(id(n))
+                            params.append(f"{n['name']}: {type_text(ty['rt']) if ty and ty.get('rt') else 'any'}")
+                template = "`" + "".join(p if isinstance(p, str) else "${" + expr_text(p) + "}" for p in tail["template"]) + "`"
+                src = _src_of(text, assert_member["loc"])
+                else_m = re.search(r"\belse\b", src)
+                if else_m:
+                    tail_start = pos_in(src, assert_member["loc"], else_m.start())
+                    one(f"declare a diagnostic for {assert_member['name']}", "refactor.extract", [
+                        {"range": {"start": {"line": type_decl["loc"]["sl"], "character": 0}, "end": {"line": type_decl["loc"]["sl"], "character": 0}}, "newText": f"diagnostic {assert_member['name']}({', '.join(params)}) {{\n    severity = {tail['severity']}\n    message = {template}\n}}\n"},
+                        {"range": {"start": tail_start, "end": at(assert_member["loc"]["el"], assert_member["loc"]["ec"])}, "newText": f"else {assert_member['name']}({', '.join(names)})"}])
+            elif tail["t"] == "ref":
+                dd = m.env.diags.get(tail["name"])
+                ddecl = next((d for d in m.decls if d["d"] == "diagnostic" and d["name"] == tail["name"]), None)
+                if dd is not None and ddecl is not None:
+                    arg_text = [_src_of(text, a_["loc"]) if a_.get("loc") else expr_text(a_) for a_ in tail["args"]]
+
+                    def part_text(p: Any) -> str:
+                        if isinstance(p, str):
+                            return p
+                        i = next((k for k, q in enumerate(dd["params"]) if q["name"] == p["name"]), -1) if p["e"] == "name" else -1
+                        return "${" + (arg_text[i] if i >= 0 else expr_text(p)) + "}"
+                    message = "`" + "".join(part_text(p) for p in dd["template"]) + "`"
+                    src = _src_of(text, assert_member["loc"])
+                    else_m = re.search(r"\belse\b", src)
+                    if else_m:
+                        tail_start = pos_in(src, assert_member["loc"], else_m.start())
+                        one(f"inline the diagnostic {tail['name']}", "refactor.inline", [{"range": {"start": tail_start, "end": at(assert_member["loc"]["el"], assert_member["loc"]["ec"])}, "newText": f"else {dd['severity']} {message}"}])
+        # an `if` chain over a discriminant into a `match`, and back
+        if_chain = next((n for n in chain if is_expr(n) and n["e"] == "if" and n.get("loc")), None)
+        if if_chain is not None:
+            # conditions `subject.member == "lit"` on one subject and member, the union's arms telling which record each literal picks
+            arms: list = []
+            subject = None
+            member = None
+            tail_expr = None
+            ok = True
+            n = if_chain
+            while True:
+                if n["e"] != "if":
+                    tail_expr = n
+                    break
+                c = n["c"]
+                if c["e"] == "bin" and c["op"] == "==" and c["l"]["e"] == "member" and c["r"]["e"] == "lit" and isinstance(c["r"]["v"], str):
+                    if subject is None:
+                        subject, member = c["l"]["x"], c["l"]["name"]
+                    elif expr_text(subject) != expr_text(c["l"]["x"]) or member != c["l"]["name"]:
+                        ok = False
+                        break
+                    arms.append((c["r"]["v"], n["t"]))
+                else:
+                    ok = False
+                    break
+                n = n["f"]
+            sty = t["types"].get(id(subject)) if subject is not None else None
+            srt = sty["rt"] if sty else None
+            if ok and arms and srt and srt.get("t") == "union":
+                def arm_name(lit: str) -> Optional[str]:
+                    r = next((r for r in srt["arms"] if r.get("t") == "rec" and any(mm["name"] == member and (mm.get("type") or {}).get("t") == "lit" and mm["type"].get("v") == lit for mm in r["members"])), None)
+                    return r.get("name") if r else None
+                names2 = [arm_name(lit) for lit, _ in arms]
+                if all(names2):
+                    indent = " " * (len(re.match(r"^ *", _line(lines, if_chain["loc"]["sl"])).group(0)) + 4)
+                    v = subject["name"][0] if subject["e"] == "name" else "v"
+                    subj_re = re.compile(r"\b" + re.escape(expr_text(subject)) + r"\b")
+                    cases = [f"{indent}({v}: {names2[i]}) => {subj_re.sub(v, _src_of(text, body_['loc']))}" for i, (_, body_) in enumerate(arms)]
+                    if tail_expr is not None and tail_expr.get("loc"):
+                        cases.append(f"{indent}(other) => {_src_of(text, tail_expr['loc'])}")
+                    one("convert to match", "refactor.rewrite", [{"range": range_of(if_chain["loc"], lines), "newText": f"match {expr_text(subject)} {{\n" + "\n".join(cases) + "\n" + indent[4:] + "}"}])
+        match_expr = next((n for n in chain if is_expr(n) and n["e"] == "match" and n.get("loc")), None)
+        if match_expr is not None:
+            # arms typed by records that a literal member discriminates: `if subject.kind == "lit" then … else …`
+            sty = t["types"].get(id(match_expr["subject"]))
+            srt = sty["rt"] if sty else None
+            recs = [r for r in srt["arms"] if r.get("t") == "rec"] if srt and srt.get("t") == "union" else []
+            disc = next((mm for mm in recs[0]["members"] if (mm.get("type") or {}).get("t") == "lit" and all(any(x["name"] == mm["name"] and (x.get("type") or {}).get("t") == "lit" for x in r["members"]) for r in recs)), None) if recs else None
+            if disc is not None:
+                parts: list = []
+                fallback = None
+                ok = True
+                for arm in match_expr["arms"]:
+                    body_ = re.sub(r"\b" + re.escape(arm["v"]) + r"\b", expr_text(match_expr["subject"]), _src_of(text, arm["body"]["loc"])) if arm.get("body") and arm["body"].get("loc") else None
+                    if body_ is None:
+                        ok = False
+                        break
+                    rec = next((r for r in recs if r.get("name") == arm["type"]["name"]), None) if arm.get("type") and arm["type"].get("k") == "named" else None
+                    lit = next((x for x in rec["members"] if x["name"] == disc["name"]), {}).get("type", {}).get("v") if rec else None
+                    if isinstance(lit, str):
+                        parts.append(f"if {expr_text(match_expr['subject'])}.{disc['name']} == {json.dumps(lit, ensure_ascii=False)} then {body_}")
+                    else:
+                        fallback = body_
+                if ok and parts:
+                    one("convert to if", "refactor.rewrite", [{"range": range_of(match_expr["loc"], lines), "newText": " else ".join(parts) + f" else {fallback if fallback is not None else 'null'}"}])
+        # inline a derived member into its sibling uses
+        derived = next((n for n in chain if is_member(n) and n["m"] == "derived" and n.get("loc") and n.get("expr") and n["expr"].get("loc")), None)
+        if derived is not None and body is not None and body.get("loc"):
+            uses: list = []
+            for other in body["members"]:
+                if other is derived:
+                    continue
+                _find_all(other, lambda n: is_expr(n) and n["e"] == "name" and n["name"] == derived["name"] and n.get("loc"), uses)
+            if uses:
+                src = _src_of(text, derived["expr"]["loc"])
+                wrapped = src if is_expr(derived["expr"]) and derived["expr"]["e"] in ("name", "lit", "unitlit", "call", "member", "paren") else f"({src})"
+                edits = [{"range": range_of(u["loc"], lines), "newText": wrapped} for u in uses]
+                edits.append({"range": {"start": {"line": derived["loc"]["sl"], "character": 0}, "end": {"line": derived["loc"]["el"] + 1, "character": 0}}, "newText": ""})
+                one(f"inline {derived['name']}", "refactor.inline", edits)
         # flip the operands of a comparison
         cmp = next((n for n in chain if is_expr(n) and n["e"] == "bin" and n["op"] in ("<", ">", "<=", ">=", "==", "!=") and n["l"].get("loc") and n["r"].get("loc")), None)
         if cmp is not None:
@@ -1994,6 +2124,77 @@ def linked_editing_range(uri: str, pos: dict) -> Any:
 
 
 # ---------------- the syntax tree ----------------
+# ---------------- on-type formatting ----------------
+# `\n`: the new line takes the previous line's indentation, one level
+# deeper after an opening bracket or a continuation point (§2.9); `}`:
+# the line dedents to the opening brace's line
+def on_type_formatting(uri: str, pos: dict, ch: str) -> list:
+    text = docs.get(uri)
+    if text is None:
+        return []
+    lines = text.split("\n")
+
+    def indent_of(s: str) -> int:
+        return len(re.match(r"^ *", s).group(0))
+
+    def edit(line: int, have: int, want: int) -> list:
+        if have == want:
+            return []
+        return [{"range": {"start": {"line": line, "character": 0}, "end": {"line": line, "character": have}}, "newText": " " * want}]
+
+    if ch == "\n":
+        prev = _line(lines, pos["line"] - 1) if pos["line"] > 0 else ""
+        cur = _line(lines, pos["line"])
+        body = re.sub(r"//.*$", "", prev).rstrip()
+        want = indent_of(prev)
+        if re.search(r"[{\[(]$", body) or re.search(r"(?:[+\-*/%<>=!&|?:,]|\bthen|\belse|\bin|\bwith|=>)$", body):
+            want += 4
+        if re.match(r"^\s*[}\])]", cur):
+            want = max(0, want - 4)
+        return edit(pos["line"], indent_of(cur), want)
+    if ch in ("}", "]", ")"):
+        cur = _line(lines, pos["line"])
+        if cur.strip() != ch:
+            return []
+        # the opening bracket's line: scan back with a depth count
+        opens = {"}": "{", "]": "[", ")": "("}
+        depth = 0
+        for l in range(pos["line"], -1, -1):
+            s = _line(lines, l)
+            start = (cur.find(ch) if l == pos["line"] else len(s)) - 1
+            for i in range(start, -1, -1):
+                c = s[i]
+                if c == ch:
+                    depth += 1
+                elif c == opens[ch]:
+                    if depth == 0:
+                        return edit(pos["line"], indent_of(cur), indent_of(s))
+                    depth -= 1
+        return []
+    return []
+
+
+# ---------------- progress ----------------
+# a client that accepts work-done progress sees an analysis of a large
+# universe as a progress item (03_lsp.md §14)
+progress_supported = False
+progress_seq = 0
+
+
+def with_progress(title: str, f: Callable[[], Any]) -> Any:
+    global progress_seq
+    if not progress_supported:
+        return f()
+    progress_seq += 1
+    token = f"decl-{progress_seq}"
+    send({"jsonrpc": "2.0", "id": f"progress-{token}", "method": "window/workDoneProgress/create", "params": {"token": token}})
+    notify("$/progress", {"token": token, "value": {"kind": "begin", "title": title, "cancellable": False}})
+    try:
+        return f()
+    finally:
+        notify("$/progress", {"token": token, "value": {"kind": "end"}})
+
+
 def syntax_tree(uri: str) -> Any:
     text = docs.get(uri)
     if text is None:
@@ -2007,6 +2208,8 @@ def handle(msg: dict) -> None:
     method = msg.get("method")
     params = msg.get("params") or {}
     if method == "initialize":
+        global progress_supported
+        progress_supported = bool(((params.get("capabilities") or {}).get("window") or {}).get("workDoneProgress"))
         reply(id_, {
             "capabilities": {
                 "textDocumentSync": 1,
@@ -2030,6 +2233,7 @@ def handle(msg: dict) -> None:
                 "typeHierarchyProvider": True,
                 "codeActionProvider": {"codeActionKinds": ["quickfix", "refactor.rewrite", "refactor.extract", "refactor.inline"]},
                 "linkedEditingRangeProvider": True,
+                "documentOnTypeFormattingProvider": {"firstTriggerCharacter": "\n", "moreTriggerCharacter": ["}", "]", ")"]},
                 "executeCommandProvider": {"commands": ["decl.evaluate", "decl.validate", "decl.trace", "decl.showSyntaxTree", "decl.reloadWorkspace"]},
             },
             "serverInfo": {"name": "decl-lsp", "version": "0.3.0"},
@@ -2143,6 +2347,8 @@ def handle(msg: dict) -> None:
         reply(id_, code_actions(params["textDocument"]["uri"], params["range"], (params.get("context") or {}).get("diagnostics") or []))
     elif method == "textDocument/linkedEditingRange":
         reply(id_, linked_editing_range(params["textDocument"]["uri"], params["position"]))
+    elif method == "textDocument/onTypeFormatting":
+        reply(id_, on_type_formatting(params["textDocument"]["uri"], params["position"], params.get("ch")))
     elif method == "workspace/executeCommand":
         # a refused command (an unknown root, an unreadable binding) answers null, never silence
         try:

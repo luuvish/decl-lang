@@ -310,9 +310,12 @@ T.m defaulted* (E4005), the assists *inline* (a constant), *extract to a
 named type*, *convert to the base unit*, *reorder the members
 canonically*, and the context-variable hints (§11). The server's core
 is transport-neutral (`lsp-core.ts`): stdio under Node, a web worker in
-the browser (§1). Open: on-type formatting, the `else error` ↔
-`diagnostic` and `if` ↔ `match` conversions, inlining a member,
-`$/progress`, the virtual documents beyond the syntax tree.
+the browser (§1). Then on-type formatting (§9), the conversions *declare
+a diagnostic* / *inline the diagnostic* and *convert to match* /
+*convert to if* over a discriminant, *inline a member* (§10), and
+`$/progress` around an analysis for a client that accepts it (§14).
+Every item of §3–§14 is delivered except the virtual documents beyond
+the syntax tree, which the extensions render on the client side.
 
 ## 18. Verification
 

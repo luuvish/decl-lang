@@ -1,7 +1,7 @@
 {
   "name": "vscode-decl",
   "displayName": "Decl",
-  "description": "Decl \u2014 a declarative language for describing, generating, and validating structured data: syntax, diagnostics, completion, navigation, rename, formatting, live output preview, and the REPL",
+  "description": "Decl — a declarative language for describing, generating, and validating structured data: syntax, diagnostics, completion, navigation, rename, formatting, live output preview, and the REPL",
   "version": "0.3.0",
   "publisher": "luuvish",
   "license": "MIT",
@@ -78,7 +78,7 @@
       },
       {
         "command": "decl.bindInput",
-        "title": "Bind Input\u2026",
+        "title": "Bind Input…",
         "category": "Decl"
       },
       {
@@ -188,7 +188,7 @@
           },
           "default": {},
           "scope": "resource",
-          "description": "Input name \u2192 JSON file (relative to the workspace folder): the editor's --input bindings."
+          "description": "Input name → JSON file (relative to the workspace folder): the editor's --input bindings."
         },
         "decl.preview.refresh": {
           "type": "string",
@@ -307,7 +307,8 @@
   "scripts": {
     "build": "node scripts/build.mjs",
     "package": "npm run build && npx @vscode/vsce package --no-dependencies",
-    "test": "npm run build && node scripts/build-tests.mjs && node dist/test/runTest.js"
+    "test": "npm run build && node scripts/build-tests.mjs && node dist/test/runTest.js",
+    "test:web": "npm run build && node scripts/build-tests.mjs && node scripts/build-web-tests.mjs && node dist/test/runWebTest.js"
   },
   "dependencies": {
     "vscode-languageclient": "^9.0.1"
@@ -316,6 +317,7 @@
     "@types/mocha": "^10.0.7",
     "@types/vscode": "^1.90.0",
     "@vscode/test-electron": "^3.1.0",
+    "@vscode/test-web": "^0.0.81",
     "esbuild": "^0.25.12",
     "mocha": "^10.7.3"
   },

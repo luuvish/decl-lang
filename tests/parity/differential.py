@@ -451,6 +451,21 @@ def lsp_transcript(cmd: list[str]) -> list:
     ads = change(61, ACTIONS)
     out.append(("diagnostics of a restated derived member", ads))
     ask("code actions at the restated member", "textDocument/codeAction", {"textDocument": {"uri": uri}, "range": {"start": pos("m: 5"), "end": pos("m: 5")}, "context": {"diagnostics": ads}})
+    # the conversions (if-chain <-> match, else error <-> diagnostic), inlining a derived member, on-type formatting
+    ACTIONS = ('type Circle = { kind: "circle", r: int }\ntype Rect = { kind: "rect", w: int, h: int }\ntype Shape = Circle | Rect\ninput shape: Shape\n'
+               'const area = if shape.kind == "circle" then shape.r * 2 else if shape.kind == "rect" then shape.w * shape.h else 0\n'
+               'const area2 = match shape {\n    (c: Circle) => c.r * 2\n    (r: Rect) => r.w * r.h\n}\n'
+               'diagnostic wide(w: int) {\n    severity = error\n    message = `too wide: ${w}`\n}\n'
+               'type Box = {\n    w: int,\n    h: int,\n    area = w * h,\n    big = area > 10,\n    assert fits: w <= 100 else error `too wide: ${w}`,\n    assert fits2: h <= 100 else wide(h)\n}\n')
+    ads = change(70, ACTIONS)
+    out.append(("diagnostics of the conversions text", ads))
+    for label, needle in [("the if chain", "if shape.kind"), ("the match", "match shape"), ("the derived member area", "area = w * h"), ("the inline else error", "assert fits:"), ("the diagnostic reference", "assert fits2")]:
+        ask(f"code actions at {label}", "textDocument/codeAction", {"textDocument": {"uri": uri}, "range": {"start": pos(needle), "end": pos(needle)}, "context": {"diagnostics": []}})
+    change(71, "type T = {\nx: int,\n    }\nconst v = 1 +\n2\n")
+    ask("on-type formatting: a new line after an opening brace", "textDocument/onTypeFormatting", {"textDocument": {"uri": uri}, "position": {"line": 1, "character": 0}, "ch": "\n", "options": {"tabSize": 4, "insertSpaces": True}})
+    ask("on-type formatting: a closing brace", "textDocument/onTypeFormatting", {"textDocument": {"uri": uri}, "position": {"line": 2, "character": 5}, "ch": "}", "options": {"tabSize": 4, "insertSpaces": True}})
+    ask("on-type formatting: a continuation line", "textDocument/onTypeFormatting", {"textDocument": {"uri": uri}, "position": {"line": 4, "character": 0}, "ch": "\n", "options": {"tabSize": 4, "insertSpaces": True}})
+    change(72, MAIN)
     ask("document symbols", "textDocument/documentSymbol", {"textDocument": {"uri": uri}})
     ask("folding ranges", "textDocument/foldingRange", {"textDocument": {"uri": uri}})
     out.append(("diagnostics of an unformatted text", change(12, "const x=1\nconst y = [s for s in [1, 2]]\n")))
