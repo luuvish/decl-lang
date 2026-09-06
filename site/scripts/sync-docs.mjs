@@ -69,7 +69,17 @@ const toolingTitles = {
   '04_extension': 'Editor extensions',
   '05_render': 'Renderer',
 };
-for (const f of list('docs/tooling', '.md')) add(`docs/tooling/${f}`, `tooling/${f.slice(0, -3)}`, { title: toolingTitles[f.slice(0, -3)] ?? f.slice(0, -3) });
+// a tooling document whose Status is "planned" describes a tool that does not
+// exist yet; it stays in the repository as a plan and off the site until it ships
+const planned = (f) => {
+  const lines = readFileSync(resolve(ROOT, 'docs/tooling', f), 'utf8').split('\n');
+  const i = lines.findIndex((l) => /^## .*Status/.test(l));
+  return i >= 0 && /^Planned\b/.test(lines.slice(i + 1).find((l) => l.trim()) ?? '');
+};
+for (const f of list('docs/tooling', '.md')) {
+  if (planned(f)) continue;
+  add(`docs/tooling/${f}`, `tooling/${f.slice(0, -3)}`, { title: toolingTitles[f.slice(0, -3)] ?? f.slice(0, -3) });
+}
 add('decl-ts/README.md', 'tooling/typescript', { title: 'TypeScript / npm' });
 add('decl-py/README.md', 'tooling/python', { title: 'Python / PyPI' });
 add('decl-rs/README.md', 'tooling/rust', { title: 'Rust / crates.io' });

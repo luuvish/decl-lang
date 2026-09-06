@@ -10,7 +10,10 @@ Actions, once).
   validation cases (with their evaluated output), and the package
   READMEs into `src/content/docs/` at build time, adds frontmatter,
   and rewrites relative links. **Never edit the synced pages** — they
-  are gitignored and regenerated; edit `docs/` instead.
+  are gitignored and regenerated; edit `docs/` instead. A tooling
+  document whose Status section begins with "Planned" describes a tool
+  that does not exist yet; it stays off the site (links to it go to the
+  repository) until it ships.
 - Hand-written pages: `src/content/docs/index.mdx` (landing),
   `start/`, `playground.mdx`, `search.mdx` (the search results as a
   page). Starlight components overridden in `src/components/`:
