@@ -32,7 +32,7 @@ Design goals:
 The `decl` command ships through several channels:
 
 ```bash
-npm install -g decl-lang          # npm — the TypeScript reference implementation (Node.js ≥ 20)
+npm install -g decl-lang          # npm — the TypeScript reference implementation (Node.js ≥ 22)
 pip install decl-lang             # PyPI — the native Python implementation (no Node.js)
 cargo install decl-lang           # crates.io — the native Rust implementation
 brew install luuvish/tap/decl-lang    # Homebrew tap
