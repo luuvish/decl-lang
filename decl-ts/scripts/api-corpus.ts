@@ -37,7 +37,16 @@ const documents = (inputs: Case['inputs']): Record<string, InputDocument> =>
     Object.entries(inputs ?? {}).map(([k, v]) => [k, 'file' in v ? v.file! : (v.json as any)]),
   );
 
+// a message may name a module by its absolute path (a module graph error,
+// a file not found): the repository root is spelled `<root>`, so that the
+// recorded answers hold on every machine
+const normalize = (v: unknown): unknown =>
+  JSON.parse(JSON.stringify(v).split(JSON.stringify(root).slice(1, -1)).join('<root>'));
+
 export async function runCase(c: Case): Promise<Answer> {
+  return normalize(await runCaseRaw(c)) as Answer;
+}
+async function runCaseRaw(c: Case): Promise<Answer> {
   try {
     let value: unknown;
     if (c.evaluate !== undefined) {

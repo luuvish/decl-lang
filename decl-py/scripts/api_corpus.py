@@ -12,7 +12,7 @@ import json
 import os
 import sys
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "decl-py/src"))
@@ -26,6 +26,15 @@ def _document(spec: dict[str, Any]) -> Any:
 
 
 def run_case(case: dict[str, Any]) -> dict[str, Any]:
+    """one case's answer; a message naming a module by its absolute path
+    spells the repository root as `<root>`, so that the recorded answers
+    hold on every machine"""
+    answer = _run_case(case)
+    text = json.dumps(answer, ensure_ascii=False).replace(json.dumps(str(ROOT))[1:-1], "<root>")
+    return cast(dict[str, Any], json.loads(text))
+
+
+def _run_case(case: dict[str, Any]) -> dict[str, Any]:
     name = case["name"]
     try:
         if "evaluate" in case:

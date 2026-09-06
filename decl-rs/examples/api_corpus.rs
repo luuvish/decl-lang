@@ -210,14 +210,18 @@ fn run_case(case: &Value) -> String {
     } else {
         panic!("unknown call in {name}")
     };
-    match answer {
+    let text = match answer {
         Ok(value) => format!("{{\"name\":{name},\"ok\":true,\"value\":{value}}}"),
         Err(e) => format!(
             "{{\"name\":{name},\"ok\":false,\"message\":{},\"diagnostics\":{}}}",
             json_str(&e.message),
             diags_json(&e.diagnostics)
         ),
-    }
+    };
+    // a message may name a module by its absolute path: the repository root
+    // is spelled `<root>`, so that the recorded answers hold on every machine
+    let root = json_str(&repo_root().to_string_lossy());
+    text.replace(&root[1..root.len() - 1], "<root>")
 }
 
 /// every case's answer, as one JSON array

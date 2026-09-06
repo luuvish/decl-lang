@@ -201,13 +201,13 @@
   {
     "name": "evaluate: a module that does not parse cannot be loaded",
     "ok": false,
-    "message": "/Users/luuvish/Projects/luuvish/decl-lang/tests/validation/lexical/invalid/semicolon.decl: 2 parse error(s)",
+    "message": "<root>/tests/validation/lexical/invalid/semicolon.decl: 2 parse error(s)",
     "diagnostics": [
       {
         "file": "tests/validation/lexical/invalid/semicolon.decl",
         "code": "E2001",
         "severity": "error",
-        "message": "/Users/luuvish/Projects/luuvish/decl-lang/tests/validation/lexical/invalid/semicolon.decl: 2 parse error(s)",
+        "message": "<root>/tests/validation/lexical/invalid/semicolon.decl: 2 parse error(s)",
         "path": ""
       }
     ]
@@ -264,7 +264,7 @@
         "file": "tests/modules/errors/collision.decl",
         "code": "E3006",
         "severity": "error",
-        "message": "import pub collides with an existing binding in /Users/luuvish/Projects/luuvish/decl-lang/tests/modules/errors/collision.decl",
+        "message": "import pub collides with an existing binding in <root>/tests/modules/errors/collision.decl",
         "path": ""
       }
     ]
@@ -277,7 +277,7 @@
         "file": "tests/api/documents/missing.decl",
         "code": "E3004",
         "severity": "error",
-        "message": "module not found: /Users/luuvish/Projects/luuvish/decl-lang/tests/api/documents/missing.decl",
+        "message": "module not found: <root>/tests/api/documents/missing.decl",
         "path": ""
       }
     ]
