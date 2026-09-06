@@ -120,9 +120,14 @@ git add Formula && git commit -m "decl-lang 0.2.0" && git push
 Users then run:
 
 ```bash
-brew tap luuvish/tap
-brew install decl-lang
+brew install luuvish/tap/decl-lang
 ```
+
+Homebrew loads a formula from a third-party tap only once it is trusted
+([Tap Trust](https://docs.brew.sh/Tap-Trust)): the fully qualified name
+above trusts that one formula; a script (the `homebrew` job of
+`release.yml`) runs `brew trust --formula luuvish/tap/decl-lang` first,
+since there is nobody to answer the question.
 
 The formula depends on `node` and installs the npm tarball under
 `libexec` (`std_npm_args`), linking `decl` and `decl-lsp` into `bin` —
