@@ -1,6 +1,6 @@
 {
   "name": "decl-lang",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "description": "Decl — a declarative language for describing, generating, and validating structured data. CLI (check / evaluate / validate / fmt), canonical formatter, and LSP server.",
   "type": "module",
   "license": "MIT",

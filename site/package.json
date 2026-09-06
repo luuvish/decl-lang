@@ -26,7 +26,7 @@
     "@lezer/highlight": "^1.2.1",
     "astro": "^7.2.10",
     "codemirror": "^6.0.2",
-    "decl-lang": "0.3.0"
+    "decl-lang": "0.4.0"
   },
   "devDependencies": {
     "opentype.js": "^2.0.0"

@@ -2,7 +2,7 @@
   "name": "vscode-decl",
   "displayName": "Decl",
   "description": "Decl — a declarative language for describing, generating, and validating structured data: syntax, diagnostics, completion, navigation, rename, formatting, live output preview, and the REPL",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "publisher": "luuvish",
   "license": "MIT",
   "private": true,

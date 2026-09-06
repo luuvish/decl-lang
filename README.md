@@ -94,20 +94,22 @@ core (`decl-lang/core`) in the browser.
 
 ## Status
 
-**Specification v0.3 (2026-09-04)** — v0.1 was frozen on 2026-08-31,
-revised through the v0.2 cycle (D31–D33, D29 amended), then v0.3: member
-kinds by shape and hidden members `x$ = e` (D4 amended, D34;
+**Specification v0.4 (2026-09-06)** — v0.1 was frozen on 2026-08-31,
+revised through the v0.2 cycle (D31–D33, D29 amended), v0.3 (member
+kinds by shape and hidden members `x$ = e`: D4 amended, D34), then v0.4
+(D35: rendering is tooling, declared in the module with `@render`;
 [docs/REVISIONS.md](docs/REVISIONS.md)). All roadmap phases are
 complete: the tree-sitter grammar, the TypeScript reference
 implementation with its full static checker, modules and packages with
 a reproducible lock, the complete standard library, the `decl` CLI /
-formatter / LSP, and real-world validation on three domain examples
-(`examples/`); Phase 6 (2026-09-05) added `decl repl`, the full
-language server, and the VS Code and Zed extensions
-(`docs/tooling/`), pending their first release. The test suites of the
-three implementations, the fixture corpus (`tests/validation`), the
-session corpus (`tests/repl`), and the parity harness are the
-conformance baseline.
+formatter / LSP, real-world validation on three domain examples
+(`examples/`), `decl repl`, the full language server, the VS Code and
+Zed extensions (`docs/tooling/`), and — Phase 10 (2026-09-06) — the
+renderer: documents in YAML, `@render`, a template dialect, fan-out,
+identical in the three implementations. The test suites of the three
+implementations, the fixture corpus (`tests/validation`), the session
+corpus (`tests/repl`), the render corpus (`tests/render`), and the
+parity harness are the conformance baseline.
 
 ## Documents
 
