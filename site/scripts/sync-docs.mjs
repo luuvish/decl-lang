@@ -70,7 +70,7 @@ const toolingTitles = {
   '05_render': 'Renderer',
 };
 for (const f of list('docs/tooling', '.md')) add(`docs/tooling/${f}`, `tooling/${f.slice(0, -3)}`, { title: toolingTitles[f.slice(0, -3)] ?? f.slice(0, -3) });
-add('decl-ts/README.md', 'tooling/javascript', { title: 'JavaScript / npm' });
+add('decl-ts/README.md', 'tooling/typescript', { title: 'TypeScript / npm' });
 add('decl-py/README.md', 'tooling/python', { title: 'Python / PyPI' });
 add('decl-rs/README.md', 'tooling/rust', { title: 'Rust / crates.io' });
 
