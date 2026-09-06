@@ -243,29 +243,14 @@ Neovim, and Helix.
   language-server corpus (`tests/lsp/`), the reference's private suites
   reduced to corpus drivers
 
-Delivered (2026-09-05). Opening the phase found the command line's
-usage paths outside the harness and divergent — the Rust usage text,
-the reference's `--expect-errors` after a document that cannot be read
-and its `--json` report on a usage error, a valueless `--expect-errors`
-read as a code by Rust, a piped session without `--script` printed three
-ways, the Rust API's roots in alphabetical order, an unreadable file
-raised as a bare exception by the reference's and Python's `validate` —
-each fixed in the implementation that diverged, with the row that
-catches it. The goldens grew from 16 to 29 entries (round trips,
-corrupted documents, the guide, `match`, generics, dimension algebra),
-the harness gained the surface rows and a generated 10×20 site, and the
-API and language-server corpora (25 cases; 11 sessions, 153 answers)
-replaced the private suites and the hand-ported sessions. Then the
-four hand-written areas left — the formatter's cases, the command
-line's scenarios, the package and lock scenarios, the REPL's file and
-clock commands — became corpora too (`tests/fmt/`, `tests/cli/`,
-`tests/packages/cases.json`, `tests/repl/files/`), and the three suites
-now mirror each other file for file, one driver per corpus, under one
-layout (`tests/<corpus>_test.<ext>`, sources under `src/` in the three;
-`tests/README.md`). Beneath the corpora, an internal layer: the checks
-of `tests/internal/checks.json` — invariants no tool surface observes,
-and one check per module boundary — carried by each suite under
-`tests/internal/`, the harness holding the three to the same list.
+Delivered (2026-09-05). The divergences the harness had not covered —
+mostly the command line's usage paths — were fixed in the
+implementation that diverged, each with the row that catches it; the
+goldens grew from 16 to 29 entries; the API, language-server,
+formatter, command-line, package, and REPL scenarios became corpora
+with one driver per corpus in each suite, under one layout
+(`tests/<corpus>_test.<ext>`); beneath them, the internal checks of
+`tests/internal/checks.json`, held to one list by the harness.
 
 **Exit criteria**: `make verify` green over the grown corpora · each
 implementation's suite drives every corpus · no behavioral test lives in
@@ -305,28 +290,13 @@ the generated documentation.
 - Playground: an example picker, bound input documents, shareable URLs,
   diagnostics in place — [site/README.md](site/README.md)
 
-**Delivered (2026-09-06)**: the identity — the mark ⊑, the Graphite
-palette in both themes, Literata / IBM Plex Sans / IBM Plex Mono — as
-the site's theme: tokens generated from one palette, the code-block
-themes and the playground editor on the same six syntax roles, the
-logo, favicon, and social card, the landing page opening with the
-sign and its evaluated output (site/README.md, "The identity").
-
-**Delivered (2026-09-06)**: the content — "Why Decl" beside CUE, Pkl,
-jsonnet, Nickel, and JSON Schema; four tutorials after the guide
-(validating documents, generating configuration, quantities and units,
-modules and packages), their modules in the golden corpus so all three
-implementations evaluate every untitled ```decl block; the standard
-library and the diagnostic codes as browsable references generated
-from the specification; the tools on the landing page; the stale
-version notes gone (docs/guide/, docs/README.md, site/README.md).
-
-**Delivered (2026-09-06)**: the playground — the reference
-implementation's session in the browser, input documents bound in an
-Inputs panel and evaluated like outputs, diagnostics in place (in the
-module by the server's anchoring, in a document at the value its path
-leads to), the tutorials with their documents in the example picker,
-links that carry the documents (site/README.md).
+Delivered (2026-09-06). The identity (the sign ⊑, the Graphite palette,
+Literata and IBM Plex) as the site's theme from one palette file;
+"Why Decl" and four tutorials whose modules are entries of the golden
+corpus; the standard library and the diagnostic codes as references
+generated from the specification; the playground running the
+reference's session in the browser, with bound documents and
+diagnostics in place — all recorded in `site/README.md`.
 
 **Exit criteria**: every ```decl module on the site evaluates clean (the
 guide's and the tutorials' blocks as modules of the golden corpus, the
