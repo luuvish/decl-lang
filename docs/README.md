@@ -45,7 +45,12 @@ charter and chapters remains a defect to fix on sight (§1.4).
 
 | Document | Description |
 |---|---|
+| [Why Decl](guide/00_why_decl.md) | Decl beside CUE, Pkl, jsonnet, Nickel, and JSON Schema: what each is for, a side-by-side table, where Decl differs, and when another tool is the better one |
 | [Decl by Example](guide/01_overview_by_example.md) | One scenario end to end — describe → generate → validate — with the evaluated JSON and the diagnostics it produces |
+| [Validating Documents](guide/02_validating_documents.md) | Tutorial: a machine inventory schema, a document that passes and one that does not, and how to read the report — root causes, paths, severities |
+| [Generating Configuration](guide/03_generating_configuration.md) | Tutorial: a cluster laid out by a constructor function and a comprehension, summarized by derived members, and re-layered with `with` |
+| [Quantities and Units](guide/04_quantities_and_units.md) | Tutorial: dimensions and units of your own, quantity arithmetic, and documents that speak in kilometres and hours |
+| [Modules and Packages](guide/05_modules_and_packages.md) | Tutorial: the service-graph example split across three modules, and a package with a manifest, a dependency, and a lock file |
 
 ### Tooling (informative)
 

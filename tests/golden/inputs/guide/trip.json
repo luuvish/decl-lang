@@ -1,0 +1,1 @@
+{ "legs": [ { "distance": { "value": 320, "unit": "km" }, "duration": { "value": 2.5, "unit": "h" } }, { "distance": { "value": 5, "unit": "km" }, "duration": { "value": 12, "unit": "min" } } ] }

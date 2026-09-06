@@ -64,6 +64,13 @@ pre,
 .sl-markdown-content :is(th):not(:where(.not-content *)) {
   color: var(--sl-color-text);
 }
+.sl-markdown-content table:not(:where(.not-content *)) {
+  font-size: var(--sl-text-sm);
+  line-height: 1.45;
+}
+.sl-markdown-content :is(td, th) code:not(:where(.not-content *)) {
+  font-size: 0.85em;
+}
 
 /* ---- the rule: ink acts */
 .sl-markdown-content a:not(:where(.not-content *)) {

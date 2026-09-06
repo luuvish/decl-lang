@@ -79,6 +79,24 @@ decl validate services.decl --input deployed=prod.json
   </TabItem>
 </Tabs>
 
+## Tools
+
+The same language server, formatter, and evaluator in every implementation; the editor extensions and the REPL are clients of them.
+
+```bash
+decl check services.decl                     # the static checks, and nothing else
+decl fmt --check services.decl               # the canonical form
+decl repl services.decl                      # a session over the module: expressions, :type, :trace, undo
+decl-lsp --stdio                             # what VS Code, Zed, Neovim, Helix, and Emacs talk to
+```
+
+<CardGrid>
+  <LinkCard title="Command line" href="/decl-lang/tooling/01_cli/" description="check, evaluate, validate, fmt — universes, bound inputs, the --json report, exit codes." />
+  <LinkCard title="REPL" href="/decl-lang/tooling/02_repl/" description="A session over the evaluation universe: partial evaluation, session outputs, document edits with exact undo." />
+  <LinkCard title="Language server" href="/decl-lang/tooling/03_lsp/" description="Diagnostics, hover, completion, navigation, rename, code actions, semantic tokens — the same answers from all three servers." />
+  <LinkCard title="Editor extensions" href="/decl-lang/tooling/04_extension/" description="VS Code and Zed extensions; configurations for Neovim, Helix, Emacs, Vim, and Sublime." />
+</CardGrid>
+
 ## Read on
 
 <CardGrid>

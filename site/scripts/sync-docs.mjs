@@ -190,4 +190,48 @@ if (existsSync(hero)) {
   writeFileSync(resolve(SAMPLES, 'hero.json'), value ? JSON.stringify(value, null, 2) + '\n' : '{}\n');
 }
 
+// ---------------------------------------------------------------- references
+// Two browsable indexes derived from the specification and regenerated with
+// it: every std function with its signature, and every diagnostic code
+// with its condition. Each row links back to the chapter it came from.
+const cells = (row) => row.trim().slice(1, -1).split(/(?<!\\)\|/).map((c) => c.trim());
+// Starlight's heading anchors (github-slugger): lowercase, punctuation dropped, each space a hyphen
+const anchor = (heading) => heading.toLowerCase().replace(/`/g, '').replace(/[^\p{L}\p{N} -]/gu, '').replace(/ /g, '-');
+const toc = { minHeadingLevel: 2, maxHeadingLevel: 2 };
+
+{
+  const md = readFileSync(resolve(ROOT, 'docs/specification/13_stdlib.md'), 'utf8');
+  const chapter = `${BASE}/specification/13_stdlib/`;
+  let body = `Every function of \`std\`, indexed from [13. Standard Library](${chapter}), the normative chapter; each namespace links to the section that states its semantics in full. The SI unit catalog is declarations, not functions: [§13.10](${chapter}#${anchor('13.10 `std.units` — the SI catalog')}).\n`;
+  let ns = null, inTable = false, count = 0;
+  for (const line of md.split('\n')) {
+    const h = line.match(/^## (13\.\d+ `std\.(\w+)`)$/);
+    if (h) { ns = h[2]; inTable = false; body += `\n## \`std.${ns}\`\n\n[§${h[1].split(' ')[0]}](${chapter}#${anchor(h[1])})\n\n| Function | Signature | Semantics |\n|---|---|---|\n`; continue; }
+    if (line.startsWith('## ')) ns = null;
+    if (!ns) continue;
+    if (/^\| Signature \| Semantics \|/.test(line)) { inTable = true; continue; }
+    if (inTable && /^\|---/.test(line)) continue;
+    if (inTable && line.startsWith('| `')) { const [sig, sem] = cells(line); const name = sig.replace(/`/g, '').match(/^[a-z_]+/)[0]; body += `| \`std.${ns}.${name}\` | ${sig} | ${sem} |\n`; count++; continue; }
+    if (inTable && !line.startsWith('|')) inTable = false;
+  }
+  write('reference/stdlib', frontmatter({ title: 'Standard library', slug: 'reference/stdlib', description: `The ${count} functions of std, indexed from the specification.`, editUrl: false, tableOfContents: toc }) + body);
+}
+{
+  const md = readFileSync(resolve(ROOT, 'docs/specification/12_errors.md'), 'utf8');
+  const chapter = `${BASE}/specification/12_errors/`;
+  const registry = md.slice(md.indexOf('## 12.4 Registry'), md.indexOf('## 12.5'));
+  let body = `Every code an implementation may report, indexed from [12. Errors and Diagnostic Codes](${chapter}) §12.4, the normative registry; the bands (§12.1), the report format (§12.2), and the ordering rules (§12.3) are stated there. Codes are stable and the registry is append-only. A code listed under more than one heading in the chapter appears here once, at its first condition.\n`;
+  const seen = new Set();
+  const bands = [];
+  for (const line of registry.split('\n')) {
+    const h = line.match(/^### (.+)$/);
+    if (h) { bands.push({ title: h[1], rows: [] }); continue; }
+    const r = line.match(/^\| ([EWI]\d{4}) \| (.*) \|$/);
+    if (r && bands.length && !seen.has(r[1])) { seen.add(r[1]); bands.at(-1).rows.push(`| \`${r[1]}\` | ${r[2]} |`); }
+  }
+  for (const b of bands) if (b.rows.length) body += `\n## ${b.title}\n\n| Code | Condition |\n|---|---|\n${b.rows.join('\n')}\n`;
+  write('reference/diagnostics', frontmatter({ title: 'Diagnostic codes', slug: 'reference/diagnostics', description: `The ${seen.size} diagnostic codes, indexed from the specification's registry.`, editUrl: false, tableOfContents: toc }) + body);
+}
+n += 2;
+
 console.log(`synced ${n} pages into ${posix.relative(ROOT, OUT)} (base ${BASE})`);

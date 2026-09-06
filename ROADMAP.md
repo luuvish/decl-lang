@@ -29,7 +29,7 @@ here, and nothing was migrated from earlier work.
 | 6 | REPL, language server & editors | `decl repl`, `decl-lsp` v2/v3, `vscode-decl`, `zed-decl` | **delivered — 2026-09-05**; v0.3.0 released 2026-09-05 |
 | 7 | Conformance depth | the corpora cover every surface: the command line, an API corpus, a language-server corpus, the goldens | **done — 2026-09-05** |
 | 8 | Crate documentation | rustdoc on docs.rs; the Python and JavaScript API docs to the same bar | **done — 2026-09-06** |
-| 9 | Website | design, content, playground | in progress — the identity and theme landed 2026-09-06 |
+| 9 | Website | design, content, playground | in progress — the identity and theme landed 2026-09-06, the content 2026-09-06 |
 | 10 | Renderer | `--format yaml`, `decl render` with a template dialect | planned |
 
 ---
@@ -311,6 +311,15 @@ the site's theme: tokens generated from one palette, the code-block
 themes and the playground editor on the same six syntax roles, the
 logo, favicon, and social card, the landing page opening with the
 sign and its evaluated output (site/README.md, "The identity").
+
+**Delivered (2026-09-06)**: the content — "Why Decl" beside CUE, Pkl,
+jsonnet, Nickel, and JSON Schema; four tutorials after the guide
+(validating documents, generating configuration, quantities and units,
+modules and packages), their modules in the golden corpus so all three
+implementations evaluate every untitled ```decl block; the standard
+library and the diagnostic codes as browsable references generated
+from the specification; the tools on the landing page; the stale
+version notes gone (docs/guide/, docs/README.md, site/README.md).
 
 **Exit criteria**: every ```decl block on the site evaluates clean · the
 playground runs every example · the site builds from `docs/` as before.

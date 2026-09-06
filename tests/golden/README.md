@@ -23,8 +23,12 @@ command line prints:
   on standard error — the diagnostics, in canonical order — and the
   exit status must be 1;
 - with `markdown` instead of `module`, the module is the markdown
-  file's ```decl blocks in order, assembled by the driver into a
-  temporary file — the guide is a module of the corpus, not prose.
+  file's untitled ```decl blocks in order, assembled by the driver into
+  a temporary file — the guide and the tutorials are modules of the
+  corpus, not prose. A titled block (```decl title="…") quotes a file
+  that exists elsewhere in the repository and is not assembled, so a
+  page may show several modules; `inputs` and `output` apply as to a
+  module entry, with the documents under `inputs/guide/`.
 
 Paths are repository-relative; the drivers run from the repository
 root. The documents under `inputs/`:

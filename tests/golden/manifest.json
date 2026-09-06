@@ -184,6 +184,34 @@
     "golden": "tests/golden/docs__guide__01_overview_by_example.json"
   },
   {
+    "markdown": "docs/guide/02_validating_documents.md",
+    "golden": "tests/golden/docs__guide__02_validating_documents.json"
+  },
+  {
+    "markdown": "docs/guide/03_generating_configuration.md",
+    "golden": "tests/golden/docs__guide__03_generating_configuration.json"
+  },
+  {
+    "markdown": "docs/guide/04_quantities_and_units.md",
+    "golden": "tests/golden/docs__guide__04_quantities_and_units.json"
+  },
+  {
+    "markdown": "docs/guide/02_validating_documents.md",
+    "inputs": [
+      "fleet=tests/golden/inputs/guide/fleet.json"
+    ],
+    "output": "fleet",
+    "golden": "tests/golden/docs__guide__02_fleet.json"
+  },
+  {
+    "markdown": "docs/guide/04_quantities_and_units.md",
+    "inputs": [
+      "trip=tests/golden/inputs/guide/trip.json"
+    ],
+    "output": "trip",
+    "golden": "tests/golden/docs__guide__04_trip.json"
+  },
+  {
     "module": "tests/packages/app/main.decl",
     "golden": "tests/golden/tests__packages__app.json"
   }

@@ -72,6 +72,13 @@ export default defineConfig({
         { label: 'Guide', items: [{ autogenerate: { directory: 'guide' } }] },
         { label: 'Examples', items: [{ autogenerate: { directory: 'examples' } }] },
         { label: 'Specification', items: [{ autogenerate: { directory: 'specification' } }] },
+        {
+          label: 'Reference',
+          items: [
+            { label: 'Standard library', slug: 'reference/stdlib' },
+            { label: 'Diagnostic codes', slug: 'reference/diagnostics' },
+          ],
+        },
         { label: 'Tooling', items: [{ autogenerate: { directory: 'tooling' } }] },
         { label: 'Design', collapsed: true, items: [{ autogenerate: { directory: 'design' } }] },
         { label: 'Revisions', slug: 'revisions' },

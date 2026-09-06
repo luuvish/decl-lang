@@ -39,6 +39,7 @@ site/src/content/docs/examples/
 site/src/content/docs/tooling/
 site/src/content/docs/revisions.md
 site/src/content/docs/documentation.md
+site/src/content/docs/reference/
 site/src/samples/synced/
 site/src/styles/tokens.css
 site/public/og.png
