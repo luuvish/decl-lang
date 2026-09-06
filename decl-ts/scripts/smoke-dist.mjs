@@ -28,9 +28,11 @@ const check = (name, cond, detail = '') => {
   }
 };
 
-// 1. pack
-const packOut = run('npm', ['pack', '--json', '--silent'], { cwd: impl });
-const [{ filename, size, unpackedSize, files }] = JSON.parse(packOut);
+// 1. pack (npm 11 reports an array of one entry, npm 12 an object keyed by package name)
+const packOut = JSON.parse(run('npm', ['pack', '--json', '--silent'], { cwd: impl }));
+const { filename, size, unpackedSize, files } = Array.isArray(packOut)
+  ? packOut[0]
+  : Object.values(packOut)[0];
 const tarball = join(impl, filename);
 check(
   `tarball built: ${filename} (${(size / 1024).toFixed(0)} KB packed, ${(unpackedSize / 1024).toFixed(0)} KB unpacked)`,
