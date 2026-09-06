@@ -1,0 +1,18 @@
+// what shadows a record's members inside a construction (§4.3, §9.3): a
+// function's parameters, a lambda's, a comprehension's variables, a match
+// binding, and the keys of a nested construction — none of these close a
+// cycle with the member of the same name
+type Row = { name: string, size: int }
+type Group = { name: string, rows: Row[], names = [r.name for r in rows] }
+func row(name: string, size: int): Row = { name: name, size: size }
+type Sheet = {
+    name: string
+    groups: { [string]: Group } = {
+        g: { name: "g", rows: [row(name, 1), { name: "x", size: 2 }] }
+    }
+    // a hidden helper read by the nested construction under another name
+    h_name$ = name
+    named: Group = { name: h_name$, rows: [{ name: n, size: 1 } for n in ["a", "b"]] }
+    sizes = std.array.sort([r.size for g in std.map.values(groups) for r in g.rows])
+}
+export output s: Sheet = { name: "sheet" }

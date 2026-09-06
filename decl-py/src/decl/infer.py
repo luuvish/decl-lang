@@ -42,6 +42,7 @@ class Ctx:
     __slots__ = (
         "const_memo",
         "env",
+        "locals",
         "nonnull",
         "pos",
         "present",
@@ -62,10 +63,14 @@ class Ctx:
         pos: dict[str, Any] | None = None,
         record: Any = None,
         resolve_hook: Any = None,
+        locals_: set[str] | None = None,
     ) -> None:
         self.env = env
         self.report = report
         self.vars = vars_
+        # the names bound by the expression itself — function and lambda parameters,
+        # comprehension variables, match bindings: they shadow a record's members (§4.3)
+        self.locals: set[str] = locals_ if locals_ is not None else set()
         self.present = present
         self.nonnull = nonnull
         self.const_memo = const_memo
@@ -87,6 +92,7 @@ class Ctx:
             self.pos,
             self.record,
             self.resolve_hook,
+            set(self.locals),
         )
 
     def with_env(self, env: Any) -> Ctx:
@@ -100,11 +106,166 @@ class Ctx:
             self.pos,
             self.record,
             self.resolve_hook,
+            self.locals,
         )
 
 
 def make_ctx(env: Any, report: Callable[[str, str], None]) -> Ctx:
     return Ctx(env, report, {}, set(), set(), {})
+
+
+# ---------------- §9.3: cycles visible in the type structure ----------------
+def _elem_rt(rt: dict[str, Any] | None) -> dict[str, Any] | None:
+    """the record type a nested literal binds to, when the expected type says: an element, a
+    map value"""
+    if not rt:
+        return None
+    if rt["t"] == "arr":
+        return rt.get("elem")
+    if rt["t"] == "map":
+        return rt.get("val")
+    return None
+
+
+def sibling_reads(
+    e: dict[str, Any],
+    siblings: set[str],
+    bound: set[str],
+    out: list[str],
+    rt: dict[str, Any] | None = None,
+) -> None:
+    """The sibling members an expression names bare. Lambda parameters, comprehension
+    variables, and match bindings shadow them; so do the members of a nested construction
+    (its declared members when the expected type is known, always its keys); a navigation
+    names no sibling."""
+    k = e["e"]
+    if k == "name":
+        if e["name"] not in bound and e["name"] in siblings and e["name"] not in out:
+            out.append(e["name"])
+    elif k == "template":
+        for part in e["parts"]:
+            if not is_str(part):
+                sibling_reads(part, siblings, bound, out)
+    elif k == "obj":
+        rec = rt if rt and rt["t"] == "rec" else None
+        keys = [en["key"] for en in e["entries"]]
+        if rec:
+            keys += [m["name"] for m in rec["members"]]
+        inner = bound | set(keys)
+        for en in e["entries"]:
+            if en["val"]["e"] == "spread":
+                sibling_reads(en["val"]["expr"], siblings, bound, out)
+                continue
+            mt = None
+            if rec:
+                m = next((m for m in rec["members"] if m["name"] == en["key"]), None)
+                mt = m.get("type") if m else None
+            elif rt and rt["t"] == "map":
+                mt = rt.get("val")
+            sibling_reads(en["val"], siblings, inner, out, mt)
+    elif k == "spread":
+        sibling_reads(e["expr"], siblings, bound, out)
+    elif k == "arr":
+        for it in e["items"]:
+            sibling_reads(it["expr"], siblings, bound, out, rt if it["spread"] else _elem_rt(rt))
+    elif k in ("comp", "mapcomp"):
+        b = set(bound)
+        for cl in e["clauses"]:
+            sibling_reads(cl["iter"], siblings, b, out)
+            b = b | {cl["v"]}
+            for f in cl["filters"]:
+                sibling_reads(f, siblings, b, out)
+        if k == "comp":
+            sibling_reads(e["head"], siblings, b, out, _elem_rt(rt))
+        else:
+            sibling_reads(e["key"], siblings, b, out)
+            sibling_reads(e["val"], siblings, b, out, _elem_rt(rt))
+    elif k == "bin":
+        sibling_reads(e["l"], siblings, bound, out)
+        sibling_reads(e["r"], siblings, bound, out)
+    elif k == "un":
+        sibling_reads(e["x"], siblings, bound, out)
+    elif k == "paren":
+        sibling_reads(e["x"], siblings, bound, out, rt)
+    elif k == "if":
+        sibling_reads(e["c"], siblings, bound, out)
+        sibling_reads(e["t"], siblings, bound, out, rt)
+        sibling_reads(e["f"], siblings, bound, out, rt)
+    elif k == "lambda":
+        sibling_reads(e["body"], siblings, bound | set(e["params"]), out)
+    elif k == "call":
+        sibling_reads(e["fn"], siblings, bound, out)
+        for a in e["args"]:
+            sibling_reads(a, siblings, bound, out)
+    elif k == "member":
+        sibling_reads(e["x"], siblings, bound, out)
+    elif k == "index":
+        sibling_reads(e["x"], siblings, bound, out)
+        sibling_reads(e["i"], siblings, bound, out)
+    elif k == "with":
+        sibling_reads(e["base"], siblings, bound, out, rt)
+        sibling_reads(e["patch"], siblings, bound, out, rt)
+    elif k == "match":
+        sibling_reads(e["subject"], siblings, bound, out)
+        for a in e["arms"]:
+            sibling_reads(a["body"], siblings, bound | {a["v"]}, out, rt)
+    # lit, unitlit, ctx, referrers, pattern: nothing
+
+
+def member_cycle(
+    rt: dict[str, Any],
+    entries: list[dict[str, Any]] | None = None,
+    bound: set[str] | None = None,
+) -> list[str] | None:
+    """A dependency cycle among a record's members through bare sibling names (§9.3,
+    E4113): the members' default and derived expressions, with a construction's entries in
+    place of the members it supplies (the construction's own members shadow the names
+    bound around it, `bound`). The cycle, or None."""
+    if rt["t"] != "rec":
+        return None
+    bound = bound or set()
+    siblings = {m["name"] for m in rt["members"]}
+    exprs: dict[str, tuple[Any, bool]] = {}
+    member_type: dict[str, Any] = {}
+    for m in rt["members"]:
+        member_type[m["name"]] = m.get("type")
+        x = m.get("expr") if m["kind"] == "der" else m.get("dflt") if m["kind"] == "dflt" else None
+        if x is not None:
+            exprs[m["name"]] = (x, False)
+    for en in entries or []:
+        if en["val"]["e"] == "spread" or en["key"] not in siblings:
+            continue
+        exprs[en["key"]] = (en["val"], True)
+    edges: dict[str, list[str]] = {}
+    for name, (x, supplied) in exprs.items():
+        out: list[str] = []
+        # a supplied entry was written where `bound` is in scope; a declared expression sees
+        # only what the type binds
+        sibling_reads(x, siblings, bound if supplied else set(), out, member_type.get(name))
+        edges[name] = out
+    state: dict[str, int] = {}
+    stack: list[str] = []
+
+    def visit(n: str) -> list[str] | None:
+        if state.get(n) == 2:
+            return None
+        if state.get(n) == 1:
+            return [*stack[stack.index(n) :], n]
+        state[n] = 1
+        stack.append(n)
+        for m in edges.get(n, []):
+            c = visit(m)
+            if c:
+                return c
+        stack.pop()
+        state[n] = 2
+        return None
+
+    for n in exprs:
+        c = visit(n)
+        if c:
+            return c
+    return None
 
 
 # ---------------- JS-faithful helpers ----------------
@@ -548,6 +709,7 @@ def _infer0(cx: Ctx, e: dict[str, Any]) -> dict[str, Any]:
             if _name_bound(c2, cl["v"]):
                 cx.report("E3019", f"comprehension variable {cl['v']} shadows an enclosing name")
             c2.vars[cl["v"]] = vt
+            c2.locals.add(cl["v"])
             for f in cl["filters"]:
                 require_val(c2, f, infer(c2, f), "as a filter")
                 c2 = apply_guards(c2, guards_of(f, True))
@@ -591,6 +753,7 @@ def _infer0(cx: Ctx, e: dict[str, Any]) -> dict[str, Any]:
             if _name_bound(c2, p):
                 cx.report("E3019", f"lambda parameter {p} shadows an enclosing name")
             c2.vars[p] = UNK
+            c2.locals.add(p)
         infer(c2, e["body"])
         return UNK
     if k == "call":
@@ -983,6 +1146,7 @@ def _check_lambda(cx: Ctx, e: dict[str, Any], expected: dict[str, Any]) -> None:
         if _name_bound(c2, p):
             cx.report("E3019", f"lambda parameter {p} shadows an enclosing name")
         c2.vars[p] = TY(None if expected["params"][i]["t"] == "any" else expected["params"][i])
+        c2.locals.add(p)
     b = require_val(c2, e["body"], infer(c2, e["body"]), "as a lambda result")
     if (
         b["rt"]
@@ -1029,6 +1193,7 @@ def _infer_match(cx: Ctx, e: dict[str, Any], expected: dict[str, Any] | None) ->
                     cx.report("E4102", "match catch-all is dead (typed arms are exhaustive)")
                 arm_ty = mk_union(rest)
         c2.vars[arm["v"]] = TY(arm_ty)
+        c2.locals.add(arm["v"])
         b = require_val(
             c2,
             arm["body"],
@@ -1093,6 +1258,7 @@ def _bind_clauses(cx: Ctx, clauses: list[Any]) -> Ctx:
         if _name_bound(c2, cl["v"]):
             cx.report("E3019", f"comprehension variable {cl['v']} shadows an enclosing name")
         c2.vars[cl["v"]] = vt
+        c2.locals.add(cl["v"])
         for f in cl["filters"]:
             require_val(c2, f, infer(c2, f), "as a filter")
             c2 = apply_guards(c2, guards_of(f, True))
@@ -1189,6 +1355,14 @@ def check_expr(cx: Ctx, e: dict[str, Any], expected: dict[str, Any] | None) -> d
                         cx.report(
                             "E4002", f"required member {m['name']} missing in the construction"
                         )
+            # §9.3: a cycle the construction closes (one through the type alone is the type's)
+            cyc = member_cycle(expected, e["entries"], cx.locals)
+            if cyc and any(any(en["key"] == n for en in e["entries"]) for n in cyc):
+                cx.report(
+                    "E4113",
+                    f"construction of {expected.get('name') or 'the record'}: dependency cycle "
+                    f"{' -> '.join(cyc)} — a bare name inside the literal is its own member (§9.3)",
+                )
             return TY(expected)
         if expected["t"] == "map":
             for en in e["entries"]:

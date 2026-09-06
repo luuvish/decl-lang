@@ -22,6 +22,9 @@ export interface ICtx {
   record?: (e: Expr, ty: Ty) => void;
   resolveHook?: (e: Expr, target: Target | null) => void;
   vars: Map<string, Ty>;
+  /** the names bound by the expression itself — function and lambda parameters,
+   * comprehension variables, match bindings: they shadow a record's members (§4.3) */
+  locals: Set<string>;
   present: Set<string>; // narrowed definitely-present paths
   nonnull: Set<string>; // narrowed non-null paths
   constMemo: Map<string, Ty>;
@@ -33,6 +36,7 @@ export function makeCtx(env: Env, report: (code: string, msg: string) => void): 
     report,
     pos: {},
     vars: new Map(),
+    locals: new Set(),
     present: new Set(),
     nonnull: new Set(),
     constMemo: new Map(),
@@ -203,6 +207,183 @@ export function applyGuards(cx: ICtx, g: Guards): ICtx {
   return c2;
 }
 
+// ---------------- §9.3: cycles visible in the type structure ----------------
+/** the record type a nested literal binds to, when the expected type says: an element, a map value, a member */
+function elemRt(rt: RT | null | undefined): RT | null {
+  if (!rt) return null;
+  if (rt.t === 'arr') return rt.elem ?? null;
+  if (rt.t === 'map') return rt.val ?? null;
+  return null;
+}
+/**
+ * The sibling members an expression names bare. Lambda parameters,
+ * comprehension variables, and match bindings shadow them; so do the
+ * members of a nested construction (its declared members when the
+ * expected type is known, always its keys); a navigation (`$parent.x`,
+ * `a.x`) names no sibling.
+ */
+export function siblingReads(
+  e: Expr,
+  siblings: Set<string>,
+  bound: Set<string>,
+  out: Set<string>,
+  rt: RT | null = null,
+) {
+  const go = (x: Expr | undefined, b: Set<string>, t: RT | null = null) => {
+    if (x) siblingReads(x, siblings, b, out, t);
+  };
+  const withVars = (vs: string[], b: Set<string>) => {
+    const b2 = new Set(b);
+    vs.forEach((v) => b2.add(v));
+    return b2;
+  };
+  switch (e.e) {
+    case 'name':
+      if (!bound.has(e.name) && siblings.has(e.name)) out.add(e.name);
+      return;
+    case 'template':
+      e.parts.forEach((p) => typeof p !== 'string' && go(p, bound));
+      return;
+    case 'obj': {
+      const rec = rt && rt.t === 'rec' ? rt : null;
+      const inner = withVars(
+        [...e.entries.map((en) => en.key), ...(rec ? rec.members.map((m: any) => m.name) : [])],
+        bound,
+      );
+      for (const en of e.entries) {
+        if (en.val.e === 'spread') go(en.val.expr, bound);
+        else {
+          const m = rec ? rec.members.find((m: any) => m.name === en.key) : null;
+          go(
+            en.val,
+            rec
+              ? inner
+              : withVars(
+                  e.entries.map((x) => x.key),
+                  bound,
+                ),
+            m?.type ?? (rt && rt.t === 'map' ? rt.val : null),
+          );
+        }
+      }
+      return;
+    }
+    case 'spread':
+      go(e.expr, bound);
+      return;
+    case 'arr':
+      e.items.forEach((it) => go(it.expr, bound, it.spread ? rt : elemRt(rt)));
+      return;
+    case 'comp':
+    case 'mapcomp': {
+      let b = bound;
+      for (const cl of e.clauses) {
+        go(cl.iter, b);
+        b = withVars([cl.v], b);
+        cl.filters.forEach((f) => go(f, b));
+      }
+      if (e.e === 'comp') go(e.head, b, elemRt(rt));
+      else {
+        go(e.key, b);
+        go(e.val, b, elemRt(rt));
+      }
+      return;
+    }
+    case 'bin':
+      go(e.l, bound);
+      go(e.r, bound);
+      return;
+    case 'un':
+      go(e.x, bound);
+      return;
+    case 'paren':
+      go(e.x, bound, rt);
+      return;
+    case 'if':
+      go(e.c, bound);
+      go(e.t, bound, rt);
+      go(e.f, bound, rt);
+      return;
+    case 'lambda':
+      go(e.body, withVars(e.params, bound));
+      return;
+    case 'call':
+      go(e.fn, bound);
+      e.args.forEach((a) => go(a, bound));
+      return;
+    case 'member':
+      go(e.x, bound);
+      return;
+    case 'index':
+      go(e.x, bound);
+      go(e.i, bound);
+      return;
+    case 'with':
+      go(e.base, bound, rt);
+      go(e.patch, bound, rt);
+      return;
+    case 'match':
+      go(e.subject, bound);
+      e.arms.forEach((a) => go(a.body, withVars([a.v], bound), rt));
+      return;
+    default:
+      return; // lit, unitlit, ctx, referrers, pattern
+  }
+}
+/**
+ * A dependency cycle among a record's members through bare sibling names
+ * (§9.3, E4113): the members' default and derived expressions, with a
+ * construction's entries in place of the members it supplies (the
+ * construction's own members shadow the names bound around it, `bound`).
+ * The cycle, or null.
+ */
+export function memberCycle(
+  rt: RT,
+  entries?: { key: string; val: Expr }[],
+  bound: Set<string> = new Set(),
+): string[] | null {
+  if (rt.t !== 'rec') return null;
+  const siblings = new Set<string>(rt.members.map((m: any) => m.name));
+  const exprs = new Map<string, { x: Expr; supplied: boolean }>();
+  const memberType = new Map<string, RT | null>();
+  for (const m of rt.members as any[]) {
+    memberType.set(m.name, m.type ?? null);
+    const x = m.kind === 'der' ? m.expr : m.kind === 'dflt' ? m.dflt : undefined;
+    if (x) exprs.set(m.name, { x, supplied: false });
+  }
+  for (const en of entries ?? []) {
+    if (en.val.e === 'spread' || !siblings.has(en.key)) continue;
+    exprs.set(en.key, { x: en.val, supplied: true });
+  }
+  const edges = new Map<string, string[]>();
+  for (const [name, { x, supplied }] of exprs) {
+    const out = new Set<string>();
+    // a supplied entry was written where `bound` is in scope; a declared
+    // expression sees only what the type binds
+    siblingReads(x, siblings, supplied ? bound : new Set(), out, memberType.get(name) ?? null);
+    edges.set(name, [...out]);
+  }
+  const state = new Map<string, 1 | 2>();
+  const stack: string[] = [];
+  const visit = (n: string): string[] | null => {
+    if (state.get(n) === 2) return null;
+    if (state.get(n) === 1) return [...stack.slice(stack.indexOf(n)), n];
+    state.set(n, 1);
+    stack.push(n);
+    for (const m of edges.get(n) ?? []) {
+      const c = visit(m);
+      if (c) return c;
+    }
+    stack.pop();
+    state.set(n, 2);
+    return null;
+  };
+  for (const n of exprs.keys()) {
+    const c = visit(n);
+    if (c) return c;
+  }
+  return null;
+}
 // ---------------- stdlib signatures (arity + result) ----------------
 export const STD: Record<string, { arity: number; ret: RT | null }> = {
   'array.count': { arity: 1, ret: PRIM('int') },
@@ -389,6 +570,7 @@ function infer0(cx: ICtx, e: Expr): Ty {
         if (nameBound(c2, cl.v))
           cx.report('E3019', `comprehension variable ${cl.v} shadows an enclosing name`);
         c2.vars.set(cl.v, vt);
+        c2.locals = new Set([...c2.locals, cl.v]);
         for (const f of cl.filters) {
           requireVal(c2, f, infer(c2, f), 'as a filter');
           c2 = applyGuards(c2, guardsOf(f, true));
@@ -435,6 +617,7 @@ function infer0(cx: ICtx, e: Expr): Ty {
       for (const p of e.params) {
         if (nameBound(c2, p)) cx.report('E3019', `lambda parameter ${p} shadows an enclosing name`);
         c2.vars.set(p, UNK);
+        c2.locals = new Set([...c2.locals, p]);
       }
       infer(c2, e.body);
       return UNK;
@@ -846,6 +1029,7 @@ function checkLambda(cx: ICtx, e: Expr & { e: 'lambda' }, expected: RT) {
   e.params.forEach((p, i) => {
     if (nameBound(c2, p)) cx.report('E3019', `lambda parameter ${p} shadows an enclosing name`);
     c2.vars.set(p, { rt: expected.params[i].t === 'any' ? null : expected.params[i], abs: false });
+    c2.locals = new Set([...c2.locals, p]);
   });
   const b = requireVal(c2, e.body, infer(c2, e.body), 'as a lambda result');
   if (
@@ -897,6 +1081,7 @@ function inferMatch(cx: ICtx, e: Expr & { e: 'match' }, expected: RT | null): Ty
       }
     }
     c2.vars.set(arm.v, { rt: armTy, abs: false });
+    c2.locals = new Set([...c2.locals, arm.v]);
     const b = requireVal(
       c2,
       arm.body,
@@ -977,6 +1162,7 @@ export function checkExpr(cx: ICtx, e: Expr, expected: RT | null): Ty {
         if (nameBound(c2, cl.v))
           cx.report('E3019', `comprehension variable ${cl.v} shadows an enclosing name`);
         c2.vars.set(cl.v, vt);
+        c2.locals = new Set([...c2.locals, cl.v]);
         for (const f of cl.filters) {
           requireVal(c2, f, infer(c2, f), 'as a filter');
           c2 = applyGuards(c2, guardsOf(f, true));
@@ -993,6 +1179,7 @@ export function checkExpr(cx: ICtx, e: Expr, expected: RT | null): Ty {
         if (nameBound(c2, cl.v))
           cx.report('E3019', `comprehension variable ${cl.v} shadows an enclosing name`);
         c2.vars.set(cl.v, vt);
+        c2.locals = new Set([...c2.locals, cl.v]);
         for (const f of cl.filters) {
           requireVal(c2, f, infer(c2, f), 'as a filter');
           c2 = applyGuards(c2, guardsOf(f, true));
@@ -1065,6 +1252,13 @@ export function checkExpr(cx: ICtx, e: Expr, expected: RT | null): Ty {
               !e.entries.some((en) => en.key === m.name)
             )
               cx.report('E4002', `required member ${m.name} missing in the construction`);
+        // §9.3: a cycle the construction closes (one through the type alone is the type's report)
+        const cyc = memberCycle(expected, e.entries, cx.locals);
+        if (cyc && cyc.some((n) => e.entries.some((en) => en.key === n)))
+          cx.report(
+            'E4113',
+            `construction of ${expected.name ?? 'the record'}: dependency cycle ${cyc.join(' -> ')} — a bare name inside the literal is its own member (§9.3)`,
+          );
         return { rt: expected, abs: false };
       }
       if (expected.t === 'map') {

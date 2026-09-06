@@ -1,0 +1,7 @@
+// @expect-phase: checking
+// @expect-error: E4113
+// inside a construction, a bare name is the construction's own member
+// before the enclosing record's: `clock_in: clock_in` names itself (§9.3)
+type Port = { clock_in: string, n = 1 }
+type Node = { clock_in: string, ports: { [string]: Port } = { p: { clock_in: clock_in } } }
+export output n: Node = { clock_in: "clk" }

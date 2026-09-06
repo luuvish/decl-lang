@@ -28,6 +28,7 @@ from .infer import (
     js_str,
     js_typeof,
     make_ctx,
+    member_cycle,
     require_val,
     try_resolve,
 )
@@ -534,6 +535,15 @@ def check_module(
                         report("E4090", f"embedding site {site} fails {who}'s $key bound (§7.3)")
 
         INT = {"t": "prim", "name": "int"}
+
+        cyc = member_cycle(rt)
+
+        if cyc:
+            report(
+                "E4113",
+                f"{rt.get('name') or 'record'}: dependency cycle visible in the type structure: "
+                f"{' -> '.join(cyc)} (§9.3)",
+            )
         for m in rt["members"]:
             mt = m.get("type")
             if m["kind"] == "der" and m.get("expr"):
@@ -653,6 +663,7 @@ def check_module(
             cx_f = cx0.child()
             for p in d["params"]:
                 cx_f.vars[p["name"]] = TY(resolve_or_report(p.get("type"), f"func {d['name']}"))
+                cx_f.locals.add(p["name"])
             check_expr(
                 cx_f,
                 d["body"],
@@ -668,6 +679,7 @@ def check_module(
             cx_d = cx0.child()
             for p in d["params"]:
                 cx_d.vars[p["name"]] = TY(try_resolve(env, p.get("type")))
+                cx_d.locals.add(p["name"])
             for p in d["template"]:
                 if not is_str(p):
                     infer(cx_d, p)

@@ -21,6 +21,7 @@ import {
   applyGuards,
   guardsOf,
   tryResolve,
+  memberCycle,
 } from './infer.ts';
 import type { Ty, Target, ICtx } from './infer.ts';
 import { Engine } from './engine.ts';
@@ -470,6 +471,12 @@ export function checkModule(decls: Decl[], linked?: Env, hooks?: CheckHooks): Di
       }
     };
     const INT: RT = { t: 'prim', name: 'int' };
+    const cyc = memberCycle(rt);
+    if (cyc)
+      report(
+        'E4113',
+        `${rt.name ?? 'record'}: dependency cycle visible in the type structure: ${cyc.join(' -> ')} (§9.3)`,
+      );
     for (const m of rt.members) {
       if (m.kind === 'der' && m.expr) checkExpr(cxFor(m.menv), m.expr, m.type ?? null);
       if (m.kind === 'dflt' && m.dflt) checkExpr(cxFor(m.menv), m.dflt, m.type ?? null);
@@ -578,9 +585,11 @@ export function checkModule(decls: Decl[], linked?: Env, hooks?: CheckHooks): Di
     if (d.d === 'const')
       checkExpr(cx0, d.expr, d.type ? resolveOrReport(d.type, `const ${d.name}`) : null);
     else if (d.d === 'func') {
-      const cxF = { ...cx0, vars: new Map(cx0.vars) };
-      for (const p of d.params)
+      const cxF = { ...cx0, vars: new Map(cx0.vars), locals: new Set(cx0.locals) };
+      for (const p of d.params) {
         cxF.vars.set(p.name, { rt: resolveOrReport(p.type, `func ${d.name}`), abs: false });
+        cxF.locals.add(p.name);
+      }
       checkExpr(cxF, d.body, d.ret ? resolveOrReport(d.ret, `func ${d.name}`) : null);
     } else if (d.d === 'output')
       checkExpr(cx0, d.expr, resolveOrReport(d.type, `output ${d.name}`));
@@ -588,8 +597,11 @@ export function checkModule(decls: Decl[], linked?: Env, hooks?: CheckHooks): Di
       checkExpr(cx0, d.fallback, resolveOrReport(d.type, `input ${d.name}`));
     else if (d.d === 'input') resolveOrReport(d.type, `input ${d.name}`);
     else if (d.d === 'diagnostic') {
-      const cxD = { ...cx0, vars: new Map(cx0.vars) };
-      for (const p of d.params) cxD.vars.set(p.name, { rt: tryResolve(env, p.type), abs: false });
+      const cxD = { ...cx0, vars: new Map(cx0.vars), locals: new Set(cx0.locals) };
+      for (const p of d.params) {
+        cxD.vars.set(p.name, { rt: tryResolve(env, p.type), abs: false });
+        cxD.locals.add(p.name);
+      }
       d.template.forEach((p) => {
         if (typeof p !== 'string') infer(cxD, p);
       });

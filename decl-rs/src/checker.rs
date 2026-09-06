@@ -933,6 +933,16 @@ pub fn check_module(
             }
         };
         let int_rt: RT = ty(RTk::Prim("int".into()));
+        if let Some(cyc) = member_cycle(rt, None, &HashSet::new()) {
+            rep(
+                "E4113",
+                format!(
+                    "{}: dependency cycle visible in the type structure: {} (§9.3)",
+                    rt.name.borrow().clone().unwrap_or_else(|| "record".into()),
+                    cyc.join(" -> ")
+                ),
+            );
+        }
         let members = rec.members.borrow().clone();
         for m in &members {
             if m.kind == MKind::Der {
@@ -1115,6 +1125,7 @@ pub fn check_module(
                         p.name.clone(),
                         tyv(resolve_or_report(p.ty.as_ref(), &format!("func {name}"))),
                     );
+                    cx_f.locals.insert(p.name.clone());
                 }
                 let exp = ret
                     .as_ref()
@@ -1147,6 +1158,7 @@ pub fn check_module(
                 for p in params {
                     cx_d.vars
                         .insert(p.name.clone(), tyv(try_resolve(&env, p.ty.as_ref())));
+                    cx_d.locals.insert(p.name.clone());
                 }
                 for p in template {
                     if let TPart::Expr(x) = p {

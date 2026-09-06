@@ -1,0 +1,8 @@
+// @expect-phase: checking
+// @expect-error: E4113
+// a member whose expression names itself is a dependency cycle visible
+// in the type structure (§9.3): a bare name in a member expression is the
+// sibling of that name before anything outside the record
+const a = 1
+type T = { a?: int = a, b = a + 1 }
+export output t: T = {}

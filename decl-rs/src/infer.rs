@@ -52,6 +52,9 @@ pub struct Ctx {
     pub report: Report,
     /// the local variables in scope, with their types
     pub vars: HashMap<String, Ty>,
+    /// the names bound by the expression itself — function and lambda parameters,
+    /// comprehension variables, match bindings: they shadow a record's members (§4.3)
+    pub locals: HashSet<String>,
     /// the paths a guard proved present
     pub present: HashSet<String>,
     /// the paths a guard proved non-null
@@ -143,12 +146,236 @@ impl Ctx {
         c
     }
 }
+// ---------------- §9.3: cycles visible in the type structure ----------------
+/// the record type a nested literal binds to, when the expected type says: an element, a map value
+fn elem_rt(rt: Option<&RT>) -> Option<RT> {
+    match rt.map(|r| &r.k) {
+        Some(RTk::Arr { elem, .. }) => Some(elem.clone()),
+        Some(RTk::Map { val, .. }) => Some(val.clone()),
+        _ => None,
+    }
+}
+/// The sibling members an expression names bare. Lambda parameters,
+/// comprehension variables, and match bindings shadow them; so do the
+/// members of a nested construction (its declared members when the
+/// expected type is known, always its keys); a navigation names no sibling.
+pub fn sibling_reads(
+    e: &Expr,
+    siblings: &HashSet<String>,
+    bound: &HashSet<String>,
+    out: &mut Vec<String>,
+    rt: Option<&RT>,
+) {
+    let with_vars = |vs: &[String], b: &HashSet<String>| -> HashSet<String> {
+        let mut b2 = b.clone();
+        for v in vs {
+            b2.insert(v.clone());
+        }
+        b2
+    };
+    match e {
+        Expr::Name(n) => {
+            if !bound.contains(n) && siblings.contains(n) && !out.contains(n) {
+                out.push(n.clone());
+            }
+        }
+        Expr::Template(parts) => {
+            for p in parts {
+                if let TPart::Expr(x) = p {
+                    sibling_reads(x, siblings, bound, out, None);
+                }
+            }
+        }
+        Expr::Obj(entries) => {
+            let rec = match rt.map(|r| &r.k) {
+                Some(RTk::Rec(r)) => Some(r),
+                _ => None,
+            };
+            let mut keys: Vec<String> = entries.iter().map(|(k, _)| k.clone()).collect();
+            if let Some(r) = &rec {
+                keys.extend(r.members.borrow().iter().map(|m| m.name.clone()));
+            }
+            let inner = with_vars(&keys, bound);
+            for (k, v) in entries {
+                if let Expr::Spread(x) = &**v {
+                    sibling_reads(x, siblings, bound, out, None);
+                    continue;
+                }
+                let mt: Option<RT> = match (&rec, rt.map(|r| &r.k)) {
+                    (Some(r), _) => r
+                        .members
+                        .borrow()
+                        .iter()
+                        .find(|m| m.name == *k)
+                        .and_then(|m| m.ty.clone()),
+                    (None, Some(RTk::Map { val, .. })) => Some(val.clone()),
+                    _ => None,
+                };
+                sibling_reads(v, siblings, &inner, out, mt.as_ref());
+            }
+        }
+        Expr::Spread(x) => sibling_reads(x, siblings, bound, out, None),
+        Expr::Arr(items) => {
+            for (spread, x) in items {
+                let t = if *spread { rt.cloned() } else { elem_rt(rt) };
+                sibling_reads(x, siblings, bound, out, t.as_ref());
+            }
+        }
+        Expr::Comp { head, clauses }
+        | Expr::MapComp {
+            val: head, clauses, ..
+        } => {
+            let mut b = bound.clone();
+            for cl in clauses {
+                sibling_reads(&cl.iter, siblings, &b, out, None);
+                b.insert(cl.v.clone());
+                for f in &cl.filters {
+                    sibling_reads(f, siblings, &b, out, None);
+                }
+            }
+            if let Expr::MapComp { key, .. } = e {
+                sibling_reads(key, siblings, &b, out, None);
+            }
+            let t = elem_rt(rt);
+            sibling_reads(head, siblings, &b, out, t.as_ref());
+        }
+        Expr::Bin { l, r, .. } => {
+            sibling_reads(l, siblings, bound, out, None);
+            sibling_reads(r, siblings, bound, out, None);
+        }
+        Expr::Un { x, .. } => sibling_reads(x, siblings, bound, out, None),
+        Expr::Paren(x) => sibling_reads(x, siblings, bound, out, rt),
+        Expr::If { c, t, f } => {
+            sibling_reads(c, siblings, bound, out, None);
+            sibling_reads(t, siblings, bound, out, rt);
+            sibling_reads(f, siblings, bound, out, rt);
+        }
+        Expr::Lambda { params, body } => {
+            sibling_reads(body, siblings, &with_vars(params, bound), out, None)
+        }
+        Expr::Call { fun, args } => {
+            sibling_reads(fun, siblings, bound, out, None);
+            for a in args {
+                sibling_reads(a, siblings, bound, out, None);
+            }
+        }
+        Expr::Member { x, .. } => sibling_reads(x, siblings, bound, out, None),
+        Expr::Index { x, i } => {
+            sibling_reads(x, siblings, bound, out, None);
+            sibling_reads(i, siblings, bound, out, None);
+        }
+        Expr::With { base, patch } => {
+            sibling_reads(base, siblings, bound, out, rt);
+            sibling_reads(patch, siblings, bound, out, rt);
+        }
+        Expr::Match { subject, arms } => {
+            sibling_reads(subject, siblings, bound, out, None);
+            for a in arms {
+                sibling_reads(
+                    &a.body,
+                    siblings,
+                    &with_vars(std::slice::from_ref(&a.v), bound),
+                    out,
+                    rt,
+                );
+            }
+        }
+        _ => {} // Lit, UnitLit, Ctx, Referrers, Pattern
+    }
+}
+/// A dependency cycle among a record's members through bare sibling names
+/// (§9.3, E4113): the members' default and derived expressions, with a
+/// construction's entries in place of the members it supplies (the
+/// construction's own members shadow the names bound around it, `bound`).
+/// The cycle, or None.
+pub fn member_cycle(
+    rt: &RT,
+    entries: Option<&Vec<(String, Rc<Expr>)>>,
+    bound: &HashSet<String>,
+) -> Option<Vec<String>> {
+    let RTk::Rec(rec) = &rt.k else { return None };
+    let members = rec.members.borrow().clone();
+    let siblings: HashSet<String> = members.iter().map(|m| m.name.clone()).collect();
+    let mut exprs: Vec<(String, Rc<Expr>, bool)> = vec![];
+    let mut member_type: HashMap<String, Option<RT>> = HashMap::new();
+    for m in &members {
+        member_type.insert(m.name.clone(), m.ty.clone());
+        let x = match m.kind {
+            MKind::Der => m.expr.clone(),
+            MKind::Dflt => m.dflt.clone(),
+            _ => None,
+        };
+        if let Some(x) = x {
+            exprs.push((m.name.clone(), x, false));
+        }
+    }
+    if let Some(es) = entries {
+        for (k, v) in es {
+            if matches!(&**v, Expr::Spread(_)) || !siblings.contains(k) {
+                continue;
+            }
+            exprs.retain(|(n, _, _)| n != k);
+            exprs.push((k.clone(), v.clone(), true));
+        }
+    }
+    let empty = HashSet::new();
+    let mut edges: HashMap<String, Vec<String>> = HashMap::new();
+    let order: Vec<String> = exprs.iter().map(|(n, _, _)| n.clone()).collect();
+    for (name, x, supplied) in &exprs {
+        let mut out = vec![];
+        // a supplied entry was written where `bound` is in scope; a declared
+        // expression sees only what the type binds
+        let b = if *supplied { bound } else { &empty };
+        let mt = member_type.get(name).cloned().flatten();
+        sibling_reads(x, &siblings, b, &mut out, mt.as_ref());
+        edges.insert(name.clone(), out);
+    }
+    fn visit(
+        n: &str,
+        edges: &HashMap<String, Vec<String>>,
+        state: &mut HashMap<String, u8>,
+        stack: &mut Vec<String>,
+    ) -> Option<Vec<String>> {
+        match state.get(n) {
+            Some(2) => return None,
+            Some(1) => {
+                let i = stack.iter().position(|s| s == n).unwrap_or(0);
+                let mut c: Vec<String> = stack[i..].to_vec();
+                c.push(n.to_string());
+                return Some(c);
+            }
+            _ => {}
+        }
+        state.insert(n.to_string(), 1);
+        stack.push(n.to_string());
+        if let Some(ms) = edges.get(n) {
+            for m in ms {
+                if let Some(c) = visit(m, edges, state, stack) {
+                    return Some(c);
+                }
+            }
+        }
+        stack.pop();
+        state.insert(n.to_string(), 2);
+        None
+    }
+    let mut state = HashMap::new();
+    let mut stack = vec![];
+    for n in &order {
+        if let Some(c) = visit(n, &edges, &mut state, &mut stack) {
+            return Some(c);
+        }
+    }
+    None
+}
+
 /// A fresh context over an environment.
 pub fn make_ctx(env: Rc<Env>, report: Report) -> Ctx {
     Ctx {
         env,
         report,
         vars: HashMap::new(),
+        locals: HashSet::new(),
         present: HashSet::new(),
         nonnull: HashSet::new(),
         const_memo: Rc::new(RefCell::new(HashMap::new())),
@@ -977,6 +1204,7 @@ fn infer0(cx: &Ctx, e: &Rc<Expr>) -> Ty {
                     );
                 }
                 c2.vars.insert(p.clone(), unk());
+                c2.locals.insert(p.clone());
             }
             infer(&c2, body);
             unk()
@@ -1041,6 +1269,7 @@ fn bind_clauses(cx: &Ctx, clauses: &[ForClause]) -> Ctx {
             );
         }
         c2.vars.insert(cl.v.clone(), vt);
+        c2.locals.insert(cl.v.clone());
         for f in &cl.filters {
             require_val(&c2, f, infer(&c2, f), "as a filter");
             c2 = apply_guards(&c2, guards_of(f, true));
@@ -1678,6 +1907,7 @@ fn check_lambda(cx: &Ctx, e: &Rc<Expr>, expected: &RT) {
                 Some(eps[i].clone())
             }),
         );
+        c2.locals.insert(p.clone());
     }
     let b = require_val(&c2, body, infer(&c2, body), "as a lambda result");
     if let (Some(brt), Some(r)) = (&b.rt, ret_of(ret)) {
@@ -1758,6 +1988,7 @@ fn infer_match(cx: &Ctx, e: &Rc<Expr>, expected: Option<&RT>) -> Ty {
             }
         }
         c2.vars.insert(arm.v.clone(), tyv(arm_ty));
+        c2.locals.insert(arm.v.clone());
         let bt = match expected {
             Some(ex) => check_expr(&c2, &arm.body, Some(ex)),
             None => infer(&c2, &arm.body),
@@ -1966,6 +2197,19 @@ pub fn check_expr(cx: &Ctx, e: &Rc<Expr>, expected: Option<&RT>) -> Ty {
                             format!("required member {} missing in the construction", m.name),
                         );
                     }
+                }
+            }
+            // §9.3: a cycle the construction closes (one through the type alone is the type's report)
+            if let Some(cyc) = member_cycle(expected, Some(entries), &cx.locals) {
+                if cyc.iter().any(|n| entries.iter().any(|(k, _)| k == n)) {
+                    cx.report(
+                        "E4113",
+                        format!(
+                            "construction of {}: dependency cycle {} — a bare name inside the literal is its own member (§9.3)",
+                            expected.name.borrow().clone().unwrap_or_else(|| "the record".into()),
+                            cyc.join(" -> ")
+                        ),
+                    );
                 }
             }
             return tyv(Some(expected.clone()));
