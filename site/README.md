@@ -59,6 +59,20 @@ Where it lives:
 - `src/components/decl-mode.ts` — the playground editor reads the same
   six roles as `--decl-syn-*`.
 
+Credits. The faces are free fonts under the SIL Open Font License 1.1
+(<https://openfontlicense.org>): Literata is © 2017 The Literata Project
+Authors (<https://github.com/googlefonts/literata>); IBM Plex Sans and
+IBM Plex Mono are © 2017–2019 IBM Corp. (<https://github.com/IBM/plex>).
+They are served unmodified, and the copyright and license records the
+files carry are the notice the license asks for; the site's footer
+(`src/components/Footer.astro`) repeats it. The mark is the Unicode
+character ⊑ (U+2291) drawn by hand on a grid, not a glyph taken from
+any font. The icons on the landing page and in the header are
+Starlight's own set (Unicons, Apache 2.0; Simple Icons, CC0); Starlight,
+Astro, Expressive Code, CodeMirror, Pagefind, and web-tree-sitter are
+MIT, and the build-time renderers sharp (Apache 2.0) and opentype.js
+(MIT) ship nothing to the browser.
+
 ```bash
 npm install                       # once, at the repository root (npm workspaces)
 cd site

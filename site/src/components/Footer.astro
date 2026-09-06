@@ -1,0 +1,28 @@
+---
+// Starlight's footer (edit link, last updated, pagination) followed by the
+// colophon: the faces and their license, and what the site is built with.
+// The fonts are the SIL Open Font License; the notice below and the
+// copyright and license records inside the font files themselves are how
+// the site carries it (site/README.md, "The identity").
+import Default from '@astrojs/starlight/components/Footer.astro';
+---
+
+<Default><slot /></Default>
+{/* one line: the compiler drops the whitespace at a line break before an element */}
+<p class="colophon">Type: <a href="https://github.com/googlefonts/literata">Literata</a> and <a href="https://github.com/IBM/plex">IBM Plex</a>, under the <a href="https://openfontlicense.org">SIL Open Font License</a>. Built with <a href="https://starlight.astro.build">Astro Starlight</a>.</p>
+
+<style>
+  .colophon {
+    margin: 2rem 0 0;
+    font-family: var(--decl-font-ui);
+    font-size: var(--sl-text-xs);
+    line-height: 1.5;
+    color: var(--sl-color-gray-3);
+  }
+  .colophon a {
+    color: var(--sl-color-gray-2);
+    text-decoration: underline;
+    text-decoration-thickness: 1px;
+    text-underline-offset: 0.18em;
+  }
+</style>
