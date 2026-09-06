@@ -351,7 +351,9 @@ jobs:
         run: |
           f=packaging/homebrew/Formula/decl-lang.rb
           cp "$f" /tmp/decl-lang.rb
-          git fetch -q origin main && git checkout -q main
+          # -f: on a re-run main already carries the formula, and the rendered copy in
+          # the working tree would otherwise block the switch (it is restored from /tmp)
+          git fetch -q origin main && git checkout -q -f main
           cp /tmp/decl-lang.rb "$f"
           if git diff --quiet; then echo "packaging/ is already current"; exit 0; fi
           git -c user.name=github-actions -c user.email=github-actions@github.com commit -qam "homebrew: decl-lang ${{ steps.tarball.outputs.version }} [skip ci]"
