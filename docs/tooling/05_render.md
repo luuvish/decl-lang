@@ -241,7 +241,7 @@ A root with a `template` is emitted as the text the template produces
 over the root's document. A root that fails validation is not
 rendered: its diagnostics are reported as `evaluate` reports them, the
 exit code is 1, nothing is written for it; the other roots are still
-emitted. Rendering errors (§5.7) are diagnostics too, on standard
+emitted. Rendering errors (§5.8) are diagnostics too, on standard
 error, exit code 1, the partial text discarded.
 
 ### 5.1 The dialect, and where it comes from
@@ -421,7 +421,71 @@ the pipeline:
 a parent key. There are no others; string work is `std.string`, and a
 template that needs more expresses it as a `func` in the module.
 
-### 5.7 Errors
+### 5.7 Functions in a template
+
+A template defines no functions of its own: the module's `func` and
+`const` declarations are in scope, and that is where computation
+belongs, so that `decl evaluate --output gateway` shows every value a
+template will place. Three idioms cover what a Jinja author reaches
+for `macro` and filters to do.
+
+A **value** is computed by a `func`, called directly or through the
+pipeline, with lambdas where a `std` function takes one:
+
+```decl
+// site.decl
+func label(s: Service): string = `${s.name}:${s.port}`
+func cidr(net: Subnet): string = `${net.base}/${net.prefix}`
+func ports_csv(ss: Service[]): string =
+    std.string.join([std.string.of(s.port) for s in ss], ",")
+
+@render({ template: "nginx.conf.j2" })
+export output gateway: Gateway = { … }
+```
+
+```
+{# nginx.conf.j2 #}
+upstream backend {
+{% for s in services if s.public %}
+    server {= label(s) =} weight={= s.replicas =};
+{% endfor %}
+}
+allow {= network |> cidr =};
+# ports: {= services |> std.array.filter((s) => s.public) |> ports_csv =}
+```
+
+A **temporary** is bound with `set`, once per scope:
+
+```
+{% set public = services |> std.array.filter((s) => s.public) %}
+{% set n = public |> std.array.count %}
+{= n =} public services
+```
+
+A **fragment of text with statements in it** — what a `func` cannot
+return — is a file included with its parameters set beforehand; the
+included file sees the scope, and what it sets stays inside it:
+
+```
+{% for s in services %}
+{% set svc = s %}
+{% include "server-block.j2" %}
+{% endfor %}
+```
+
+```
+{# server-block.j2: svc is in scope #}
+    server {
+        name {= svc.name =};
+        listen {= svc.port =};
+    }
+```
+
+The limits follow from the language's: a `func` does not recurse (§5.3)
+and holds no statements, so a deep tree is flattened into a value by a
+comprehension in the module and then walked by `for` in the template.
+
+### 5.8 Errors
 
 | Code | Condition |
 |---|---|
@@ -480,7 +544,7 @@ The three APIs grow in the `evaluate` vocabulary
   single text for a one-file root and a map from path to text for a
   fan-out root. Nothing is written to disk; a failure throws / raises /
   returns the same error type as `evaluate` with the diagnostics of
-  §5.7.
+  §5.8.
 - `toJson(value, indent?)` and `toYaml(value, indent?)` — the text of a
   JSON value in the layouts of §4, pure functions with no universe
   behind them, for a program that has a document and wants its text.
@@ -519,7 +583,7 @@ other configurations have no preview and change nothing.
   tree under `expected/<case>/` for files and fan-out, or `rejected`
   with the expected standard error. Every key of §3, every statement of
   §5.3, every text form of §5.5, every function of §5.6, every error of
-  §5.7, the whitespace rules of §5.2, and fan-out over an array and a
+  §5.8, the whitespace rules of §5.2, and fan-out over an array and a
   map have a case.
 - `formats.json` — pairs of a golden document (`tests/golden/`) and its
   YAML form under `yaml/`, plus its indented JSON forms for the indents
@@ -596,7 +660,7 @@ of §9 passes in the three implementations and the harness.
   implementations in the harness — exit code, standard output, standard
   error, and the files written.
 - Every key of §3, every construct of §5.2–5.3, every text form of
-  §5.5, every function of §5.6, every error of §5.7, and fan-out over an
+  §5.5, every function of §5.6, every error of §5.8, and fan-out over an
   array and a map with a case.
 - Every golden's YAML form read back by a YAML 1.2 reader (the harness
   uses PyYAML in 1.2 core-schema mode and `serde_yaml`'s reader through
