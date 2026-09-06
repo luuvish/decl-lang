@@ -174,6 +174,8 @@ export class Engine {
           __pre: 'obj',
           entries: e.entries.map((en) => [en.key, { __expr: en.val, scope: sc }]),
         };
+      case 'spread':
+        throw new EvalErr('spread outside an object literal');
       case 'arr':
         return {
           __pre: 'arr',
@@ -247,7 +249,8 @@ export class Engine {
         return this.access(x, e.name);
       }
       case 'index': {
-        const x = this.deref(this.ev(e.x, sc));
+        // a literal (or document) operand is materialized before it is indexed
+        const x = this.matVal(this.ev(e.x, sc));
         const i = this.ev(e.i, sc);
         if (isArr(x)) {
           const n = Number(i);
@@ -269,8 +272,19 @@ export class Engine {
           // an unbound literal (e.g. a constructor func's result):
           // merge entries directly, still unbound
           const patch = this.ev(e.patch, sc);
-          const entries: [string, any][] = base.entries.map(([k, v]: any) => [k, v]);
-          for (const [k, v] of patch.entries) {
+          const entries: [string, any][] = this.entriesOf(base).map(([k, v]: any) => [k, v]);
+          for (const [k, v] of this.entriesOf(patch)) {
+            const i = entries.findIndex(([n]) => n === k);
+            if (i >= 0) entries[i] = [k, v];
+            else entries.push([k, v]);
+          }
+          return { __pre: 'obj', entries };
+        }
+        if (isMap(base)) {
+          // a literal no record type claimed: its entries, updated, still unbound
+          const patch = this.ev(e.patch, sc);
+          const entries: [string, any][] = [...base.entries.entries()].map(([k, v]: any) => [k, v]);
+          for (const [k, v] of this.entriesOf(patch)) {
             const i = entries.findIndex(([n]) => n === k);
             if (i >= 0) entries[i] = [k, v];
             else entries.push([k, v]);
@@ -299,7 +313,7 @@ export class Engine {
           )
             entries.push([m.name, this.forceSlot(base, m.name)]);
         }
-        for (const [k, v] of patch.entries) {
+        for (const [k, v] of this.entriesOf(patch)) {
           const i = entries.findIndex(([n]) => n === k);
           if (i >= 0) entries[i] = [k, v];
           else entries.push([k, v]);
@@ -307,6 +321,58 @@ export class Engine {
         return { __pre: 'obj', entries };
       }
     }
+  }
+  // the entries of an unbound object literal with its spreads (§4.2) expanded
+  // in place: a spread copies the entries of an object-valued operand — a
+  // record's value members (hidden ones are not entries), a map's entries, or
+  // another literal's — and a key produced twice is E5004. Expanded once per
+  // literal; spread operands evaluate in the literal's own scope.
+  entriesOf(x: any): [string, any][] {
+    if (x.flat) return x.flat;
+    const isSpread = (v: any) => v && v.__expr && v.__expr.e === 'spread';
+    if (!x.entries.some(([, v]: any) => isSpread(v))) return (x.flat = x.entries);
+    const out: [string, any][] = [];
+    const put = (k: string, v: any) => {
+      if (out.some(([n]) => n === k)) throw new EvalErr(`duplicate key ${k}`, 'E5004');
+      out.push([k, v]);
+    };
+    for (const [k, v] of x.entries) {
+      if (!isSpread(v)) {
+        put(k, v);
+        continue;
+      }
+      const s = this.deref(this.ev(v.__expr.expr, v.scope));
+      for (const [k2, v2] of this.spreadEntries(s)) put(k2, v2);
+    }
+    return (x.flat = out);
+  }
+  spreadEntries(s: any): [string, any][] {
+    if (s && s.__pre === 'obj') return this.entriesOf(s);
+    if (s && s.__jobj) return s.entries;
+    if (isMap(s)) return [...s.entries.entries()].map(([k, v]: any) => [k, v]);
+    if (isRec(s)) {
+      // the value's entries in serialization order (§10.3): supplied members in
+      // document order, then the members evaluation materialized, in
+      // declaration order — every value member, hidden ones never
+      const entries: [string, any][] = [];
+      const seen = new Set<string>();
+      const take = (n: string) => {
+        if (seen.has(n)) return;
+        seen.add(n);
+        if (s.extras.has(n)) {
+          entries.push([n, s.extras.get(n)]);
+          return;
+        }
+        const slot = s.slots.get(n);
+        if (!slot || slot.hidden) return;
+        if (this.forceState(s, n) === 'absent') return;
+        entries.push([n, this.forceSlot(s, n)]);
+      };
+      for (const n of s.entryOrder) take(n);
+      for (const m of s.rt.members) take(m.name);
+      return entries;
+    }
+    throw new EvalErr('spread of a non-object value');
   }
   // does a value belong to a type? (match arm selection) — bound records
   // answer by their bound type; raw values by a silent trial binding
@@ -491,8 +557,9 @@ export class Engine {
       if (bad) throw new EvalErr(`malformed pattern /${r.re}/: ${bad}`, 'E4119');
       return compilePattern(r.re).test(l);
     }
-    if (op === '==') return valueEq(l, r);
-    if (op === '!=') return !valueEq(l, r);
+    // a literal operand is materialized: equality is structural over values (§4.5)
+    if (op === '==') return valueEq(this.matVal(l), this.matVal(r));
+    if (op === '!=') return !valueEq(this.matVal(l), this.matVal(r));
     if (op === 'in') {
       if (isRef(r)) r = this.deref(r); // the container may be reached through a reference ($this, $parent)
       if (isRange(r)) return l >= r.lo && (r.excl ? l < r.hi : l <= r.hi);
@@ -638,14 +705,21 @@ export class Engine {
         return this.forceSlot(x, name);
       }
       if (x.extras.has(name)) throw new EvalErr(`opaque field ${name} accessed`);
-      throw new EvalErr(`no member ${name}`);
+      // a member the record's type does not declare: the checker admitted the
+      // read against a bound that declares it optional, so it is absent (§4.10)
+      return ABSENT;
     }
     if (x && x.__pre === 'obj') {
       // unbound literal (e.g. std.map.entries records)
-      const en = x.entries.find(([k]: any) => k === name);
+      const en = this.entriesOf(x).find(([k]: any) => k === name);
       if (!en) return ABSENT;
       const v = en[1];
       return v && v.__expr ? this.ev(v.__expr, v.scope) : v;
+    }
+    if (isMap(x)) {
+      // a literal that no record type claimed is a map at evaluation time
+      // while the checker typed its members by name; the name reads the entry
+      return x.entries.has(name) ? x.entries.get(name) : ABSENT;
     }
     if (x === null) throw new EvalErr('member access on null');
     if (x === ABSENT) return ABSENT;
@@ -821,6 +895,10 @@ export class Engine {
     }
     return { __pre: 'obj', entries };
   }
+  matVal(v: any): any {
+    const d = this.deref(v);
+    return d && (d.__pre || d.__jobj) ? this.materialize(d, [], null, null as any) : d;
+  }
   matRec(v: any): RecInst {
     let d = this.deref(v);
     if (d && (d.__pre || d.__jobj)) d = this.materialize(d, [], null, null as any);
@@ -837,6 +915,10 @@ export class Engine {
     let d = this.deref(v);
     if (d && d.__pre) d = this.materialize(d, [], null, null as any);
     if (isMap(d)) return d;
+    if (isRec(d)) {
+      // a record reads as the map of its value entries (§3.17)
+      return { __map: true, entries: new Map(this.spreadEntries(d)), path: d.path };
+    }
     throw new EvalErr('expected map');
   }
 
@@ -1014,10 +1096,12 @@ export class Engine {
           raw && raw.__jobj
             ? raw.entries
             : raw && raw.__pre === 'obj'
-              ? raw.entries
+              ? this.entriesOf(raw)
               : isMap(raw)
                 ? [...raw.entries.entries()].map(([k, v]: any) => [k, v])
-                : (null as any);
+                : isRec(raw)
+                  ? this.spreadEntries(raw) // a record binds to a map as its value entries (§3.18)
+                  : (null as any);
         if (!es) return fail('expected map');
         for (const [k, v] of es) {
           try {
@@ -1036,8 +1120,9 @@ export class Engine {
       }
       case 'union': {
         // record arms discriminate on shared literal members; others by kind
+        if (raw && raw.__expr) raw = this.rawLit(raw); // a literal's entry: its value decides
         const recArms = rt.arms.filter((a: RT) => a.t === 'rec');
-        if ((raw && raw.__jobj) || (raw && raw.__pre === 'obj') || isRec(raw)) {
+        if ((raw && raw.__jobj) || (raw && raw.__pre === 'obj') || isRec(raw) || isMap(raw)) {
           if (recArms.length > 0) {
             const discNames = recArms[0].members
               .filter(
@@ -1097,7 +1182,8 @@ export class Engine {
   }
   rawEntry(raw: any, name: string): any {
     if (raw && raw.__jobj) return raw.entries.find(([k]: any) => k === name)?.[1];
-    if (raw && raw.__pre === 'obj') return raw.entries.find(([k]: any) => k === name)?.[1];
+    if (raw && raw.__pre === 'obj') return this.entriesOf(raw).find(([k]: any) => k === name)?.[1];
+    if (isMap(raw)) return raw.entries.get(name);
     if (isRec(raw)) return raw.slots.has(name) ? this.forceSlot(raw, name) : undefined;
     return undefined;
   }
@@ -1173,7 +1259,9 @@ export class Engine {
   bindRecord(raw: any, rt: RT, path: Seg[], parent: RecInst | null, sc: Scope): RecInst {
     let entries: [string, any][];
     if (raw && raw.__jobj) entries = raw.entries;
-    else if (raw && raw.__pre === 'obj') entries = raw.entries;
+    else if (raw && raw.__pre === 'obj') entries = this.entriesOf(raw);
+    // a literal no record type claimed became a map; its entries bind like a document's
+    else if (isMap(raw)) entries = [...raw.entries.entries()].map(([k, v]: any) => [k, v]);
     else if (isRec(raw)) {
       entries = raw.entryOrder
         .filter((n) => !raw.slots.has(n) || raw.slots.get(n)!.kind !== 'der')
@@ -1332,14 +1420,18 @@ export class Engine {
       let i = 0;
       for (const it of v.items) {
         const x = it.v.__expr ? this.ev(it.v.__expr, it.v.scope) : it.v;
-        arr.items.push(this.materialize(x, [...path, i], parent, sc));
-        i++;
+        // a spread item splices its array's elements (§4.2)
+        const xs = it.spread ? this.matArr(this.deref(x)) : [x];
+        for (const y of xs) {
+          arr.items.push(this.materialize(y, [...path, i], parent, sc));
+          i++;
+        }
       }
       return arr;
     }
     if (v && v.__pre === 'obj') {
       const m: any = { __map: true, entries: new Map(), path };
-      for (const [k, pv] of v.entries)
+      for (const [k, pv] of this.entriesOf(v))
         m.entries.set(
           k,
           this.materialize(

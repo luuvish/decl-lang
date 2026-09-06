@@ -296,6 +296,9 @@ class Env:
     def __init__(self) -> None:
         self.type_asts: dict[str, Any] = {}
         self.type_memo: dict[str, Any] = {}
+        # the non-record aliases being resolved, to catch a reference back to one
+        self.resolving: set[str] = set()
+        self.cyclic: dict[str, Any] = {}  # the placeholder an alias's inner reference took
         # names being spliced into a pattern right now, across nested
         # resolutions — a mutually recursive pair is a cycle, not a stack overflow
         self.pattern_visiting: set[Any] = set()
@@ -722,7 +725,31 @@ class Env:
                 self.type_memo.pop(n, None)
                 raise
         else:
-            base = self.resolve(decl["ast"], n)
+            # an alias that names itself through an array, a map, or a union
+            # (`type Json = … | Json[] | { [string]: Json }`, §3.1) is entered
+            # once: the inner reference gets a placeholder union that the outer
+            # resolution fills — so every reference shares the one node; a
+            # pattern's interpolation cycle is the pattern code's own diagnostic
+            guard = decl["ast"]["k"] != "pattern"
+            if guard and n in self.resolving:
+                ph = self.cyclic.get(n)
+                if ph is None:
+                    ph = {"t": "union", "arms": [], "name": n, "tail": decl.get("tail")}
+                    self.cyclic[n] = ph
+                return ph
+            if guard:
+                self.resolving.add(n)
+            try:
+                base = self.resolve(decl["ast"], n)
+            finally:
+                self.resolving.discard(n)
+            ph = self.cyclic.pop(n, None)
+            if ph is not None:
+                arms = base["arms"] if base["t"] == "union" else [base]
+                if any(a is ph for a in arms):
+                    raise RuntimeError(f"recursive type alias {n} names itself as an arm")
+                ph["arms"] = arms
+                base = ph
             if base["t"] in ("rec", "union"):
                 base["name"] = n
             if base.get("tail") is None:

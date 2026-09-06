@@ -164,6 +164,11 @@ fn spaced(a: &Leaf, b: &Leaf, prev: Option<&Leaf>) -> bool {
     if bt == ";" {
         return false;
     }
+    // a spread attaches to its operand (`...xs`, `...(e)`); the open marker of a
+    // record type keeps its space before `}`
+    if at == "..." && bt != "}" {
+        return false;
+    }
     if at == ".." || at == "..<" || bt == ".." || bt == "..<" {
         return false;
     }

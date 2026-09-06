@@ -816,7 +816,7 @@ impl<'a> Finder<'a> {
                 self.expr(l, &p);
                 self.expr(r, &p);
             }
-            Expr::Un { x, .. } | Expr::Paren(x) => self.expr(x, &p),
+            Expr::Un { x, .. } | Expr::Paren(x) | Expr::Spread(x) => self.expr(x, &p),
             Expr::If { c, t, f } => {
                 self.expr(c, &p);
                 self.expr(t, &p);
@@ -1335,7 +1335,7 @@ fn named_types_of_rt(rt: Option<&RT>, out: &mut Vec<String>) {
         RTk::Arr { elem, .. } => named_types_of_rt(Some(elem), out),
         RTk::Map { val, .. } => named_types_of_rt(Some(val), out),
         RTk::Union(arms) => {
-            for arm in arms {
+            for arm in arms.borrow().iter() {
                 named_types_of_rt(Some(arm), out);
             }
         }
@@ -1805,7 +1805,7 @@ fn collect_expr<'a>(e: &'a Rc<Expr>, exprs: &mut Vec<Rc<Expr>>, types: &mut Vec<
             go(l);
             go(r);
         }
-        Expr::Un { x, .. } | Expr::Paren(x) => go(x),
+        Expr::Un { x, .. } | Expr::Paren(x) | Expr::Spread(x) => go(x),
         Expr::If { c, t, f } => {
             go(c);
             go(t);
@@ -4053,7 +4053,7 @@ fn placeholder_for(rt: Option<&RT>) -> String {
         RTk::Rec(_) => "{ }".into(),
         RTk::Arr { .. } => "[]".into(),
         RTk::Map { .. } => "{}".into(),
-        RTk::Union(arms) => placeholder_for(arms.first()),
+        RTk::Union(arms) => placeholder_for(arms.borrow().first()),
         _ => "null".into(),
     }
 }
@@ -4767,6 +4767,7 @@ fn code_actions(st: &mut State, uri: &str, range: (Pos, Pos), diagnostics: &[Val
                     let subject_rt = t.types.get(&key_of(subject)).and_then(|x| x.rt.clone());
                     let arms: Vec<String> = match subject_rt.as_ref().map(|r| &r.k) {
                         Some(RTk::Union(us)) => us
+                            .borrow()
                             .iter()
                             .filter_map(|r| {
                                 if let RTk::Rec(_) = &r.k {
@@ -5727,6 +5728,7 @@ fn code_actions(st: &mut State, uri: &str, range: (Pos, Pos), diagnostics: &[Val
                 srt.as_ref(),
             ) {
                 if let RTk::Union(uarms) = &srt.k {
+                    let uarms = uarms.borrow();
                     let arm_name = |lit: &str| -> Option<String> {
                         uarms.iter()
                             .find(|r| matches!(r.k, RTk::Rec(_)) && rec_members(r).iter().any(|mm| &mm.name == mem && matches!(mm.ty.as_ref().map(|t| &t.k), Some(RTk::Lit(Value::Str(v))) if v == lit)))
@@ -5786,6 +5788,7 @@ fn code_actions(st: &mut State, uri: &str, range: (Pos, Pos), diagnostics: &[Val
             let srt = t.types.get(&key_of(subject)).and_then(|x| x.rt.clone());
             let recs: Vec<RT> = match srt.as_ref().map(|r| &r.k) {
                 Some(RTk::Union(us)) => us
+                    .borrow()
                     .iter()
                     .filter(|r| matches!(r.k, RTk::Rec(_)))
                     .cloned()

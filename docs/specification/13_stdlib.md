@@ -130,6 +130,10 @@ The bias and conflict rules D16 promised, exhaustively:
 | `values<V>(m: { [string]: V }): V[]` | values in insertion order |
 | `entries<V>(m: { [string]: V }): { key: string, value: V }[]` | key/value records in insertion order |
 
+A record argument is read as the map of its value entries *(v0.4.1,
+§3.17)*: `std.map.entries(r)` walks a record's members by name, hidden
+members excluded.
+
 Maps are not directly iterable (§4.8); these three are the bridge to
 array comprehensions. Counting is `std.array.count(std.map.keys(m))`.
 

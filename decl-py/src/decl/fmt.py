@@ -214,6 +214,10 @@ def _spaced(a: Leaf, b: Leaf, prev: Leaf | None) -> bool:
         return False
     if bt == ";":
         return False
+    # a spread attaches to its operand (`...xs`, `...(e)`); the open marker of a
+    # record type keeps its space before `}`
+    if at == "..." and bt != "}":
+        return False
     if at in ("..", "..<") or bt in ("..", "..<"):
         return False
     if bt == "(":

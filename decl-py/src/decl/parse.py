@@ -45,6 +45,12 @@ def _kids(n: Node, type_: str) -> list[Any]:
     return [c for c in n.named_children if c.type == type_]
 
 
+def _type_arms(n: Node) -> list[Any]:
+    # the arms of a union or intersection: the named type nodes and the keyword
+    # literal types, which the grammar keeps as anonymous tokens
+    return [c for c in n.children if c.is_named or _text(c) in ("true", "false", "null")]
+
+
 def _kid_req(n: Node, type_: str) -> Node:
     c = _kid(n, type_)
     if c is None:
@@ -290,9 +296,14 @@ def lower_type(n: Node) -> dict[str, Any]:
 def _lower_type0(n: Node) -> dict[str, Any]:
     t = n.type
     if t == "union_type":
-        return {"k": "union", "arms": [lower_type(c) for c in n.named_children]}
+        return {"k": "union", "arms": [lower_type(c) for c in _type_arms(n)]}
     if t == "intersection_type":
-        return {"k": "isect", "arms": [lower_type(c) for c in n.named_children]}
+        return {"k": "isect", "arms": [lower_type(c) for c in _type_arms(n)]}
+    # the literal types `true`, `false`, `null` (§3.3) are keyword tokens
+    if t in ("true", "false"):
+        return {"k": "lit", "v": t == "true"}
+    if t == "null":
+        return {"k": "lit", "v": None}
     if t == "nullable_type":
         return {
             "k": "union",
@@ -585,7 +596,12 @@ def _lower_expr0(n: Node) -> dict[str, Any]:
                     }
                 )
             else:
-                entries.append({"key": "...", "val": lower_expr(en.named_children[0])})
+                # a spread entry (§4.2): the key `...` never comes from source unquoted,
+                # and a quoted "..." key carries a plain value, so the `spread` node
+                # tells them apart
+                entries.append(
+                    {"key": "...", "val": {"e": "spread", "expr": lower_expr(en.named_children[0])}}
+                )
         return {"e": "obj", "entries": entries}
     if t == "map_comprehension":
         return {

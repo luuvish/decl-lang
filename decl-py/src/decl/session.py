@@ -1831,7 +1831,14 @@ def expr_text(e: Any) -> str:
         )
     if k == "obj":
         return (
-            "{ " + ", ".join(f"{en['key']}: {expr_text(en['val'])}" for en in e["entries"]) + " }"
+            "{ "
+            + ", ".join(
+                f"...{expr_text(en['val']['expr'])}"
+                if en["val"]["e"] == "spread"
+                else f"{en['key']}: {expr_text(en['val'])}"
+                for en in e["entries"]
+            )
+            + " }"
         )
     if k == "arr":
         return (

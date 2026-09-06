@@ -193,6 +193,8 @@ class Engine:
             return self.referrers(e["type"], e["member"], sc)
         if k == "obj":
             return PreObj([(en["key"], PreVal(en["val"], sc)) for en in e["entries"]])
+        if k == "spread":
+            raise EvalErr("spread outside an object literal")
         if k == "arr":
             return PreArr([(it["spread"], PreVal(it["expr"], sc)) for it in e["items"]])
         if k == "comp":
@@ -265,7 +267,8 @@ class Engine:
                 return ABSENT
             return self.access(self.deref(x0), e["name"])
         if k == "index":
-            x = self.deref(self.ev(e["x"], sc))
+            # a literal (or document) operand is materialized before it is indexed
+            x = self.mat_val(self.ev(e["x"], sc))
             i = self.ev(e["i"], sc)
             if isinstance(x, ArrV):
                 n = int(i)
@@ -283,10 +286,16 @@ class Engine:
             return self.call(fn, args, sc)
         if k == "with":
             base = self.deref(self.ev(e["base"], sc))
-            if isinstance(base, PreObj):
+            if isinstance(base, (PreObj, MapV)):
+                # an unbound literal (e.g. a constructor func's result), or a literal
+                # no record type claimed: its entries, updated, still unbound
                 patch = self.ev(e["patch"], sc)
-                entries = list(base.entries)
-                for pk, pv in patch.entries:
+                entries = (
+                    self.entries_of(base)
+                    if isinstance(base, PreObj)
+                    else list(base.entries.items())
+                )
+                for pk, pv in self.entries_of(patch):
                     idx = next((j for j, (n, _) in enumerate(entries) if n == pk), -1)
                     if idx >= 0:
                         entries[idx] = (pk, pv)
@@ -313,7 +322,7 @@ class Engine:
                     and base.slots[m["name"]].state != "absent"
                 ):
                     entries.append((m["name"], self.force_slot(base, m["name"])))
-            for pk, pv in patch.entries:
+            for pk, pv in self.entries_of(patch):
                 idx = next((j for j, (n, _) in enumerate(entries) if n == pk), -1)
                 if idx >= 0:
                     entries[idx] = (pk, pv)
@@ -321,6 +330,69 @@ class Engine:
                     entries.append((pk, pv))
             return PreObj(entries)
         raise EvalErr(f"ev: unhandled {k}")
+
+    def entries_of(self, pre: PreObj) -> list[Any]:
+        """the entries of an unbound object literal with its spreads (§4.2)
+        expanded in place: a spread copies the entries of an object-valued
+        operand — a record's value members (hidden ones are not entries), a
+        map's entries, or another literal's — and a key produced twice is
+        E5004. Spread operands evaluate in the literal's own scope."""
+
+        def is_spread(v: Any) -> bool:
+            return isinstance(v, PreVal) and v.expr.get("e") == "spread"
+
+        if not any(is_spread(v) for _, v in pre.entries):
+            return list(pre.entries)
+        out: list[Any] = []
+
+        def put(k_: str, v: Any) -> None:
+            if any(n == k_ for n, _ in out):
+                raise EvalErr(f"duplicate key {k_}", "E5004")
+            out.append((k_, v))
+
+        for k_, v in pre.entries:
+            if not is_spread(v):
+                put(k_, v)
+                continue
+            s = self.deref(self.ev(v.expr["expr"], v.scope))
+            for k2, v2 in self.spread_entries(s):
+                put(k2, v2)
+        return out
+
+    def spread_entries(self, s: Any) -> list[Any]:
+        if isinstance(s, PreObj):
+            return self.entries_of(s)
+        if isinstance(s, JObj):
+            return list(s.entries)
+        if isinstance(s, MapV):
+            return list(s.entries.items())
+        if isinstance(s, RecInst):
+            # the value's entries in serialization order (§10.3): supplied members
+            # in document order, then the members evaluation materialized, in
+            # declaration order — every value member, hidden ones never
+            entries: list[Any] = []
+            seen: set[str] = set()
+            for n in [*s.entry_order, *(m["name"] for m in s.rt["members"])]:
+                if n in seen:
+                    continue
+                seen.add(n)
+                if n in s.extras:
+                    entries.append((n, s.extras[n]))
+                    continue
+                slot = s.slots.get(n)
+                if slot is None or slot.hidden:
+                    continue
+                if self.force_state(s, n) == "absent":
+                    continue
+                entries.append((n, self.force_slot(s, n)))
+            return entries
+        raise EvalErr("spread of a non-object value")
+
+    def mat_val(self, v: Any) -> Any:
+        d = self.deref(v)
+        if isinstance(d, (PreObj, PreArr, JObj)):
+            return self.materialize(d, [], None, None)
+        return d
 
     def member_of(self, v: Any, rt: dict[str, Any], sc: Scope) -> bool:
         from .subsume import subsumes
@@ -505,10 +577,11 @@ class Engine:
             if bad:
                 raise EvalErr(f"malformed pattern /{r.re}/: {bad}", "E4119")
             return compile_pattern(r.re).fullmatch(l) is not None
+        # a literal operand is materialized: equality is structural over values (§4.5)
         if op == "==":
-            return value_eq(l, r)
+            return value_eq(self.mat_val(l), self.mat_val(r))
         if op == "!=":
-            return not value_eq(l, r)
+            return not value_eq(self.mat_val(l), self.mat_val(r))
         if op == "in":
             if isinstance(r, Ref):
                 r = self.deref(
@@ -671,12 +744,18 @@ class Engine:
                 return self.force_slot(x, name)
             if name in x.extras:
                 raise EvalErr(f"opaque field {name} accessed")
-            raise EvalErr(f"no member {name}")
+            # a member the record's type does not declare: the checker admitted the
+            # read against a bound that declares it optional, so it is absent (§4.10)
+            return ABSENT
         if isinstance(x, PreObj):
-            for k_, v in x.entries:
+            for k_, v in self.entries_of(x):
                 if k_ == name:
                     return self.ev(v.expr, v.scope) if isinstance(v, PreVal) else v
             return ABSENT
+        if isinstance(x, MapV):
+            # a literal that no record type claimed is a map at evaluation time
+            # while the checker typed its members by name; the name reads the entry
+            return x.entries.get(name, ABSENT)
         if x is None:
             raise EvalErr("member access on null")
         if x is ABSENT:
@@ -879,6 +958,9 @@ class Engine:
             d = self.materialize(d, [], None, None)
         if isinstance(d, MapV):
             return d
+        if isinstance(d, RecInst):
+            # a record reads as the map of its value entries (§3.17)
+            return MapV(dict(self.spread_entries(d)), d.path)
         raise EvalErr("expected map")
 
     # ---------- referrers ----------
@@ -1042,10 +1124,15 @@ class Engine:
                     arr.items.append(ABSENT)
             return arr
         if t == "map":
-            if isinstance(raw, (JObj, PreObj)):
+            if isinstance(raw, JObj):
                 pairs = raw.entries
+            elif isinstance(raw, PreObj):
+                pairs = self.entries_of(raw)
             elif isinstance(raw, MapV):
                 pairs = list(raw.entries.items())
+            elif isinstance(raw, RecInst):
+                # a record binds to a map as its value entries (§3.18)
+                pairs = self.spread_entries(raw)
             else:
                 fail("expected map")
             m = MapV({}, path)
@@ -1058,8 +1145,10 @@ class Engine:
                     m.entries[k_] = self.bind(v, rt["val"], [*path, Key(k_)], parent, sc)
             return m
         if t == "union":
+            if isinstance(raw, PreVal):
+                raw = self.ev(raw.expr, raw.scope)  # a literal's entry: its value decides
             rec_arms = [a for a in rt["arms"] if a["t"] == "rec"]
-            if isinstance(raw, (JObj, PreObj, RecInst)) and rec_arms:
+            if isinstance(raw, (JObj, PreObj, RecInst, MapV)) and rec_arms:
                 disc_names = [
                     m["name"]
                     for m in rec_arms[0]["members"]
@@ -1114,10 +1203,12 @@ class Engine:
 
     def raw_entry(self, raw: Any, name: str) -> Any:
         if isinstance(raw, (JObj, PreObj)):
-            for k_, v in raw.entries:
+            for k_, v in raw.entries if isinstance(raw, JObj) else self.entries_of(raw):
                 if k_ == name:
                     return v
             return _UNDEF
+        if isinstance(raw, MapV):
+            return raw.entries.get(name, _UNDEF)
         if isinstance(raw, RecInst):
             return self.force_slot(raw, name) if name in raw.slots else _UNDEF
         return _UNDEF
@@ -1202,8 +1293,13 @@ class Engine:
     def bind_record(
         self, raw: Any, rt: dict[str, Any], path: list[Any], parent: RecInst | None, sc: Scope
     ) -> RecInst:
-        if isinstance(raw, (JObj, PreObj)):
+        if isinstance(raw, JObj):
             entries = list(raw.entries)
+        elif isinstance(raw, PreObj):
+            entries = self.entries_of(raw)
+        elif isinstance(raw, MapV):
+            # a literal no record type claimed became a map; its entries bind like a document's
+            entries = list(raw.entries.items())
         elif isinstance(raw, RecInst):
             entries = [
                 (n, raw.extras[n] if n in raw.extras else self.force_slot(raw, n))
@@ -1362,13 +1458,17 @@ class Engine:
     def materialize(self, v: Any, path: list[Any], parent: RecInst | None, sc: Scope | None) -> Any:
         if isinstance(v, PreArr):
             arr = ArrV([], path)
-            for i, (_spread, it) in enumerate(v.items):
+            i = 0
+            for spread, it in v.items:
                 x = self.ev(it.expr, it.scope) if isinstance(it, PreVal) else it
-                arr.items.append(self.materialize(x, [*path, i], parent, sc))
+                # a spread item splices its array's elements (§4.2)
+                for y in self.mat_arr(x) if spread else [x]:
+                    arr.items.append(self.materialize(y, [*path, i], parent, sc))
+                    i += 1
             return arr
         if isinstance(v, PreObj):
             m = MapV({}, path)
-            for k_, pv in v.entries:
+            for k_, pv in self.entries_of(v):
                 m.entries[k_] = self.materialize(
                     self.ev(pv.expr, pv.scope) if isinstance(pv, PreVal) else pv,
                     [*path, Key(k_)],

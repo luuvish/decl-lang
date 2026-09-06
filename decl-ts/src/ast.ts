@@ -45,7 +45,8 @@ type ExprBody =
   | { e: 'name'; name: string }
   | { e: 'ctx'; name: string }
   | { e: 'referrers'; type: string; member: string }
-  | { e: 'obj'; entries: { key: string; val: Expr }[] }
+  | { e: 'obj'; entries: { key: string; val: Expr }[] } // a spread entry: key '...', val { e: 'spread' }
+  | { e: 'spread'; expr: Expr }
   | { e: 'arr'; items: { spread: boolean; expr: Expr }[] }
   | { e: 'comp'; head: Expr; clauses: { v: string; iter: Expr; filters: Expr[] }[] }
   | { e: 'mapcomp'; key: Expr; val: Expr; clauses: { v: string; iter: Expr; filters: Expr[] }[] }

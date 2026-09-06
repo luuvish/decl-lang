@@ -38,3 +38,6 @@ type PairSmall = Pair<Small>
 type PairStruct = { first: Small, second: Small }
 type Quad = Vec<Small, 4>
 type Wide4 = Wide[4]
+type Maybe = null | int
+type Flag = true | false
+type Json = null | bool | int | float | string | Json[] | { [string]: Json }

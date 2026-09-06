@@ -264,6 +264,13 @@ const locOf = (n: Node): Loc => ({
   el: n.endPosition.row,
   ec: n.endPosition.column,
 });
+// the arms of a union or intersection: the named type nodes and the keyword
+// literal types, which the grammar keeps as anonymous tokens
+function typeArms(n: Node): Node[] {
+  return n.children.filter(
+    (c): c is Node => !!c && (c.isNamed || ['true', 'false', 'null'].includes(c.text)),
+  );
+}
 function lowerType(n: Node): TypeAst {
   const t = lowerType0(n);
   t.loc = locOf(n);
@@ -272,9 +279,15 @@ function lowerType(n: Node): TypeAst {
 function lowerType0(n: Node): TypeAst {
   switch (n.type) {
     case 'union_type':
-      return { k: 'union', arms: n.namedChildren.filter(Boolean).map((c) => lowerType(c)) };
+      return { k: 'union', arms: typeArms(n).map((c) => lowerType(c)) };
     case 'intersection_type':
-      return { k: 'isect', arms: n.namedChildren.filter(Boolean).map((c) => lowerType(c)) };
+      return { k: 'isect', arms: typeArms(n).map((c) => lowerType(c)) };
+    // the literal types `true`, `false`, `null` (§3.3) are keyword tokens
+    case 'true':
+    case 'false':
+      return { k: 'lit', v: n.type === 'true' };
+    case 'null':
+      return { k: 'lit', v: null };
     case 'nullable_type':
       return { k: 'union', arms: [lowerType(n.namedChildren[0]), { k: 'prim', name: 'null' }] };
     case 'array_type': {
@@ -567,7 +580,9 @@ function lowerExpr0(n: Node): Expr {
               key: key.type === 'string' ? JSON.parse(key.text) : key.text,
               val: lowerExpr(req(en, 'value')),
             };
-          return { key: '...', val: lowerExpr(en.namedChildren[0]) }; // spread entry
+          // a spread entry (§4.2): the key '...' never comes from source unquoted, and a
+          // quoted "..." key carries a plain value, so the `spread` node tells them apart
+          return { key: '...', val: { e: 'spread', expr: lowerExpr(en.namedChildren[0]) } };
         }),
       };
     }

@@ -234,17 +234,22 @@ pub fn has_null(rt: Option<&RT>) -> bool {
         None => false,
         Some(t) => {
             is_null_lit(t)
-                || matches!(&t.k, RTk::Union(arms) if arms.iter().any(|a| has_null(Some(a))))
+                || matches!(&t.k, RTk::Union(arms) if arms.borrow().iter().any(|a| has_null(Some(a))))
         }
     }
 }
 fn strip_null(rt: &RT) -> RT {
     if let RTk::Union(arms) = &rt.k {
-        let kept: Vec<RT> = arms.iter().filter(|a| !is_null_lit(a)).cloned().collect();
+        let kept: Vec<RT> = arms
+            .borrow()
+            .iter()
+            .filter(|a| !is_null_lit(a))
+            .cloned()
+            .collect();
         return if kept.len() == 1 {
             kept[0].clone()
         } else {
-            ty(RTk::Union(kept))
+            ty(RTk::Union(RefCell::new(kept)))
         };
     }
     rt.clone()
@@ -267,7 +272,7 @@ pub fn mk_union(arms: Vec<Option<RT>>) -> Option<RT> {
     let mut flat: Vec<RT> = vec![];
     for a in arms.into_iter().flatten() {
         match &a.k {
-            RTk::Union(xs) => flat.extend(xs.iter().cloned()),
+            RTk::Union(xs) => flat.extend(xs.borrow().iter().cloned()),
             _ => flat.push(a),
         }
     }
@@ -280,7 +285,7 @@ pub fn mk_union(arms: Vec<Option<RT>>) -> Option<RT> {
     Some(if uniq.len() == 1 {
         uniq[0].clone()
     } else {
-        ty(RTk::Union(uniq))
+        ty(RTk::Union(RefCell::new(uniq)))
     })
 }
 /// The numeric kind of a type — int, float, quantity — when it has one.
@@ -306,7 +311,7 @@ pub fn num_kind(rt: Option<&RT>) -> Option<String> {
         RTk::Pred { base, .. } => num_kind(Some(base)),
         RTk::Quantity(_) => Some("quantity".into()),
         RTk::Union(arms) => {
-            let ks: Vec<Option<String>> = arms.iter().map(|a| num_kind(Some(a))).collect();
+            let ks: Vec<Option<String>> = arms.borrow().iter().map(|a| num_kind(Some(a))).collect();
             match ks.first() {
                 Some(Some(k0)) if ks.iter().all(|k| k.as_ref() == Some(k0)) => Some(k0.clone()),
                 _ => None,
@@ -338,6 +343,7 @@ fn arm_of(rt: Option<&RT>, t: &str) -> Option<RT> {
         }
     }
     if let RTk::Union(arms) = &rt.k {
+        let arms = arms.borrow();
         let sub: Vec<RT> = arms.iter().filter_map(|x| arm_of(Some(x), t)).collect();
         if sub.len() == arms.len() && !sub.is_empty() {
             if t == "arr" {
@@ -352,7 +358,7 @@ fn arm_of(rt: Option<&RT>, t: &str) -> Option<RT> {
                     })
                     .collect();
                 return Some(ty(RTk::Arr {
-                    elem: ty(RTk::Union(elems)),
+                    elem: ty(RTk::Union(RefCell::new(elems))),
                     lo: None,
                     hi: None,
                 }));
@@ -557,6 +563,10 @@ fn std_sig(name: &str) -> Option<(usize, Option<RT>)> {
 /// The text of a type as the language spells it: `int`, `1..10`, `int[3..3]`,
 /// `(1 | 2)[]`, `quantity<Length>`.
 pub fn type_text(rt: Option<&RT>) -> String {
+    text(rt, &[])
+}
+
+fn text(rt: Option<&RT>, seen: &[usize]) -> String {
     let Some(rt) = rt else {
         return "unknown".into();
     };
@@ -576,8 +586,10 @@ pub fn type_text(rt: Option<&RT>) -> String {
         }
         RTk::Pattern { src, .. } => format!("/{src}/"),
         RTk::Quantity(dim) => format!("quantity<{dim}>"),
-        RTk::Ref(t) => format!("ref<{}>", type_text(Some(t))),
-        RTk::Map { key, val } => format!("map<{}, {}>", type_text(Some(key)), type_text(Some(val))),
+        RTk::Ref(t) => format!("ref<{}>", text(Some(t), seen)),
+        RTk::Map { key, val } => {
+            format!("map<{}, {}>", text(Some(key), seen), text(Some(val), seen))
+        }
         RTk::Arr { elem, lo, hi } => {
             let b = if lo.is_some() || hi.is_some() {
                 format!(
@@ -588,7 +600,7 @@ pub fn type_text(rt: Option<&RT>) -> String {
             } else {
                 "[]".into()
             };
-            let e = type_text(Some(elem));
+            let e = text(Some(elem), seen);
             // a compound element type is parenthesized (`(1 | 2)[]`, `(1..8)[]`), as the grammar's paren_type spells it
             let wrap = matches!(
                 &elem.k,
@@ -597,12 +609,19 @@ pub fn type_text(rt: Option<&RT>) -> String {
             format!("{}{b}", if wrap { format!("({e})") } else { e })
         }
         RTk::Union(arms) => {
+            // a recursive alias prints its name rather than unfolding
+            if seen.contains(&(Rc::as_ptr(rt) as usize)) {
+                return rt.name.borrow().clone().unwrap_or_else(|| "…".into());
+            }
+            let mut inner = seen.to_vec();
+            inner.push(Rc::as_ptr(rt) as usize);
+            let arms = arms.borrow();
             let nn: Vec<&RT> = arms.iter().filter(|a| !is_null_arm(a)).collect();
             if nn.len() + 1 == arms.len() && nn.len() == 1 {
-                return format!("{}?", type_text(Some(nn[0])));
+                return format!("{}?", text(Some(nn[0]), &inner));
             }
             arms.iter()
-                .map(|a| type_text(Some(a)))
+                .map(|a| text(Some(a), &inner))
                 .collect::<Vec<_>>()
                 .join(" | ")
         }
@@ -693,6 +712,33 @@ pub fn named(name: &str) -> TypeAst {
 }
 
 /// Require a value-typed expression where a type or a namespace would be an error.
+/// The operand of an object spread (§4.2) must be object-valued: a record, a
+/// map, an intersection of records, or a union of those; the type is handed
+/// back so a construction can count the members a record-typed spread supplies.
+fn spread_ty(cx: &Ctx, e: &Rc<Expr>) -> Ty {
+    let Expr::Spread(inner) = &**e else {
+        return infer(cx, e);
+    };
+    let t = require_val(cx, inner, infer(cx, inner), "as a spread");
+    let rt = match t.rt {
+        Some(r) if matches!(r.k, RTk::Ref(_)) => match &r.k {
+            RTk::Ref(target) => Some(target.clone()),
+            _ => None,
+        },
+        other => other,
+    };
+    if let Some(r) = &rt {
+        if !matches!(
+            r.k,
+            RTk::Rec(_) | RTk::Map { .. } | RTk::IsectN(_) | RTk::Union(_) | RTk::Any
+        ) {
+            cx.report("E4001", "spread of a non-object value".into());
+        }
+    }
+    Ty { rt, abs: false }
+}
+
+/// The type of an expression used as a value: a maybe-absent one is refused (§4.10).
 pub fn require_val(cx: &Ctx, e: &Expr, ty: Ty, what: &str) -> Ty {
     if ty.abs {
         let k = path_key(e);
@@ -817,10 +863,15 @@ fn infer0(cx: &Ctx, e: &Rc<Expr>) -> Ty {
         }
         Expr::Obj(entries) => {
             for (_, v) in entries {
-                require_val(cx, v, infer(cx, v), "as a construction member");
+                if matches!(&**v, Expr::Spread(_)) {
+                    spread_ty(cx, v);
+                } else {
+                    require_val(cx, v, infer(cx, v), "as a construction member");
+                }
             }
             unk() // literals are typed by their checked position (§3.18)
         }
+        Expr::Spread(_) => spread_ty(cx, e),
         Expr::Arr(items) => {
             let ts: Vec<Option<RT>> = items
                 .iter()
@@ -1272,7 +1323,7 @@ fn as_ival(rt: &RT) -> Option<(BigInt, BigInt)> {
             base,
         } if base == "int" => Some((lo.clone(), if *excl { hi - 1 } else { hi.clone() })),
         RTk::Union(arms) => {
-            let ivs: Vec<Option<(BigInt, BigInt)>> = arms.iter().map(as_ival).collect();
+            let ivs: Vec<Option<(BigInt, BigInt)>> = arms.borrow().iter().map(as_ival).collect();
             if !ivs.is_empty() && ivs.iter().all(|v| v.is_some()) {
                 let ivs: Vec<(BigInt, BigInt)> = ivs.into_iter().flatten().collect();
                 let lo = ivs.iter().map(|v| v.0.clone()).min().unwrap();
@@ -1467,6 +1518,7 @@ fn member_core(cx: &Ctx, b: Ty, e: &Rc<Expr>) -> Ty {
         }
         RTk::Union(arms) => {
             let parts: Vec<Option<RT>> = arms
+                .borrow()
                 .iter()
                 .map(|a| match &a.k {
                     RTk::Rec(rec) => {
@@ -1644,7 +1696,7 @@ fn infer_match(cx: &Ctx, e: &Rc<Expr>, expected: Option<&RT>) -> Ty {
     if let Some(srt0) = &s.rt {
         let srt = strip_null(srt0);
         if let RTk::Union(vs) = &srt.k {
-            let mut v = vs.clone();
+            let mut v = vs.borrow().clone();
             if has_null(Some(srt0)) {
                 v.push(ty(RTk::Lit(Value::Null)));
             }
@@ -1843,7 +1895,41 @@ pub fn check_expr(cx: &Ctx, e: &Rc<Expr>, expected: Option<&RT>) -> Ty {
                     },
                 );
             }
+            // a spread (§4.2) contributes the value members of a record-typed operand;
+            // an operand of unknown or map type may contribute anything, so the
+            // required-member check stands down for that literal
+            let mut provided: Vec<String> = vec![];
+            let mut dynamic = false;
             for (k, v) in entries {
+                if matches!(&**v, Expr::Spread(_)) {
+                    let st = spread_ty(&cx_r, v).rt;
+                    match st.as_ref().map(|t| &t.k) {
+                        Some(RTk::Rec(sr)) => {
+                            for sm in sr.members.borrow().iter() {
+                                if sm.hidden {
+                                    continue;
+                                }
+                                provided.push(sm.name.clone());
+                                if !rec.open.get() && find_member(&members, &sm.name).is_none() {
+                                    cx.report(
+                                        "E4003",
+                                        format!(
+                                            "member {} (spread) is not declared on {}",
+                                            sm.name,
+                                            expected
+                                                .name
+                                                .borrow()
+                                                .clone()
+                                                .unwrap_or_else(|| "the record".into())
+                                        ),
+                                    );
+                                }
+                            }
+                        }
+                        _ => dynamic = true,
+                    }
+                    continue;
+                }
                 let Some(m) = find_member(&members, k) else {
                     if !rec.open.get() {
                         cx.report(
@@ -1865,18 +1951,27 @@ pub fn check_expr(cx: &Ctx, e: &Rc<Expr>, expected: Option<&RT>) -> Ty {
                 let t = check_expr(&cx_r, v, mt.as_ref());
                 require_val(&cx_r, v, t, "as a construction member");
             }
-            for m in &members {
-                if m.kind == MKind::Req && !entries.iter().any(|(k, _)| *k == m.name) {
-                    cx.report(
-                        "E4002",
-                        format!("required member {} missing in the construction", m.name),
-                    );
+            if !dynamic {
+                for m in &members {
+                    if m.kind == MKind::Req
+                        && !provided.contains(&m.name)
+                        && !entries.iter().any(|(k, _)| *k == m.name)
+                    {
+                        cx.report(
+                            "E4002",
+                            format!("required member {} missing in the construction", m.name),
+                        );
+                    }
                 }
             }
             return tyv(Some(expected.clone()));
         }
         (Expr::Obj(entries), RTk::Map { val, .. }) => {
             for (_, v) in entries {
+                if matches!(&**v, Expr::Spread(_)) {
+                    spread_ty(cx, v);
+                    continue;
+                }
                 let t = check_expr(cx, v, Some(val));
                 require_val(cx, v, t, "as a map value");
             }
@@ -1935,7 +2030,7 @@ fn deferrable(s: &RT, t: &RT) -> bool {
         RTk::Pattern { .. } => k == "string",
         RTk::Range { base, .. } => &k == base,
         RTk::Lit(_) => Some(k) == num_kind(Some(t)),
-        RTk::Union(arms) => arms.iter().any(|a| deferrable(s, a)),
+        RTk::Union(arms) => arms.borrow().iter().any(|a| deferrable(s, a)),
         RTk::Pred { base, .. } => deferrable(s, base),
         _ => false,
     }

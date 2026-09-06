@@ -387,6 +387,17 @@ def try_resolve(env: Any, ast: dict[str, Any] | None) -> dict[str, Any] | None:
         return None
 
 
+def _spread_ty(cx: Ctx, e: dict[str, Any]) -> dict[str, Any]:
+    # the operand of an object spread (§4.2) must be object-valued: a record, a
+    # map, an intersection of records, or a union of those; the type is handed
+    # back so a construction can count the members a record-typed spread supplies
+    t = require_val(cx, e["expr"], infer(cx, e["expr"]), "as a spread")
+    rt = t["rt"]["target"] if t["rt"] is not None and t["rt"]["t"] == "ref" else t["rt"]
+    if rt is not None and rt["t"] not in ("rec", "map", "isectN", "union", "any"):
+        cx.report("E4001", "spread of a non-object value")
+    return TY(rt)
+
+
 def require_val(cx: Ctx, e: dict[str, Any], ty: dict[str, Any], what: str) -> dict[str, Any]:
     if ty["abs"]:
         k = path_key(e)
@@ -508,8 +519,13 @@ def _infer0(cx: Ctx, e: dict[str, Any]) -> dict[str, Any]:
         )
     if k == "obj":
         for en in e["entries"]:
-            require_val(cx, en["val"], infer(cx, en["val"]), "as a construction member")
+            if en["val"]["e"] == "spread":
+                _spread_ty(cx, en["val"])
+            else:
+                require_val(cx, en["val"], infer(cx, en["val"]), "as a construction member")
         return UNK  # literals are typed by their checked position (§3.18)
+    if k == "spread":
+        return _spread_ty(cx, e)
     if k == "arr":
         ts = []
         for it in e["items"]:
@@ -1121,7 +1137,30 @@ def check_expr(cx: Ctx, e: dict[str, Any], expected: dict[str, Any] | None) -> d
             for m in expected["members"]:
                 mt = {"t": "isectN", "arms": m["conj"]} if m.get("conj") else m.get("type")
                 cx_r.vars[m["name"]] = TY(mt, m["kind"] == "opt")
+            # a spread (§4.2) contributes the value members of a record-typed operand;
+            # an operand of unknown or map type may contribute anything, so the
+            # required-member check stands down for that literal
+            provided: set[str] = set()
+            dynamic = False
             for en in e["entries"]:
+                if en["val"]["e"] == "spread":
+                    st = _spread_ty(cx_r, en["val"])["rt"]
+                    if st is not None and st["t"] == "rec":
+                        for sm in st["members"]:
+                            if sm.get("hidden"):
+                                continue
+                            provided.add(sm["name"])
+                            if not expected.get("open") and not any(
+                                m["name"] == sm["name"] for m in expected["members"]
+                            ):
+                                cx.report(
+                                    "E4003",
+                                    f"member {sm['name']} (spread) is not declared on "
+                                    f"{expected.get('name') or 'the record'}",
+                                )
+                    else:
+                        dynamic = True
+                    continue
                 m = next((m for m in expected["members"] if m["name"] == en["key"]), None)
                 if m is None:
                     if not expected.get("open"):
@@ -1136,12 +1175,22 @@ def check_expr(cx: Ctx, e: dict[str, Any], expected: dict[str, Any] | None) -> d
                 require_val(
                     cx_r, en["val"], check_expr(cx_r, en["val"], mt), "as a construction member"
                 )
-            for m in expected["members"]:
-                if m["kind"] == "req" and not any(en["key"] == m["name"] for en in e["entries"]):
-                    cx.report("E4002", f"required member {m['name']} missing in the construction")
+            if not dynamic:
+                for m in expected["members"]:
+                    if (
+                        m["kind"] == "req"
+                        and m["name"] not in provided
+                        and not any(en["key"] == m["name"] for en in e["entries"])
+                    ):
+                        cx.report(
+                            "E4002", f"required member {m['name']} missing in the construction"
+                        )
             return TY(expected)
         if expected["t"] == "map":
             for en in e["entries"]:
+                if en["val"]["e"] == "spread":
+                    _spread_ty(cx, en["val"])
+                    continue
                 require_val(
                     cx, en["val"], check_expr(cx, en["val"], expected["val"]), "as a map value"
                 )
@@ -1197,11 +1246,13 @@ def _deferrable(s: dict[str, Any], t: dict[str, Any]) -> bool:
 
 
 # ---------------- type text ----------------
-def type_text(rt: dict[str, Any] | None) -> str:
+def type_text(rt: dict[str, Any] | None, seen: frozenset[int] = frozenset()) -> str:
     """the static type as inference sees it, spelled in the language's own
     type syntax where it has one (`:type` in the REPL, hover in the editor)"""
     if not rt:
         return "unknown"
+    if id(rt) in seen:
+        return rt.get("name") or "…"  # a recursive alias prints its name
 
     def lit(v: Any) -> str:
         if is_int(v):
@@ -1228,9 +1279,9 @@ def type_text(rt: dict[str, Any] | None) -> str:
     if t == "quantity":
         return f"quantity<{rt['dim']}>"
     if t == "ref":
-        return f"ref<{type_text(rt['target'])}>"
+        return f"ref<{type_text(rt['target'], seen)}>"
     if t == "map":
-        return f"map<{type_text(rt['key'])}, {type_text(rt['val'])}>"
+        return f"map<{type_text(rt['key'], seen)}, {type_text(rt['val'], seen)}>"
     if t == "arr":
         lo, hi = rt.get("lo"), rt.get("hi")
         b = (
@@ -1238,7 +1289,7 @@ def type_text(rt: dict[str, Any] | None) -> str:
             if (lo is not None or hi is not None)
             else "[]"
         )
-        elem = type_text(rt.get("elem"))
+        elem = type_text(rt.get("elem"), seen)
         # a compound element type is parenthesized (`(1 | 2)[]`, `(1..8)[]`), as the grammar's
         # paren_type spells it
         e = rt.get("elem")
@@ -1254,9 +1305,10 @@ def type_text(rt: dict[str, Any] | None) -> str:
                 (a["t"] == "prim" and a["name"] == "null") or (a["t"] == "lit" and a["v"] is None)
             )
         ]
+        inner = seen | {id(rt)}
         if len(nn) == len(arms) - 1 and len(nn) == 1:
-            return f"{type_text(nn[0])}?"
-        return " | ".join(type_text(a) for a in arms)
+            return f"{type_text(nn[0], inner)}?"
+        return " | ".join(type_text(a, inner) for a in arms)
     if t == "pred":
         return f"{type_text(rt['base'])} where \u2026"
     if t == "func":

@@ -1,0 +1,29 @@
+// object spread (§4.2): the entries of an object-valued expression copied in
+// place — a constant, a sibling, a map, a comprehension, a conditional, a
+// record instance's value members — in source order
+const defaults = { region: "us", replicas: 1 }
+type Site = {
+    name: string
+    zone?: string = "a"
+    label = `${name}-${zone}`
+    secret$ = "never copied"
+}
+type Check = {
+    site: Site
+    tags = { team: "core" }
+    fam$ = { `f_${i}`: i for i in 0..<2 }
+    wide?: bool = true
+
+    layered = { ...defaults, name: "edge" }
+    from_map = { ...tags, ...fam$, extra: 2 }
+    from_comp = { ...{ `q_${i}`: i for i in 0..<2 }, ...(if wide then { w: 1 } else {}) }
+    from_site = { ...site, rank: 3 }
+    keys = std.map.keys(from_map)
+
+    assert order: keys == ["team", "f_0", "f_1", "extra"]
+    assert layered_ok: layered["region"] == "us" && layered["name"] == "edge"
+    assert comp_ok: from_comp["q_1"] == 1 && from_comp["w"] == 1
+    // a record's derived members are entries; a hidden member is not
+    assert site_ok: from_site["label"] == "edge-a" && !("secret$" in from_site)
+}
+export output check: Check = { site: { name: "edge" } }

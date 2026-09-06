@@ -1,0 +1,6 @@
+// @expect-phase: binding
+// @expect-error: E5004
+// a key produced twice by a spread and an entry (§4.2, §4.14)
+const base = { a: 1 }
+type T = { v = { ...base, a: 2 } }
+export output t: T = {}

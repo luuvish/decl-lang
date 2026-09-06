@@ -306,6 +306,8 @@ def check_module(
             report("E4073", f"{msg} (in {where})")
         elif re.search(r"unknown type", msg):
             report("E3003", f"{msg} (in {where})")
+        elif "recursive type alias" in msg:
+            report("E4012", f"{msg} (in {where})")
         elif re.search(r"generic arity", msg):
             report("E4022", f"{msg} (in {where})")
         elif re.search(r"outside parameter", msg):

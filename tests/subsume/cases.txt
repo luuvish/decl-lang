@@ -31,6 +31,17 @@ no     lit ⊄ union of others :: "ip" ⊑ Ip
 yes    union ⊑ wider prim :: Ip ⊑ string
 yes    subset union ⊑ union :: "tcp" ⊑ Ip
 no     union ⊄ one arm :: Ip ⊑ "tcp"
+yes    null lit ⊑ keyword union :: null ⊑ Maybe
+yes    true lit ⊑ keyword union :: true ⊑ Flag
+no     int ⊄ bool keyword union :: 1 ⊑ Flag
+yes    recursive union arm ⊑ alias :: Json[] ⊑ Json
+yes    map of alias ⊑ alias :: map<string, Json> ⊑ Json
+no     alias ⊄ one arm :: Json ⊑ int
+full   recursive union inhabited :: Json
+yes    record ⊑ map of its member types :: Base ⊑ map<string, string | int>
+no     record ⊄ map narrower than a member :: Base ⊑ map<string, int>
+no     record ⊄ map with a stricter key :: Base ⊑ map<Small, string | int>
+no     map ⊄ record :: SMap ⊑ Base
 
 # predicates
 yes    pred ⊑ base :: Even ⊑ int

@@ -479,6 +479,14 @@ a union — each arm of `T` subsumes into some arm. `A | B ⊑ T` iff
 **Arrays.** `T₁[σ₁] ⊑ T₂[σ₂]` iff `T₁ ⊑ T₂` and `σ₁ ⊆ σ₂`.
 
 **Maps.** `{ [K₁]: V₁ } ⊑ { [K₂]: V₂ }` iff `K₁ ⊑ K₂` and `V₁ ⊑ V₂`.
+A **record flows into a map** *(v0.4.1, D36)*: `R ⊑ { [K]: V }` iff for
+every value member `m` of `R` (hidden members are not entries, §5.7)
+the literal `"m"` ⊑ `K` and `m`'s declared type ⊑ `V` — a record value
+is an object whose entries are known by name, and a map position that
+admits those entries admits the record. The reverse never holds: a
+map is not a record (§3.11). At evaluation the record's value entries
+are the map's entries, in serialization order (§10.3); the same
+reading serves `std.map` (§13.8) and spread (§4.2).
 
 **Records** — over the four value-member kinds (V3), comparing declared
 members only (closedness excluded — D10). `R′ ⊑ R` iff for every value
@@ -541,6 +549,9 @@ One judgment serves every checking site (D13):
   — they are completed by evaluation, [05. Declarations](05_declarations.md));
   plus the closedness check (§3.11) against undeclared members. A
   provided derived member follows the restatement rule below.
+- **A record in a map position** *(v0.4.1)* — binds as its value
+  entries (§3.17, records into maps); an object literal in a map
+  position is a map (§3.11), never a record.
 - **Input binding** — a bound document is checked as a literal
   construction of the target type, with one addition: a supplied
   **derived** member is accepted iff its value equals the computed one

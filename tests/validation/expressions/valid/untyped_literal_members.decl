@@ -1,0 +1,23 @@
+// a literal no record type claims is a map at evaluation time; the checker
+// typed its members by name, and the names read the entries (§4.2, §4.3);
+// such a value binds where a record is expected, takes `with`, and an
+// untyped array literal splices its spreads (§4.2)
+type Pt = { x: int, y?: int = 0 }
+type T = {
+    cands = [{ key: "a", on: true }, { key: "b", on: false }]
+    on = [c.key for c in cands if c.on]
+    inline = [c.key for c in [{ key: "p", on: true }, { key: "q", on: false }] if c.on]
+    m = { a: 1, b: 2 }
+    entries = [e.key for e in std.map.entries(m)]
+    both = [e.key for e in [...std.map.entries(m), ...std.map.entries({ c: 3 })]]
+    shapes = [{ x: 1 }, { x: 2, y: 3 }]
+    pts: Pt[] = shapes
+    turned = cands[0] with { on: false }
+    spliced = [...[1, 2], 3]
+    assert on_ok: on == ["a"] && inline == ["p"]
+    assert entries_ok: entries == ["a", "b"] && both == ["a", "b", "c"]
+    assert bound_ok: pts[0].y == 0 && pts[1].y == 3
+    assert turned_ok: turned.key == "a" && !turned.on
+    assert spliced_ok: spliced == [1, 2, 3]
+}
+export output t: T = {}

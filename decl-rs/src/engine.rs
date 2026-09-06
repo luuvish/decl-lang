@@ -365,6 +365,7 @@ impl Engine {
                 }
             }
             Expr::Referrers { ty, member } => self.referrers(ty, member, sc),
+            Expr::Spread(_) => err("spread outside an object literal"),
             Expr::Obj(entries) => Ok(Value::PreObj(Rc::new(
                 entries
                     .iter()
@@ -484,7 +485,8 @@ impl Engine {
                 self.access(&d, name)
             }
             Expr::Index { x, i } => {
-                let x = self.deref(self.ev(x, sc)?)?;
+                // a literal (or document) operand is materialized before it is indexed
+                let x = self.mat_val(self.ev(x, sc)?)?;
                 let i = self.ev(i, sc)?;
                 match &x {
                     Value::Arr(a) => {
@@ -934,8 +936,9 @@ impl Engine {
                 let re = compile_pattern(p).or_else(err)?;
                 return Ok(Value::Bool(re.is_match(s)));
             }
-            "==" => return Ok(Value::Bool(value_eq(&l, &r))),
-            "!=" => return Ok(Value::Bool(!value_eq(&l, &r))),
+            // a literal operand is materialized: equality is structural over values (§4.5)
+            "==" => return Ok(Value::Bool(value_eq(&self.mat_val(l)?, &self.mat_val(r)?))),
+            "!=" => return Ok(Value::Bool(!value_eq(&self.mat_val(l)?, &self.mat_val(r)?))),
             "in" => {
                 if matches!(r, Value::Ref(_)) {
                     r = self.deref(r)?; // the container may be reached through a reference ($this, $parent)
@@ -1170,19 +1173,24 @@ impl Engine {
                 if is_extra {
                     return err(format!("opaque field {name} accessed"));
                 }
-                err(format!("no member {name}"))
+                // a member the record's type does not declare: the checker admitted the
+                // read against a bound that declares it optional, so it is absent (§4.10)
+                Ok(Value::Absent)
             }
             Value::PreObj(es) => {
-                for (k, v) in es.iter() {
+                for (k, v) in self.entries_of(es)? {
                     if k == name {
                         return match v {
                             Value::PreVal(pv) => self.ev(&pv.expr, &pv.scope),
-                            other => Ok(other.clone()),
+                            other => Ok(other),
                         };
                     }
                 }
                 Ok(Value::Absent)
             }
+            // a literal that no record type claimed is a map at evaluation time
+            // while the checker typed its members by name; the name reads the entry
+            Value::Map(m) => Ok(m.borrow().get(name).cloned().unwrap_or(Value::Absent)),
             Value::Null => err("member access on null"),
             Value::Absent => Ok(Value::Absent),
             _ => err(format!("member access on non-record ({name})")),
@@ -1533,6 +1541,99 @@ impl Engine {
         Ok(Value::PreObj(Rc::new(entries)))
     }
 
+    /// A value with its literal (or document) form materialized.
+    pub fn mat_val(&self, v: Value) -> R<Value> {
+        let d = self.deref(v)?;
+        if matches!(d, Value::PreObj(_) | Value::PreArr(_) | Value::JObj(_)) {
+            return self.materialize(d, &[]);
+        }
+        Ok(d)
+    }
+    /// The entries of an unbound object literal with its spreads (§4.2)
+    /// expanded in place: a spread copies the entries of an object-valued
+    /// operand — a record's value members (hidden ones are not entries), a
+    /// map's entries, or another literal's — and a key produced twice is
+    /// E5004. Spread operands evaluate in the literal's own scope.
+    pub fn entries_of(&self, es: &[(String, Value)]) -> R<Vec<(String, Value)>> {
+        let is_spread =
+            |v: &Value| matches!(v, Value::PreVal(pv) if matches!(&*pv.expr, Expr::Spread(_)));
+        if !es.iter().any(|(_, v)| is_spread(v)) {
+            return Ok(es.to_vec());
+        }
+        let mut out: Vec<(String, Value)> = vec![];
+        let mut put = |k: String, v: Value| -> R<()> {
+            if out.iter().any(|(n, _)| *n == k) {
+                return err_code(format!("duplicate key {k}"), "E5004");
+            }
+            out.push((k, v));
+            Ok(())
+        };
+        for (k, v) in es {
+            if !is_spread(v) {
+                put(k.clone(), v.clone())?;
+                continue;
+            }
+            let Value::PreVal(pv) = v else { unreachable!() };
+            let Expr::Spread(inner) = &*pv.expr else {
+                unreachable!()
+            };
+            let s = self.deref(self.ev(inner, &pv.scope)?)?;
+            for (k2, v2) in self.spread_entries(s)? {
+                put(k2, v2)?;
+            }
+        }
+        Ok(out)
+    }
+    fn spread_entries(&self, s: Value) -> R<Vec<(String, Value)>> {
+        match s {
+            Value::PreObj(es) => self.entries_of(&es),
+            Value::JObj(es) => Ok((*es).clone()),
+            Value::Map(m) => Ok(m.borrow().entries.clone()),
+            Value::Rec(r) => {
+                // the value's entries in serialization order (§10.3): supplied
+                // members in document order, then the members evaluation
+                // materialized, in declaration order — every value member,
+                // hidden ones never
+                let (order, names) = {
+                    let b = r.borrow();
+                    (
+                        b.entry_order.clone(),
+                        rec_members(&b.rt)
+                            .iter()
+                            .map(|m| m.name.clone())
+                            .collect::<Vec<_>>(),
+                    )
+                };
+                let mut entries: Vec<(String, Value)> = vec![];
+                let mut seen: Vec<String> = vec![];
+                for n in order.into_iter().chain(names) {
+                    if seen.contains(&n) {
+                        continue;
+                    }
+                    seen.push(n.clone());
+                    let (extra, hidden, has) = {
+                        let b = r.borrow();
+                        (
+                            b.extra(&n).cloned(),
+                            b.slots.iter().any(|(s, sl)| *s == n && sl.hidden),
+                            b.has_slot(&n),
+                        )
+                    };
+                    if let Some(x) = extra {
+                        entries.push((n, x));
+                        continue;
+                    }
+                    if !has || hidden || self.force_state(&r, &n) == SlotState::Absent {
+                        continue;
+                    }
+                    let v = self.force_slot(&r, &n)?;
+                    entries.push((n, v));
+                }
+                Ok(entries)
+            }
+            _ => err("spread of a non-object value"),
+        }
+    }
     fn mat_rec(&self, v: &Value) -> R<Inst> {
         let mut d = self.deref(v.clone())?;
         if matches!(d, Value::PreObj(_) | Value::PreArr(_) | Value::JObj(_)) {
@@ -1560,6 +1661,12 @@ impl Engine {
         }
         match d {
             Value::Map(m) => Ok(m),
+            // a record reads as the map of its value entries (§3.17)
+            Value::Rec(r) => {
+                let path = r.borrow().path.clone();
+                let entries = self.spread_entries(Value::Rec(r))?;
+                Ok(Rc::new(RefCell::new(MapV { entries, path })))
+            }
             _ => err("expected map"),
         }
     }
@@ -1837,8 +1944,11 @@ impl Engine {
             }
             RTk::Map { key, val } => {
                 let es: Vec<(String, Value)> = match &raw {
-                    Value::JObj(e) | Value::PreObj(e) => (**e).clone(),
+                    Value::JObj(e) => (**e).clone(),
+                    Value::PreObj(e) => self.entries_of(e)?,
                     Value::Map(m) => m.borrow().entries.clone(),
+                    // a record binds to a map as its value entries (§3.18)
+                    Value::Rec(_) => self.spread_entries(raw.clone())?,
                     _ => return Err(fail("expected map".into(), None)),
                 };
                 let m = Rc::new(RefCell::new(MapV {
@@ -1862,9 +1972,17 @@ impl Engine {
                 Ok(Value::Map(m))
             }
             RTk::Union(arms) => {
+                // a literal's entry: its value decides the arm
+                let raw = match raw {
+                    Value::PreVal(pv) => self.ev(&pv.expr, &pv.scope)?,
+                    other => other,
+                };
+                let arms = arms.borrow();
                 let rec_arms: Vec<&RT> = arms.iter().filter(|a| is_rec(a)).collect();
-                if matches!(raw, Value::JObj(_) | Value::PreObj(_) | Value::Rec(_))
-                    && !rec_arms.is_empty()
+                if matches!(
+                    raw,
+                    Value::JObj(_) | Value::PreObj(_) | Value::Rec(_) | Value::Map(_)
+                ) && !rec_arms.is_empty()
                 {
                     let is_lit =
                         |m: &Member| matches!(m.ty.as_ref().map(|t| &t.k), Some(RTk::Lit(_)));
@@ -1914,7 +2032,7 @@ impl Engine {
                     }
                     return Err(fail("no union arm matches discriminant".into(), None));
                 }
-                for arm in arms {
+                for arm in arms.iter() {
                     if self.kind_matches(&raw, arm)? {
                         return self.bind(raw, arm, path, parent, sc);
                     }
@@ -1953,9 +2071,13 @@ impl Engine {
 
     fn raw_entry(&self, raw: &Value, name: &str) -> R<Option<Value>> {
         match raw {
-            Value::JObj(es) | Value::PreObj(es) => {
-                Ok(es.iter().find(|(k, _)| k == name).map(|(_, v)| v.clone()))
-            }
+            Value::JObj(es) => Ok(es.iter().find(|(k, _)| k == name).map(|(_, v)| v.clone())),
+            Value::PreObj(es) => Ok(self
+                .entries_of(es)?
+                .into_iter()
+                .find(|(k, _)| k == name)
+                .map(|(_, v)| v)),
+            Value::Map(m) => Ok(m.borrow().get(name).cloned()),
             Value::Rec(r) => {
                 if r.borrow().has_slot(name) {
                     Ok(Some(self.force_slot(r, name)?))
@@ -2117,7 +2239,10 @@ impl Engine {
             return err("bind_record on non-record type");
         };
         let entries: Vec<(String, Value)> = match &raw {
-            Value::JObj(e) | Value::PreObj(e) => (**e).clone(),
+            Value::JObj(e) => (**e).clone(),
+            Value::PreObj(e) => self.entries_of(e)?,
+            // a literal no record type claimed became a map; its entries bind like a document's
+            Value::Map(m) => m.borrow().entries.clone(),
             Value::Rec(r) => {
                 let (order, extras, ders) = {
                     let b = r.borrow();
@@ -2422,15 +2547,21 @@ impl Engine {
                     items: vec![],
                     path: path.to_vec(),
                 }));
-                for (i, (_, it)) in items.iter().enumerate() {
+                let mut i = 0;
+                for (spread, it) in items.iter() {
                     let x = match it {
                         Value::PreVal(pv) => self.ev(&pv.expr, &pv.scope)?,
                         other => other.clone(),
                     };
-                    let mut p = path.to_vec();
-                    p.push(Seg::Idx(i));
-                    let m = self.materialize(x, &p)?;
-                    arr.borrow_mut().items.push(m);
+                    // a spread item splices its array's elements (§4.2)
+                    let xs = if *spread { self.mat_arr(&x)? } else { vec![x] };
+                    for y in xs {
+                        let mut p = path.to_vec();
+                        p.push(Seg::Idx(i));
+                        let m = self.materialize(y, &p)?;
+                        arr.borrow_mut().items.push(m);
+                        i += 1;
+                    }
                 }
                 Ok(Value::Arr(arr))
             }
@@ -2439,7 +2570,7 @@ impl Engine {
                     entries: vec![],
                     path: path.to_vec(),
                 }));
-                for (k, pv) in entries.iter() {
+                for (k, pv) in self.entries_of(&entries)?.iter() {
                     let x = match pv {
                         Value::PreVal(pv) => self.ev(&pv.expr, &pv.scope)?,
                         other => other.clone(),
@@ -2461,18 +2592,25 @@ impl Engine {
             let Value::PreObj(pes) = patch else {
                 return err("with: patch must be an object");
             };
-            for (pk, pv) in pes.iter() {
-                if let Some(e) = entries.iter_mut().find(|(n, _)| n == pk) {
-                    e.1 = pv.clone();
+            for (pk, pv) in self.entries_of(&pes)? {
+                if let Some(e) = entries.iter_mut().find(|(n, _)| *n == pk) {
+                    e.1 = pv;
                 } else {
-                    entries.push((pk.clone(), pv.clone()));
+                    entries.push((pk, pv));
                 }
             }
             Ok(())
         };
         if let Value::PreObj(bes) = &base {
             let p = self.ev(patch, sc)?;
-            let mut entries = (**bes).clone();
+            let mut entries = self.entries_of(bes)?;
+            merge(&mut entries, p)?;
+            return Ok(Value::PreObj(Rc::new(entries)));
+        }
+        if let Value::Map(m) = &base {
+            // a literal no record type claimed: its entries, updated, still unbound
+            let p = self.ev(patch, sc)?;
+            let mut entries = m.borrow().entries.clone();
             merge(&mut entries, p)?;
             return Ok(Value::PreObj(Rc::new(entries)));
         }

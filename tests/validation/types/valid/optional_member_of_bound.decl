@@ -1,0 +1,19 @@
+// a context declaration names what a type reads from its owner: a member the
+// bound declares optional may be one the owner's type never declares — the read
+// is absent (§4.10, §7.3); and a literal is materialized before it is indexed
+type Port = {
+    $parent: ref<{ params: { clock?: string, ... }, ... }>
+    name: string
+    clock = $parent.params.clock ?? "none"
+}
+type Leaf = { params: { clock?: string = "clk0", ... }, port: Port }
+type Root = { params: { width: int, ... }, port: Port, leaf: Leaf }
+func first_of(xs: string[]): string = if std.array.count(xs) == 0 then "" else xs[0]
+type Check = {
+    root: Root
+    picked = first_of([n for n in ["b", "a"] if n != "b"])
+    direct = [i * 2 for i in [1, 2, 3]][1]
+    assert absent_read: root.port.clock == "none" && root.leaf.port.clock == "clk0"
+    assert indexed: picked == "a" && direct == 4
+}
+export output c: Check = { root: { params: { width: 8 }, port: { name: "p" }, leaf: { params: {}, port: { name: "q" } } } }

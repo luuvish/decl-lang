@@ -2396,7 +2396,7 @@ impl Session {
                     RTk::Rec(_) => Some(rec_members(t)),
                     RTk::Union(arms) => {
                         let sets: Vec<Option<Vec<crate::semantics::Member>>> =
-                            arms.iter().map(|a| members(Some(a))).collect();
+                            arms.borrow().iter().map(|a| members(Some(a))).collect();
                         if sets.iter().any(|s| s.is_none()) {
                             return None;
                         }
@@ -2973,7 +2973,7 @@ fn reads_of(e: &Rc<Expr>) -> Vec<Rc<Expr>> {
                 go(l, out);
                 go(r, out);
             }
-            Expr::Un { x, .. } | Expr::Paren(x) => go(x, out),
+            Expr::Un { x, .. } | Expr::Paren(x) | Expr::Spread(x) => go(x, out),
             Expr::If { c, t, f } => {
                 go(c, out);
                 go(t, out);
@@ -3020,6 +3020,7 @@ pub fn expr_text(e: &Expr) -> String {
         }
         Expr::Index { x, i } => format!("{}[{}]", expr_text(x), expr_text(i)),
         Expr::Paren(x) => format!("({})", expr_text(x)),
+        Expr::Spread(x) => format!("...{}", expr_text(x)),
         Expr::Bin { op, l, r } => format!("{} {op} {}", expr_text(l), expr_text(r)),
         Expr::Un { op, x } => format!("{op}{}", expr_text(x)),
         Expr::Call { fun, args } => format!(
@@ -3050,7 +3051,10 @@ pub fn expr_text(e: &Expr) -> String {
         Expr::Obj(es) => format!(
             "{{ {} }}",
             es.iter()
-                .map(|(k, v)| format!("{k}: {}", expr_text(v)))
+                .map(|(k, v)| match &**v {
+                    Expr::Spread(x) => format!("...{}", expr_text(x)),
+                    _ => format!("{k}: {}", expr_text(v)),
+                })
                 .collect::<Vec<_>>()
                 .join(", ")
         ),

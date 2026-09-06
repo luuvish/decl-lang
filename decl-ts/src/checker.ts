@@ -273,6 +273,7 @@ export function checkModule(decls: Decl[], linked?: Env, hooks?: CheckHooks): Di
     else if (/pattern interpolation of .*: unknown type/.test(msg))
       report('E3003', `${msg} (in ${where})`);
     else if (/unknown type/.test(msg)) report('E3003', `${msg} (in ${where})`);
+    else if (/recursive type alias/.test(msg)) report('E4012', `${msg} (in ${where})`);
     else if (/generic arity/.test(msg)) report('E4022', `${msg} (in ${where})`);
     else if (/outside parameter/.test(msg)) report('E4023', `${msg} (in ${where})`);
     else if (/non-constant value argument/.test(msg)) report('E4021', `${msg} (in ${where})`);

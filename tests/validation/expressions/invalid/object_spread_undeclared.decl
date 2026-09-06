@@ -1,0 +1,8 @@
+// @expect-phase: checking
+// @expect-error: E4003
+// a spread of a record type supplies members; one a closed target does not declare is refused (§3.11)
+type Wide = { a: int, extra: string }
+type Narrow = { a: int }
+input w: Wide
+type T = { v: Narrow = { ...w } }
+export output t: T = {}

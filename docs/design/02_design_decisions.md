@@ -864,6 +864,26 @@ diagnostic width_mismatch(src: int, dst: int) {
   renderer's own document, docs/tooling/05_render.md, is the
   specification of all of it.
 
+### D36. A record flows into a map *(revision, 2026-09-06)*
+
+- `⊑` had no clause between a record and a map, so a record value
+  could not be placed where a map is expected — `params: { [string]:
+  Json }` in a projection of an evaluated tree, `std.map.entries(r)`
+  over a record's members — although §3.11 says the two are different
+  types with the same value syntax and a record's entries are known by
+  name. Found projecting an interconnect model into the legacy shape
+  its consumers read: every per-element parameter record had to become
+  a map, and nothing in the language could say so.
+- **Records into maps** (§3.17): `R ⊑ { [K]: V }` iff every value
+  member's name satisfies `K` and its type `V`; hidden members are not
+  entries. At evaluation the record binds as its value entries in
+  serialization order (§3.18, §10.3), which is also what spread (§4.2)
+  and `std.map` (§13.8) read. The reverse stays false: a map is never
+  a record, and an object literal in a map position is a map.
+- One direction, structural, no new syntax: the existing rule that a
+  record's value *is* an object (D1, P3) gains the type-level clause it
+  lacked.
+
 ## Syntax deliberately absent
 
 One concept, one syntax (P5). The left column does not exist in Decl; use

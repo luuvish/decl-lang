@@ -363,9 +363,12 @@ function infer0(cx: ICtx, e: Expr): Ty {
     }
     case 'obj': {
       for (const en of e.entries)
-        requireVal(cx, en.val, infer(cx, en.val), 'as a construction member');
+        if (en.val.e === 'spread') spreadTy(cx, en.val);
+        else requireVal(cx, en.val, infer(cx, en.val), 'as a construction member');
       return UNK; // literals are typed by their checked position (§3.18)
     }
+    case 'spread':
+      return spreadTy(cx, e);
     case 'arr': {
       const ts = e.items.map((it) => {
         const t = requireVal(cx, it.expr, infer(cx, it.expr), 'as an array element');
@@ -465,6 +468,17 @@ function infer0(cx: ICtx, e: Expr): Ty {
       return inferMatch(cx, e, null);
   }
   return UNK;
+}
+
+// the operand of an object spread (§4.2) must be object-valued: a record, a
+// map, an intersection of records, or a union of those; the type is handed back
+// so a construction can count the members a record-typed spread supplies
+function spreadTy(cx: ICtx, e: Expr & { e: 'spread' }): Ty {
+  const t = requireVal(cx, e.expr, infer(cx, e.expr), 'as a spread');
+  const rt = t.rt && t.rt.t === 'ref' ? t.rt.target : t.rt;
+  if (rt && !['rec', 'map', 'isectN', 'union', 'any'].includes(rt.t))
+    cx.report('E4001', 'spread of a non-object value');
+  return { rt, abs: false };
 }
 
 function iterVarTy(cx: ICtx, iter: Expr): Ty {
@@ -1005,7 +1019,27 @@ export function checkExpr(cx: ICtx, e: Expr, expected: RT | null): Ty {
           const mt: RT | null = m.conj ? { t: 'isectN', arms: m.conj } : (m.type ?? null);
           cxR.vars.set(m.name, { rt: mt, abs: m.kind === 'opt' });
         }
+        // a spread (§4.2) contributes the value members of a record-typed operand;
+        // an operand of unknown or map type may contribute anything, so the
+        // required-member check stands down for that literal
+        const provided = new Set<string>();
+        let dynamic = false;
         for (const en of e.entries) {
+          if (en.val.e === 'spread') {
+            const st = spreadTy(cxR, en.val).rt;
+            if (st && st.t === 'rec') {
+              for (const sm of st.members) {
+                if (sm.hidden) continue;
+                provided.add(sm.name);
+                if (!expected.open && !expected.members.some((m: any) => m.name === sm.name))
+                  cx.report(
+                    'E4003',
+                    `member ${sm.name} (spread) is not declared on ${expected.name ?? 'the record'}`,
+                  );
+              }
+            } else dynamic = true;
+            continue;
+          }
           const m = expected.members.find((m: any) => m.name === en.key);
           if (!m) {
             if (!expected.open)
@@ -1019,14 +1053,20 @@ export function checkExpr(cx: ICtx, e: Expr, expected: RT | null): Ty {
           const mt: RT | null = m.conj ? { t: 'isectN', arms: m.conj } : (m.type ?? null);
           requireVal(cxR, en.val, checkExpr(cxR, en.val, mt), 'as a construction member');
         }
-        for (const m of expected.members)
-          if (m.kind === 'req' && !e.entries.some((en) => en.key === m.name))
-            cx.report('E4002', `required member ${m.name} missing in the construction`);
+        if (!dynamic)
+          for (const m of expected.members)
+            if (
+              m.kind === 'req' &&
+              !provided.has(m.name) &&
+              !e.entries.some((en) => en.key === m.name)
+            )
+              cx.report('E4002', `required member ${m.name} missing in the construction`);
         return { rt: expected, abs: false };
       }
       if (expected.t === 'map') {
         for (const en of e.entries)
-          requireVal(cx, en.val, checkExpr(cx, en.val, expected.val), 'as a map value');
+          if (en.val.e === 'spread') spreadTy(cx, en.val);
+          else requireVal(cx, en.val, checkExpr(cx, en.val, expected.val), 'as a map value');
         return { rt: expected, abs: false };
       }
       if (expected.t === 'union') {
@@ -1081,8 +1121,9 @@ function deferrable(s: RT, t: RT): boolean {
 // ---------------- type text ----------------
 // the static type as inference sees it, spelled in the language's own
 // type syntax where it has one (`:type` in the REPL, hover in the editor)
-export function typeText(rt: RT | null): string {
+export function typeText(rt: RT | null, seen: Set<RT> = new Set()): string {
   if (!rt) return 'unknown';
+  if (seen.has(rt)) return rt.name ?? '…'; // a recursive alias prints its name
   const lit = (v: any) =>
     typeof v === 'bigint' ? v.toString() : typeof v === 'string' ? JSON.stringify(v) : String(v);
   switch (rt.t) {
@@ -1099,13 +1140,13 @@ export function typeText(rt: RT | null): string {
     case 'quantity':
       return `quantity<${rt.dim}>`;
     case 'ref':
-      return `ref<${typeText(rt.target)}>`;
+      return `ref<${typeText(rt.target, seen)}>`;
     case 'map':
-      return `map<${typeText(rt.key)}, ${typeText(rt.val)}>`;
+      return `map<${typeText(rt.key, seen)}, ${typeText(rt.val, seen)}>`;
     case 'arr': {
       const b =
         rt.lo !== undefined || rt.hi !== undefined ? `[${rt.lo ?? ''}..${rt.hi ?? ''}]` : '[]';
-      const elem = typeText(rt.elem);
+      const elem = typeText(rt.elem, seen);
       // a compound element type is parenthesized (`(1 | 2)[]`, `(1..8)[]`), as the grammar's paren_type spells it
       return `${rt.elem && ['union', 'func', 'pred', 'range'].includes(rt.elem.t) ? `(${elem})` : elem}${b}`;
     }
@@ -1114,8 +1155,10 @@ export function typeText(rt: RT | null): string {
       const nn = arms.filter(
         (a) => !((a.t === 'prim' && a.name === 'null') || (a.t === 'lit' && a.v === null)),
       );
-      if (nn.length === arms.length - 1 && nn.length === 1) return `${typeText(nn[0])}?`;
-      return arms.map(typeText).join(' | ');
+      const inner = new Set(seen);
+      inner.add(rt);
+      if (nn.length === arms.length - 1 && nn.length === 1) return `${typeText(nn[0], inner)}?`;
+      return arms.map((a) => typeText(a, inner)).join(' | ');
     }
     case 'pred':
       return `${typeText(rt.base)} where …`;

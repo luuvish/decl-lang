@@ -1,0 +1,12 @@
+// a type alias may name itself through an array, a map, or a union arm (§3.1):
+// the cycle passes through a collection, which an empty value terminates
+type Json = null | bool | int | float | string | Json[] | { [string]: Json }
+type Nest = { [string]: Nest }
+type Deep = Deep[]
+type Doc = { body: Json, tree: Nest, deep: Deep }
+const doc: Doc = {
+    body: { a: [1, 2.5, "x", null, { b: [true] }] }
+    tree: { k: { j: {} } }
+    deep: [[], [[]]]
+}
+export output out: Doc = doc

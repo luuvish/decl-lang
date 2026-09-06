@@ -83,5 +83,10 @@
     "name": "annotations: the name follows its @, arguments attach, one space between two",
     "input": "@ deprecated\ntype T=int\ntype S={\n  @doc( \"x\" )   @deprecated\n  a:int\n}\n@render({format:\"yaml\",indent:2})\nexport output o:S={a:1}\n",
     "expected": "@deprecated\ntype T = int\ntype S = {\n    @doc(\"x\") @deprecated\n    a: int\n}\n@render({ format: \"yaml\", indent: 2 })\nexport output o: S = { a: 1 }\n"
+  },
+  {
+    "name": "spreads attach to their operands",
+    "input": "const b = { ... a, y: 2, ... (if c then a else { z: 3 }) }\nconst d = [ ... xs, 3]\n",
+    "expected": "const b = { ...a, y: 2, ...(if c then a else { z: 3 }) }\nconst d = [...xs, 3]\n"
   }
 ]

@@ -1,11 +1,12 @@
 # Decl Documentation
 
-**Status: v0.4 (2026-09-06)** — v0.1 frozen 2026-08-31, revised through
+**Status: v0.4.1 (2026-09-06)** — v0.1 frozen 2026-08-31, revised through
 the v0.2 cycle (D31–D33, D29 amended, clarifications), v0.3 (member
 kinds read off `?` and `= e` with no `const` in record bodies, D4
-amended; hidden members `x$ = e`, D34), then v0.4: rendering is
+amended; hidden members `x$ = e`, D34), v0.4: rendering is
 tooling, declared in the module with `@render` (D35; the E7xxx band,
-documents in YAML) — see [REVISIONS.md](REVISIONS.md). The normative specification below is the
+documents in YAML), then v0.4.1: a record flows into a map (D36) — see
+[REVISIONS.md](REVISIONS.md). The normative specification below is the
 single source of truth for every implementation phase.
 
 **Post-freeze changes are revisions**: a change touches the design
@@ -21,7 +22,7 @@ charter and chapters remains a defect to fix on sight (§1.4).
 |---|---|
 | [00. Vision and Background](design/00_vision.md) | Why this language exists: the config-language landscape, the agent-era turn, lessons and defect review from the previous Decl iteration, and the checklist of issues the new spec must resolve (informative) |
 | [01. Design Requirements](design/01_requirements.md) | Goals, non-goals, capability requirements (describe / generate / validate / modules / tooling), the generality benchmark, and the quality bar — with the vision checklist promoted to requirements |
-| [02. Design Decisions](design/02_design_decisions.md) | The charter: principles P1–P7, decisions D1–D33, the rejected-syntax table, the comprehensive example, vision-checklist traceability, and the revision-tracked decision log — spec chapters must not contradict it |
+| [02. Design Decisions](design/02_design_decisions.md) | The charter: principles P1–P7, decisions D1–D36, the rejected-syntax table, the comprehensive example, vision-checklist traceability, and the revision-tracked decision log — spec chapters must not contradict it |
 | [03. v0.2 Revision Candidates](design/03_v02_revision_candidates.md) | Findings from implementing Phases 2–4 and the Phase 5 real-world sweeps, adjudicated 2026-09-01 into revisions v0.1.4–v0.1.8 (the v0.2 cycle); each entry records its outcome |
 
 ### Language specification (normative — the single source of truth)

@@ -374,6 +374,8 @@ pub enum Expr {
     },
     /// a record literal
     Obj(Vec<(String, Rc<Expr>)>),
+    /// a spread entry's operand (§4.2): the value of an object entry keyed `...`
+    Spread(Rc<Expr>),
     /// an array literal: (spread, item)
     Arr(Vec<(bool, Rc<Expr>)>),
     /// an array comprehension
@@ -639,6 +641,7 @@ pub fn mentions_referrers(e: &Expr) -> bool {
             .iter()
             .any(|p| matches!(p, TPart::Expr(x) if mentions_referrers(x))),
         Expr::Obj(es) => es.iter().any(|(_, v)| mentions_referrers(v)),
+        Expr::Spread(x) => mentions_referrers(x),
         Expr::Arr(items) => items.iter().any(|(_, v)| mentions_referrers(v)),
         Expr::Comp { head, clauses } => {
             mentions_referrers(head) || clauses.iter().any(clause_mentions)

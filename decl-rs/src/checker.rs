@@ -62,7 +62,7 @@ fn walk_expr_tree(e: &Rc<Expr>, into_types: bool, f: &mut dyn FnMut(&Rc<Expr>)) 
             go(l);
             go(r);
         }
-        Expr::Un { x, .. } | Expr::Paren(x) => go(x),
+        Expr::Un { x, .. } | Expr::Paren(x) | Expr::Spread(x) => go(x),
         Expr::If { c, t, f: ff } => {
             go(c);
             go(t);
@@ -176,7 +176,7 @@ fn str_shaped(k: &RT) -> bool {
         RTk::Prim(n) => n == "string",
         RTk::Pattern { .. } => true,
         RTk::Lit(Value::Str(_)) => true,
-        RTk::Union(arms) => arms.iter().all(str_shaped),
+        RTk::Union(arms) => arms.borrow().iter().all(str_shaped),
         RTk::Pred { base, .. } => str_shaped(base),
         _ => false,
     }
@@ -579,6 +579,8 @@ pub fn check_module(
             rep("E4073", format!("{msg} (in {where_})"));
         } else if pattern_unknown.is_match(msg) || msg.contains("unknown type") {
             rep("E3003", format!("{msg} (in {where_})"));
+        } else if msg.contains("recursive type alias") {
+            rep("E4012", format!("{msg} (in {where_})"));
         } else if msg.contains("generic arity") {
             rep("E4022", format!("{msg} (in {where_})"));
         } else if msg.contains("outside parameter") {
@@ -652,6 +654,7 @@ pub fn check_module(
                 check_resolved(env, rep, val, name, seen);
             }
             RTk::Union(arms) => {
+                let arms = arms.borrow();
                 let recs: Vec<&RT> = arms.iter().filter(|a| is_rec(a)).collect();
                 if recs.len() >= 2 {
                     let lit_of = |r: &RT, n: &str| -> Option<Value> {
@@ -1014,7 +1017,7 @@ pub fn check_module(
     // (directly, or on a union arm) is an error at the root
     fn check_root_type(rep: &dyn Fn(&str, String), root_name: &str, root_rt: &RT) {
         let arms: Vec<RT> = match &root_rt.k {
-            RTk::Union(arms) => arms.clone(),
+            RTk::Union(arms) => arms.borrow().clone(),
             _ => vec![root_rt.clone()],
         };
         for t in &arms {
@@ -1069,7 +1072,11 @@ pub fn check_module(
             }
             RTk::Arr { elem, .. } => walk_root_bounds(env, rep, root_name, root_rt, elem, seen),
             RTk::Map { val, .. } => walk_root_bounds(env, rep, root_name, root_rt, val, seen),
-            RTk::Union(arms) | RTk::IsectN(arms) => arms
+            RTk::Union(arms) => arms
+                .borrow()
+                .iter()
+                .for_each(|a| walk_root_bounds(env, rep, root_name, root_rt, a, seen)),
+            RTk::IsectN(arms) => arms
                 .iter()
                 .for_each(|a| walk_root_bounds(env, rep, root_name, root_rt, a, seen)),
             RTk::Pred { base, .. } => walk_root_bounds(env, rep, root_name, root_rt, base, seen),

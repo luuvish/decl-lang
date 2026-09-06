@@ -160,6 +160,8 @@ function spaced(a: Leaf, b: Leaf, prev: Leaf | null): boolean {
   if (bt === '?' || at === '?') return false; // int?, name?:
   if (at === '.' || bt === '.' || at === '?.' || bt === '?.') return false;
   if (bt === ';') return false;
+  // a spread attaches to its operand (`...xs`, `...(e)`); the open marker of a record type keeps its space before `}`
+  if (at === '...' && bt !== '}') return false;
   if (at === '..' || at === '..<' || bt === '..' || bt === '..<') return false;
   if (bt === '(') {
     // call/parameter parens attach to a name or closing bracket; grouping parens do not

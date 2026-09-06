@@ -18,14 +18,27 @@ fn sub(env: &Rc<Env>, a: &RT, b: &RT, assume: &mut HashMap<usize, Vec<usize>>) -
         return true;
     }
     let (ia, ib) = (Rc::as_ptr(a) as usize, Rc::as_ptr(b) as usize);
-    if is_rec(a) && is_rec(b) && assume.get(&ia).map(|s| s.contains(&ib)).unwrap_or(false) {
+    // coinductive assumption for recursive types: a pair under test holds while
+    // its parts are compared (records, and the unions a recursive alias passes
+    // through — §3.1, §3.17)
+    if assume.get(&ia).map(|s| s.contains(&ib)).unwrap_or(false) {
         return true;
     }
-    if let RTk::Union(arms) = &a.k {
-        return arms.iter().all(|x| sub(env, x, b, assume));
-    }
-    if let RTk::Union(arms) = &b.k {
-        return arms.iter().any(|x| sub(env, a, x, assume));
+    if matches!(a.k, RTk::Union(_)) || matches!(b.k, RTk::Union(_)) {
+        assume.entry(ia).or_default().push(ib);
+        let r = if let RTk::Union(arms) = &a.k {
+            arms.borrow().iter().all(|x| sub(env, x, b, assume))
+        } else if let RTk::Union(arms) = &b.k {
+            arms.borrow().iter().any(|x| sub(env, a, x, assume))
+        } else {
+            unreachable!()
+        };
+        if !r {
+            if let Some(s) = assume.get_mut(&ia) {
+                s.retain(|x| *x != ib);
+            }
+        }
+        return r;
     }
     if let RTk::IsectN(arms) = &a.k {
         return arms.iter().any(|x| sub(env, x, b, assume));
@@ -95,6 +108,30 @@ fn sub(env: &Rc<Env>, a: &RT, b: &RT, assume: &mut HashMap<usize, Vec<usize>>) -
         },
         RTk::Map { key, val } => match &a.k {
             RTk::Map { key: ak, val: av } => sub(env, ak, key, assume) && sub(env, av, val, assume),
+            RTk::Rec(r) => {
+                // a record flows into a map (§3.17): every value member's name satisfies
+                // the key type and its type the value type; hidden members are not entries
+                assume.entry(ia).or_default().push(ib);
+                let members = r.members.borrow().clone();
+                let ok = members.iter().all(|m| {
+                    if m.hidden {
+                        return true;
+                    }
+                    if !sub(env, &ty(RTk::Lit(Value::Str(m.name.clone()))), key, assume) {
+                        return false;
+                    }
+                    match crate::infer::member_ty(m) {
+                        Some(mt) => sub(env, &mt, val, assume),
+                        None => true,
+                    }
+                });
+                if !ok {
+                    if let Some(s) = assume.get_mut(&ia) {
+                        s.retain(|x| *x != ib);
+                    }
+                }
+                ok
+            }
             _ => false,
         },
         RTk::Quantity(d) => matches!(&a.k, RTk::Quantity(ad) if ad == d),
@@ -247,6 +284,15 @@ fn js_gt(a: &Value, b: &Value) -> bool {
 /// an array bound below zero, a record with an uninhabited required member, an
 /// empty union.
 pub fn structurally_empty(env: &Rc<Env>, t: &RT) -> bool {
+    empty(env, t, &mut vec![])
+}
+
+fn empty(env: &Rc<Env>, t: &RT, seen: &mut Vec<usize>) -> bool {
+    let id = Rc::as_ptr(t) as usize;
+    if seen.contains(&id) {
+        return false; // a recursive union is inhabited by its finite arms
+    }
+    seen.push(id);
     match &t.k {
         RTk::Range { lo, hi, excl, .. } => {
             let h = if *excl && !matches!(hi, Value::Str(_)) {
@@ -265,9 +311,9 @@ pub fn structurally_empty(env: &Rc<Env>, t: &RT) -> bool {
                     }
                 }
             }
-            arms.iter().any(|a| structurally_empty(env, a))
+            arms.iter().any(|a| empty(env, a, seen))
         }
-        RTk::Union(arms) => arms.iter().all(|a| structurally_empty(env, a)),
+        RTk::Union(arms) => arms.borrow().iter().all(|a| empty(env, a, seen)),
         _ => false,
     }
 }

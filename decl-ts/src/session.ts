@@ -1737,7 +1737,11 @@ export function exprText(e: any): string {
         '`'
       );
     case 'obj':
-      return `{ ${e.entries.map((en: any) => `${en.key}: ${exprText(en.val)}`).join(', ')} }`;
+      return `{ ${e.entries
+        .map((en: any) =>
+          en.val.e === 'spread' ? `...${exprText(en.val.expr)}` : `${en.key}: ${exprText(en.val)}`,
+        )
+        .join(', ')} }`;
     case 'arr':
       return `[${e.items.map((it: any) => (it.spread ? '...' : '') + exprText(it.expr)).join(', ')}]`;
     case 'comp':

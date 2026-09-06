@@ -127,6 +127,9 @@ export type RT = any;
 export class Env {
   typeAsts = new Map<string, { ast: TypeAst; tail?: ElseTail; params?: any[] }>();
   typeMemo = new Map<string, RT>();
+  // the non-record aliases being resolved, to catch a reference back to one
+  resolving = new Set<string>();
+  cyclic = new Map<string, RT>(); // the placeholder an alias's inner reference took
   consts = new Map<string, { expr: Expr; type?: TypeAst; value?: Value; state: string }>();
   funcs = new Map<
     string,
@@ -519,7 +522,35 @@ export class Env {
             throw e;
           }
         } else {
-          base = this.resolve(decl.ast, ast.name);
+          // an alias that names itself through an array, a map, or a union
+          // (`type Json = … | Json[] | { [string]: Json }`, §3.1) is entered
+          // once: the inner reference gets a placeholder union that the outer
+          // resolution fills — so every reference shares the one node; a
+          // pattern's interpolation cycle is the pattern code's own diagnostic
+          const guard = decl.ast.k !== 'pattern';
+          if (guard && this.resolving.has(ast.name)) {
+            let ph = this.cyclic.get(ast.name);
+            if (!ph) {
+              ph = { t: 'union', arms: [], name: ast.name, tail: decl.tail };
+              this.cyclic.set(ast.name, ph);
+            }
+            return ph;
+          }
+          if (guard) this.resolving.add(ast.name);
+          try {
+            base = this.resolve(decl.ast, ast.name);
+          } finally {
+            if (guard) this.resolving.delete(ast.name);
+          }
+          const ph = this.cyclic.get(ast.name);
+          if (ph) {
+            this.cyclic.delete(ast.name);
+            const arms = base.t === 'union' ? base.arms : [base];
+            if (arms.includes(ph))
+              throw new Error(`recursive type alias ${ast.name} names itself as an arm`);
+            ph.arms = arms;
+            base = ph;
+          }
           if (base.t === 'rec' || base.t === 'union') base.name = ast.name;
           base.tail = base.tail ?? decl.tail;
           this.typeMemo.set(ast.name, base);

@@ -1,0 +1,5 @@
+// @expect-phase: checking
+// @expect-error: E4001
+// the operand of an object spread must be object-valued (§4.2)
+type T = { v = { ...[1, 2], a: 2 } }
+export output t: T = {}

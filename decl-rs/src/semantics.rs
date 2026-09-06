@@ -572,8 +572,9 @@ pub enum RTk {
         /// the value type
         val: RT,
     },
-    /// a union
-    Union(Vec<RT>),
+    /// a union; its arms are filled after the node exists when an alias names
+    /// itself through one of them (§3.1)
+    Union(RefCell<Vec<RT>>),
     /// an intersection not yet merged
     IsectN(Vec<RT>),
     /// a record
@@ -795,6 +796,10 @@ pub struct Env {
     pub type_asts: RefCell<HashMap<String, Rc<TypeEntry>>>,
     /// resolved types, memoized
     pub type_memo: RefCell<HashMap<String, RT>>,
+    /// the non-record aliases being resolved, to catch a reference back to one
+    pub resolving: RefCell<HashSet<String>>,
+    /// the placeholder an alias's inner reference took (§3.1)
+    pub cyclic: RefCell<HashMap<String, RT>>,
     // names being spliced into a pattern right now, across nested
     // resolutions — a mutually recursive pair is a cycle, not a stack overflow
     /// the named types being resolved (recursion)
@@ -903,6 +908,8 @@ impl Env {
         let env = Env {
             type_asts: RefCell::new(HashMap::new()),
             type_memo: RefCell::new(HashMap::new()),
+            resolving: RefCell::new(HashSet::new()),
+            cyclic: RefCell::new(HashMap::new()),
             pattern_visiting: RefCell::new(vec![]),
             consts: RefCell::new(HashMap::new()),
             funcs: RefCell::new(HashMap::new()),
@@ -1504,11 +1511,11 @@ impl Env {
                     hi: hi_i,
                 })
             }
-            TypeAst::Union { arms, .. } => ty(RTk::Union(
+            TypeAst::Union { arms, .. } => ty(RTk::Union(RefCell::new(
                 arms.iter()
                     .map(|a| self.resolve(a, None))
                     .collect::<Result<_, _>>()?,
-            )),
+            ))),
             TypeAst::Isect { arms, .. } => {
                 let arms: Vec<RT> = arms
                     .iter()
@@ -1678,7 +1685,50 @@ impl Env {
                             rt
                         }
                         other => {
-                            let rt = self.resolve(other, Some(n))?;
+                            // an alias that names itself through an array, a map, or a
+                            // union (`type Json = … | Json[] | { [string]: Json }`, §3.1)
+                            // is entered once: the inner reference gets a placeholder
+                            // union that the outer resolution fills — so every reference
+                            // shares the one node; a pattern's interpolation cycle is the
+                            // pattern code's own diagnostic
+                            let guard = !matches!(other, TypeAst::Pattern { .. });
+                            if guard && self.resolving.borrow().contains(n) {
+                                let ph = self.cyclic.borrow().get(n).cloned();
+                                return Ok(match ph {
+                                    Some(ph) => ph,
+                                    None => {
+                                        let ph = ty(RTk::Union(RefCell::new(vec![])));
+                                        *ph.name.borrow_mut() = Some(n.clone());
+                                        *ph.tail.borrow_mut() = decl.tail.clone();
+                                        self.cyclic.borrow_mut().insert(n.clone(), ph.clone());
+                                        ph
+                                    }
+                                });
+                            }
+                            if guard {
+                                self.resolving.borrow_mut().insert(n.clone());
+                            }
+                            let resolved = self.resolve(other, Some(n));
+                            if guard {
+                                self.resolving.borrow_mut().remove(n);
+                            }
+                            let mut rt = resolved?;
+                            let ph = self.cyclic.borrow_mut().remove(n);
+                            if let Some(ph) = ph {
+                                let arms: Vec<RT> = match &rt.k {
+                                    RTk::Union(a) => a.borrow().clone(),
+                                    _ => vec![rt.clone()],
+                                };
+                                if arms.iter().any(|a| Rc::ptr_eq(a, &ph)) {
+                                    return Err(format!(
+                                        "recursive type alias {n} names itself as an arm"
+                                    ));
+                                }
+                                if let RTk::Union(pa) = &ph.k {
+                                    *pa.borrow_mut() = arms;
+                                }
+                                rt = ph;
+                            }
                             if matches!(rt.k, RTk::Rec(_) | RTk::Union(_)) {
                                 *rt.name.borrow_mut() = Some(n.clone());
                             }
@@ -1891,6 +1941,7 @@ impl Env {
             }
             RTk::Union(arms) => {
                 let parts = arms
+                    .borrow()
                     .iter()
                     .map(|a| self.pattern_fragment(a, name))
                     .collect::<Result<Vec<_>, _>>()?;

@@ -1,0 +1,8 @@
+// the keyword literal types `true`, `false`, `null` (§3.3): alone, as union
+// arms, and beside other literals
+type Flag = true | false
+type Maybe = null | int
+type Yes = true
+type Mode = "auto" | null
+type T = { flag: Flag, maybe: Maybe, yes: Yes, mode: Mode, off: false }
+export output t: T = { flag: false, maybe: null, yes: true, mode: null, off: false }

@@ -16,14 +16,23 @@ def subsumes(
     assume = assume if assume is not None else {}
     if a is b:
         return True
-    if a["t"] == "rec" and b["t"] == "rec":
-        s = assume.get(id(a))
-        if s is not None and id(b) in s:
-            return True
-    if a["t"] == "union":
-        return all(subsumes(env, x, b, assume) for x in a["arms"])
-    if b["t"] == "union":
-        return any(subsumes(env, a, x, assume) for x in b["arms"])
+    # coinductive assumption for recursive types: a pair under test holds while
+    # its parts are compared (records, and the unions a recursive alias passes
+    # through — §3.1, §3.17)
+    s0 = assume.get(id(a))
+    if s0 is not None and id(b) in s0:
+        return True
+    if a["t"] == "union" or b["t"] == "union":
+        s = assume.setdefault(id(a), set())
+        s.add(id(b))
+        r = (
+            all(subsumes(env, x, b, assume) for x in a["arms"])
+            if a["t"] == "union"
+            else any(subsumes(env, a, x, assume) for x in b["arms"])
+        )
+        if not r:
+            s.discard(id(b))
+        return r
     if a["t"] == "isectN":
         return any(subsumes(env, x, b, assume) for x in a["arms"])
     if b["t"] == "isectN":
@@ -83,11 +92,29 @@ def subsumes(
         except TypeError:
             return False
     if bt == "map":
-        return (
-            a["t"] == "map"
-            and subsumes(env, a["key"], b["key"], assume)
-            and subsumes(env, a["val"], b["val"], assume)
-        )
+        if a["t"] == "map":
+            return subsumes(env, a["key"], b["key"], assume) and subsumes(
+                env, a["val"], b["val"], assume
+            )
+        if a["t"] == "rec":
+            # a record flows into a map (§3.17): every value member's name satisfies
+            # the key type and its type the value type; hidden members are not entries
+            s = assume.setdefault(id(a), set())
+            s.add(id(b))
+
+            def member_ok(m: dict[str, Any]) -> bool:
+                if m.get("hidden"):
+                    return True
+                if not subsumes(env, {"t": "lit", "v": m["name"]}, b["key"], assume):
+                    return False
+                mt = {"t": "isectN", "arms": m["conj"]} if m.get("conj") else m.get("type")
+                return mt is None or subsumes(env, mt, b["val"], assume)
+
+            ok = all(member_ok(m) for m in a["members"])
+            if not ok:
+                s.discard(id(b))
+            return ok
+        return False
     if bt == "quantity":
         return a["t"] == "quantity" and a["dim"] == b["dim"]
     if bt == "ref":
@@ -209,7 +236,11 @@ def _js_gt(a: Any, b: Any) -> bool:
         return False
 
 
-def structurally_empty(env: Any, t: dict[str, Any]) -> bool:
+def structurally_empty(env: Any, t: dict[str, Any], seen: set[int] | None = None) -> bool:
+    seen = seen if seen is not None else set()
+    if id(t) in seen:
+        return False  # a recursive union is inhabited by its finite arms
+    seen.add(id(t))
     tt = t["t"]
     if tt == "range":
         hi = _dec(t["hi"]) if (t["excl"] and not is_str(t["hi"])) else t["hi"]
@@ -222,9 +253,9 @@ def structurally_empty(env: Any, t: dict[str, Any]) -> bool:
             for j in range(i + 1, len(arms)):
                 if _disjoint(env, arms[i], arms[j]):
                     return True
-        return any(structurally_empty(env, a) for a in arms)
+        return any(structurally_empty(env, a, seen) for a in arms)
     if tt == "union":
-        return all(structurally_empty(env, a) for a in t["arms"])
+        return all(structurally_empty(env, a, seen) for a in t["arms"])
     return False
 
 

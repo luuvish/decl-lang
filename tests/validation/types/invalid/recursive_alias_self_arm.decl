@@ -1,0 +1,7 @@
+// @expect-phase: checking
+// @expect-error: E4012
+// @expect-message: names itself as an arm
+// an alias that is one of its own arms denotes nothing new (§3.1)
+type U = U | int
+type T = { u: U }
+export output t: T = { u: 1 }

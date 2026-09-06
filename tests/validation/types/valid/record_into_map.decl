@@ -1,0 +1,16 @@
+// a record flows into a map (§3.17, D36): its value entries are the map's
+// entries, hidden members excluded; std.map reads a record the same way
+type Json = null | bool | int | float | string | Json[] | { [string]: Json }
+type Params = { width: int, name?: string = "w", label = `${name}:${width}`, note$ = "hidden" }
+type Port = { params: Params }
+type T = {
+    port: Port
+    as_map: { [string]: int | string } = port.params
+    as_json: Json = port
+    keys = std.map.keys(port.params)
+    labels = [e.value for e in std.map.entries(port.params) if e.key == "label"]
+    assert map_ok: (as_map["width"] ?? 0) == 8 && (as_map["label"] ?? "") == "w:8"
+    assert keys_ok: keys == ["width", "name", "label"]
+    assert labels_ok: labels == ["w:8"]
+}
+export output t: T = { port: { params: { width: 8 } } }

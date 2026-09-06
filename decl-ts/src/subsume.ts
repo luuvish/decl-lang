@@ -9,15 +9,22 @@ type Assume = Map<RT, Set<RT>>;
 export function subsumes(env: Env, a: RT, b: RT, assume: Assume = new Map()): boolean {
   if (a === b) return true;
 
-  // coinductive assumption for recursive records
-  if (a.t === 'rec' && b.t === 'rec') {
-    const set = assume.get(a);
-    if (set?.has(b)) return true;
+  // coinductive assumption for recursive types: a pair under test holds while
+  // its parts are compared (records, and the unions, arrays, and maps a
+  // recursive alias passes through — §3.1, §3.17)
+  const set0 = assume.get(a);
+  if (set0?.has(b)) return true;
+  if (a.t === 'union' || b.t === 'union') {
+    const set = set0 ?? new Set<RT>();
+    assume.set(a, set);
+    set.add(b);
+    const r =
+      a.t === 'union'
+        ? a.arms.every((x: RT) => subsumes(env, x, b, assume))
+        : b.arms.some((x: RT) => subsumes(env, a, x, assume));
+    if (!r) set.delete(b);
+    return r;
   }
-
-  // unions / intersections first (structural set rules)
-  if (a.t === 'union') return a.arms.every((x: RT) => subsumes(env, x, b, assume));
-  if (b.t === 'union') return b.arms.some((x: RT) => subsumes(env, a, x, assume));
   if (a.t === 'isectN') return a.arms.some((x: RT) => subsumes(env, x, b, assume));
   if (b.t === 'isectN') return b.arms.every((x: RT) => subsumes(env, a, x, assume));
 
@@ -72,9 +79,24 @@ export function subsumes(env: Env, a: RT, b: RT, assume: Assume = new Map()): bo
       return aLo >= bLo && aHi <= bHi;
     }
     case 'map':
-      return (
-        a.t === 'map' && subsumes(env, a.key, b.key, assume) && subsumes(env, a.val, b.val, assume)
-      );
+      if (a.t === 'map')
+        return subsumes(env, a.key, b.key, assume) && subsumes(env, a.val, b.val, assume);
+      if (a.t === 'rec') {
+        // a record flows into a map (§3.17): every value member's name satisfies
+        // the key type and its type the value type; hidden members are not entries
+        const set = assume.get(a) ?? new Set<RT>();
+        assume.set(a, set);
+        set.add(b);
+        const ok = a.members.every((m: any) => {
+          if (m.hidden) return true;
+          if (!subsumes(env, { t: 'lit', v: m.name }, b.key, assume)) return false;
+          const mt: RT | null = m.conj ? { t: 'isectN', arms: m.conj } : (m.type ?? null);
+          return !mt || subsumes(env, mt, b.val, assume);
+        });
+        if (!ok) set.delete(b);
+        return ok;
+      }
+      return false;
     case 'quantity':
       return a.t === 'quantity' && a.dim === b.dim;
     case 'ref':
@@ -186,7 +208,9 @@ function litSatisfies(env: Env, v: any, pred: any): boolean {
 }
 
 // ---------------- structural emptiness (§3.19, D12) ----------------
-export function structurallyEmpty(env: Env, t: RT): boolean {
+export function structurallyEmpty(env: Env, t: RT, seen: Set<RT> = new Set()): boolean {
+  if (seen.has(t)) return false; // a recursive union is inhabited by its finite arms
+  seen.add(t);
   if (t.t === 'range') {
     const hi = t.excl ? dec(t.hi) : t.hi;
     return t.lo > hi;
@@ -196,9 +220,9 @@ export function structurallyEmpty(env: Env, t: RT): boolean {
     const arms: RT[] = t.arms;
     for (let i = 0; i < arms.length; i++)
       for (let j = i + 1; j < arms.length; j++) if (disjoint(env, arms[i], arms[j])) return true;
-    return arms.some((a) => structurallyEmpty(env, a));
+    return arms.some((a) => structurallyEmpty(env, a, seen));
   }
-  if (t.t === 'union') return t.arms.every((a: RT) => structurallyEmpty(env, a));
+  if (t.t === 'union') return t.arms.every((a: RT) => structurallyEmpty(env, a, seen));
   return false;
 }
 function kindOf(t: RT): string | null {

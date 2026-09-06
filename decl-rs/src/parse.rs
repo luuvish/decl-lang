@@ -138,6 +138,14 @@ impl<'a> Lower<'a> {
     fn text(&self, n: Node) -> String {
         n.utf8_text(self.src).unwrap_or("").to_string()
     }
+    /// the arms of a union or intersection: the named type nodes and the
+    /// keyword literal types, which the grammar keeps as anonymous tokens
+    fn type_arms<'b>(&self, n: Node<'b>) -> Vec<Node<'b>> {
+        self.all(n)
+            .into_iter()
+            .filter(|c| c.is_named() || ["true", "false", "null"].contains(&self.text(*c).as_str()))
+            .collect()
+    }
     fn field<'b>(&self, n: Node<'b>, name: &str) -> Option<Node<'b>> {
         n.child_by_field_name(name)
     }
@@ -421,15 +429,24 @@ impl<'a> Lower<'a> {
         Ok(match n.kind() {
             "union_type" => TypeAst::Union {
                 arms: self
-                    .named(n)
+                    .type_arms(n)
                     .into_iter()
                     .map(|c| self.ty(c))
                     .collect::<LR<_>>()?,
                 loc: None,
             },
+            // the literal types `true`, `false`, `null` (§3.3) are keyword tokens
+            "true" | "false" => TypeAst::Lit {
+                v: Value::Bool(n.kind() == "true"),
+                loc: None,
+            },
+            "null" => TypeAst::Lit {
+                v: Value::Null,
+                loc: None,
+            },
             "intersection_type" => TypeAst::Isect {
                 arms: self
-                    .named(n)
+                    .type_arms(n)
                     .into_iter()
                     .map(|c| self.ty(c))
                     .collect::<LR<_>>()?,
@@ -896,7 +913,13 @@ impl<'a> Lower<'a> {
                             },
                             self.expr(self.req(en, "value")?)?,
                         )),
-                        None => entries.push(("...".to_string(), self.expr(self.first(en)?)?)),
+                        // a spread entry (§4.2): the key `...` never comes from source
+                        // unquoted, and a quoted "..." key carries a plain value, so the
+                        // `Spread` node tells them apart
+                        None => entries.push((
+                            "...".to_string(),
+                            Rc::new(Expr::Spread(self.expr(self.first(en)?)?)),
+                        )),
                     }
                 }
                 Expr::Obj(entries)
