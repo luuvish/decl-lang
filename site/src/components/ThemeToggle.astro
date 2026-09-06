@@ -1,0 +1,52 @@
+---
+// Replaces Starlight's theme select with one button that switches between
+// the light and the dark theme. A first visit follows the system; a click
+// stores the choice the way Starlight's own picker does (`starlight-theme`
+// in localStorage), so the inlined ThemeProvider applies it before the
+// next page paints. Styled in src/styles/custom.css.
+---
+
+<starlight-theme-toggle>
+  <button type="button" aria-live="polite">
+    <svg class="sun" aria-hidden="true" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"><circle cx="12" cy="12" r="4"/><path d="M12 2.5v2.5M12 19v2.5M2.5 12H5M19 12h2.5M5.3 5.3l1.8 1.8M16.9 16.9l1.8 1.8M5.3 18.7l1.8-1.8M16.9 7.1l1.8-1.8"/></svg>
+    <svg class="moon" aria-hidden="true" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"><path d="M20 14.5A8 8 0 0 1 9.5 4a8 8 0 1 0 10.5 10.5z"/></svg>
+    <span class="label"></span>
+  </button>
+</starlight-theme-toggle>
+
+<script>
+  const KEY = 'starlight-theme';
+  const current = () => (document.documentElement.dataset.theme === 'dark' ? 'dark' : 'light');
+
+  class ThemeToggle extends HTMLElement {
+    constructor() {
+      super();
+      const button = this.querySelector('button')!;
+      const label = this.querySelector('.label')!;
+      const sync = () => {
+        const dark = current() === 'dark';
+        label.textContent = dark ? 'Dark' : 'Light';
+        button.setAttribute('aria-label', dark ? 'Switch to the light theme' : 'Switch to the dark theme');
+        button.title = button.getAttribute('aria-label')!;
+      };
+      button.addEventListener('click', () => {
+        const next = current() === 'dark' ? 'light' : 'dark';
+        document.documentElement.dataset.theme = next;
+        try { localStorage.setItem(KEY, next); } catch { /* no storage: the choice lasts the page */ }
+        for (const other of document.querySelectorAll<ThemeToggle>('starlight-theme-toggle')) other.dispatchEvent(new Event('theme-sync'));
+      });
+      this.addEventListener('theme-sync', sync);
+      // no stored choice: keep following the system
+      matchMedia('(prefers-color-scheme: light)').addEventListener('change', (e) => {
+        let stored = '';
+        try { stored = localStorage.getItem(KEY) ?? ''; } catch { /* none */ }
+        if (!stored) {
+          document.documentElement.dataset.theme = e.matches ? 'light' : 'dark';
+          sync();
+        }
+      });
+      sync();
+    }
+  }
+  customElements.define('starlight-theme-toggle', ThemeToggle);
+</script>

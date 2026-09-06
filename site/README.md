@@ -12,7 +12,11 @@ Actions, once).
   and rewrites relative links. **Never edit the synced pages** — they
   are gitignored and regenerated; edit `docs/` instead.
 - Hand-written pages: `src/content/docs/index.mdx` (landing),
-  `start/`, `playground.mdx`.
+  `start/`, `playground.mdx`, `search.mdx` (the search results as a
+  page). Starlight components overridden in `src/components/`:
+  `Search.astro` (a field in the header instead of a dialog; Enter opens
+  the search page), `ThemeToggle.astro` (one button, light or dark,
+  instead of a select), `Footer.astro` (the colophon).
 - `grammars/decl.tmLanguage.json` highlights ```decl blocks
   (Expressive Code / Shiki); `src/components/decl-mode.ts` is the
   editor's stream mode.

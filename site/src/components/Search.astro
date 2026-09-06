@@ -1,0 +1,45 @@
+---
+// Replaces Starlight's search dialog with a plain search field in the
+// header: typing and pressing Enter opens the search page (src/content/
+// docs/search.mdx), where the results are a page like any other. ⌘K or
+// Ctrl+K focuses the field; so does "/" outside an editor. On narrow
+// screens the field gives way to a link to the search page. Styled in
+// src/styles/custom.css.
+const base = import.meta.env.BASE_URL.replace(/\/$/, '');
+const q = Astro.url.pathname.startsWith(`${base}/search`) ? (Astro.url.searchParams.get('q') ?? '') : '';
+---
+
+<site-search-form>
+  <form class="site-search" role="search" action={`${base}/search/`} method="get">
+    <svg aria-hidden="true" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><circle cx="10.5" cy="10.5" r="6"/><path d="M15 15l5 5"/></svg>
+    <input type="search" name="q" value={q} placeholder="Search" aria-label="Search the documentation" autocomplete="off" spellcheck="false" />
+    <kbd aria-hidden="true">⌘K</kbd>
+  </form>
+  <a class="site-search-link" href={`${base}/search/`} aria-label="Search">
+    <svg aria-hidden="true" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><circle cx="10.5" cy="10.5" r="6"/><path d="M15 15l5 5"/></svg>
+  </a>
+</site-search-form>
+
+<script>
+  class SearchForm extends HTMLElement {
+    constructor() {
+      super();
+      const input = this.querySelector<HTMLInputElement>('input')!;
+      const kbd = this.querySelector('kbd')!;
+      if (!/(Mac|iPhone|iPod|iPad)/i.test(navigator.platform)) kbd.textContent = 'Ctrl K';
+      window.addEventListener('keydown', (e) => {
+        const t = e.target as HTMLElement | null;
+        const typing = t instanceof HTMLInputElement || t instanceof HTMLTextAreaElement || t instanceof HTMLSelectElement || !!t?.isContentEditable;
+        if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'k') {
+          e.preventDefault();
+          input.focus();
+          input.select();
+        } else if (e.key === '/' && !typing) {
+          e.preventDefault();
+          input.focus();
+        }
+      });
+    }
+  }
+  customElements.define('site-search-form', SearchForm);
+</script>

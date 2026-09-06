@@ -1,0 +1,51 @@
+---
+// The search page's body: Pagefind's UI mounted in the page, over the index
+// Starlight builds at build time (public/pagefind/ in the output). The
+// query comes from `?q=` and follows what is typed, so a search has a URL.
+// In development there is no index; the page says so.
+const base = import.meta.env.BASE_URL.replace(/\/$/, '');
+const dev = import.meta.env.DEV;
+---
+
+<div class="search-page not-content" data-base={base}>
+  {dev ? (
+    <p class="search-dev">The index is written when the site is built (<code>npm run build</code>); search runs on the built site, not in development.</p>
+  ) : (
+    <div id="search-results"></div>
+  )}
+</div>
+
+<script>
+  const root = document.querySelector<HTMLElement>('.search-page')!;
+  const base = root.dataset.base ?? '';
+  const el = document.getElementById('search-results');
+  if (el) {
+    const q = new URLSearchParams(location.search).get('q') ?? '';
+    const css = document.createElement('link');
+    css.rel = 'stylesheet';
+    css.href = `${base}/pagefind/pagefind-ui.css`;
+    document.head.appendChild(css);
+    const script = document.createElement('script');
+    script.src = `${base}/pagefind/pagefind-ui.js`;
+    script.onload = () => {
+      const ui = new (window as any).PagefindUI({
+        element: '#search-results',
+        baseUrl: `${base}/`,
+        bundlePath: `${base}/pagefind/`,
+        showImages: false,
+        showSubResults: true,
+        autofocus: true,
+        translations: { placeholder: 'Search the documentation', zero_results: 'No results for [SEARCH_TERM]', many_results: '[COUNT] results for [SEARCH_TERM]', one_result: '[COUNT] result for [SEARCH_TERM]' },
+      });
+      if (q) ui.triggerSearch(q);
+      const input = el.querySelector<HTMLInputElement>('input');
+      input?.addEventListener('input', () => {
+        const u = new URL(location.href);
+        if (input.value) u.searchParams.set('q', input.value);
+        else u.searchParams.delete('q');
+        history.replaceState(null, '', u);
+      });
+    };
+    document.head.appendChild(script);
+  }
+</script>

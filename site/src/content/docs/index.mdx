@@ -16,16 +16,15 @@ hero:
       link: /decl-lang/start/install/
       variant: minimal
   image:
-    light: ../../assets/sign-light.svg
-    dark: ../../assets/sign-dark.svg
-    alt: 'The subsumption sign, value ⊑ type'
+    html: '<svg viewBox="6 5 28 30" role="img" aria-label="The subsumption sign, value ⊑ type"><path fill="currentColor" d="M8 7h24v4H12v10h20v4H8zM8 29h24v4H8z"/></svg>'
 ---
 
 import { Card, CardGrid, Code, Tabs, TabItem, LinkCard } from '@astrojs/starlight/components';
 import hero from '../../samples/hero.decl?raw';
 import heroOut from '../../samples/synced/hero.json?raw';
 
-<CardGrid stagger>
+<div class="three">
+<CardGrid>
   <Card title="Describe" icon="document">
     Types, defaults, derived members, and constraints live in one flat schema. No domain keywords — graphs, configs, and hardware are all just records, references, and rules.
   </Card>
@@ -36,6 +35,7 @@ import heroOut from '../../samples/synced/hero.json?raw';
     Bind external documents to the same types. Every failure is a diagnostic with a path, a code, and a root cause — never a cascade.
   </Card>
 </CardGrid>
+</div>
 
 ## One file, three capabilities
 

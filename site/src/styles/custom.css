@@ -109,16 +109,131 @@ button:focus-visible,
 header.header {
   border-bottom: 1px solid var(--sl-color-hairline);
 }
-site-search > button {
-  border-radius: var(--decl-radius);
-}
-site-search > button kbd {
-  border-radius: var(--decl-radius);
-}
 .social-icons a,
-starlight-theme-select label,
 starlight-lang-select label {
   color: var(--sl-color-gray-2);
+}
+/* the search field (src/components/Search.astro): a field, not a dialog */
+site-search-form {
+  display: contents;
+}
+.site-search {
+  display: none;
+  align-items: center;
+  gap: 0.5rem;
+  width: 100%;
+  max-width: 24rem;
+  height: 2.5rem;
+  padding: 0 0.75rem;
+  border: 1px solid var(--sl-color-hairline);
+  border-radius: var(--decl-radius);
+  background: var(--sl-color-bg);
+  color: var(--sl-color-gray-3);
+  font-family: var(--decl-font-ui);
+  font-size: var(--sl-text-sm);
+}
+.site-search:focus-within {
+  border-color: var(--sl-color-white);
+  color: var(--sl-color-white);
+}
+.site-search input {
+  flex: 1;
+  min-width: 0;
+  border: 0;
+  padding: 0;
+  background: transparent;
+  color: var(--sl-color-text);
+  font: inherit;
+  outline: none;
+}
+.site-search input::placeholder {
+  color: var(--sl-color-gray-3);
+}
+.site-search input::-webkit-search-decoration,
+.site-search input::-webkit-search-cancel-button {
+  -webkit-appearance: none;
+}
+.site-search kbd {
+  padding: 0.05rem 0.35rem;
+  border: 1px solid var(--sl-color-hairline);
+  border-radius: var(--decl-radius);
+  font-family: var(--sl-font-mono);
+  font-size: 0.68rem;
+  color: var(--sl-color-gray-3);
+  white-space: nowrap;
+}
+.site-search-link {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 2.5rem;
+  height: 2.5rem;
+  color: var(--sl-color-white);
+}
+@media (min-width: 50rem) {
+  .site-search {
+    display: flex;
+  }
+  .site-search-link {
+    display: none;
+  }
+}
+/* the theme toggle (src/components/ThemeToggle.astro): the icon of the theme in use */
+starlight-theme-toggle button {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  height: 2rem;
+  margin: 0;
+  padding: 0 0.6rem;
+  border: 1px solid var(--sl-color-hairline);
+  border-radius: var(--decl-radius);
+  background: var(--sl-color-bg);
+  color: var(--sl-color-gray-2);
+  font-family: var(--decl-font-ui);
+  font-size: var(--sl-text-xs);
+  line-height: 1;
+  cursor: pointer;
+}
+starlight-theme-toggle button:hover {
+  color: var(--sl-color-white);
+  border-color: var(--sl-color-white);
+}
+:root[data-theme='dark'] starlight-theme-toggle .sun,
+:root[data-theme='light'] starlight-theme-toggle .moon {
+  display: none;
+}
+/* the search page: Pagefind's UI in the palette */
+.search-page {
+  --pagefind-ui-scale: 0.9;
+  --pagefind-ui-primary: var(--sl-color-white);
+  --pagefind-ui-text: var(--sl-color-text);
+  --pagefind-ui-background: var(--sl-color-bg);
+  --pagefind-ui-border: var(--sl-color-hairline);
+  --pagefind-ui-tag: var(--sl-color-gray-6);
+  --pagefind-ui-border-width: 1px;
+  --pagefind-ui-border-radius: var(--decl-radius);
+  --pagefind-ui-font: var(--decl-font-ui);
+  font-family: var(--decl-font-ui);
+}
+.search-page .pagefind-ui__result-title,
+.search-page .pagefind-ui__result-link {
+  font-family: var(--sl-font);
+  font-weight: 600;
+  color: var(--sl-color-white) !important;
+}
+.search-page .pagefind-ui__result-excerpt {
+  font-family: var(--sl-font);
+}
+.search-page .pagefind-ui__search-input {
+  font-family: var(--decl-font-ui);
+  font-weight: 400;
+}
+.search-page .pagefind-ui__button {
+  font-family: var(--decl-font-ui);
+}
+.search-dev {
+  color: var(--sl-color-gray-3);
 }
 
 /* ---- the sidebar: a table of contents; the current page on the field with an ink bar */
@@ -262,10 +377,10 @@ starlight-tabs .tab > [role='tab'][aria-selected='true'] {
 }
 
 /* ---- search hits and the search dialog */
-.pagefind-ui mark,
-.pagefind-ui__result-excerpt mark {
-  background: var(--decl-tint);
-  color: inherit;
+.search-page .pagefind-ui mark,
+.search-page .pagefind-ui__result-excerpt mark {
+  background: var(--decl-tint) !important;
+  color: inherit !important;
   padding: 0 0.1em;
 }
 .pagefind-ui__result-link {
@@ -275,17 +390,56 @@ dialog {
   border-radius: var(--decl-radius);
 }
 
-/* ---- the landing page */
-.hero > img {
-  width: min(40%, 11rem);
+/* ---- the landing page: the sign above the title, one column, on the left edge */
+.hero {
+  grid-template-columns: 1fr;
+  gap: 1.25rem;
+  padding-block: clamp(1.5rem, 5vw, 3.5rem) 1rem;
 }
-@media (min-width: 50rem) {
-  .hero > img {
-    width: min(100%, 12.5rem);
-  }
+.hero > .hero-html {
+  order: 0;
+  width: auto;
+  height: auto;
+  margin: 0;
+  justify-content: flex-start;
+  color: var(--sl-color-white);
+}
+.hero > .hero-html svg {
+  width: 3.25rem;
+  height: auto;
+  display: block;
+}
+.hero .stack {
+  text-align: start;
+}
+.hero .copy {
+  align-items: flex-start;
+}
+.hero .copy > * {
+  max-width: 58ch;
 }
 .hero .tagline {
   color: var(--sl-color-gray-2);
+}
+.hero .actions {
+  justify-content: flex-start;
+}
+@media (min-width: 50rem) {
+  .hero {
+    grid-template-columns: 1fr;
+  }
+  .hero > .hero-html svg {
+    width: 4rem;
+  }
+}
+/* three capabilities in one row */
+@media (min-width: 60rem) {
+  .three .card-grid {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+}
+.three .card-grid > * {
+  margin-top: 0 !important;
 }
 /* landing page: source and its evaluated output side by side */
 .two-col {

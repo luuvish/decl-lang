@@ -34,7 +34,11 @@ export default defineConfig({
         { tag: 'meta', attrs: { name: 'twitter:image', content: card } },
       ],
       social: [{ icon: 'github', label: 'GitHub', href: 'https://github.com/luuvish/decl-lang' }],
-      components: { Footer: './src/components/Footer.astro' }, // the default footer plus the colophon
+      components: {
+        Footer: './src/components/Footer.astro', // the default footer plus the colophon
+        ThemeSelect: './src/components/ThemeToggle.astro', // one button, light or dark
+        Search: './src/components/Search.astro', // a field in the header; the results are a page
+      },
       customCss: [
         '@fontsource-variable/literata/wght.css',
         '@fontsource-variable/literata/wght-italic.css',
