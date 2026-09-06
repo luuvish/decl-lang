@@ -33,4 +33,4 @@ pip install -e decl-py       # the Python package (builds the grammar extension)
 make verify                          # all three, then the parity check
 ```
 
-See the [tooling pages](/decl-lang/tooling/javascript/) for each package's API.
+See the [tooling pages](/decl-lang/tooling/typescript/) for each package's API.
