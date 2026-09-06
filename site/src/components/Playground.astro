@@ -478,9 +478,10 @@ const base = import.meta.env.BASE_URL;
   /* one grid: the toolbar over the module, the tab strip over the results;
      the input documents sit under the module and appear only when the
      module declares an input root */
-  .pg-frame { margin-top: 1rem; container-type: inline-size; }
+  .pg-frame { margin-top: 1rem; min-width: 0; max-width: 100%; container-type: inline-size; }
   .pg {
     --pg-head: 2.75rem;
+    min-width: 0;
     display: grid;
     grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
     grid-template-rows: auto minmax(0, 1fr) auto;
@@ -496,7 +497,7 @@ const base = import.meta.env.BASE_URL;
   /* stack the panes when the playground itself (not the viewport) gets narrow */
   @container (max-width: 56rem) {
     .pg, .pg.has-inputs {
-      grid-template-columns: 1fr;
+      grid-template-columns: minmax(0, 1fr);
       grid-template-rows: auto minmax(22rem, auto) auto auto minmax(16rem, auto);
       grid-template-areas: "bar" "editor" "inputs" "tabs" "out";
       height: auto;
@@ -520,7 +521,7 @@ const base = import.meta.env.BASE_URL;
     padding: 0.35rem 0.75rem;
     border-right: 1px solid var(--sl-color-hairline);
   }
-  .pg-sample { display: flex; align-items: center; gap: 0.4rem; min-width: 0; }
+  .pg-sample { display: flex; align-items: center; gap: 0.4rem; flex: 1 1 12rem; min-width: 0; }
   .pg-bar select, .pg-bar button, .pg-inputs-head button {
     font: inherit;
     margin: 0;
@@ -532,7 +533,7 @@ const base = import.meta.env.BASE_URL;
     color: var(--sl-color-text);
     cursor: pointer;
   }
-  .pg-bar select { max-width: 16rem; }
+  .pg-bar select { flex: 1 1 8rem; min-width: 0; max-width: 18rem; }
   .pg-bar button:hover, .pg-inputs-head button:hover { border-color: var(--sl-color-white); color: var(--sl-color-white); }
   .pg-tabbar { grid-area: tabs; align-items: stretch; }
   .pg-status {

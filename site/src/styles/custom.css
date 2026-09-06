@@ -298,7 +298,12 @@ dialog {
   margin-top: 0 !important;
 }
 
-/* the playground page uses the full width of the main pane */
-.sl-container:has(.pg) {
+/* the playground page: the title, the introduction, and the playground share
+   the main pane's full width, aligned on one left edge; the prose keeps a
+   reading measure */
+main:has(.pg) .sl-container {
   max-width: 100%;
+}
+main:has(.pg) .sl-markdown-content > p {
+  max-width: 65ch;
 }
