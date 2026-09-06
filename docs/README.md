@@ -1,11 +1,12 @@
 # Decl Documentation
 
-**Status: v0.4.1 (2026-09-06)** — v0.1 frozen 2026-08-31, revised through
+**Status: v0.4.2 (2026-09-06)** — v0.1 frozen 2026-08-31, revised through
 the v0.2 cycle (D31–D33, D29 amended, clarifications), v0.3 (member
 kinds read off `?` and `= e` with no `const` in record bodies, D4
 amended; hidden members `x$ = e`, D34), v0.4: rendering is
 tooling, declared in the module with `@render` (D35; the E7xxx band,
-documents in YAML), then v0.4.1: a record flows into a map (D36) — see
+documents in YAML), then v0.4.1: a record flows into a map (D36) and
+v0.4.2: `$referrers` answers in rounds (D26 amended) — see
 [REVISIONS.md](REVISIONS.md). The normative specification below is the
 single source of truth for every implementation phase.
 

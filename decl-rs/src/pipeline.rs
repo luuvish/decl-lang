@@ -25,16 +25,17 @@ pub struct Pipeline {
 pub fn run_pipeline(decls: &[Decl]) -> Pipeline {
     let env = Env::new();
     env.load(decls);
-    let eng = Engine::new(env.clone());
     let outs = env.outputs.borrow().clone();
-    for (name, ty_ast, expr) in outs {
-        let sc = Scope::new(&name, None);
-        match env.resolve(&ty_ast, None) {
-            Ok(rt) => eng.bind_root(&name, RootSrc::Expr(&expr), &rt, &sc),
-            Err(e) => env.report(Diag::error(e, name.clone(), None)),
+    let eng = Engine::evaluate(&env, &|eng| {
+        for (name, ty_ast, expr) in &outs {
+            let sc = Scope::new(name, None);
+            match env.resolve(ty_ast, None) {
+                Ok(rt) => eng.bind_root(name, RootSrc::Expr(expr), &rt, &sc),
+                Err(e) => env.report(Diag::error(e, name.clone(), None)),
+            }
         }
-    }
-    eng.drive(&env);
+    });
+    eng.validate_all("");
     let diags = sort_diags(env.diagnostics_vec()); // §6.7
     env.diag_set(diags.clone());
     Pipeline { env, eng, diags }

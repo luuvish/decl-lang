@@ -14,17 +14,16 @@ export type Pipeline = { env: Env; eng: Engine; diags: Diag[] };
 export function runPipeline(decls: Decl[]): Pipeline {
   const env = new Env();
   env.load(decls);
-  const eng = new Engine(env);
-  for (const o of env.outputs) {
-    const sc = { inst: null, locals: new Map<string, any>(), rootName: o.name };
-    eng.bindRoot(o.name, o.expr, env.resolve(o.type), sc, true);
-  }
-  for (const v of env.roots.values()) eng.forceAll(v, false);
-  eng.phase = 2;
-  for (let i = 0; i < eng.deferredSlots.length; i++)
-    eng.forceSlotSafe(eng.deferredSlots[i].inst, eng.deferredSlots[i].name);
-  eng.bindDeferredRoots();
-  for (const v of env.roots.values()) eng.forceAll(v, true);
+  const eng = Engine.evaluate(
+    env,
+    (eng) => {
+      for (const o of env.outputs) {
+        const sc = { inst: null, locals: new Map<string, any>(), rootName: o.name };
+        eng.bindRoot(o.name, o.expr, env.resolve(o.type), sc, true);
+      }
+    },
+    () => env.roots.values(),
+  );
   eng.validateAll('');
   env.diagnostics.splice(0, env.diagnostics.length, ...sortDiags(env.diagnostics)); // §6.7
   return { env, eng, diags: env.diagnostics };

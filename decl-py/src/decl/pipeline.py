@@ -17,19 +17,13 @@ def run_pipeline(decls: list[Any]) -> dict[str, Any]:
     """Returns {"env", "eng", "diags"}."""
     env = Env()
     env.load(decls)
-    eng = Engine(env)
-    for o in env.outputs:
-        sc = Scope(None, {}, o["name"])
-        eng.bind_root(o["name"], o["expr"], env.resolve(o["type"]), sc, True)
-    eng.force_all_roots(False)
-    eng.phase = 2
-    i = 0
-    while i < len(eng.deferred_slots):
-        inst, name = eng.deferred_slots[i]
-        eng.force_slot_safe(inst, name)
-        i += 1
-    eng.bind_deferred_roots()
-    eng.force_all_roots(True)
+
+    def bind(eng: Engine) -> None:
+        for o in env.outputs:
+            sc = Scope(None, {}, o["name"])
+            eng.bind_root(o["name"], o["expr"], env.resolve(o["type"]), sc, True)
+
+    eng = Engine.evaluate(env, bind)
     eng.validate_all("")
     env.diagnostics[:] = sort_diags(env.diagnostics)  # §6.7
     return {"env": env, "eng": eng, "diags": env.diagnostics}

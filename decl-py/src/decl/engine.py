@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import contextlib
 import math
+from collections.abc import Callable
 from typing import Any
 
 from .semantics import (
@@ -59,7 +60,59 @@ def _is_num(v: Any) -> bool:
     return is_int(v) or is_float(v)
 
 
+def _refs_in(v: Any, out: list[Any]) -> None:
+    """the references under a value: arrays and maps are traversed, records are not (§7.6)"""
+    if isinstance(v, Ref):
+        out.append(v.segs)
+    elif isinstance(v, ArrV):
+        for x in v.items:
+            _refs_in(x, out)
+    elif isinstance(v, MapV):
+        for x in v.entries.values():
+            _refs_in(x, out)
+
+
+def _group_by_type(insts: list[Any]) -> dict[str, list[Any]]:
+    out: dict[str, list[Any]] = {}
+    for inst in insts:
+        if inst.type_name is None:
+            continue
+        out.setdefault(inst.type_name, []).append(inst)
+    return out
+
+
+def _refs_key(refs: list[Any]) -> str:
+    return "\n".join(sorted(path_str(r) for r in refs))
+
+
+def _edge_eq(a: dict[str, Any], b: dict[str, Any]) -> bool:
+    if len(a) != len(b):
+        return False
+    for k, e in a.items():
+        f = b.get(k)
+        if f is None or _refs_key(e["refs"]) != _refs_key(f["refs"]):
+            return False
+    return True
+
+
+def _segs_key(p: list[Any]) -> list[Any]:
+    return [(0, s) if is_int(s) else (1, str(s)) for s in p]
+
+
+def _edge_diff(a: dict[str, Any], b: dict[str, Any]) -> str:
+    """the first referrer (canonical order) whose entry differs between two edges"""
+    paths = sorted(({**b, **a}[k]["path"] for k in set(a) | set(b)), key=_segs_key)
+    for p in paths:
+        k = path_str(p)
+        e, f = a.get(k), b.get(k)
+        if e is None or f is None or _refs_key(e["refs"]) != _refs_key(f["refs"]):
+            return k
+    return ""
+
+
 class Engine:
+    ROUNDS = 8
+
     def __init__(self, env: Env) -> None:
         self.env = env
         self.deferred_slots: list[Any] = []
@@ -76,9 +129,29 @@ class Engine:
         self.reads: dict[str, Any] = {}
         self.computing: list[Any] = []
         self.slots_by_key: dict[str, Any] = {}
+        # ---- `$referrers` is answered in rounds (§7.6) ----
+        # a round answers from a fixed snapshot — round 1 from what phase 1
+        # materialized, every later round from the previous round's whole
+        # universe, kept frozen in `prev` — never from what it creates itself;
+        # rounds repeat until the queried edges stop changing (`Engine.evaluate`)
+        self.prev: Engine | None = None
+        self.frozen_roots: dict[str, Any] | None = None
+        self.frozen_registry: list[Any] | None = None
+        self.settled = False  # the last round: a reference into the snapshot resolves live
+        self.snap: dict[str, Any] | None = None  # {"insts": by type, "edges": by `T|m`}
+        self.queried: set[str] = set()
+        # the edges being computed: a query for one of them from inside its own
+        # computation is unanswerable in this round (the member is excluded)
+        self.computing_edges: set[str] = set()
+        self.const_envs: list[Env] = []
         env.tagger = lambda: self.computing[-1] if self.computing else None
         env.const_eval = lambda name: self.force_const_in(env, name, "")
         env.expr_eval = lambda e: self.ev(e, Scope(None, {}, ""))
+
+    @property
+    def roots_map(self) -> dict[str, Any]:
+        """the roots this engine's expressions read: its own universe once frozen"""
+        return self.frozen_roots if self.frozen_roots is not None else self.env.roots
 
     @staticmethod
     def slot_key(inst: RecInst, name: str) -> str:
@@ -148,9 +221,9 @@ class Engine:
                 return bound
             if name == "std":
                 return StdRef([])
-            if name in self.env.roots:
+            if name in self.roots_map:
                 self.record(f"root:{name}")
-                return self.env.roots[name]
+                return self.roots_map[name]
             inp = self.demand_input(menv, name)
             if inp is not _UNDEF:
                 return inp
@@ -170,7 +243,7 @@ class Engine:
                     raise EvalErr("$parent: the evaluation root has no owner", "E4090")
                 return Ref(inst.parent.path)
             if n == "$root":
-                if not sc.root_name or sc.root_name not in self.env.roots:
+                if not sc.root_name or sc.root_name not in self.roots_map:
                     raise EvalErr("$root outside an evaluation root", "E4090")
                 return Ref([sc.root_name])
             if n == "$key":
@@ -433,9 +506,9 @@ class Engine:
             v = self.module_value(im["env"], im["name"], root_name)
             if v is not _UNDEF:
                 return v
-            if im["name"] in self.env.roots:
+            if im["name"] in self.roots_map:
                 self.record(f"root:{im['name']}")
-                return self.env.roots[im["name"]]  # imported output/input root
+                return self.roots_map[im["name"]]  # imported output/input root
             return self.demand_input(im["env"], im["name"])
         ns = menv.namespaces.get(name)
         if ns is not None:
@@ -449,9 +522,9 @@ class Engine:
         v = self.module_value(ex["env"], ex["name"], sc.root_name)
         if v is not _UNDEF:
             return v
-        if ex["name"] in self.env.roots:
+        if ex["name"] in self.roots_map:
             self.record(f"root:{ex['name']}")
-            return self.env.roots[ex["name"]]
+            return self.roots_map[ex["name"]]
         inp = self.demand_input(ex["env"], ex["name"])
         if inp is not _UNDEF:
             return inp
@@ -466,8 +539,8 @@ class Engine:
         if decl is None:
             return _UNDEF
         self.record(f"root:{name}")
-        if name in self.env.roots:
-            return self.env.roots[name]
+        if name in self.roots_map:
+            return self.roots_map[name]
         if name in self.failed_inputs:
             raise Taint()
         if decl.get("fallback") is None:
@@ -678,7 +751,10 @@ class Engine:
 
     def deref(self, v: Any) -> Any:
         if isinstance(v, Ref):
-            target = self.resolve_segs(v.segs)
+            if v.snap is not None and not self.settled:
+                target = v.snap.muted(lambda: v.snap.resolve_segs(v.segs))
+            else:
+                target = self.resolve_segs(v.segs)
             if target is _UNDEF:
                 raise EvalErr(f"dangling reference {path_str(v.segs)}", "E6002")
             return target
@@ -688,7 +764,7 @@ class Engine:
     # member counts as none — §7.5). Lenient about segment kinds: engine-built
     # paths are canonical by construction
     def resolve_segs(self, segs: list[Any]) -> Any:
-        cur = self.env.roots.get(segs[0], _UNDEF)
+        cur = self.roots_map.get(segs[0], _UNDEF)
         for s0 in segs[1:]:
             if cur is _UNDEF:
                 break
@@ -712,7 +788,7 @@ class Engine:
     # bracketed otherwise, an array index numeric — any other spelling does
     # not resolve
     def resolve_canonical(self, segs: list[Any]) -> Any:
-        cur = self.env.roots.get(segs[0], _UNDEF)
+        cur = self.roots_map.get(segs[0], _UNDEF)
         for s in segs[1:]:
             if cur is _UNDEF:
                 break
@@ -968,30 +1044,143 @@ class Engine:
         if self.phase < 2:
             raise DeferSig()
         self.record(f"referrers:{type_name}")
-        self_inst = sc.inst
-        out: list[Any] = []
-        for cand in self.env.registry:
-            if cand.type_name != type_name:
-                continue
-            if member not in cand.slots:
-                continue
+        self_path = sc.inst.path
+        out = [
+            e["path"]
+            for e in self.snap_edge(type_name, member).values()
+            if any(cmp_path(r, self_path) == 0 for r in e["refs"])
+        ]
+        out.sort(key=_segs_key)
+        return ArrV([Ref(p, self.prev) for p in out], [])
+
+    def snap_edge(self, type_name: str, member: str) -> dict[str, Any]:
+        """the edge `T|m` of the snapshot: computed from its instances on first demand"""
+        if self.snap is None:
+            self.take_snapshot({})  # a lazy session: what is materialized
+        snap = self.snap
+        assert snap is not None
+        key = f"{type_name}|{member}"
+        self.queried.add(key)
+        edge = snap["edges"].get(key)
+        if edge is None:
+            if key in self.computing_edges:
+                raise DeferSig()
+            self.computing_edges.add(key)
+            try:
+                edge = self.edge_of(snap["insts"].get(type_name, []), member)
+            finally:
+                self.computing_edges.discard(key)
+            snap["edges"][key] = edge
+        return edge
+
+    def take_snapshot(self, edges: dict[str, Any]) -> None:
+        """the snapshot's instances: the previous round's universe, else what is materialized now"""
+        insts = self.prev.frozen_registry if self.prev is not None else self.env.registry
+        self.snap = {"insts": _group_by_type(insts or []), "edges": edges}
+
+    def edge_of(self, insts: list[Any], member: str) -> dict[str, Any]:
+        """every candidate's path with the places its member refers to
+        (an invalid member: excluded silently, §6.6)"""
+        out: dict[str, Any] = {}
+        for cand in insts:
+            slot = cand.slots.get(member)
+            if slot is None or slot.state == "forcing":
+                continue  # in computation: needs this very edge
             try:
                 v = self.force_slot(cand, member)
             except Exception:
                 continue
-            if self.contains_ref_to(v, self_inst.path):
-                out.append(cand)
-        out.sort(key=_path_key)
-        return ArrV([Ref(c.path) for c in out], [])
+            refs: list[Any] = []
+            _refs_in(v, refs)
+            out[path_str(cand.path)] = {"path": cand.path, "refs": refs}
+        return out
 
-    def contains_ref_to(self, v: Any, target: list[Any]) -> bool:
-        if isinstance(v, Ref):
-            return cmp_path(v.segs, target) == 0
-        if isinstance(v, ArrV):
-            return any(self.contains_ref_to(x, target) for x in v.items)
-        if isinstance(v, MapV):
-            return any(self.contains_ref_to(x, target) for x in v.entries.values())
-        return False
+    def live_edges(self) -> dict[str, Any]:
+        """the queried edges over this round's universe, answered from its snapshot"""
+        out: dict[str, Any] = {}
+        while True:
+            todo = [k for k in sorted(self.queried) if k not in out]
+            if not todo:
+                return out
+            insts = _group_by_type(self.env.registry)
+            for key in todo:
+                t, m = key.split("|")
+                out[key] = self.edge_of(insts.get(t, []), m)
+            # forcing may have materialized more, and queried more
+
+    def settle(self, edges: dict[str, Any] | None = None) -> dict[str, Any]:
+        """phase 2, one round: the deferred slots and roots, then everything;
+        stable when the queried edges did not change"""
+        self.phase = 2
+        self.take_snapshot(edges if edges is not None else {})
+        deferred, self.deferred_slots = self.deferred_slots, []
+        for inst, name in deferred:
+            self.force_slot_safe(inst, name)
+        self.bind_deferred_roots()
+        self.force_all_roots(True)
+        live = self.live_edges()
+        snap_edges = self.snap["edges"] if self.snap is not None else {}
+        changed = sorted(k for k, e in live.items() if not _edge_eq(e, snap_edges.get(k, {})))
+        return {"stable": not changed, "edges": live, "changed": changed}
+
+    def freeze(self) -> None:
+        """this round's universe, kept as the next round's snapshot"""
+        self.frozen_roots = dict(self.env.roots)
+        self.frozen_registry = list(self.env.registry)
+
+    def muted(self, f: Callable[[], Any]) -> Any:
+        """run inside a frozen round: what it reports is not this evaluation's"""
+        self.env.muted += 1
+        try:
+            return f()
+        finally:
+            self.env.muted -= 1
+
+    @staticmethod
+    def evaluate(env: Env, bind: Callable[[Engine], None]) -> Engine:
+        """Evaluate a universe (§7.6, §9.3): `bind` binds every root on a fresh
+        engine; the rounds repeat, each answering `$referrers` from the previous
+        round, until the queried edges are stable — the settled engine is the
+        result. A universe still changing after `ROUNDS` rounds is E5009."""
+        prev: Engine | None = None
+        edges: dict[str, Any] = {}
+        round_ = 0
+        while True:
+            round_ += 1
+            eng = Engine(env)
+            eng.prev = prev
+            mark = len(env.diagnostics)
+            bind(eng)
+            eng.force_all_roots(False)
+            r = eng.settle(edges)
+            if r["stable"] or round_ == Engine.ROUNDS:
+                if not r["stable"]:
+                    snap_edges = eng.snap["edges"] if eng.snap is not None else {}
+                    for key in r["changed"]:
+                        t, m = key.split("|")
+                        env.report(
+                            {
+                                "severity": "error",
+                                "message": f'$referrers({t}, "{m}") does not stabilize '
+                                f"after {Engine.ROUNDS} rounds",
+                                "path": _edge_diff(r["edges"][key], snap_edges.get(key, {})),
+                                "code": "E5009",
+                            }
+                        )
+                eng.settled = True
+                eng.prev = None
+                return eng
+            # the round is the next one's snapshot; the universe starts over
+            eng.freeze()
+            env.roots.clear()
+            env.registry.clear()
+            del env.diagnostics[mark:]
+            for e in eng.const_envs:
+                for c in e.consts.values():
+                    c["state"] = "unforced"
+                    c.pop("value", None)
+            prev = eng
+            edges = r["edges"]
 
     # ---------- binding / checking ----------
     def bind(
@@ -1321,6 +1510,7 @@ class Engine:
         if self.no_reg == 0:
             self.env.registry.append(inst)
         inst.menv = sc.menv
+        inst.eng = self
         isc0 = Scope(inst, {}, sc.root_name, sc.menv)
         supplied = dict(entries)
         for m in rt["members"]:
@@ -1487,6 +1677,9 @@ class Engine:
             self.force_slot(inst, name)
 
     def force_slot(self, inst: RecInst, name: str) -> Any:
+        owner = inst.eng
+        if owner is not None and owner is not self:  # a frozen round's
+            return owner.muted(lambda: owner.force_slot(inst, name))
         s = inst.slots.get(name)
         if s is None:
             raise EvalErr(f"no member {name}")
@@ -1540,6 +1733,8 @@ class Engine:
         return self.force_const_in(self.env, name, root_name)
 
     def force_const_in(self, env: Env, name: str, root_name: str) -> Any:
+        if env not in self.const_envs:
+            self.const_envs.append(env)
         c = env.consts[name]
         if c["state"] == "ok":
             return c["value"]

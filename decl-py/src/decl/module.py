@@ -203,32 +203,25 @@ def _link_universe(mods: list[Any], entry: Module, report: Any) -> None:
 
 
 def run_universe(mods: list[Any], entry: Module, binds: list[Any] | None = None) -> dict[str, Any]:
-    eng = Engine(entry.env)
-    for m in mods:
-        menv = m.env
-        menv.const_eval = (lambda e_: lambda n: eng.force_const_in(e_, n, ""))(menv)
-        menv.expr_eval = (lambda e_: lambda x: eng.ev(x, Scope(None, {}, "", e_)))(menv)
-    # bound documents first: an output may read an input (§5.5), and a
-    # bound input is a root of the universe (§9.2); unbound inputs with a
-    # fallback bind on first demand (§9.4)
-    for b in binds or []:
-        m = b.get("module") or entry
-        decl = m.env.inputs[b["input"]]
-        sc = Scope(None, {}, b["input"], m.env)
-        eng.bind_root(b["input"], b["raw"], m.env.resolve(decl["type"]), sc, False)
-    for m in mods:
-        for o in m.env.outputs:
-            sc = Scope(None, {}, o["name"], m.env)
-            eng.bind_root(o["name"], o["expr"], m.env.resolve(o["type"]), sc, True)
-    eng.force_all_roots(False)
-    eng.phase = 2
-    i = 0
-    while i < len(eng.deferred_slots):
-        inst, name = eng.deferred_slots[i]
-        eng.force_slot_safe(inst, name)
-        i += 1
-    eng.bind_deferred_roots()
-    eng.force_all_roots(True)
+    def bind(eng: Engine) -> None:
+        for m in mods:
+            menv = m.env
+            menv.const_eval = (lambda e_: lambda n: eng.force_const_in(e_, n, ""))(menv)
+            menv.expr_eval = (lambda e_: lambda x: eng.ev(x, Scope(None, {}, "", e_)))(menv)
+        # bound documents first: an output may read an input (§5.5), and a
+        # bound input is a root of the universe (§9.2); unbound inputs with a
+        # fallback bind on first demand (§9.4)
+        for b in binds or []:
+            m = b.get("module") or entry
+            decl = m.env.inputs[b["input"]]
+            sc = Scope(None, {}, b["input"], m.env)
+            eng.bind_root(b["input"], b["raw"], m.env.resolve(decl["type"]), sc, False)
+        for m in mods:
+            for o in m.env.outputs:
+                sc = Scope(None, {}, o["name"], m.env)
+                eng.bind_root(o["name"], o["expr"], m.env.resolve(o["type"]), sc, True)
+
+    eng = Engine.evaluate(entry.env, bind)
     eng.validate_all("")
     # §6.7: evaluation- and validation-time diagnostics in (path, id) order
     entry.env.diagnostics[:] = sort_diags(entry.env.diagnostics)

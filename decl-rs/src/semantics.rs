@@ -822,6 +822,8 @@ pub struct Env {
     pub roots: RefCell<Rc<RefCell<Vec<(String, Value)>>>>,
     /// the diagnostics raised
     pub diagnostics: RefCell<Rc<RefCell<Vec<Diag>>>>,
+    /// >0: a frozen round is being read (`Engine::muted`) — its reports are not this evaluation's
+    pub muted: Cell<u32>,
     /// the constant evaluator, once an engine is wired in
     pub const_eval: RefCell<Option<ConstEval>>,
     /// the expression evaluator, once an engine is wired in
@@ -920,6 +922,7 @@ impl Env {
             registry: RefCell::new(Rc::new(RefCell::new(vec![]))),
             roots: RefCell::new(Rc::new(RefCell::new(vec![]))),
             diagnostics: RefCell::new(Rc::new(RefCell::new(vec![]))),
+            muted: Cell::new(0),
             const_eval: RefCell::new(None),
             expr_eval: RefCell::new(None),
             imports: RefCell::new(HashMap::new()),
@@ -1201,6 +1204,9 @@ impl Env {
 
     /// Raise a diagnostic.
     pub fn report(&self, d: Diag) {
+        if self.muted.get() > 0 {
+            return;
+        }
         let by = self.tagger.borrow().as_ref().and_then(|t| t());
         let mut d = d;
         if by.is_some() {
@@ -1275,6 +1281,18 @@ impl Env {
     /// Register an instance.
     pub fn registry_push(&self, inst: Rc<RefCell<RecInst>>) {
         self.registry.borrow().borrow_mut().push(inst);
+    }
+    /// Forget every instance (a round starts over).
+    pub fn registry_clear(&self) {
+        self.registry.borrow().borrow_mut().clear();
+    }
+    /// Forget every root (a round starts over).
+    pub fn roots_clear(&self) {
+        self.roots.borrow().borrow_mut().clear();
+    }
+    /// The roots with their names, in order.
+    pub fn roots_vec(&self) -> Vec<(String, Value)> {
+        self.roots.borrow().borrow().clone()
     }
     /// The instances registered so far.
     pub fn registry_snapshot(&self) -> Vec<Rc<RefCell<RecInst>>> {

@@ -9,7 +9,7 @@ use num_bigint::BigInt;
 use num_traits::{FromPrimitive, Signed, ToPrimitive, Zero};
 use std::cell::{Cell, RefCell};
 use std::cmp::Ordering::{self, Equal, Greater, Less};
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::rc::{Rc, Weak};
 
 /// a record instance, shared: the engine's unit of binding and forcing
@@ -39,6 +39,104 @@ pub struct Engine {
     pub slots_by_key: RefCell<HashMap<String, (Inst, String)>>,
     /// roots whose binding deferred through `$referrers` in phase 1: bound again after the deferred slots
     pub deferred_roots: RefCell<Vec<DeferredRoot>>,
+    // ---- `$referrers` is answered in rounds (§7.6) ----
+    // a round answers from a fixed snapshot — round 1 from what phase 1
+    // materialized, every later round from the previous round's whole
+    // universe, kept frozen in `prev` — never from what it creates itself;
+    // rounds repeat until the queried edges stop changing (`Engine::evaluate`)
+    /// the previous round, frozen
+    pub prev: RefCell<Option<Rc<Engine>>>,
+    /// this round's roots once frozen
+    frozen_roots: RefCell<Option<Vec<(String, Value)>>>,
+    /// this round's instances once frozen
+    frozen_registry: RefCell<Option<Vec<Inst>>>,
+    /// the frozen instances by address: what `force_slot` delegates to this round
+    frozen_set: RefCell<HashSet<usize>>,
+    /// the last round: a reference into the snapshot resolves live
+    settled: Cell<bool>,
+    /// the snapshot a round answers from
+    snap: RefCell<Option<Snap>>,
+    /// the edges `T|m` queried so far
+    queried: RefCell<BTreeSet<String>>,
+    /// the edges being computed: a query for one of them from inside its own
+    /// computation is unanswerable in this round (the member is excluded)
+    computing_edges: RefCell<HashSet<String>>,
+    /// the environments whose constants this engine forced
+    const_envs: RefCell<Vec<Rc<Env>>>,
+    /// the answers' references into the previous round, by identity
+    snap_refs: RefCell<HashMap<usize, (Rc<SegPath>, Rc<Engine>)>>,
+}
+
+/// one `$referrers` edge: every referrer's path (keyed by its text) with the places its member refers to
+type Edge = BTreeMap<String, (SegPath, Vec<SegPath>)>;
+/// the universe a round answers from
+pub struct Snap {
+    insts: HashMap<String, Vec<Inst>>,
+    edges: HashMap<String, Edge>,
+}
+/// what one round found: whether the queried edges were stable, and what they are
+pub struct Settled {
+    /// no queried edge changed
+    pub stable: bool,
+    /// the queried edges over the round's universe
+    pub edges: HashMap<String, Edge>,
+    /// the edges that changed, sorted
+    pub changed: Vec<String>,
+}
+/// the references under a value: arrays and maps are traversed, records are not (§7.6)
+fn refs_in(v: &Value, out: &mut Vec<SegPath>) {
+    match v {
+        Value::Ref(p) => out.push((**p).clone()),
+        Value::Arr(a) => {
+            for x in &a.borrow().items {
+                refs_in(x, out);
+            }
+        }
+        Value::Map(m) => {
+            for (_, x) in &m.borrow().entries {
+                refs_in(x, out);
+            }
+        }
+        _ => {}
+    }
+}
+fn refs_key(refs: &[SegPath]) -> String {
+    let mut ks: Vec<String> = refs.iter().map(|r| path_str(r, None)).collect();
+    ks.sort();
+    ks.join("\n")
+}
+fn edge_eq(a: &Edge, b: &Edge) -> bool {
+    a.len() == b.len()
+        && a.iter()
+            .all(|(k, (_, r))| b.get(k).is_some_and(|(_, q)| refs_key(r) == refs_key(q)))
+}
+/// the first referrer (canonical order) whose entry differs between two edges
+fn edge_diff(a: &Edge, b: &Edge) -> String {
+    let mut paths: Vec<&SegPath> = a
+        .keys()
+        .chain(b.keys())
+        .collect::<BTreeSet<_>>()
+        .into_iter()
+        .map(|k| &a.get(k).or_else(|| b.get(k)).unwrap().0)
+        .collect();
+    paths.sort_by(|x, y| path_key_cmp(x, y));
+    for p in paths {
+        let k = path_str(p, None);
+        match (a.get(&k), b.get(&k)) {
+            (Some((_, r)), Some((_, q))) if refs_key(r) == refs_key(q) => {}
+            _ => return k,
+        }
+    }
+    String::new()
+}
+fn group_by_type(insts: &[Inst]) -> HashMap<String, Vec<Inst>> {
+    let mut out: HashMap<String, Vec<Inst>> = HashMap::new();
+    for inst in insts {
+        if let Some(t) = inst.borrow().type_name.clone() {
+            out.entry(t).or_default().push(inst.clone());
+        }
+    }
+    out
 }
 
 /// a root binding kept for phase 2 (its source owned)
@@ -192,6 +290,8 @@ pub fn fmt_f(n: f64) -> String {
 }
 
 impl Engine {
+    /// how many rounds a universe may take to settle (§7.6)
+    pub const ROUNDS: u32 = 8;
     /// an engine without registering itself as the environment's evaluator
     pub fn bare(env: Rc<Env>) -> Rc<Engine> {
         let eng = Rc::new(Engine {
@@ -204,6 +304,16 @@ impl Engine {
             computing: RefCell::new(vec![]),
             slots_by_key: RefCell::new(HashMap::new()),
             deferred_roots: RefCell::new(vec![]),
+            prev: RefCell::new(None),
+            frozen_roots: RefCell::new(None),
+            frozen_registry: RefCell::new(None),
+            frozen_set: RefCell::new(HashSet::new()),
+            settled: Cell::new(false),
+            snap: RefCell::new(None),
+            queried: RefCell::new(BTreeSet::new()),
+            computing_edges: RefCell::new(HashSet::new()),
+            const_envs: RefCell::new(vec![]),
+            snap_refs: RefCell::new(HashMap::new()),
         });
         let w = Rc::downgrade(&eng);
         *env.tagger.borrow_mut() = Some(Rc::new(move || {
@@ -211,6 +321,16 @@ impl Engine {
                 .and_then(|e| e.computing.borrow().last().cloned())
         }));
         eng
+    }
+    /// The root's value as this engine's expressions read it: its own universe once frozen.
+    pub fn root(&self, name: &str) -> Option<Value> {
+        if let Some(roots) = self.frozen_roots.borrow().as_ref() {
+            return roots
+                .iter()
+                .find(|(n, _)| n == name)
+                .map(|(_, v)| v.clone());
+        }
+        self.env.root(name)
     }
     /// The key of a slot in the dependency graph: the instance's path and the member's name.
     pub fn slot_key(inst: &Inst, name: &str) -> String {
@@ -299,7 +419,7 @@ impl Engine {
                 if name == "std" {
                     return Ok(Value::Std(Rc::new(vec![])));
                 }
-                if let Some(v) = self.env.root(name) {
+                if let Some(v) = self.root(name) {
                     self.record(format!("root:{name}"));
                     return Ok(v);
                 }
@@ -323,7 +443,7 @@ impl Engine {
                         None => err_code("$parent: the evaluation root has no owner", "E4090"),
                     },
                     "$root" => {
-                        if sc.root_name.is_empty() || self.env.root(&sc.root_name).is_none() {
+                        if sc.root_name.is_empty() || self.root(&sc.root_name).is_none() {
                             return err_code("$root outside an evaluation root", "E4090");
                         }
                         Ok(Value::Ref(Rc::new(vec![Seg::Name(sc.root_name.clone())])))
@@ -664,7 +784,7 @@ impl Engine {
             if let Some(v) = self.module_value(&im.env, &im.name, root_name)? {
                 return Ok(Some(v));
             }
-            if let Some(v) = self.env.root(&im.name) {
+            if let Some(v) = self.root(&im.name) {
                 self.record(format!("root:{}", im.name));
                 return Ok(Some(v)); // imported output/input root
             }
@@ -685,7 +805,7 @@ impl Engine {
         if let Some(v) = self.module_value(&ex.env, &ex.name, &sc.root_name)? {
             return Ok(v);
         }
-        if let Some(v) = self.env.root(&ex.name) {
+        if let Some(v) = self.root(&ex.name) {
             self.record(format!("root:{}", ex.name));
             return Ok(v);
         }
@@ -705,7 +825,7 @@ impl Engine {
             return Ok(None);
         };
         self.record(format!("root:{name}"));
-        if let Some(v) = self.env.root(name) {
+        if let Some(v) = self.root(name) {
             return Ok(Some(v));
         }
         if self.failed_inputs.borrow().contains(name) {
@@ -1064,7 +1184,18 @@ impl Engine {
     /// Read through a reference to the value it names (§7.4).
     pub fn deref(&self, v: Value) -> R<Value> {
         if let Value::Ref(p) = &v {
-            let target = self.resolve_segs(p)?;
+            let snap = if self.settled.get() {
+                None
+            } else {
+                self.snap_refs
+                    .borrow()
+                    .get(&(Rc::as_ptr(p) as usize))
+                    .map(|(_, e)| e.clone())
+            };
+            let target = match snap {
+                Some(e) => e.muted(|| e.resolve_segs(p))?,
+                None => self.resolve_segs(p)?,
+            };
             if target.is_undef() {
                 return err_code(format!("dangling reference {}", path_str(p, None)), "E6002");
             }
@@ -1079,7 +1210,7 @@ impl Engine {
     /// The value at a canonical path from a root (§7.2), forcing what the path crosses.
     pub fn resolve_segs(&self, segs: &[Seg]) -> R<Value> {
         let mut cur = match segs.first() {
-            Some(Seg::Name(n)) => self.env.root(n).unwrap_or(Value::Undef),
+            Some(Seg::Name(n)) => self.root(n).unwrap_or(Value::Undef),
             _ => Value::Undef,
         };
         for s in segs.iter().skip(1) {
@@ -1118,7 +1249,7 @@ impl Engine {
     /// The value at a canonical path as a document's reference string names it (§7.5).
     pub fn resolve_canonical(&self, segs: &[Seg]) -> R<Value> {
         let mut cur = match segs.first() {
-            Some(Seg::Name(n)) => self.env.root(n).unwrap_or(Value::Undef),
+            Some(Seg::Name(n)) => self.root(n).unwrap_or(Value::Undef),
             _ => Value::Undef,
         };
         for s in segs.iter().skip(1) {
@@ -1681,47 +1812,219 @@ impl Engine {
             return err("$referrers outside a record");
         };
         let target = self_inst.borrow().path.clone();
-        let mut out: Vec<Inst> = vec![];
-        for cand in self.env.registry_snapshot() {
-            let (tn, has) = {
-                let b = cand.borrow();
-                (b.type_name.clone(), b.has_slot(member))
-            };
-            if tn.as_deref() != Some(type_name) || !has {
-                continue;
-            }
-            let Ok(v) = self.force_slot(&cand, member) else {
-                continue;
-            };
-            if self.contains_ref_to(&v, &target) {
-                out.push(cand);
-            }
-        }
-        out.sort_by(|a, b| path_key_cmp(&a.borrow().path, &b.borrow().path));
+        let edge = self.snap_edge(type_name, member)?;
+        let mut out: Vec<SegPath> = edge
+            .values()
+            .filter(|(_, refs)| refs.iter().any(|r| cmp_path(r, &target) == Equal))
+            .map(|(p, _)| p.clone())
+            .collect();
+        out.sort_by(|a, b| path_key_cmp(a, b));
+        let prev = self.prev.borrow().clone();
         let items = out
-            .iter()
-            .map(|c| Value::Ref(Rc::new(c.borrow().path.clone())))
+            .into_iter()
+            .map(|p| {
+                let rc = Rc::new(p);
+                if let Some(e) = &prev {
+                    self.snap_refs
+                        .borrow_mut()
+                        .insert(Rc::as_ptr(&rc) as usize, (rc.clone(), e.clone()));
+                }
+                Value::Ref(rc)
+            })
             .collect();
         Ok(Value::Arr(Rc::new(RefCell::new(ArrV {
             items,
             path: vec![],
         }))))
     }
-
-    fn contains_ref_to(&self, v: &Value, target: &[Seg]) -> bool {
-        match v {
-            Value::Ref(p) => cmp_path(p, target) == Equal,
-            Value::Arr(a) => a
+    /// the edge `T|m` of the snapshot: computed from its instances on first demand
+    fn snap_edge(&self, type_name: &str, member: &str) -> R<Edge> {
+        if self.snap.borrow().is_none() {
+            self.take_snapshot(HashMap::new()); // a lazy session: what is materialized
+        }
+        let key = format!("{type_name}|{member}");
+        self.queried.borrow_mut().insert(key.clone());
+        if let Some(e) = self.snap.borrow().as_ref().unwrap().edges.get(&key) {
+            return Ok(e.clone());
+        }
+        if self.computing_edges.borrow().contains(&key) {
+            return Err(Fail::Defer);
+        }
+        self.computing_edges.borrow_mut().insert(key.clone());
+        let insts = self
+            .snap
+            .borrow()
+            .as_ref()
+            .unwrap()
+            .insts
+            .get(type_name)
+            .cloned()
+            .unwrap_or_default();
+        let edge = self.edge_of(&insts, member);
+        self.computing_edges.borrow_mut().remove(&key);
+        self.snap
+            .borrow_mut()
+            .as_mut()
+            .unwrap()
+            .edges
+            .insert(key, edge.clone());
+        Ok(edge)
+    }
+    /// the snapshot's instances: the previous round's universe, else what is materialized now
+    fn take_snapshot(&self, edges: HashMap<String, Edge>) {
+        let prev = self.prev.borrow().clone();
+        let insts = match &prev {
+            Some(p) => p.frozen_registry.borrow().clone().unwrap_or_default(),
+            None => self.env.registry_snapshot(),
+        };
+        *self.snap.borrow_mut() = Some(Snap {
+            insts: group_by_type(&insts),
+            edges,
+        });
+    }
+    /// every candidate's path with the places its member refers to (an invalid member: excluded silently, §6.6)
+    fn edge_of(&self, insts: &[Inst], member: &str) -> Edge {
+        let mut out = Edge::new();
+        for cand in insts {
+            let state = cand.borrow().slot(member).map(|s| s.state);
+            match state {
+                None | Some(SlotState::Forcing) => continue, // in computation: needs this very edge
+                _ => {}
+            }
+            let Ok(v) = self.force_slot(cand, member) else {
+                continue;
+            };
+            let mut refs = vec![];
+            refs_in(&v, &mut refs);
+            let path = cand.borrow().path.clone();
+            out.insert(path_str(&path, None), (path, refs));
+        }
+        out
+    }
+    /// the queried edges over this round's universe, answered from its snapshot
+    fn live_edges(&self) -> HashMap<String, Edge> {
+        let mut out: HashMap<String, Edge> = HashMap::new();
+        loop {
+            let todo: Vec<String> = self
+                .queried
                 .borrow()
-                .items
                 .iter()
-                .any(|x| self.contains_ref_to(x, target)),
-            Value::Map(m) => m
-                .borrow()
-                .entries
-                .iter()
-                .any(|(_, x)| self.contains_ref_to(x, target)),
-            _ => false,
+                .filter(|k| !out.contains_key(*k))
+                .cloned()
+                .collect();
+            if todo.is_empty() {
+                return out;
+            }
+            let insts = group_by_type(&self.env.registry_snapshot());
+            for key in todo {
+                let (t, m) = key.split_once('|').unwrap();
+                let e = self.edge_of(insts.get(t).map(|v| v.as_slice()).unwrap_or(&[]), m);
+                out.insert(key.clone(), e);
+            } // forcing may have materialized more, and queried more
+        }
+    }
+    /// Phase 2, one round: the deferred slots and roots, then everything; stable when the queried edges did not change.
+    pub fn settle(&self, env: &Env, edges: HashMap<String, Edge>) -> Settled {
+        self.phase.set(2);
+        self.take_snapshot(edges);
+        let deferred: Vec<(Inst, String)> = self.deferred_slots.borrow_mut().drain(..).collect();
+        for (inst, name) in &deferred {
+            self.force_slot_safe(inst, name);
+        }
+        self.bind_deferred_roots();
+        self.force_roots(env);
+        let live = self.live_edges();
+        let snap = self.snap.borrow();
+        let snap_edges = &snap.as_ref().unwrap().edges;
+        let mut changed: Vec<String> = live
+            .iter()
+            .filter(|(k, e)| !snap_edges.get(*k).is_some_and(|f| edge_eq(e, f)))
+            .map(|(k, _)| k.clone())
+            .collect();
+        changed.sort();
+        drop(snap);
+        Settled {
+            stable: changed.is_empty(),
+            edges: live,
+            changed,
+        }
+    }
+    /// this round's universe, kept as the next round's snapshot
+    fn freeze(&self) {
+        let registry = self.env.registry_snapshot();
+        *self.frozen_set.borrow_mut() = registry.iter().map(|i| Rc::as_ptr(i) as usize).collect();
+        *self.frozen_roots.borrow_mut() = Some(self.env.roots_vec());
+        *self.frozen_registry.borrow_mut() = Some(registry);
+    }
+    /// the frozen round that owns an instance, if it is not this engine's
+    fn owner_of(&self, inst: &Inst) -> Option<Rc<Engine>> {
+        let prev = self.prev.borrow().clone()?;
+        if prev
+            .frozen_set
+            .borrow()
+            .contains(&(Rc::as_ptr(inst) as usize))
+        {
+            return Some(prev);
+        }
+        prev.owner_of(inst)
+    }
+    /// Run inside a frozen round: what it reports is not this evaluation's.
+    pub fn muted<T>(&self, f: impl FnOnce() -> T) -> T {
+        self.env.muted.set(self.env.muted.get() + 1);
+        let r = f();
+        self.env.muted.set(self.env.muted.get() - 1);
+        r
+    }
+    /// Evaluate a universe (§7.6, §9.3): `bind` binds every root on a fresh
+    /// engine; the rounds repeat, each answering `$referrers` from the previous
+    /// round, until the queried edges are stable — the settled engine is the
+    /// result. A universe still changing after `ROUNDS` rounds is E5009.
+    pub fn evaluate(env: &Rc<Env>, bind: &dyn Fn(&Rc<Engine>)) -> Rc<Engine> {
+        let mut prev: Option<Rc<Engine>> = None;
+        let mut edges: HashMap<String, Edge> = HashMap::new();
+        let mut round = 0;
+        loop {
+            round += 1;
+            let eng = Engine::new(env.clone());
+            *eng.prev.borrow_mut() = prev.clone();
+            let mark = env.diag_len();
+            bind(&eng);
+            eng.force_roots(env);
+            let r = eng.settle(env, edges);
+            if r.stable || round == Engine::ROUNDS {
+                if !r.stable {
+                    let snap = eng.snap.borrow();
+                    let snap_edges = &snap.as_ref().unwrap().edges;
+                    for key in &r.changed {
+                        let (t, m) = key.split_once('|').unwrap();
+                        let empty = Edge::new();
+                        env.report(Diag::error(
+                            format!(
+                                "$referrers({t}, \"{m}\") does not stabilize after {} rounds",
+                                Engine::ROUNDS
+                            ),
+                            edge_diff(&r.edges[key], snap_edges.get(key).unwrap_or(&empty)),
+                            Some("E5009"),
+                        ));
+                    }
+                }
+                eng.settled.set(true);
+                *eng.prev.borrow_mut() = None;
+                return eng;
+            }
+            // the round is the next one's snapshot; the universe starts over
+            eng.freeze();
+            env.roots_clear();
+            env.registry_clear();
+            env.diag_truncate(mark);
+            for e in eng.const_envs.borrow().iter() {
+                for c in e.consts.borrow().values() {
+                    c.state.set(false);
+                    *c.value.borrow_mut() = Value::Undef;
+                }
+            }
+            prev = Some(eng);
+            edges = r.edges;
         }
     }
 
@@ -2682,6 +2985,9 @@ impl Engine {
     /// Force a slot — its check, default, or derived expression — once, with
     /// dependency tracking (§9.3).
     pub fn force_slot(&self, inst: &Inst, name: &str) -> R<Value> {
+        if let Some(owner) = self.owner_of(inst) {
+            return owner.muted(|| owner.force_slot(inst, name)); // a frozen round's
+        }
         let (state, compute) = {
             let b = inst.borrow();
             let Some(s) = b.slot(name) else {
@@ -2763,6 +3069,9 @@ impl Engine {
 
     /// The value of a module-level constant, evaluated once in its module's environment.
     pub fn force_const_in(&self, env: &Rc<Env>, name: &str, root_name: &str) -> R<Value> {
+        if !self.const_envs.borrow().iter().any(|e| Rc::ptr_eq(e, env)) {
+            self.const_envs.borrow_mut().push(env.clone());
+        }
         let c = env.consts.borrow().get(name).cloned();
         let Some(c) = c else {
             return err(format!("unknown constant {name}"));
@@ -2846,27 +3155,6 @@ impl Engine {
             i += 1;
         }
     }
-    /// Force every root of an environment and every deferred slot, until nothing is left (§9.3).
-    pub fn drive(&self, env: &Env) {
-        self.force_roots(env);
-        self.phase.set(2);
-        let mut i = 0;
-        loop {
-            let item = {
-                let d = self.deferred_slots.borrow();
-                if i >= d.len() {
-                    break;
-                }
-                d[i].clone()
-            };
-            self.force_slot_safe(&item.0, &item.1);
-            i += 1;
-        }
-        self.bind_deferred_roots();
-        self.force_roots(env);
-        self.validate_all("");
-    }
-
     /// Run every assertion of every instance, reporting under the root's name (§6).
     pub fn validate_all(&self, root_name: &str) {
         for inst in self.env.registry_snapshot() {

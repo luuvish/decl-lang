@@ -1,0 +1,32 @@
+// the universe may depend on what $referrers answers: the links a hub
+// derives exist only once the ports' peers are known, and the ports learn
+// their peers from those very links — evaluation repeats in rounds, each
+// answering from the previous round's universe, until the queried edges
+// are stable (§7.6)
+type Port = {
+    $key: string
+    name = $key
+    incoming$ = $referrers(Link, "target")
+    // the flag flows from the first peer, else it is on
+    flag?: bool = if std.array.count(incoming$) == 0 then true else incoming$[0].source.flag
+    peers = [l.source.name for l in incoming$]
+}
+type Link = {
+    $parent: ref<{ ports: { [string]: Port }, auto: { [string]: Port }, ... }>
+    name: string
+    source: ref<Port> = $parent.ports[std.string.split(name, "->")[0]]
+    target: ref<Port> =
+        if std.string.split(name, "->")[1] in std.map.keys($parent.ports)
+        then $parent.ports[std.string.split(name, "->")[1]]
+        else $parent.auto[std.string.split(name, "->")[1]]
+}
+type Hub = {
+    ports: { [string]: Port } = { a: {}, b: { flag: false }, c: {} }
+    // a generated port exists when its user port's flag is on
+    auto: { [string]: Port } = { `${e.key}_gen`: {} for e in std.map.entries(ports) if e.value.flag }
+    links: Link[] = [
+        { name: "a->b" }
+        ...[{ name: `${e.key}->${e.key}_gen` } for e in std.map.entries(ports) if e.value.flag]
+    ]
+}
+export output hub: Hub = {}

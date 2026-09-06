@@ -628,6 +628,15 @@ diagnostic width_mismatch(src: int, dst: int) {
   enumeration; other relationship constraints belong to the container
   type that owns the collections, as comprehensions over named
   collections.
+- *(amended 2026-09-06, v0.4.2)* The universe may depend on the
+  answers: a member computed from `$referrers` may produce instances
+  of a queried type. The answers are then defined by rounds — each
+  round answers over the whole universe the previous round produced
+  and recomputes what read an answer, until the queried edges are
+  stable (at most eight rounds; E5009 beyond) — so that demand order
+  never reaches an answer and every answer holds over the result.
+  Found reimplementing a real generator whose derived links exist only
+  once the ports have learned their peers from those links.
 
 ---
 

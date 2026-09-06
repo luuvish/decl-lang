@@ -370,7 +370,9 @@ export class Env {
 
   /** installed by the engine: the evaluation step a report is attributed to */
   tagger?: () => string | undefined;
+  muted = 0; // >0: a frozen round is being read (Engine.muted) — its reports are not this evaluation's
   report(d: Diag) {
+    if (this.muted > 0) return;
     const by = this.tagger?.();
     if (by !== undefined) d.by = by;
     this.diagnostics.push(d);

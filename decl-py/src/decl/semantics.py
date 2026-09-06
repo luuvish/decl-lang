@@ -47,10 +47,12 @@ class Quantity:
 
 
 class Ref:
-    __slots__ = ("segs",)
+    __slots__ = ("segs", "snap")
 
-    def __init__(self, segs: list[Any]):
+    def __init__(self, segs: list[Any], snap: Any = None):
+        # `snap`: the frozen round this reference resolves in until the rounds end (§7.6)
         self.segs = segs
+        self.snap = snap
 
 
 class RangeV:
@@ -198,7 +200,17 @@ class Slot:
 
 
 class RecInst:
-    __slots__ = ("entry_order", "extras", "menv", "parent", "path", "rt", "slots", "type_name")
+    __slots__ = (
+        "eng",
+        "entry_order",
+        "extras",
+        "menv",
+        "parent",
+        "path",
+        "rt",
+        "slots",
+        "type_name",
+    )
 
     def __init__(self, type_name: Any, rt: Any, path: Any, parent: Any) -> None:
         self.type_name, self.rt, self.path, self.parent = type_name, rt, path, parent
@@ -206,6 +218,7 @@ class RecInst:
         self.entry_order: list[Any] = []
         self.extras: dict[str, Any] = {}
         self.menv = None
+        self.eng: Any = None  # the engine (the round) that owns the instance
 
 
 class Scope:
@@ -311,6 +324,7 @@ class Env:
         self.registry: list[Any] = []
         self.roots: dict[str, Any] = {}
         self.diagnostics: list[Any] = []
+        self.muted = 0
         # installed by the engine: the evaluation step a report is attributed to
         self.tagger: Callable[[], str | None] | None = None
         self.const_eval: Callable[[str], Any] | None = None
@@ -464,6 +478,8 @@ class Env:
                 self.diags[name] = d
 
     def report(self, d: dict[str, Any]) -> None:
+        if self.muted > 0:  # a frozen round is being read: its reports are not this evaluation's
+            return
         by = self.tagger() if self.tagger is not None else None
         if by is not None:
             d["by"] = by

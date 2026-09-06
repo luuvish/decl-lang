@@ -90,6 +90,15 @@ unique across the universe (§8.8).
   none under full validation except unbound-undemanded inputs and
   overridden defaults, §5.7).
 
+- **Rounds** ([07. Relationships](07_relationships.md) §7.6, v0.4.2):
+  when the universe's instances themselves depend on a `$referrers`
+  answer, materialization completes in rounds, each answering over the
+  previous round's whole universe and recomputing what read an answer,
+  until the queried edges are stable; the result is the last round's
+  values, and a universe that does not settle within eight rounds is
+  E5009. Demand order never reaches an answer: a round answers only
+  over what the previous round produced.
+
 ## 9.5 Determinism
 
 Given the same module set, lock state, and input bindings, a conforming

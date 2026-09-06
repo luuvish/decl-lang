@@ -1,0 +1,14 @@
+// @expect-phase: binding
+// @expect-error: E5009
+// a universe that never settles: the link exists exactly when its target
+// has no incoming link, so every round undoes the previous one (§7.6)
+type Port = {
+    incoming$ = $referrers(Link, "target")
+    lonely = std.array.count(incoming$) == 0
+}
+type Link = { $parent: ref<{ port: Port, ... }>, target: ref<Port> = $parent.port }
+type Hub = {
+    port: Port = {}
+    links: Link[] = [{} for i in [1] if port.lonely]
+}
+export output hub: Hub = {}

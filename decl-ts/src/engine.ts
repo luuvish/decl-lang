@@ -26,11 +26,54 @@ import {
   segText,
   dotSpellable,
 } from './semantics.ts';
-import type { RecInst, RT, Seg, Slot } from './semantics.ts';
+import type { RecInst, RT, Seg, Slot, Value } from './semantics.ts';
 import type { Expr } from './ast.ts';
 import { subsumes } from './subsume.ts';
 
 type Scope = { inst: RecInst | null; locals: Map<string, any>; rootName: string; menv?: Env };
+/** one `$referrers` edge: every referrer's path (keyed by its text) with the places its member refers to */
+type Edge = Map<string, { path: Seg[]; refs: Seg[][] }>;
+/** the references under a value: arrays and maps are traversed, records are not (§7.6) */
+function refsIn(v: any, out: Seg[][]) {
+  if (isRef(v)) out.push(v.segs);
+  else if (isArr(v)) for (const x of v.items) refsIn(x, out);
+  else if (isMap(v)) for (const x of v.entries.values()) refsIn(x, out);
+}
+function groupByType(insts: RecInst[]): Map<string, RecInst[]> {
+  const out = new Map<string, RecInst[]>();
+  for (const inst of insts) {
+    if (!inst.typeName) continue;
+    (out.get(inst.typeName) ?? out.set(inst.typeName, []).get(inst.typeName)!).push(inst);
+  }
+  return out;
+}
+function refsKey(refs: Seg[][]): string {
+  return refs
+    .map((r) => pathStr(r))
+    .sort()
+    .join('\n');
+}
+function edgeEq(a: Edge, b: Edge): boolean {
+  if (a.size !== b.size) return false;
+  for (const [k, e] of a) {
+    const f = b.get(k);
+    if (!f || refsKey(e.refs) !== refsKey(f.refs)) return false;
+  }
+  return true;
+}
+/** the first referrer (canonical order) whose entry differs between two edges */
+function edgeDiff(a: Edge, b: Edge): string {
+  const paths = [...new Set([...a.keys(), ...b.keys()])]
+    .map((k) => (a.get(k) ?? b.get(k))!.path)
+    .sort(cmpPath);
+  for (const p of paths) {
+    const k = pathStr(p);
+    const e = a.get(k),
+      f = b.get(k);
+    if (!e || !f || refsKey(e.refs) !== refsKey(f.refs)) return k;
+  }
+  return '';
+}
 
 export class Engine {
   env: Env;
@@ -64,6 +107,26 @@ export class Engine {
   }
   noReg = 0; // >0: binding for comparison only — do not register instances
   phase = 1; // 1: materialization; 2: universe complete, $referrers answers
+  // ---- `$referrers` is answered in rounds (§7.6) ----
+  // a round answers from a fixed snapshot — round 1 from what phase 1
+  // materialized, every later round from the previous round's whole
+  // universe, kept frozen in `prev` — never from what it creates itself;
+  // rounds repeat until the queried edges stop changing (`Engine.evaluate`)
+  prev: Engine | null = null;
+  frozenRoots: Map<string, Value> | null = null;
+  frozenRegistry: RecInst[] | null = null;
+  settled = false; // the last round: a reference into the snapshot resolves live
+  snap: { insts: Map<string, RecInst[]>; edges: Map<string, Edge> } | null = null;
+  queried = new Set<string>();
+  // the edges being computed: a query for one of them from inside its own
+  // computation is unanswerable in this round (the member is excluded)
+  computingEdges = new Set<string>();
+  constEnvs = new Set<Env>();
+  static readonly ROUNDS = 8;
+  /** the roots this engine's expressions read: its own universe once frozen */
+  get rootsMap(): Map<string, Value> {
+    return this.frozenRoots ?? this.env.roots;
+  }
   constructor(env: Env) {
     env.tagger = () => this.computing[this.computing.length - 1];
     this.env = env;
@@ -125,9 +188,9 @@ export class Engine {
         const bound = this.moduleValue(menv, e.name, sc.rootName);
         if (bound !== undefined) return bound;
         if (e.name === 'std') return { __std: true, path: [] };
-        if (this.env.roots.has(e.name)) {
+        if (this.rootsMap.has(e.name)) {
           this.record(`root:${e.name}`);
-          return this.env.roots.get(e.name);
+          return this.rootsMap.get(e.name);
         }
         const inp = this.demandInput(menv, e.name);
         if (inp !== undefined) return inp;
@@ -148,7 +211,7 @@ export class Engine {
           return { __ref: true, segs: inst.parent.path };
         }
         if (e.name === '$root') {
-          if (!sc.rootName || !this.env.roots.has(sc.rootName))
+          if (!sc.rootName || !this.rootsMap.has(sc.rootName))
             throw new EvalErr('$root outside an evaluation root', 'E4090');
           return { __ref: true, segs: [sc.rootName] };
         }
@@ -416,9 +479,9 @@ export class Engine {
     if (im) {
       const v = this.moduleValue(im.env, im.name, rootName);
       if (v !== undefined) return v;
-      if (this.env.roots.has(im.name)) {
+      if (this.rootsMap.has(im.name)) {
         this.record(`root:${im.name}`);
-        return this.env.roots.get(im.name);
+        return this.rootsMap.get(im.name);
       } // imported output/input root
       return this.demandInput(im.env, im.name);
     }
@@ -431,9 +494,9 @@ export class Engine {
     if (!ex) throw new EvalErr(`namespace has no export ${name}`);
     const v = this.moduleValue(ex.env, ex.name, sc.rootName);
     if (v !== undefined) return v;
-    if (this.env.roots.has(ex.name)) {
+    if (this.rootsMap.has(ex.name)) {
       this.record(`root:${ex.name}`);
-      return this.env.roots.get(ex.name);
+      return this.rootsMap.get(ex.name);
     }
     const inp = this.demandInput(ex.env, ex.name);
     if (inp !== undefined) return inp;
@@ -448,7 +511,7 @@ export class Engine {
     const decl = menv.inputs.get(name);
     if (!decl) return undefined;
     this.record(`root:${name}`);
-    if (this.env.roots.has(name)) return this.env.roots.get(name);
+    if (this.rootsMap.has(name)) return this.rootsMap.get(name);
     if (this.failedInputs.has(name)) throw new Taint();
     if (!decl.fallback) throw new EvalErr(`input ${name} is not bound`, 'E5006');
     const sc: Scope = { inst: null, locals: new Map(), rootName: name, menv };
@@ -653,7 +716,10 @@ export class Engine {
   }
   deref(v: any): any {
     if (isRef(v)) {
-      const target = this.resolveSegs(v.segs);
+      const target =
+        v.snap && !this.settled
+          ? (v.snap as Engine).muted(() => (v.snap as Engine).resolveSegs(v.segs))
+          : this.resolveSegs(v.segs);
       if (target === undefined) throw new EvalErr(`dangling reference ${pathStr(v.segs)}`, 'E6002');
       return target;
     }
@@ -663,7 +729,7 @@ export class Engine {
   // member counts as none — §7.5). Lenient about segment kinds: engine-built
   // paths are canonical by construction
   resolveSegs(segs: Seg[]): any {
-    let cur: any = this.env.roots.get(segs[0] as string);
+    let cur: any = this.rootsMap.get(segs[0] as string);
     for (let i = 1; i < segs.length && cur !== undefined; i++) {
       const s = segText(segs[i]);
       if (isRec(cur))
@@ -681,7 +747,7 @@ export class Engine {
   // bracketed otherwise, an array index numeric — any other spelling does
   // not resolve
   resolveCanonical(segs: Seg[]): any {
-    let cur: any = this.env.roots.get(segs[0] as string);
+    let cur: any = this.rootsMap.get(segs[0] as string);
     for (let i = 1; i < segs.length && cur !== undefined; i++) {
       const s = segs[i];
       if (isRec(cur)) {
@@ -927,27 +993,139 @@ export class Engine {
     if (this.phase < 2) throw new DeferSig(); // universe not fully materialized yet
     this.record(`referrers:${typeName}`);
     const self = sc.inst!;
-    const out: RecInst[] = [];
-    for (const cand of this.env.registry) {
-      if (cand.typeName !== typeName) continue;
+    const out: Seg[][] = [];
+    for (const e of this.snapEdge(typeName, member).values())
+      if (e.refs.some((r) => cmpPath(r, self.path) === 0)) out.push(e.path);
+    out.sort(cmpPath);
+    const items = out.map((p) =>
+      this.prev ? { __ref: true, segs: p, snap: this.prev } : { __ref: true, segs: p },
+    );
+    return { __arr: true, items, path: [] };
+  }
+  /** the edge `T|m` of the snapshot: computed from its instances on first demand */
+  snapEdge(typeName: string, member: string): Edge {
+    if (!this.snap) this.takeSnapshot(new Map()); // a lazy session: what is materialized
+    const key = `${typeName}|${member}`;
+    this.queried.add(key);
+    let edge = this.snap!.edges.get(key);
+    if (!edge) {
+      if (this.computingEdges.has(key)) throw new DeferSig();
+      this.computingEdges.add(key);
+      try {
+        edge = this.edgeOf(this.snap!.insts.get(typeName) ?? [], member);
+      } finally {
+        this.computingEdges.delete(key);
+      }
+      this.snap!.edges.set(key, edge);
+    }
+    return edge;
+  }
+  /** the snapshot's instances: the previous round's universe, else what is materialized now */
+  takeSnapshot(edges: Map<string, Edge>) {
+    this.snap = { insts: groupByType(this.prev?.frozenRegistry ?? this.env.registry), edges };
+  }
+  /** every candidate's path with the places its member refers to (an invalid member: excluded silently, §6.6) */
+  edgeOf(insts: RecInst[], member: string): Edge {
+    const out: Edge = new Map();
+    for (const cand of insts) {
       const slot = cand.slots.get(member);
-      if (!slot) continue;
+      if (!slot || slot.state === 'forcing') continue; // in computation: needs this very edge
       let v: any;
       try {
         v = this.forceSlot(cand, member);
       } catch {
         continue;
-      } // invalid m: excluded silently
-      if (this.containsRefTo(v, self.path)) out.push(cand);
+      }
+      const refs: Seg[][] = [];
+      refsIn(v, refs);
+      out.set(pathStr(cand.path), { path: cand.path, refs });
     }
-    out.sort((x, y) => cmpPath(x.path, y.path));
-    return { __arr: true, items: out.map((c) => ({ __ref: true, segs: c.path })), path: [] };
+    return out;
   }
-  containsRefTo(v: any, target: Seg[]): boolean {
-    if (isRef(v)) return cmpPath(v.segs, target) === 0;
-    if (isArr(v)) return v.items.some((x: any) => this.containsRefTo(x, target));
-    if (isMap(v)) return [...v.entries.values()].some((x: any) => this.containsRefTo(x, target));
-    return false;
+  /** the queried edges over this round's universe, answered from its snapshot */
+  liveEdges(): Map<string, Edge> {
+    const out = new Map<string, Edge>();
+    for (;;) {
+      const todo = [...this.queried].filter((k) => !out.has(k));
+      if (todo.length === 0) return out;
+      const insts = groupByType(this.env.registry);
+      for (const key of todo) {
+        const [t, m] = key.split('|');
+        out.set(key, this.edgeOf(insts.get(t) ?? [], m));
+      } // forcing may have materialized more, and queried more
+    }
+  }
+  /** phase 2, one round: the deferred slots and roots, then everything; stable when the queried edges did not change */
+  settle(roots: () => Iterable<any>, edges = new Map<string, Edge>()) {
+    this.phase = 2;
+    this.takeSnapshot(edges);
+    for (const d of this.deferredSlots.splice(0)) this.forceSlotSafe(d.inst, d.name);
+    this.bindDeferredRoots();
+    for (const v of roots()) this.forceAll(v, true);
+    const live = this.liveEdges();
+    const changed = [...live.keys()]
+      .filter((k) => !edgeEq(live.get(k)!, this.snap!.edges.get(k) ?? new Map()))
+      .sort();
+    return { stable: changed.length === 0, edges: live, changed };
+  }
+  /** this round's universe, kept as the next round's snapshot */
+  freeze() {
+    this.frozenRoots = new Map(this.env.roots);
+    this.frozenRegistry = this.env.registry.slice();
+  }
+  /** run inside a frozen round: what it reports is not this evaluation's */
+  muted<T>(f: () => T): T {
+    this.env.muted++;
+    try {
+      return f();
+    } finally {
+      this.env.muted--;
+    }
+  }
+  /**
+   * Evaluate a universe (§7.6, §9.3): `bind` binds every root on a fresh
+   * engine; the rounds repeat, each answering `$referrers` from the previous
+   * round, until the queried edges are stable — the settled engine is the
+   * result. A universe still changing after `ROUNDS` rounds is E5009.
+   */
+  static evaluate(env: Env, bind: (eng: Engine) => void, roots: () => Iterable<any>): Engine {
+    let prev: Engine | null = null;
+    let edges = new Map<string, Edge>();
+    for (let round = 1; ; round++) {
+      const eng = new Engine(env);
+      eng.prev = prev;
+      const mark = env.diagnostics.length;
+      bind(eng);
+      for (const v of roots()) eng.forceAll(v, false);
+      const r = eng.settle(roots, edges);
+      if (r.stable || round === Engine.ROUNDS) {
+        if (!r.stable)
+          for (const key of r.changed) {
+            const [t, m] = key.split('|');
+            env.report({
+              severity: 'error',
+              message: `$referrers(${t}, "${m}") does not stabilize after ${Engine.ROUNDS} rounds`,
+              path: edgeDiff(r.edges.get(key)!, eng.snap!.edges.get(key) ?? new Map()),
+              code: 'E5009',
+            });
+          }
+        eng.settled = true;
+        eng.prev = null;
+        return eng;
+      }
+      // the round is the next one's snapshot; the universe starts over
+      eng.freeze();
+      env.roots.clear();
+      env.registry.splice(0);
+      env.diagnostics.splice(mark);
+      for (const e of eng.constEnvs)
+        for (const c of e.consts.values()) {
+          c.state = 'unforced';
+          delete c.value;
+        }
+      prev = eng;
+      edges = r.edges;
+    }
   }
 
   // ---------- binding / checking ----------
@@ -1288,6 +1466,7 @@ export class Engine {
     };
     if (this.noReg === 0) this.env.registry.push(inst);
     (inst as any).menv = sc.menv; // module scope for asserts/diagnostics
+    (inst as any).eng = this;
     const isc0: Scope = { inst, locals: new Map(), rootName: sc.rootName, menv: sc.menv };
     const supplied = new Map(entries);
 
@@ -1458,6 +1637,8 @@ export class Engine {
     }
   }
   forceSlot(inst: RecInst, name: string): any {
+    const owner: Engine = (inst as any).eng;
+    if (owner && owner !== this) return owner.muted(() => owner.forceSlot(inst, name)); // a frozen round's
     const s = inst.slots.get(name);
     if (!s) throw new EvalErr(`no member ${name}`);
     const key = Engine.slotKey(inst, name);
@@ -1505,6 +1686,7 @@ export class Engine {
     return this.forceConstIn(this.env, name, rootName);
   }
   forceConstIn(env: Env, name: string, rootName: string): any {
+    this.constEnvs.add(env);
     const c = env.consts.get(name)!;
     if (c.state === 'ok') return c.value;
     c.state = 'ok';

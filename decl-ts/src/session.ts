@@ -657,11 +657,9 @@ export class Session {
       );
     }
     for (const v of env.roots.values()) eng.forceAll(v, false);
-    eng.phase = 2;
-    for (let i = 0; i < eng.deferredSlots.length; i++)
-      eng.forceSlotSafe(eng.deferredSlots[i].inst, eng.deferredSlots[i].name);
-    eng.bindDeferredRoots();
-    for (const v of env.roots.values()) eng.forceAll(v, true);
+    // an incremental round answers `$referrers` from what it holds; a
+    // universe that needs another round is evaluated afresh
+    if (!eng.settle(() => env.roots.values()).stable) return null;
     // 5. the asserts of the instances that are new or whose asserts read what changed
     for (const inst of env.registry) {
       const key = `assert:${pathStr(inst.path)}`;
@@ -756,44 +754,44 @@ export class Session {
       return finish();
 
     const t2 = now();
-    const eng = new Engine(entry.env);
-    for (const m of b.modules) {
-      m.env.constEval = (n: string) => eng.forceConstIn(m.env, n, '');
-      m.env.exprEval = (e: any) =>
-        eng.ev(e, { inst: null, locals: new Map(), rootName: '', menv: m.env });
-    }
-    // documents first (an output may read an input, §5.5), then the
-    // modules' outputs, then the session's
-    for (const [name, d] of st.documents) {
-      const m = b.modules.find((x) => x.env.inputs.has(name)) ?? entry;
-      const rt = m.env.resolve(m.env.inputs.get(name)!.type);
-      const sc: any = { inst: null, locals: new Map(), rootName: name, menv: m.env };
-      eng.bindRoot(name, d.doc, rt, sc, false);
-    }
-    for (const m of b.modules)
-      for (const o of m.env.outputs) {
-        const sc: any = { inst: null, locals: new Map(), rootName: o.name, menv: m.env };
-        eng.bindRoot(o.name, o.expr, m.env.resolve(o.type), sc, true);
+    const bind = (eng: Engine) => {
+      for (const m of b.modules) {
+        m.env.constEval = (n: string) => eng.forceConstIn(m.env, n, '');
+        m.env.exprEval = (e: any) =>
+          eng.ev(e, { inst: null, locals: new Map(), rootName: '', menv: m.env });
       }
-    for (const s of sessionRoots) {
-      const sc: any = { inst: null, locals: new Map(), rootName: s.name, menv: entry.env };
-      eng.bindRoot(s.name, s.expr, s.rt, sc, true);
-    }
+      // documents first (an output may read an input, §5.5), then the
+      // modules' outputs, then the session's
+      for (const [name, d] of st.documents) {
+        const m = b.modules.find((x) => x.env.inputs.has(name)) ?? entry;
+        const rt = m.env.resolve(m.env.inputs.get(name)!.type);
+        const sc: any = { inst: null, locals: new Map(), rootName: name, menv: m.env };
+        eng.bindRoot(name, d.doc, rt, sc, false);
+      }
+      for (const m of b.modules)
+        for (const o of m.env.outputs) {
+          const sc: any = { inst: null, locals: new Map(), rootName: o.name, menv: m.env };
+          eng.bindRoot(o.name, o.expr, m.env.resolve(o.type), sc, true);
+        }
+      for (const s of sessionRoots) {
+        const sc: any = { inst: null, locals: new Map(), rootName: s.name, menv: entry.env };
+        eng.bindRoot(s.name, s.expr, s.rt, sc, true);
+      }
+    };
     out.sessionRoots = sessionRoots;
-    out.eng = eng;
-    out.timing.bind = now() - t2;
     if (mode === 'lazy') {
+      const eng = new Engine(entry.env);
+      bind(eng);
+      out.eng = eng;
+      out.timing.bind = now() - t2;
       eng.phase = 2;
       out.diags = entry.env.diagnostics;
       return finish();
     }
     const t3 = now();
-    for (const v of entry.env.roots.values()) eng.forceAll(v, false);
-    eng.phase = 2;
-    for (let i = 0; i < eng.deferredSlots.length; i++)
-      eng.forceSlotSafe(eng.deferredSlots[i].inst, eng.deferredSlots[i].name);
-    eng.bindDeferredRoots();
-    for (const v of entry.env.roots.values()) eng.forceAll(v, true);
+    const eng = Engine.evaluate(entry.env, bind, () => entry.env.roots.values());
+    out.eng = eng;
+    out.timing.bind = t3 - t2;
     eng.validateAll('');
     entry.env.diagnostics.splice(
       0,

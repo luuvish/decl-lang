@@ -338,6 +338,25 @@ type Service = {
   depending on demand order, violating observational equivalence
   (§9.4). The §0.6 spike hit this as a live bug: a width forced
   mid-materialization memoized an empty referrer set.
+- **The universe may depend on the answers** *(v0.4.2)*. A member
+  computed from `$referrers` may itself produce record instances of a
+  queried type — a hub deriving its link list from the peers its ports
+  found, ports that exist only once a flag has flowed from a peer. The
+  answers are then defined by **rounds**: round 1 answers over the
+  instances that exist without any answer; every later round answers
+  over the *whole* universe the previous round produced — its
+  instances and the values of their queried members, as that round
+  computed them — and recomputes everything that read an answer;
+  evaluation is complete at the first round whose queried edges (every
+  referrer of every queried `(T, "m")` and the places its `m` refers
+  to) equal the previous round's. A round never sees what it creates
+  itself, so demand order cannot leak into an answer; when the rounds
+  end, every answer holds over the universe that is the result. A
+  universe still changing after eight rounds — a link that exists
+  exactly when its target has no link — is an error (E5009) at the
+  first referrer, in canonical order, whose entry still differs, and
+  the last round's values stand. A universe that needs no such
+  dependence takes one round.
 - `$referrers` is the **only** universe query. Ad-hoc relationship
   constraints — uniqueness, degree rules, joins — belong to the
   container type that owns the collections involved, filtering

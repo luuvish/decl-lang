@@ -186,6 +186,7 @@ A diagnostic serializes as:
 | E5006 | unbound `input` demanded (§5.6) |
 | E5007 | dependency cycle detected at evaluation time (§9.3) |
 | E5008 | standard-library function called outside its domain ([13. Stdlib](13_stdlib.md)) |
+| E5009 | `$referrers` universe does not settle: a queried edge still changes after eight rounds (§7.6, v0.4.2) |
 
 ### E6xxx — validation and binding (ch. 6, 7, 10)
 

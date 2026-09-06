@@ -204,32 +204,28 @@ export function runUniverse(
   entry: Module,
   binds: { module?: Module; input: string; raw: any }[] = [],
 ): { eng: Engine; diags: Diag[] } {
-  const eng = new Engine(entry.env);
-  for (const m of mods) {
-    m.env.constEval = (n: string) => eng.forceConstIn(m.env, n, '');
-    m.env.exprEval = (e: any) =>
-      eng.ev(e, { inst: null, locals: new Map(), rootName: '', menv: m.env });
-  }
-  // bound documents first: an output may read an input (§5.5), and a
-  // bound input is a root of the universe (§9.2); unbound inputs with a
-  // fallback bind on first demand (§9.4)
-  for (const b of binds) {
-    const m = b.module ?? entry;
-    const decl = m.env.inputs.get(b.input)!;
-    const sc: any = { inst: null, locals: new Map(), rootName: b.input, menv: m.env };
-    eng.bindRoot(b.input, b.raw, m.env.resolve(decl.type), sc, false);
-  }
-  for (const m of mods)
-    for (const o of m.env.outputs) {
-      const sc: any = { inst: null, locals: new Map(), rootName: o.name, menv: m.env };
-      eng.bindRoot(o.name, o.expr, m.env.resolve(o.type), sc, true);
+  const bind = (eng: Engine) => {
+    for (const m of mods) {
+      m.env.constEval = (n: string) => eng.forceConstIn(m.env, n, '');
+      m.env.exprEval = (e: any) =>
+        eng.ev(e, { inst: null, locals: new Map(), rootName: '', menv: m.env });
     }
-  for (const v of entry.env.roots.values()) eng.forceAll(v, false);
-  eng.phase = 2;
-  for (let i = 0; i < eng.deferredSlots.length; i++)
-    eng.forceSlotSafe(eng.deferredSlots[i].inst, eng.deferredSlots[i].name);
-  eng.bindDeferredRoots();
-  for (const v of entry.env.roots.values()) eng.forceAll(v, true);
+    // bound documents first: an output may read an input (§5.5), and a
+    // bound input is a root of the universe (§9.2); unbound inputs with a
+    // fallback bind on first demand (§9.4)
+    for (const b of binds) {
+      const m = b.module ?? entry;
+      const decl = m.env.inputs.get(b.input)!;
+      const sc: any = { inst: null, locals: new Map(), rootName: b.input, menv: m.env };
+      eng.bindRoot(b.input, b.raw, m.env.resolve(decl.type), sc, false);
+    }
+    for (const m of mods)
+      for (const o of m.env.outputs) {
+        const sc: any = { inst: null, locals: new Map(), rootName: o.name, menv: m.env };
+        eng.bindRoot(o.name, o.expr, m.env.resolve(o.type), sc, true);
+      }
+  };
+  const eng = Engine.evaluate(entry.env, bind, () => entry.env.roots.values());
   eng.validateAll('');
   // §6.7: evaluation- and validation-time diagnostics in (path, id) order
   entry.env.diagnostics.splice(

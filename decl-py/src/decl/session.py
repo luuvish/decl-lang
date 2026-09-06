@@ -700,14 +700,10 @@ class Session:
                 continue
             eng.bind_root(name, expr, rt, Scope(None, {}, name, entry.env), True)
         eng.force_all_roots(False)
-        eng.phase = 2
-        i = 0
-        while i < len(eng.deferred_slots):
-            inst, name = eng.deferred_slots[i]
-            eng.force_slot_safe(inst, name)
-            i += 1
-        eng.bind_deferred_roots()
-        eng.force_all_roots(True)
+        # an incremental round answers `$referrers` from what it holds; a
+        # universe that needs another round is evaluated afresh
+        if not eng.settle()["stable"]:
+            return None
         # 5. the asserts of the instances that are new or whose asserts read what changed
         for inst in list(env.registry):
             key = f"assert:{path_str(inst.path)}"
@@ -807,45 +803,43 @@ class Session:
             return finish()
 
         t2 = _now()
-        eng = Engine(entry.env)
-        for m in b["modules"]:
-            menv = m.env
-            menv.const_eval = (lambda e_: lambda n: eng.force_const_in(e_, n, ""))(menv)
-            menv.expr_eval = (lambda e_: lambda x: eng.ev(x, Scope(None, {}, "", e_)))(menv)
-        # documents first (an output may read an input, §5.5), then the
-        # modules' outputs, then the session's
-        for name, d in st.documents.items():
-            m = next((x for x in b["modules"] if name in x.env.inputs), entry)
-            rt = m.env.resolve(m.env.inputs[name]["type"])
-            eng.bind_root(name, d.doc, rt, Scope(None, {}, name, m.env), False)
-        for m in b["modules"]:
-            for o in m.env.outputs:
-                eng.bind_root(
-                    o["name"],
-                    o["expr"],
-                    m.env.resolve(o["type"]),
-                    Scope(None, {}, o["name"], m.env),
-                    True,
-                )
-        for name, expr, rt in session_roots:
-            eng.bind_root(name, expr, rt, Scope(None, {}, name, entry.env), True)
+
+        def bind(eng: Engine) -> None:
+            for m in b["modules"]:
+                menv = m.env
+                menv.const_eval = (lambda e_: lambda n: eng.force_const_in(e_, n, ""))(menv)
+                menv.expr_eval = (lambda e_: lambda x: eng.ev(x, Scope(None, {}, "", e_)))(menv)
+            # documents first (an output may read an input, §5.5), then the
+            # modules' outputs, then the session's
+            for name, d in st.documents.items():
+                m = next((x for x in b["modules"] if name in x.env.inputs), entry)
+                rt = m.env.resolve(m.env.inputs[name]["type"])
+                eng.bind_root(name, d.doc, rt, Scope(None, {}, name, m.env), False)
+            for m in b["modules"]:
+                for o in m.env.outputs:
+                    eng.bind_root(
+                        o["name"],
+                        o["expr"],
+                        m.env.resolve(o["type"]),
+                        Scope(None, {}, o["name"], m.env),
+                        True,
+                    )
+            for name, expr, rt in session_roots:
+                eng.bind_root(name, expr, rt, Scope(None, {}, name, entry.env), True)
+
         out.session_roots = session_roots
-        out.eng = eng
-        out.timing["bind"] = _now() - t2
         if mode == "lazy":
+            eng = Engine(entry.env)
+            bind(eng)
+            out.eng = eng
+            out.timing["bind"] = _now() - t2
             eng.phase = 2
             out.diags = entry.env.diagnostics
             return finish()
         t3 = _now()
-        eng.force_all_roots(False)
-        eng.phase = 2
-        i = 0
-        while i < len(eng.deferred_slots):
-            inst, name = eng.deferred_slots[i]
-            eng.force_slot_safe(inst, name)
-            i += 1
-        eng.bind_deferred_roots()
-        eng.force_all_roots(True)
+        eng = Engine.evaluate(entry.env, bind)
+        out.eng = eng
+        out.timing["bind"] = t3 - t2
         eng.validate_all("")
         entry.env.diagnostics[:] = sort_diags(entry.env.diagnostics)  # §6.7
         out.diags = entry.env.diagnostics

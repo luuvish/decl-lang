@@ -1223,21 +1223,11 @@ impl Session {
             eng.bind_root(name, RootSrc::Expr(expr), rt, &sc);
         }
         eng.force_roots(&env);
-        eng.set_phase(2);
-        let mut i = 0;
-        loop {
-            let item = {
-                let d = eng.deferred_slots.borrow();
-                if i >= d.len() {
-                    break;
-                }
-                d[i].clone()
-            };
-            eng.force_slot_safe(&item.0, &item.1);
-            i += 1;
+        // an incremental round answers `$referrers` from what it holds; a
+        // universe that needs another round is evaluated afresh
+        if !eng.settle(&env, HashMap::new()).stable {
+            return None;
         }
-        eng.bind_deferred_roots();
-        eng.force_roots(&env);
         // 5. the asserts of the instances that are new or whose asserts read what changed
         for inst in env.registry_snapshot() {
             let key = format!("assert:{}", path_str(&inst.borrow().path, None));
@@ -1411,51 +1401,58 @@ impl Session {
         }
 
         let t2 = Instant::now();
-        let eng = Engine::new(entry.env.clone());
-        for m in &out.modules {
-            eng.install_hooks(&m.env, true);
-        }
-        // documents first (an output may read an input, §5.5), then the
-        // modules' outputs, then the session's
-        for (name, d) in &st.documents {
-            let m = out
-                .modules
-                .iter()
-                .find(|x| x.env.inputs.borrow().contains_key(name))
-                .cloned()
-                .unwrap_or_else(|| entry.clone());
-            let decl = m.env.inputs.borrow().get(name).cloned();
-            let Some((ty_ast, _)) = decl else { continue };
-            let sc = Scope::new(name, Some(m.env.clone()));
-            match m.env.resolve(&ty_ast, None) {
-                Ok(rt) => eng.bind_root(name, RootSrc::Doc(d.doc.clone()), &rt, &sc),
-                Err(e) => entry.env.report(Diag::error(e, name.clone(), None)),
+        let modules = out.modules.clone();
+        let bind = |eng: &Rc<Engine>| {
+            for m in &modules {
+                eng.install_hooks(&m.env, true);
             }
-        }
-        for m in &out.modules {
-            let outs = m.env.outputs.borrow().clone();
-            for (name, ty_ast, expr) in outs {
-                let sc = Scope::new(&name, Some(m.env.clone()));
+            // documents first (an output may read an input, §5.5), then the
+            // modules' outputs, then the session's
+            for (name, d) in &st.documents {
+                let m = modules
+                    .iter()
+                    .find(|x| x.env.inputs.borrow().contains_key(name))
+                    .cloned()
+                    .unwrap_or_else(|| entry.clone());
+                let decl = m.env.inputs.borrow().get(name).cloned();
+                let Some((ty_ast, _)) = decl else { continue };
+                let sc = Scope::new(name, Some(m.env.clone()));
                 match m.env.resolve(&ty_ast, None) {
-                    Ok(rt) => eng.bind_root(&name, RootSrc::Expr(&expr), &rt, &sc),
+                    Ok(rt) => eng.bind_root(name, RootSrc::Doc(d.doc.clone()), &rt, &sc),
                     Err(e) => entry.env.report(Diag::error(e, name.clone(), None)),
                 }
             }
-        }
-        for (name, expr, rt) in &session_roots {
-            let sc = Scope::new(name, Some(entry.env.clone()));
-            eng.bind_root(name, RootSrc::Expr(expr), rt, &sc);
-        }
-        out.session_roots = session_roots;
-        out.eng = Some(eng.clone());
-        out.timing.bind = ms(t2);
+            for m in &modules {
+                let outs = m.env.outputs.borrow().clone();
+                for (name, ty_ast, expr) in outs {
+                    let sc = Scope::new(&name, Some(m.env.clone()));
+                    match m.env.resolve(&ty_ast, None) {
+                        Ok(rt) => eng.bind_root(&name, RootSrc::Expr(&expr), &rt, &sc),
+                        Err(e) => entry.env.report(Diag::error(e, name.clone(), None)),
+                    }
+                }
+            }
+            for (name, expr, rt) in &session_roots {
+                let sc = Scope::new(name, Some(entry.env.clone()));
+                eng.bind_root(name, RootSrc::Expr(expr), rt, &sc);
+            }
+        };
         if mode == Mode::Lazy {
+            let eng = Engine::new(entry.env.clone());
+            bind(&eng);
+            out.session_roots = session_roots;
+            out.eng = Some(eng.clone());
+            out.timing.bind = ms(t2);
             eng.set_phase(2);
             out.diags = entry.env.diagnostics_vec();
             return finish(out);
         }
         let t3 = Instant::now();
-        eng.drive(&entry.env);
+        let eng = Engine::evaluate(&entry.env, &bind);
+        out.session_roots = session_roots;
+        out.eng = Some(eng.clone());
+        out.timing.bind = ms(t2) - ms(t3);
+        eng.validate_all("");
         out.diags = entry.env.diagnostics_vec(); // sorted by drive's caller? no: sorted here (§6.7)
         let sorted = sort_diags(out.diags.clone());
         entry.env.diag_set(sorted.clone());
