@@ -1,0 +1,5 @@
+// @expect-phase: binding
+// @expect-error: E5008
+// std.array.sort orders one kind of primitive per call: a string among
+// ints is outside its domain (§13.2)
+export output o: (int | string)[] = std.array.sort([1, "a", 2])

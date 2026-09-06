@@ -65,8 +65,48 @@ pub struct Engine {
     const_envs: RefCell<Vec<Rc<Env>>>,
     /// the answers' references into the previous round, by identity
     snap_refs: RefCell<HashMap<usize, (Rc<SegPath>, Rc<Engine>)>>,
+    /// an unmaterialized literal read as a value is materialized once (by identity; the literal is
+    /// kept alive): its elements are pure, and a chain of spreads (a fold accumulating an array)
+    /// would otherwise re-evaluate every level at every read
+    mat_cache: RefCell<HashMap<usize, (Value, Value)>>,
 }
 
+/// the values `std.array.sort` orders: one primitive kind per call (§13.2)
+fn is_orderable(x: &Value) -> bool {
+    matches!(x, Value::Int(_) | Value::Float(_) | Value::Str(_))
+}
+/// int and float by value, strings by code point (§4.5); a mix of kinds is a domain error
+fn cmp_prim(x: &Value, y: &Value) -> R<Ordering> {
+    match (x, y) {
+        (Value::Str(a), Value::Str(b)) => Ok(a.chars().cmp(b.chars())),
+        (Value::Int(a), Value::Int(b)) => Ok(a.cmp(b)),
+        (Value::Float(a), Value::Float(b)) => Ok(a.partial_cmp(b).unwrap_or(Equal)),
+        (Value::Int(a), Value::Float(b)) => {
+            Ok(a.to_f64().unwrap_or(0.0).partial_cmp(b).unwrap_or(Equal))
+        }
+        (Value::Float(a), Value::Int(b)) => {
+            Ok(a.partial_cmp(&b.to_f64().unwrap_or(0.0)).unwrap_or(Equal))
+        }
+        _ => err_code("std.array.sort: elements must be of one kind", "E5008"),
+    }
+}
+/// a stable sort by key (equal keys keep their order)
+fn sort_keyed(keyed: &mut [(Value, Value)]) -> R<()> {
+    let mut failed: Option<Fail> = None;
+    keyed.sort_by(|p, q| match cmp_prim(&p.0, &q.0) {
+        Ok(o) => o,
+        Err(e) => {
+            if failed.is_none() {
+                failed = Some(e);
+            }
+            Equal
+        }
+    });
+    match failed {
+        Some(e) => Err(e),
+        None => Ok(()),
+    }
+}
 /// one `$referrers` edge: every referrer's path (keyed by its text) with the places its member refers to
 type Edge = BTreeMap<String, (SegPath, Vec<SegPath>)>;
 /// the universe a round answers from
@@ -314,6 +354,7 @@ impl Engine {
             computing_edges: RefCell::new(HashSet::new()),
             const_envs: RefCell::new(vec![]),
             snap_refs: RefCell::new(HashMap::new()),
+            mat_cache: RefCell::new(HashMap::new()),
         });
         let w = Rc::downgrade(&eng);
         *env.tagger.borrow_mut() = Some(Rc::new(move || {
@@ -1439,6 +1480,45 @@ impl Engine {
                 }
                 Ok(acc)
             }
+            "array.sort" => {
+                let mut items = vec![];
+                for x in self.mat_arr(arg(&a, 0, name)?)? {
+                    items.push(self.mat_val(x)?);
+                }
+                if items.iter().any(|x| !is_orderable(x)) {
+                    return Err(domain("elements must be int, float, or string".into()));
+                }
+                let mut keyed: Vec<(Value, Value)> =
+                    items.into_iter().map(|x| (x.clone(), x)).collect();
+                sort_keyed(&mut keyed)?;
+                Ok(arr(keyed.into_iter().map(|(_, x)| x).collect()))
+            }
+            "array.sort_by" => {
+                let mut keyed = vec![];
+                for x in self.mat_arr(arg(&a, 0, name)?)? {
+                    let k = self.mat_val(self.call(arg(&a, 1, name)?, vec![x.clone()], sc)?)?;
+                    if !is_orderable(&k) {
+                        return Err(domain("keys must be int, float, or string".into()));
+                    }
+                    keyed.push((k, x));
+                }
+                sort_keyed(&mut keyed)?;
+                Ok(arr(keyed.into_iter().map(|(_, x)| x).collect()))
+            }
+            "array.unique" => {
+                let mut out: Vec<Value> = vec![];
+                for x in self.mat_arr(arg(&a, 0, name)?)? {
+                    if !out.iter().any(|y| value_eq(y, &x)) {
+                        out.push(x);
+                    }
+                }
+                Ok(arr(out))
+            }
+            "array.reverse" => {
+                let mut items = self.mat_arr(arg(&a, 0, name)?)?;
+                items.reverse();
+                Ok(arr(items))
+            }
             "map.keys" => Ok(arr(self
                 .mat_map(arg(&a, 0, name)?)?
                 .borrow()
@@ -1675,10 +1755,27 @@ impl Engine {
     /// A value with its literal (or document) form materialized.
     pub fn mat_val(&self, v: Value) -> R<Value> {
         let d = self.deref(v)?;
-        if matches!(d, Value::PreObj(_) | Value::PreArr(_) | Value::JObj(_)) {
+        if matches!(d, Value::PreObj(_) | Value::PreArr(_)) {
+            return self.mat_pre(d);
+        }
+        if matches!(d, Value::JObj(_)) {
             return self.materialize(d, &[]);
         }
         Ok(d)
+    }
+    /// An unmaterialized literal materialized once (see `mat_cache`).
+    fn mat_pre(&self, d: Value) -> R<Value> {
+        let key = match &d {
+            Value::PreArr(rc) => Rc::as_ptr(rc) as usize,
+            Value::PreObj(rc) => Rc::as_ptr(rc) as usize,
+            _ => return self.materialize(d, &[]),
+        };
+        if let Some((_, m)) = self.mat_cache.borrow().get(&key) {
+            return Ok(m.clone());
+        }
+        let m = self.materialize(d.clone(), &[])?;
+        self.mat_cache.borrow_mut().insert(key, (d, m.clone()));
+        Ok(m)
     }
     /// The entries of an unbound object literal with its spreads (§4.2)
     /// expanded in place: a spread copies the entries of an object-valued
@@ -1778,7 +1875,7 @@ impl Engine {
     fn mat_arr(&self, v: &Value) -> R<Vec<Value>> {
         let mut d = self.deref(v.clone())?;
         if matches!(d, Value::PreObj(_) | Value::PreArr(_)) {
-            d = self.materialize(d, &[])?;
+            d = self.mat_pre(d)?;
         }
         match d {
             Value::Arr(a) => Ok(a.borrow().items.clone()),
@@ -1788,7 +1885,7 @@ impl Engine {
     fn mat_map(&self, v: &Value) -> R<Rc<RefCell<MapV>>> {
         let mut d = self.deref(v.clone())?;
         if matches!(d, Value::PreObj(_) | Value::PreArr(_)) {
-            d = self.materialize(d, &[])?;
+            d = self.mat_pre(d)?;
         }
         match d {
             Value::Map(m) => Ok(m),

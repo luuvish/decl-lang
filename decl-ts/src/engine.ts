@@ -31,6 +31,35 @@ import type { Expr } from './ast.ts';
 import { subsumes } from './subsume.ts';
 
 type Scope = { inst: RecInst | null; locals: Map<string, any>; rootName: string; menv?: Env };
+/** the values `std.array.sort` orders: one primitive kind per call (§13.2) */
+function isOrderable(x: any): boolean {
+  return typeof x === 'bigint' || typeof x === 'number' || typeof x === 'string';
+}
+/** int and float by value, strings by code point (§4.5); a mix of kinds is a domain error */
+function cmpPrim(x: any, y: any): number {
+  if (typeof x === 'string' && typeof y === 'string') {
+    const a = [...x],
+      b = [...y];
+    for (let i = 0; i < Math.min(a.length, b.length); i++) {
+      const d = a[i].codePointAt(0)! - b[i].codePointAt(0)!;
+      if (d !== 0) return d;
+    }
+    return a.length - b.length;
+  }
+  if (typeof x === 'string' || typeof y === 'string')
+    throw new EvalErr('std.array.sort: elements must be of one kind', 'E5008');
+  const p = typeof x === 'bigint' ? Number(x) : x;
+  const q = typeof y === 'bigint' ? Number(y) : y;
+  if (typeof x === 'bigint' && typeof y === 'bigint') return x < y ? -1 : x > y ? 1 : 0;
+  return p < q ? -1 : p > q ? 1 : 0;
+}
+/** a stable sort (equal elements keep their order) */
+function stableSort<T>(xs: T[], cmp: (a: T, b: T) => number): T[] {
+  return xs
+    .map((x, i) => ({ x, i }))
+    .sort((a, b) => cmp(a.x, b.x) || a.i - b.i)
+    .map((e) => e.x);
+}
 /** one `$referrers` edge: every referrer's path (keyed by its text) with the places its member refers to */
 type Edge = Map<string, { path: Seg[]; refs: Seg[][] }>;
 /** the references under a value: arrays and maps are traversed, records are not (§7.6) */
@@ -841,6 +870,29 @@ export class Engine {
       }
       case 'array.fold':
         return this.matArr(a[0]).reduce((acc, x) => this.call(a[2], [acc, x], sc), a[1]);
+      case 'array.sort': {
+        const items = this.matArr(a[0]).map((x) => this.matVal(x));
+        for (const x of items)
+          if (!isOrderable(x)) domain('elements must be int, float, or string');
+        return { __arr: true, items: stableSort(items, (x, y) => cmpPrim(x, y)), path: [] };
+      }
+      case 'array.sort_by': {
+        const items = this.matArr(a[0]);
+        const keyed = items.map((x) => ({ x, k: this.matVal(this.call(a[1], [x], sc)) }));
+        for (const e of keyed) if (!isOrderable(e.k)) domain('keys must be int, float, or string');
+        return {
+          __arr: true,
+          items: stableSort(keyed, (p, q) => cmpPrim(p.k, q.k)).map((e) => e.x),
+          path: [],
+        };
+      }
+      case 'array.unique': {
+        const out: any[] = [];
+        for (const x of this.matArr(a[0])) if (!out.some((y) => valueEq(y, x))) out.push(x);
+        return { __arr: true, items: out, path: [] };
+      }
+      case 'array.reverse':
+        return { __arr: true, items: [...this.matArr(a[0])].reverse(), path: [] };
       case 'map.keys':
         return { __arr: true, items: [...this.matMap(a[0]).entries.keys()], path: [] };
       case 'map.values':
@@ -971,15 +1023,24 @@ export class Engine {
     if (isRec(d)) return d;
     throw new EvalErr('std.object.merge: expected records', 'E5008');
   }
+  // an unmaterialized literal read as a value is materialized once: its
+  // elements are pure, and a chain of spreads (a fold accumulating an array)
+  // would otherwise re-evaluate every level at every read
   matArr(v: any): any[] {
     let d = this.deref(v);
-    if (d && d.__pre) d = this.materialize(d, [], null, null as any);
+    if (d && d.__pre) {
+      if (!d.flatValue) d.flatValue = this.materialize(d, [], null, null as any);
+      d = d.flatValue;
+    }
     if (isArr(d)) return d.items;
     throw new EvalErr('expected array');
   }
   matMap(v: any): any {
     let d = this.deref(v);
-    if (d && d.__pre) d = this.materialize(d, [], null, null as any);
+    if (d && d.__pre) {
+      if (!d.flatValue) d.flatValue = this.materialize(d, [], null, null as any);
+      d = d.flatValue;
+    }
     if (isMap(d)) return d;
     if (isRec(d)) {
       // a record reads as the map of its value entries (§3.17)

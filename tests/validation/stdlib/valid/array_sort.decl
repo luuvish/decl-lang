@@ -1,0 +1,13 @@
+// std.array.sort orders one primitive kind per call (ints and floats by
+// value, strings by code point), sort_by orders by a key and is stable,
+// unique keeps first occurrences, reverse reverses (§13.2, v0.4.3)
+type Row = { n: string, v: int }
+export output o: { a: string[], b: int[], f: float[], c: Row[], d: int[], e: string[], empty: int[] } = {
+    a: std.array.sort(["b", "a", "ab", "B", "é", ""]),
+    b: std.array.sort([3, 1, 2, 1]),
+    f: std.array.sort([2.5, -1.0, 0.5]),
+    c: std.array.sort_by([{ n: "x", v: 2 }, { n: "y", v: 1 }, { n: "z", v: 2 }], (r) => r.v),
+    d: std.array.reverse([1, 2, 3]),
+    e: std.array.unique(["a", "b", "a", "c", "b"]),
+    empty: std.array.sort([]),
+}

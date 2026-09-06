@@ -1,0 +1,12 @@
+// a fold whose accumulator grows by spreading the previous accumulator
+// nests one unmaterialized literal per step; each level is materialized
+// once (§9.4 memoization), so the sort below is quadratic, not exponential
+func insert_sorted(acc: string[], x: string): string[] =
+    [...[y for y in acc if y <= x], x, ...[y for y in acc if y > x]]
+func sorted(xs: string[]): string[] = std.array.fold(xs, [], insert_sorted)
+const names = [`n${(i * 37) % 64}` for i in 0..<64]
+export output o: { count: int, first: string, last: string } = {
+    count: std.array.count(sorted(names)),
+    first: sorted(names)[0],
+    last: sorted(names)[63],
+}

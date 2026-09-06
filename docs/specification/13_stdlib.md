@@ -40,6 +40,10 @@ additions come by revision, append-only like everything else.
 | `filter<T>(xs: T[], p: (T) => bool): T[]` | elements satisfying `p`, in order |
 | `fold<T, A>(xs: T[], init: A, f: (A, T) => A): A` | left fold: `f(…f(f(init, xs[0]), xs[1])…)` — the language's general iteration (D17) |
 | `sum<T: int \| float>(xs: T[]): T` | left-to-right sum; `0`/`0.0` on `[]`; float rounding per element in array order (§9.5) |
+| `sort<T: int \| float \| string>(xs: T[]): T[]` | ascending, stable: `int`/`float` by value, `string` by code point (§4.5); every element of one kind, or E5008 (v0.4.3) |
+| `sort_by<T, K: int \| float \| string>(xs: T[], key: (T) => K): T[]` | ascending by `key(x)`, stable (equal keys keep array order); the keys are ordered as `sort` orders them (v0.4.3) |
+| `unique<T>(xs: T[]): T[]` | the first occurrence of every element, in order (§4.5 equality, including place equality for references) (v0.4.3) |
+| `reverse<T>(xs: T[]): T[]` | the elements in reverse order (v0.4.3) |
 
 Predicates run under ordinary evaluation: an erroring predicate makes
 the call error (root-cause at the element's path). `all`/`any` are

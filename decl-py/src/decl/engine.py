@@ -60,6 +60,19 @@ def _is_num(v: Any) -> bool:
     return is_int(v) or is_float(v)
 
 
+def _is_orderable(x: Any) -> bool:
+    """the values `std.array.sort` orders: one primitive kind per call (§13.2)"""
+    return is_int(x) or is_float(x) or is_str(x)
+
+
+def _sort_keyed(keyed: list[tuple[Any, Any]]) -> list[Any]:
+    """a stable sort by key: int and float by value, strings by code point (§4.5);
+    a mix of kinds is a domain error"""
+    if any(is_str(k) for k, _ in keyed) and not all(is_str(k) for k, _ in keyed):
+        raise EvalErr("std.array.sort: elements must be of one kind", "E5008")
+    return [x for _, x in sorted(keyed, key=lambda e: e[0])]
+
+
 def _refs_in(v: Any, out: list[Any]) -> None:
     """the references under a value: arrays and maps are traversed, records are not (§7.6)"""
     if isinstance(v, Ref):
@@ -463,9 +476,19 @@ class Engine:
 
     def mat_val(self, v: Any) -> Any:
         d = self.deref(v)
-        if isinstance(d, (PreObj, PreArr, JObj)):
+        if isinstance(d, (PreObj, PreArr)):
+            return self.mat_pre(d)
+        if isinstance(d, JObj):
             return self.materialize(d, [], None, None)
         return d
+
+    def mat_pre(self, d: Any) -> Any:
+        """an unmaterialized literal read as a value is materialized once: its
+        elements are pure, and a chain of spreads (a fold accumulating an array)
+        would otherwise re-evaluate every level at every read"""
+        if d.flat_value is None:
+            d.flat_value = self.materialize(d, [], None, None)
+        return d.flat_value
 
     def member_of(self, v: Any, rt: dict[str, Any], sc: Scope) -> bool:
         from .subsume import subsumes
@@ -893,6 +916,27 @@ class Engine:
             for x in self.mat_arr(a[0]):
                 acc = self.call(a[2], [acc, x], sc)
             return acc
+        if name == "array.sort":
+            items = [self.mat_val(x) for x in self.mat_arr(a[0])]
+            if any(not _is_orderable(x) for x in items):
+                raise EvalErr(f"std.{name}: elements must be int, float, or string", "E5008")
+            return ArrV(_sort_keyed([(x, x) for x in items]), [])
+        if name == "array.sort_by":
+            keyed = []
+            for x in self.mat_arr(a[0]):
+                k = self.mat_val(self.call(a[1], [x], sc))
+                if not _is_orderable(k):
+                    raise EvalErr(f"std.{name}: keys must be int, float, or string", "E5008")
+                keyed.append((k, x))
+            return ArrV(_sort_keyed(keyed), [])
+        if name == "array.unique":
+            out: list[Any] = []
+            for x in self.mat_arr(a[0]):
+                if not any(value_eq(y, x) for y in out):
+                    out.append(x)
+            return ArrV(out, [])
+        if name == "array.reverse":
+            return ArrV(list(reversed(self.mat_arr(a[0]))), [])
         if name == "map.keys":
             return ArrV(list(self.mat_map(a[0]).entries.keys()), [])
         if name == "map.values":
@@ -1023,7 +1067,7 @@ class Engine:
     def mat_arr(self, v: Any) -> list[Any]:
         d = self.deref(v)
         if isinstance(d, (PreArr, PreObj)):
-            d = self.materialize(d, [], None, None)
+            d = self.mat_pre(d)
         if isinstance(d, ArrV):
             return d.items
         raise EvalErr("expected array")
@@ -1031,7 +1075,7 @@ class Engine:
     def mat_map(self, v: Any) -> MapV:
         d = self.deref(v)
         if isinstance(d, (PreArr, PreObj)):
-            d = self.materialize(d, [], None, None)
+            d = self.mat_pre(d)
         if isinstance(d, MapV):
             return d
         if isinstance(d, RecInst):

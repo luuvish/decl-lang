@@ -8,6 +8,7 @@ import json
 import os
 import re
 import sys
+import threading
 from typing import Any
 
 from .checker import check_module
@@ -460,6 +461,22 @@ def usage() -> int:
 
 
 def main(argv: list[str] | None = None) -> int:
+    """The command line; the work runs on a thread with a large stack and a
+    matching recursion limit: a member reading a member reading … nests one
+    group of frames per hop, and a real document's chains run hundreds of
+    hops deep (§9.9 sets no limit)."""
+    if threading.current_thread() is not threading.main_thread():
+        return _main(argv)
+    result: list[int] = []
+    threading.stack_size(1 << 30)
+    sys.setrecursionlimit(1_000_000)
+    worker = threading.Thread(target=lambda: result.append(_main(argv)), name="decl")
+    worker.start()
+    worker.join()
+    return result[0] if result else 1
+
+
+def _main(argv: list[str] | None = None) -> int:
     if argv is None:
         argv = sys.argv[1:]
     if not argv:

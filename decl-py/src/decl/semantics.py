@@ -107,17 +107,19 @@ class PreVal:
 
 
 class PreObj:
-    __slots__ = ("entries",)
+    __slots__ = ("entries", "flat_value")
 
     def __init__(self, entries: list[Any]):
         self.entries = entries  # [(key, PreVal | value)]
+        self.flat_value: Any = None  # materialized once, when read as a value
 
 
 class PreArr:
-    __slots__ = ("items",)
+    __slots__ = ("flat_value", "items")
 
     def __init__(self, items: list[Any]):
         self.items = items  # [(spread: bool, PreVal | value)]
+        self.flat_value: Any = None  # materialized once, when read as a value
 
 
 class JObj:

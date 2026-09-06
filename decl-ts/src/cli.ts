@@ -23,6 +23,7 @@ import { judgeCorpus } from './conformance.ts';
 import { format, initFormatter } from './fmt.ts';
 import { runRepl } from './repl.ts';
 import { VERSION } from './version.ts';
+import { Worker, isMainThread } from 'node:worker_threads';
 
 const args = process.argv.slice(2);
 const cmd = args.shift();
@@ -37,6 +38,30 @@ if (cmd === 'repl') {
   await initParser();
   await initFormatter();
   process.exit(await runRepl(args));
+}
+
+// the other commands run on a thread with a large stack and heap: a member
+// reading a member reading … nests one group of host frames per hop, and a
+// real document's chains run hundreds of hops deep (§9.9 sets no limit)
+if (isMainThread && !process.env.DECL_IN_THREAD) {
+  // a reader that stops early (`| head`) closes the pipe: not an error here
+  process.stdout.on('error', (e: NodeJS.ErrnoException) => {
+    if (e.code !== 'EPIPE') throw e;
+  });
+  const worker = new Worker(new URL(import.meta.url), {
+    argv: process.argv.slice(2),
+    env: { ...process.env, DECL_IN_THREAD: '1' },
+    resourceLimits: { stackSizeMb: 256, maxOldGenerationSizeMb: 16384 },
+  });
+  const code: number = await new Promise((done) => {
+    worker.on('error', (e) => {
+      console.error(e);
+      done(1);
+    });
+    worker.on('exit', (c) => done(c));
+  });
+  await new Promise<void>((done) => process.stdout.write('', () => done()));
+  process.exit(code);
 }
 
 const flags = new Map<string, string | boolean>();
@@ -580,3 +605,5 @@ if (jsonMode && process.exitCode !== 2) {
       : JSON.stringify(collected),
   );
 }
+// on the worker thread, the exit code is the thread's (the streams drain first)
+if (!isMainThread) await new Promise<void>((done) => process.stdout.write('', () => done()));
