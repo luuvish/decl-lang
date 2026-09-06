@@ -20,7 +20,10 @@ type TypeAstBody =
   | { k: 'func'; params: TypeAst[]; ret: TypeAst }
   | { k: 'named'; name: string; args: TypeAst[]; preds?: Expr[]; ext?: TypeAst };
 
-export type MemberAst = MemberAstBody & { loc?: Loc };
+/** an annotation (§5.10): `@name` or `@name(args)` — metadata only (D4) */
+export type Annotation = { name: string; args: Expr[]; loc?: Loc };
+
+export type MemberAst = MemberAstBody & { annotations?: Annotation[]; loc?: Loc };
 type MemberAstBody =
   | { m: 'value'; name: string; opt: boolean; type: TypeAst; dflt?: Expr }
   | { m: 'derived'; name: string; type?: TypeAst; expr: Expr; hidden?: boolean } // hidden: `x$ = e` (D34)
@@ -58,7 +61,7 @@ type ExprBody =
   | { e: 'pattern'; re: string }
   | { e: 'match'; subject: Expr; arms: { v: string; type?: TypeAst; body: Expr }[] };
 
-export type Decl = DeclBody & { exported?: boolean; loc?: Loc };
+export type Decl = DeclBody & { exported?: boolean; annotations?: Annotation[]; loc?: Loc };
 type DeclBody =
   | {
       d: 'type';

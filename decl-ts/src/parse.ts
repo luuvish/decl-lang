@@ -2,7 +2,16 @@
 // of ast.ts. This is the reference implementation's only parser front
 // end (ROADMAP: tree-sitter is the single canonical parser).
 import { Parser, Language, Node } from 'web-tree-sitter';
-import type { Decl, ElseTail, Expr, Loc, MemberAst, TemplateParts, TypeAst } from './ast.ts';
+import type {
+  Annotation,
+  Decl,
+  ElseTail,
+  Expr,
+  Loc,
+  MemberAst,
+  TemplateParts,
+  TypeAst,
+} from './ast.ts';
 
 // This module is platform-neutral: it does not know where the grammar
 // wasm lives. Node callers use node.ts (which locates it on disk);
@@ -50,17 +59,26 @@ function parseSourceUncached(src: string): ParseResult {
   const errors: { row: number; col: number }[] = [];
   collectErrors(tree.rootNode, errors);
   const decls: Decl[] = [];
+  // annotations precede the declaration they attach to as its siblings (§5.10)
+  let pending: Annotation[] = [];
   for (const c of tree.rootNode.namedChildren) {
     if (!c || c.type === 'ERROR') continue;
     let d: Decl | null;
     try {
+      if (c.type === 'annotation') {
+        pending.push(lowerAnnotation(c));
+        continue;
+      }
       d = lowerDecl(c);
     } catch {
       if (!errors.length) errors.push({ row: c.startPosition.row, col: c.startPosition.column });
+      pending = [];
       continue;
     }
     if (d) {
       if (c.previousSibling?.text === 'export' || d.d === 're_export') d.exported = true;
+      if (pending.length) d.annotations = pending;
+      pending = [];
       // the declaration's source range (Phase 6 foundations): the `export`
       // keyword, when present, is the previous sibling and is included
       const start =
@@ -96,6 +114,17 @@ const kids = (n: Node, type: string): Node[] =>
   n.namedChildren.filter((c): c is Node => !!c && c.type === type);
 const kid = (n: Node, type: string): Node | null =>
   n.namedChildren.find((c): c is Node => !!c && c.type === type) ?? null;
+
+// ---------------- annotations ----------------
+function lowerAnnotation(n: Node): Annotation {
+  return {
+    name: req(n, 'name').text,
+    args: operands(n)
+      .slice(1)
+      .map((c) => lowerExpr(c)),
+    loc: locOf(n),
+  };
+}
 
 // ---------------- declarations ----------------
 function lowerDecl(n: Node): Decl | null {
@@ -290,14 +319,23 @@ function lowerType0(n: Node): TypeAst {
     case 'record_type': {
       let open = false;
       const members: MemberAst[] = [];
+      let pending: Annotation[] = []; // a member's annotations precede it as siblings (§5.10)
       for (const c of n.namedChildren) {
         if (!c) continue;
         if (c.type === 'open_marker') {
           open = true;
           continue;
         }
+        if (c.type === 'annotation') {
+          pending.push(lowerAnnotation(c));
+          continue;
+        }
         const m = lowerMember(c);
-        if (m) members.push(m);
+        if (m) {
+          if (pending.length) m.annotations = pending;
+          pending = [];
+          members.push(m);
+        }
       }
       return { k: 'record', members, open };
     }

@@ -189,6 +189,8 @@ pub enum MemberAst {
         ty: TypeAst,
         /// the default, for a defaulted member
         dflt: Option<Rc<Expr>>,
+        /// the annotations (§5.10)
+        annotations: Vec<Annotation>,
         /// the source range
         loc: Option<Loc>,
     },
@@ -202,6 +204,8 @@ pub enum MemberAst {
         expr: Rc<Expr>,
         /// hidden (`x$ = e`)
         hidden: bool,
+        /// the annotations (§5.10)
+        annotations: Vec<Annotation>,
         /// the source range
         loc: Option<Loc>,
     },
@@ -211,6 +215,8 @@ pub enum MemberAst {
         variable: String,
         /// the declared type
         ty: TypeAst,
+        /// the annotations (§5.10)
+        annotations: Vec<Annotation>,
         /// the source range
         loc: Option<Loc>,
     },
@@ -222,6 +228,8 @@ pub enum MemberAst {
         cond: Rc<Expr>,
         /// the `else` tail
         tail: Option<Tail>,
+        /// the annotations (§5.10)
+        annotations: Vec<Annotation>,
         /// the source range
         loc: Option<Loc>,
     },
@@ -231,6 +239,8 @@ pub enum MemberAst {
         cond: Rc<Expr>,
         /// the members
         body: Vec<MemberAst>,
+        /// the annotations (§5.10)
+        annotations: Vec<Annotation>,
         /// the source range
         loc: Option<Loc>,
     },
@@ -254,6 +264,26 @@ impl MemberAst {
             | MemberAst::Context { loc, .. }
             | MemberAst::Assert { loc, .. }
             | MemberAst::When { loc, .. } => *loc = Some(l),
+        }
+    }
+    /// Attach the annotations (§5.10).
+    pub fn set_annotations(&mut self, a: Vec<Annotation>) {
+        match self {
+            MemberAst::Value { annotations, .. }
+            | MemberAst::Derived { annotations, .. }
+            | MemberAst::Context { annotations, .. }
+            | MemberAst::Assert { annotations, .. }
+            | MemberAst::When { annotations, .. } => *annotations = a,
+        }
+    }
+    /// the annotations (§5.10)
+    pub fn annotations(&self) -> &[Annotation] {
+        match self {
+            MemberAst::Value { annotations, .. }
+            | MemberAst::Derived { annotations, .. }
+            | MemberAst::Context { annotations, .. }
+            | MemberAst::Assert { annotations, .. }
+            | MemberAst::When { annotations, .. } => annotations,
         }
     }
     /// the member's name (`name` in the reference: value, derived, and assert members)
@@ -438,6 +468,17 @@ pub enum Expr {
 }
 
 #[derive(Debug, Clone)]
+/// an annotation (§5.10): `@name` or `@name(args)` — metadata only (D4)
+pub struct Annotation {
+    /// the name
+    pub name: String,
+    /// the arguments
+    pub args: Vec<Rc<Expr>>,
+    /// the source range
+    pub loc: Option<Loc>,
+}
+
+#[derive(Debug, Clone)]
 /// a parameter of a function, a type, or a diagnostic
 pub struct Param {
     /// the name
@@ -564,6 +605,8 @@ pub struct Decl {
     pub body: DeclBody,
     /// `export`
     pub exported: bool,
+    /// the annotations (§5.10)
+    pub annotations: Vec<Annotation>,
     /// the declaration's source range (Phase 6 foundations); `export` included
     pub loc: Option<Loc>,
 }

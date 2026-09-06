@@ -37,8 +37,12 @@ def judge_fixture(file: str, is_valid: bool) -> dict[str, Any]:
     parsed = parse_source(src)
     if is_valid:
         # a valid fixture must parse, check clean, AND evaluate its outputs
-        # without error-severity diagnostics
-        checks = check_module(parsed["decls"]) if not parsed["errors"] else []
+        # without error-severity diagnostics (a warning is not a failure)
+        checks = (
+            [d for d in check_module(parsed["decls"]) if d["severity"] == "error"]
+            if not parsed["errors"]
+            else []
+        )
         eval_errs = (
             [d for d in run_pipeline(parsed["decls"])["diags"] if d["severity"] == "error"]
             if (not parsed["errors"] and not checks)

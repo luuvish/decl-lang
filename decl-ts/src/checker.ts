@@ -9,7 +9,7 @@
 //   E4032 illegal member-kind transition
 //   E4052 ?? mixed with &&/|| unparenthesized
 //   E4094 context variable without / with an invalid context declaration
-import type { Decl, Expr, MemberAst, TypeAst } from './ast.ts';
+import type { Annotation, Decl, Expr, MemberAst, TypeAst } from './ast.ts';
 import { Env } from './semantics.ts';
 import type { Diag, RT } from './semantics.ts';
 import { subsumes, structurallyEmpty } from './subsume.ts';
@@ -595,6 +595,67 @@ export function checkModule(decls: Decl[], linked?: Env, hooks?: CheckHooks): Di
     } else if (d.d === 'unit' && d.factor) {
       const bad = constViolation(d.factor);
       if (bad) report('E4021', `non-constant unit factor for ${d.name}: ${bad} (§3.16)`);
+    }
+  }
+
+  // ---------- §5.10: annotations are metadata; an unknown one is a warning ----------
+  // known: `@deprecated` and `@doc` anywhere, `@render` on an output
+  // (docs/tooling/05_render.md); the warning keeps a typo visible (W0001)
+  const warnUnknown = (anns: Annotation[] | undefined, known: string[]) => {
+    for (const a of anns ?? [])
+      if (!known.includes(a.name))
+        out.push({
+          code: 'W0001',
+          message: `unknown annotation @${a.name}`,
+          severity: 'warn',
+          path: '',
+          ...(a.loc ? { loc: a.loc } : {}),
+        });
+  };
+  const annotatedMembers = (t: TypeAst | undefined): void => {
+    if (!t) return;
+    switch (t.k) {
+      case 'record':
+        for (const m of t.members) annotatedMember(m);
+        return;
+      case 'map':
+        annotatedMembers(t.key);
+        annotatedMembers(t.val);
+        return;
+      case 'array':
+        annotatedMembers(t.elem);
+        return;
+      case 'union':
+      case 'isect':
+        t.arms.forEach(annotatedMembers);
+        return;
+      case 'func':
+        t.params.forEach(annotatedMembers);
+        annotatedMembers(t.ret);
+        return;
+      case 'named':
+        t.args.forEach(annotatedMembers);
+        annotatedMembers(t.ext);
+        return;
+      default:
+        return;
+    }
+  };
+  const annotatedMember = (m: MemberAst) => {
+    warnUnknown(m.annotations, ['deprecated', 'doc']);
+    if (m.m === 'value' || m.m === 'context' || m.m === 'derived') annotatedMembers(m.type);
+    else if (m.m === 'when') m.body.forEach(annotatedMember);
+  };
+  for (const d of decls) {
+    warnUnknown(
+      d.annotations,
+      d.d === 'output' ? ['deprecated', 'doc', 'render'] : ['deprecated', 'doc'],
+    );
+    if (d.d === 'type' || d.d === 'output' || d.d === 'input' || d.d === 'const')
+      annotatedMembers(d.type);
+    else if (d.d === 'func') {
+      d.params.forEach((p) => annotatedMembers(p.type));
+      annotatedMembers(d.ret);
     }
   }
   return out;

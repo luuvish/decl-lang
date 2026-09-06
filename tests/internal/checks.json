@@ -20,6 +20,11 @@
     "check": "the document reader keeps an object's key order, reads an array of an integer, a float, a string, true, and null, keeps an integer beyond 2^53 exactly, and refuses trailing characters"
   },
   {
+    "module": "parse",
+    "name": "annotations",
+    "check": "`@deprecated\\ntype T = {\\n    @doc(\"x\")\\n    a: int\\n}` parses clean to a type declaration carrying one annotation named deprecated with no arguments, whose record's member carries one annotation named doc with the single string argument \"x\" (§5.10)"
+  },
+  {
     "module": "semantics",
     "name": "resolve_types",
     "check": "with `type A = int`, `type Vec<T, N: int> = T[N]`, `type V3 = Vec<int, 3>`, `type Small = 1..10` loaded, the names resolve to the types spelled `int`, `int[3..3]`, and `1..10`"

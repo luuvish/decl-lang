@@ -24,6 +24,7 @@ syn match   declType         "\<[A-Z]\w*\>"
 syn match   declTypeName     "\<type\s\+\zs\h\w*"
 syn match   declContextVar   "\$\h\w*"
 syn match   declBuiltin      "\$referrers\>"
+syn match   declAnnotation   "@\h\w*"
 
 " keywords
 syn keyword declKeyword      type const func output input export import from as dimension unit diagnostic
@@ -64,6 +65,7 @@ hi def link declProperty       Identifier
 hi def link declFunction       Function
 hi def link declContextVar     Identifier
 hi def link declBuiltin        Function
+hi def link declAnnotation     PreProc
 hi def link declOperator       Operator
 hi def link declPunctuation    Delimiter
 hi def link declSpread         Special

@@ -1033,7 +1033,7 @@ export class Session {
       errors:
         r.diags.filter((d) => d.severity === 'error' && isRootDiag(d, name)).length +
         (r.entry?.env.roots.has(name) ? 0 : r.eng ? 1 : 0),
-      warnings: r.diags.filter((d) => d.severity === 'warning' && isRootDiag(d, name)).length,
+      warnings: r.diags.filter((d) => d.severity === 'warn' && isRootDiag(d, name)).length,
     }));
     return { run: r, verdicts, diags };
   }

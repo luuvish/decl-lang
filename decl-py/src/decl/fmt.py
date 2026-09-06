@@ -202,6 +202,8 @@ def _spaced(a: Leaf, b: Leaf, prev: Leaf | None) -> bool:
         return False  # '>' falls through
     if _is_type_angle(b):
         return False  # Vec<...>, no space before either angle
+    if at == "@":
+        return False  # an annotation's name follows its `@`
     if at in ("(", "["):
         return False
     if bt in (")", "]", ",", ":"):

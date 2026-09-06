@@ -160,7 +160,7 @@ def evaluate(
         for m in r["modules"]
         for d in check_module(m.decls, m.env)
     ]
-    if checks:
+    if any(d["severity"] == "error" for d in checks):
         _fail("", checks)
     u = run_universe(r["modules"], entry, _bind_inputs(r["modules"], file, inputs))
     report = [_tagged(file, d) for d in u["diags"]]
@@ -214,13 +214,14 @@ def validate(
         raise DeclError(f"{file}: {len(parsed['errors'])} parse error(s)")
     decls = parsed["decls"]
     diags = [_tagged(file, d) for d in check_module(decls)]
-    if not diags:
+    # a warning of the checks (W0001) is returned beside the run's diagnostics
+    if not any(d["severity"] == "error" for d in diags):
         if _pairs(inputs):
             r = open_universe(file)
             u = run_universe(r["modules"], r["entry"], _bind_inputs(r["modules"], file, inputs))
-            diags = [_tagged(file, d) for d in u["diags"]]
+            diags += [_tagged(file, d) for d in u["diags"]]
         else:
-            diags = [_tagged(file, d) for d in run_pipeline(decls)["diags"]]
+            diags += [_tagged(file, d) for d in run_pipeline(decls)["diags"]]
     if expect_errors is not None:
         want = sorted(expect_errors)
         got = sorted(d.get("code") or "" for d in diags if d["severity"] == "error")

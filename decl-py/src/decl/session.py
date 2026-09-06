@@ -1088,9 +1088,7 @@ class Session:
             errors = sum(1 for d in r.diags if d["severity"] == "error" and _is_root_diag(d, name))
             if r.entry is None or name not in r.entry.env.roots:
                 errors += 1 if r.eng is not None else 0
-            warnings = sum(
-                1 for d in r.diags if d["severity"] == "warning" and _is_root_diag(d, name)
-            )
+            warnings = sum(1 for d in r.diags if d["severity"] == "warn" and _is_root_diag(d, name))
             verdicts.append({"name": name, "errors": errors, "warnings": warnings})
         return {"run": r, "verdicts": verdicts, "diags": diags}
 

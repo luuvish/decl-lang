@@ -45,6 +45,10 @@ contexts:
       pop: true
 
   declarations:
+    - match: '(@)({{ident}})'
+      captures:
+        1: punctuation.definition.annotation.decl
+        2: entity.other.attribute-name.decl
     - match: '\b(export)\b'
       scope: keyword.control.export.decl
     - match: '\b(import|from)\b'

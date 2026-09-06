@@ -253,7 +253,7 @@ def loc_of_path(decls: list[Any], segs: list[Any]) -> dict[str, Any] | None:
 
 
 def severity_of(s: str) -> int:
-    return 1 if s == "error" else 2 if s == "warning" else 3
+    return 1 if s == "error" else 2 if s == "warn" else 3
 
 
 def analyze(uri: str) -> None:

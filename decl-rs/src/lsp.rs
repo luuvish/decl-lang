@@ -475,7 +475,7 @@ fn loc_of_path(decls: &[Decl], segs: &[Seg]) -> Option<Loc> {
 fn severity_of(s: &str) -> i64 {
     match s {
         "error" => 1,
-        "warning" => 2,
+        "warn" => 2,
         _ => 3,
     }
 }
@@ -3444,6 +3444,7 @@ impl<'a> HintWalk<'a> {
             expr,
             hidden,
             loc: Some(_),
+            ..
         } = m
         {
             if self.hints.0 {

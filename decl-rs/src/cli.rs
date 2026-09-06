@@ -172,23 +172,22 @@ pub fn evaluate(
                 .collect::<Vec<_>>()
         })
         .collect();
-    if !checks.is_empty() {
+    if checks.iter().any(|(_, d)| d.severity == "error") {
         return (1, None, checks, vec![]);
     }
     let binds = match input_binds(&r.modules, inputs) {
         Ok(b) => b,
         Err((code, diag)) => {
-            return (
-                code,
-                None,
-                diag.into_iter().map(|d| (file.to_string(), d)).collect(),
-                vec![],
-            )
+            let mut all = checks;
+            all.extend(diag.into_iter().map(|d| (file.to_string(), d)));
+            return (code, None, all, vec![]);
         }
     };
     let (eng, diags) = run_universe(&r.modules, &entry, binds);
+    let mut all = checks; // a warning of the checks (W0001) is reported with the run's
+    all.extend(tag(diags.clone()));
     if diags.iter().any(|d| d.severity == "error") {
-        return (1, None, tag(diags), vec![]);
+        return (1, None, all, vec![]);
     }
     let names: Vec<String> = if targets.is_empty() {
         entry
@@ -210,7 +209,7 @@ pub fn evaluate(
         }
     }
     if !notes.is_empty() {
-        return (1, None, tag(diags), notes);
+        return (1, None, all.clone(), notes);
     }
     let doc = |n: &str| eng.serialize(&entry.env.root(n).unwrap(), n, false);
     let mut text = None;
@@ -235,13 +234,13 @@ pub fn evaluate(
                 Some(path) => {
                     if std::fs::write(path, doc(n) + "\n").is_err() {
                         notes.push(format!("cannot write {path}"));
-                        return (1, None, tag(diags), notes);
+                        return (1, None, all.clone(), notes);
                     }
                 }
             }
         }
     }
-    (0, text, tag(diags), notes)
+    (0, text, all.clone(), notes)
 }
 
 /// single-file validation, module-aware like `check` and `evaluate`: load
@@ -273,12 +272,16 @@ pub fn validate_file(file: &str, inputs: &[String]) -> Result<Vec<(String, Diag)
                 .collect::<Vec<_>>()
         })
         .collect();
-    if !checks.is_empty() {
+    if checks.iter().any(|(_, d)| d.severity == "error") {
         return Ok(checks);
     }
+    diags.extend(checks); // a warning (W0001) is reported beside the run's diagnostics
     let binds = match input_binds(&r.modules, inputs) {
         Ok(b) => b,
-        Err((_, Some(d))) => return Ok(vec![(file.to_string(), d)]),
+        Err((_, Some(d))) => {
+            diags.push((file.to_string(), d));
+            return Ok(diags);
+        }
         Err((code, None)) => return Err(-(code as i64)),
     };
     diags.extend(
@@ -378,10 +381,10 @@ pub fn main(args: Vec<String>) -> i32 {
             if json {
                 println!("[{}]", collected.join(","));
             }
-            if diags.is_empty() {
-                0
+            if diags.iter().any(|(_, d)| d.severity == "error") {
+                1 // a warning (W0001) is reported, not a failure
             } else {
-                1
+                0
             }
         }
         "evaluate" => {

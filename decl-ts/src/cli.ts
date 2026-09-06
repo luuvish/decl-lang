@@ -144,21 +144,24 @@ async function main(): Promise<number> {
   switch (cmd) {
     case 'check': {
       if (!positional.length) return usage();
-      let bad = 0;
+      let bad = 0,
+        reported = 0;
       for (const f of positional) {
         const { modules, entry, diags } = openUniverse(f);
         for (const d of diags) {
           printDiag(f, d);
           bad++;
+          reported++;
         }
         for (const m of modules) {
           for (const d of checkModule(m.decls, m.env)) {
             printDiag(fileTag(f, entry?.path, m.path), d);
-            bad++;
+            if (d.severity === 'error') bad++; // a warning (W0001) is reported, not a failure
+            reported++;
           }
         }
       }
-      if (bad === 0) console.error(`ok: ${positional.length} entry file(s) check clean`);
+      if (reported === 0) console.error(`ok: ${positional.length} entry file(s) check clean`);
       return bad ? 1 : 0;
     }
     case 'evaluate': {
@@ -193,7 +196,7 @@ async function main(): Promise<number> {
       for (const m of modules)
         for (const d of checkModule(m.decls, m.env)) {
           printDiag(fileTag(f, entry.path, m.path), d);
-          bad++;
+          if (d.severity === 'error') bad++;
         }
       if (bad) return 1;
       const binds = inputBinds(modules, f);
@@ -270,13 +273,13 @@ async function main(): Promise<number> {
             checks.push(d);
           }
         diags = checks;
-        if (!checks.length) {
+        if (!checks.some((d) => d.severity === 'error')) {
           const binds = inputBinds(modules, target);
           if (Array.isArray(binds)) {
             const { diags: ed } = runUniverse(modules, entry, binds);
-            diags = ed;
+            diags = [...checks, ...ed];
             ed.forEach((d) => printDiag(target, d));
-          } else diags = [binds];
+          } else diags = [...checks, binds];
         }
       }
       const expect = flags.get('expect-errors');

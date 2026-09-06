@@ -136,7 +136,7 @@ export async function evaluate(
   const checks = modules.flatMap((m) =>
     checkModule(m.decls, m.env).map((d) => tagged(fileTag(path, entry!.path, m.path), d)),
   );
-  if (checks.length) fail('', checks);
+  if (checks.some((d) => d.severity === 'error')) fail('', checks);
   const { eng, diags: ed } = runUniverse(
     modules,
     entry!,
@@ -188,14 +188,17 @@ export async function validate(
   const { decls, errors } = parseSource(text);
   if (errors.length) throw new DeclError(`${path}: ${errors.length} parse error(s)`);
   const checks = checkModule(decls).map((d) => tagged(path, d));
-  if (checks.length) return checks;
+  if (checks.some((d) => d.severity === 'error')) return checks;
   if (opts.inputs && Object.keys(opts.inputs).length) {
     const { modules, entry } = openUniverse(path);
-    return runUniverse(modules, entry!, bindInputs(modules, path, opts.inputs)).diags.map((d) =>
-      tagged(path, d),
-    );
+    return [
+      ...checks,
+      ...runUniverse(modules, entry!, bindInputs(modules, path, opts.inputs)).diags.map((d) =>
+        tagged(path, d),
+      ),
+    ];
   }
-  return runPipeline(decls).diags.map((d) => tagged(path, d));
+  return [...checks, ...runPipeline(decls).diags.map((d) => tagged(path, d))];
 }
 
 /** The canonical formatting of a source text; throws DeclError when it does not parse. */

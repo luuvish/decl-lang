@@ -37,8 +37,9 @@ export function judgeFixture(file: string, isValid: boolean): Verdict {
   const { decls, errors } = parseSource(src);
   if (isValid) {
     // a valid fixture must parse, check clean, AND evaluate its outputs
-    // without error-severity diagnostics
-    const checks = errors.length === 0 ? checkModule(decls) : [];
+    // without error-severity diagnostics (a warning is not a failure)
+    const checks =
+      errors.length === 0 ? checkModule(decls).filter((d) => d.severity === 'error') : [];
     const evalErrs =
       errors.length === 0 && checks.length === 0
         ? runPipeline(decls).diags.filter((d) => d.severity === 'error')

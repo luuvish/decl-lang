@@ -146,6 +146,9 @@ fn spaced(a: &Leaf, b: &Leaf, prev: Option<&Leaf>) -> bool {
     if is_type_angle(b) {
         return false; // Vec<...>, no space before either angle
     }
+    if at == "@" {
+        return false; // an annotation's name follows its `@`
+    }
     if at == "(" || at == "[" {
         return false;
     }

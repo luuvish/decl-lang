@@ -74,9 +74,10 @@ and a file that cannot be written is reported by name (exit 1).
 
 Loads each entry file's universe and statically checks every module in
 it (§8 for loading, §6 and §9.7 for what the checker decides). Prints
-every diagnostic of every entry; when every entry is clean,
-`ok: N entry file(s) check clean` on standard error. Exit 1 iff a
-diagnostic was reported.
+every diagnostic of every entry; when nothing was reported,
+`ok: N entry file(s) check clean` on standard error. Exit 1 iff an
+error was reported: a warning (an unknown annotation, W0001) is
+printed and leaves the exit code 0.
 
 ### `decl evaluate`
 

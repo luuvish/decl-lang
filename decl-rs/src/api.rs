@@ -175,7 +175,7 @@ pub fn evaluate(path: &str, opts: &EvaluateOptions) -> Result<IndexMap<String, S
                 .collect::<Vec<_>>()
         })
         .collect();
-    if !checks.is_empty() {
+    if checks.iter().any(|d| d.severity == "error") {
         return fail("", checks);
     }
     let binds = bind_inputs(&r.modules, path, &opts.inputs)?;
@@ -238,9 +238,11 @@ pub fn validate(path: &str, inputs: &[(String, Document)]) -> Result<Vec<Diagnos
         .iter()
         .map(|d| tagged(path, d))
         .collect();
-    if !checks.is_empty() {
+    if checks.iter().any(|d| d.severity == "error") {
         return Ok(checks);
     }
+    // a warning of the checks (W0001) is returned beside the run's diagnostics
+    let mut all = checks;
     if !inputs.is_empty() {
         let r = open_universe(path);
         let Some(entry) = r.entry.clone() else {
@@ -251,13 +253,16 @@ pub fn validate(path: &str, inputs: &[(String, Document)]) -> Result<Vec<Diagnos
         };
         let binds = bind_inputs(&r.modules, path, inputs)?;
         let (_, diags) = run_universe(&r.modules, &entry, binds);
-        return Ok(diags.iter().map(|d| tagged(path, d)).collect());
+        all.extend(diags.iter().map(|d| tagged(path, d)));
+        return Ok(all);
     }
-    Ok(run_pipeline(&parsed.decls)
-        .diags
-        .iter()
-        .map(|d| tagged(path, d))
-        .collect())
+    all.extend(
+        run_pipeline(&parsed.decls)
+            .diags
+            .iter()
+            .map(|d| tagged(path, d)),
+    );
+    Ok(all)
 }
 
 /// The canonical formatting of a source text; fails when it does not parse.

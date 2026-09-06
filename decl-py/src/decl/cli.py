@@ -128,10 +128,11 @@ def evaluate_file(
         for m in r["modules"]
         for d in check_module(m.decls, m.env)
     ]
-    if checks:
+    if any(d["severity"] == "error" for d in checks):
         return 1, None, checks, []
     u = run_universe(r["modules"], entry, input_binds(r["modules"], input_specs or []))
-    diags = list(u["diags"])
+    # a warning of the checks (W0001) is reported with the run's diagnostics
+    diags = checks + [dict(d, file=path) for d in u["diags"]]
     errs = [d for d in diags if d["severity"] == "error"]
     if errs:
         return 1, None, diags, []
@@ -182,10 +183,11 @@ def validate_file(path: str, input_specs: list[str] | None = None) -> Any:
         for m in r["modules"]
         for d in check_module(m.decls, m.env)
     ]
-    if checks:
+    if any(d["severity"] == "error" for d in checks):
         return checks
     u = run_universe(r["modules"], entry, input_binds(r["modules"], input_specs or []))
-    return [dict(d, file=path) for d in u["diags"]]
+    # a warning of the checks (W0001) is reported beside the run's diagnostics
+    return checks + [dict(d, file=path) for d in u["diags"]]
 
 
 def _file_tag(given: str, entry: Any, module_path: str) -> str:
@@ -281,7 +283,8 @@ def main(argv: list[str] | None = None) -> int:
             print(f"ok: {len(pos)} entry file(s) check clean", file=sys.stderr)
         if json_mode:
             print(_dumps(collected))
-        return 1 if diags else 0
+        # a warning (W0001) is reported, not a failure
+        return 1 if any(d["severity"] == "error" for d in diags) else 0
     if cmd == "fmt":
         if not pos:
             return usage()

@@ -174,7 +174,7 @@ function locOfPath(decls: Decl[], segs: Seg[]): Loc | null {
   }
   return best;
 }
-const severityOf = (s: string) => (s === 'error' ? 1 : s === 'warning' ? 2 : 3);
+const severityOf = (s: string) => (s === 'error' ? 1 : s === 'warn' ? 2 : 3);
 
 /**
  * The diagnostics of one document as the server publishes them — LSP items

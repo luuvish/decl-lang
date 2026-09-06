@@ -230,7 +230,7 @@
     ],
     "exit": 0,
     "stdout": "",
-    "stderr": "121 ok, 0 failed\n"
+    "stderr": "122 ok, 0 failed\n"
   },
   {
     "name": "validate --expect-errors: the codes match",
@@ -394,5 +394,45 @@
     "exit": 0,
     "stdout": "> deployed\n{\"port\":9000,\"name\":\"doc\",\"replicas\":1,\"label\":\"doc:9000\"}\n(partial)\n",
     "stderr": ""
+  },
+  {
+    "name": "check: an unknown annotation is a warning (W0001), not a failure",
+    "files": {
+      "ann.decl": "@todo\ntype T = {\n    @doc(\"x\") a: int\n}\nexport output o: T = { a: 1 }\n"
+    },
+    "args": [
+      "check",
+      "<dir>/ann.decl"
+    ],
+    "exit": 0,
+    "stdout": "",
+    "stderr": "<dir>/ann.decl: warn [W0001]: unknown annotation @todo\n"
+  },
+  {
+    "name": "check --json: the warning's severity is warn",
+    "files": {
+      "ann.decl": "@todo\ntype T = { a: int }\nexport output o: T = { a: 1 }\n"
+    },
+    "args": [
+      "check",
+      "--json",
+      "<dir>/ann.decl"
+    ],
+    "exit": 0,
+    "stdout": "[{\"file\":\"<dir>/ann.decl\",\"code\":\"W0001\",\"severity\":\"warn\",\"message\":\"unknown annotation @todo\",\"path\":\"\"}]\n",
+    "stderr": ""
+  },
+  {
+    "name": "evaluate: a warning of the checks is reported and the value still printed",
+    "files": {
+      "ann.decl": "@render({ format: \"yaml\" })\n@todo\nexport output o: int = 1\n"
+    },
+    "args": [
+      "evaluate",
+      "<dir>/ann.decl"
+    ],
+    "exit": 0,
+    "stdout": "{\"o\":1}\n",
+    "stderr": "<dir>/ann.decl: warn [W0001]: unknown annotation @todo\n"
   }
 ]

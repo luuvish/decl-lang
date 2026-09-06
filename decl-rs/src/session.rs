@@ -1789,7 +1789,7 @@ impl Session {
                 let warnings = r
                     .diags
                     .iter()
-                    .filter(|d| d.severity == "warning" && is_root_diag(d, name))
+                    .filter(|d| d.severity == "warn" && is_root_diag(d, name))
                     .count();
                 (name.clone(), errors, warnings)
             })

@@ -1,18 +1,87 @@
 [
-  { "name": "spacing", "input": "const x=1+2*3\n", "expected": "const x = 1 + 2 * 3\n" },
-  { "name": "range stays tight", "input": "type P=1..65535\n", "expected": "type P = 1..65535\n" },
-  { "name": "generic angles attach", "input": "type V = Vec<int ,4>\n", "expected": "type V = Vec<int, 4>\n" },
-  { "name": "call parens attach", "input": "const n = std.array.count(xs )\n", "expected": "const n = std.array.count(xs)\n" },
-  { "name": "record braces breathe", "input": "type T = {a: int,b?: string}\n", "expected": "type T = { a: int, b?: string }\n" },
-  { "name": "indent rederived", "input": "type T = {\n        a: int\n  b: string\n}\n", "expected": "type T = {\n    a: int\n    b: string\n}\n" },
-  { "name": "unary minus attaches", "input": "const y = -x + 1\n", "expected": "const y = -x + 1\n" },
-  { "name": "blank lines collapse", "input": "const a = 1\n\n\n\nconst b = 2\n", "expected": "const a = 1\n\nconst b = 2\n" },
-  { "name": "continuation hangs", "input": "type T = {\n    assert a: x > 0\nelse warn `bad`\n}\n", "expected": "type T = {\n    assert a: x > 0\n        else warn `bad`\n}\n" },
-  { "name": "lambda spacing", "input": "const f = std.array.all(xs,(x)=>x>0)\n", "expected": "const f = std.array.all(xs, (x) => x > 0)\n" },
-  { "name": "array suffix after a record attaches", "input": "input s: {a: int, ...}[]\n", "expected": "input s: { a: int, ... }[]\n" },
-  { "name": "func body hangs after =", "input": "func f(n: int): int =\nn + 1\n", "expected": "func f(n: int): int =\n    n + 1\n" },
-  { "name": "lambda body hangs after =>", "input": "const xs = std.array.filter(ys, (y) =>\ny > 0)\n", "expected": "const xs = std.array.filter(ys, (y) =>\n        y > 0)\n" },
-  { "name": "operator at line end continues", "input": "const s = a +\nb\n", "expected": "const s = a +\n    b\n" },
-  { "name": "a closing type angle does not continue", "input": "type P = {\n    $parent: ref<{ a: int, ... }>\n    b: int\n}\n", "expected": "type P = {\n    $parent: ref<{ a: int, ... }>\n    b: int\n}\n" },
-  { "name": "a text that does not parse is refused", "input": "type T = {", "error": true }
+  {
+    "name": "spacing",
+    "input": "const x=1+2*3\n",
+    "expected": "const x = 1 + 2 * 3\n"
+  },
+  {
+    "name": "range stays tight",
+    "input": "type P=1..65535\n",
+    "expected": "type P = 1..65535\n"
+  },
+  {
+    "name": "generic angles attach",
+    "input": "type V = Vec<int ,4>\n",
+    "expected": "type V = Vec<int, 4>\n"
+  },
+  {
+    "name": "call parens attach",
+    "input": "const n = std.array.count(xs )\n",
+    "expected": "const n = std.array.count(xs)\n"
+  },
+  {
+    "name": "record braces breathe",
+    "input": "type T = {a: int,b?: string}\n",
+    "expected": "type T = { a: int, b?: string }\n"
+  },
+  {
+    "name": "indent rederived",
+    "input": "type T = {\n        a: int\n  b: string\n}\n",
+    "expected": "type T = {\n    a: int\n    b: string\n}\n"
+  },
+  {
+    "name": "unary minus attaches",
+    "input": "const y = -x + 1\n",
+    "expected": "const y = -x + 1\n"
+  },
+  {
+    "name": "blank lines collapse",
+    "input": "const a = 1\n\n\n\nconst b = 2\n",
+    "expected": "const a = 1\n\nconst b = 2\n"
+  },
+  {
+    "name": "continuation hangs",
+    "input": "type T = {\n    assert a: x > 0\nelse warn `bad`\n}\n",
+    "expected": "type T = {\n    assert a: x > 0\n        else warn `bad`\n}\n"
+  },
+  {
+    "name": "lambda spacing",
+    "input": "const f = std.array.all(xs,(x)=>x>0)\n",
+    "expected": "const f = std.array.all(xs, (x) => x > 0)\n"
+  },
+  {
+    "name": "array suffix after a record attaches",
+    "input": "input s: {a: int, ...}[]\n",
+    "expected": "input s: { a: int, ... }[]\n"
+  },
+  {
+    "name": "func body hangs after =",
+    "input": "func f(n: int): int =\nn + 1\n",
+    "expected": "func f(n: int): int =\n    n + 1\n"
+  },
+  {
+    "name": "lambda body hangs after =>",
+    "input": "const xs = std.array.filter(ys, (y) =>\ny > 0)\n",
+    "expected": "const xs = std.array.filter(ys, (y) =>\n        y > 0)\n"
+  },
+  {
+    "name": "operator at line end continues",
+    "input": "const s = a +\nb\n",
+    "expected": "const s = a +\n    b\n"
+  },
+  {
+    "name": "a closing type angle does not continue",
+    "input": "type P = {\n    $parent: ref<{ a: int, ... }>\n    b: int\n}\n",
+    "expected": "type P = {\n    $parent: ref<{ a: int, ... }>\n    b: int\n}\n"
+  },
+  {
+    "name": "a text that does not parse is refused",
+    "input": "type T = {",
+    "error": true
+  },
+  {
+    "name": "annotations: the name follows its @, arguments attach, one space between two",
+    "input": "@ deprecated\ntype T=int\ntype S={\n  @doc( \"x\" )   @deprecated\n  a:int\n}\n@render({format:\"yaml\",indent:2})\nexport output o:S={a:1}\n",
+    "expected": "@deprecated\ntype T = int\ntype S = {\n    @doc(\"x\") @deprecated\n    a: int\n}\n@render({ format: \"yaml\", indent: 2 })\nexport output o: S = { a: 1 }\n"
+  }
 ]
