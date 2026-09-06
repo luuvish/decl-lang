@@ -53,6 +53,7 @@ from .semantics import (
     seg_text,
     sort_diags,
 )
+from .yaml import YamlError, is_yaml_path, read_yaml
 
 
 class SessionError(Exception):
@@ -93,7 +94,13 @@ def parse_decl(text: str) -> dict[str, Any]:
     return {"decl": d, "name": name}
 
 
-def _parse_doc(text: str, what: str) -> Any:
+def _parse_doc(text: str, what: str, file: str | None = None) -> Any:
+    """a document's text is JSON, or YAML when its file says so (docs/tooling/05_render.md §2)"""
+    if file is not None and is_yaml_path(file):
+        try:
+            return read_yaml(text)
+        except YamlError as e:
+            raise SessionError(f"{what} is not well-formed YAML: {e}") from None
     try:
         return read_json(text)
     except Exception:
@@ -347,7 +354,9 @@ class Session:
                 doc = self._eval_to_doc(st, src["text"])
             else:
                 doc = _parse_doc(
-                    src["text"], src["file"] if src["kind"] == "file" else "the document"
+                    src["text"],
+                    src["file"] if src["kind"] == "file" else "the document",
+                    src["file"] if src["kind"] == "file" else None,
                 )
             st.documents[name] = Document(
                 src["kind"], doc, _doc_clone(doc), src["file"] if src["kind"] == "file" else None

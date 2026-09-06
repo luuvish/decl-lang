@@ -35,6 +35,7 @@ import {
 import type { Diag, Seg, RT } from './semantics.ts';
 import { makeCtx, infer, typeText, STD } from './infer.ts';
 import type { Decl, Expr } from './ast.ts';
+import { isYamlPath, readYaml } from './yaml.ts';
 import { format } from './fmt.ts';
 
 // ---------------- operations ----------------
@@ -132,7 +133,15 @@ export function parseDecl(text: string): { decl: Decl; name: string } {
   return { decl: decls[0], name };
 }
 
-function parseDoc(text: string, what: string): any {
+// a document's text is JSON, or YAML when its file says so (docs/tooling/05_render.md §2)
+function parseDoc(text: string, what: string, file?: string): any {
+  if (file !== undefined && isYamlPath(file)) {
+    try {
+      return readYaml(text);
+    } catch (e: any) {
+      throw new SessionError(`${what} is not well-formed YAML: ${e.message}`);
+    }
+  }
   try {
     return readJson(text);
   } catch {
@@ -313,7 +322,11 @@ export class Session {
         const doc =
           op.src.kind === 'expr'
             ? this.evalToDoc(st, op.src.text)
-            : parseDoc(op.src.text, op.src.kind === 'file' ? op.src.file : 'the document');
+            : parseDoc(
+                op.src.text,
+                op.src.kind === 'file' ? op.src.file : 'the document',
+                op.src.kind === 'file' ? op.src.file : undefined,
+              );
         st.documents.set(op.name, {
           origin: op.src.kind,
           file: op.src.kind === 'file' ? op.src.file : undefined,

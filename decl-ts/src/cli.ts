@@ -8,10 +8,13 @@
 //   decl fmt <files...> [--check]             canonical formatting (in place)
 //   decl repl [file.decl] [--input n=doc.json]... [--script file]
 //                                             an interactive session (repl.ts, docs/tooling/02_repl.md)
-import { readFileSync, writeFileSync, existsSync, statSync } from 'node:fs';
-import { resolve as absPath } from 'node:path';
+import { readFileSync, writeFileSync, existsSync, statSync, mkdirSync } from 'node:fs';
+import { resolve as absPath, dirname } from 'node:path';
 import { initParser } from './node.ts';
 import { readJson } from './semantics.ts';
+import { isYamlPath, readYaml, toJson } from './yaml.ts';
+import { declaredForm, layout } from './render.ts';
+import type { Form } from './render.ts';
 import type { Diag } from './semantics.ts';
 import { checkModule } from './checker.ts';
 import { loadModules, runUniverse } from './module.ts';
@@ -38,7 +41,8 @@ if (cmd === 'repl') {
 
 const flags = new Map<string, string | boolean>();
 const inputFlags: string[] = []; // --input name=doc.json, repeatable
-const outputFlags: string[] = []; // --output name[=file], repeatable
+const outputFlags: string[] = []; // --output name[=file|dir|-], repeatable
+const templateFlags: string[] = []; // --template [root=]path, repeatable
 const positional: string[] = [];
 for (let i = 0; i < args.length; i++) {
   if (args[i].startsWith('--')) {
@@ -46,20 +50,22 @@ for (let i = 0; i < args.length; i++) {
     if (
       i + 1 < args.length &&
       !args[i + 1].startsWith('--') &&
-      ['output', 'input', 'expect-errors'].includes(name)
+      ['output', 'input', 'expect-errors', 'format', 'indent', 'template'].includes(name)
     ) {
       if (name === 'input') inputFlags.push(args[++i]);
       else if (name === 'output') outputFlags.push(args[++i]);
+      else if (name === 'template') templateFlags.push(args[++i]);
       else flags.set(name, args[++i]);
     } else flags.set(name, true);
   } else positional.push(args[i]);
 }
 
 // the documents named by --input, each bound to the module that declares
-// its input (§10): `name=doc.json`. A usage error (bad spec, unknown input)
-// exits 2 at once; a document that cannot be read or is not well-formed
-// JSON is one E6004 diagnostic against the entry file, printed and
-// returned (exit 1 — and, for validate, an error code like any other)
+// its input (§10): `name=doc.json`, or `name=doc.yaml` read as YAML by its
+// extension (docs/tooling/05_render.md §2). A usage error (bad spec,
+// unknown input) exits 2 at once; a document that cannot be read or is
+// not well-formed is one E6004 diagnostic against the entry file, printed
+// and returned (exit 1 — and, for validate, an error code like any other)
 function inputBinds(
   modules: { env: any }[],
   entryFile: string,
@@ -90,10 +96,18 @@ function inputBinds(
       return problem(`bound document cannot be read: ${file}`);
     }
     let raw: any;
-    try {
-      raw = readJson(text);
-    } catch {
-      return problem(`bound document is not well-formed JSON: ${file}`);
+    if (isYamlPath(file)) {
+      try {
+        raw = readYaml(text);
+      } catch (e: any) {
+        return problem(`bound document is not well-formed YAML: ${file}: ${e.message}`);
+      }
+    } else {
+      try {
+        raw = readJson(text);
+      } catch {
+        return problem(`bound document is not well-formed JSON: ${file}`);
+      }
     }
     binds.push({ module, input: name, raw });
   }
@@ -131,6 +145,39 @@ const printDiag = (file: string, d: Diag) => {
 const fileTag = (given: string, entryPath: string | undefined, modulePath: string) =>
   modulePath === entryPath ? given : modulePath;
 
+// --format json|yaml, --indent n, --pretty: the layout of every document
+// emitted (docs/tooling/05_render.md §3.4, §4); null for a usage error
+function formOverrides(): { format?: 'json' | 'yaml'; indent?: number } | null {
+  const out: { format?: 'json' | 'yaml'; indent?: number } = {};
+  const format = flags.get('format');
+  if (format !== undefined) {
+    if (format !== 'json' && format !== 'yaml') {
+      console.error(`--format expects json or yaml, got ${format === true ? 'nothing' : format}`);
+      return null;
+    }
+    if (format === 'yaml' && jsonMode) {
+      console.error('--json reports are JSON: it cannot be combined with --format yaml');
+      return null;
+    }
+    out.format = format;
+  }
+  const indent = flags.get('indent');
+  if (indent !== undefined && flags.get('pretty')) {
+    console.error('--indent and --pretty exclude each other');
+    return null;
+  }
+  if (indent !== undefined) {
+    if (typeof indent !== 'string' || !/^(0|[1-9][0-9]?)$/.test(indent) || Number(indent) > 16) {
+      console.error(
+        `--indent expects an integer in 0..16, got ${indent === true ? 'nothing' : indent}`,
+      );
+      return null;
+    }
+    out.indent = Number(indent);
+  } else if (flags.get('pretty')) out.indent = 2;
+  return out;
+}
+
 function openUniverse(file: string) {
   const abs = absPath(file);
   const pkg = openPackageUniverse(abs);
@@ -167,26 +214,27 @@ async function main(): Promise<number> {
     case 'evaluate': {
       const f = positional[0];
       if (!f) return usage();
-      // what to emit, and where (§5.5): each `--output name[=file]` names a
-      // root — an output, or an input bound by --input or demanded through
-      // its fallback — and the file its document goes to (stdout without
-      // one); with no --output, the entry module's exported outputs, as one
-      // object keyed by name, on stdout
-      const targets: { name: string; file?: string }[] = [];
+      // what to emit, and where (§5.5, docs/tooling/05_render.md §3.2): each
+      // `--output name[=file|dir|-]` names a root — an output, or an input
+      // bound by --input or demanded through its fallback — and where its
+      // document goes: the file given, `-` for stdout, or, alone, the file
+      // the root's `@render` declares, else stdout; with no --output, the
+      // entry module's exported outputs, as one object keyed by name, on
+      // stdout
+      const targets: { name: string; dest?: string }[] = [];
       for (const spec of outputFlags) {
         const eq = spec.indexOf('=');
         const name = eq < 0 ? spec : spec.slice(0, eq),
-          file = eq < 0 ? undefined : spec.slice(eq + 1);
-        if (!name || file === '') {
+          dest = eq < 0 ? undefined : spec.slice(eq + 1);
+        if (!name || dest === '') {
           console.error(`--output expects name or name=file, got ${spec}`);
           return 2;
         }
-        targets.push({ name, file });
+        targets.push({ name, dest });
       }
-      if (targets.filter((t) => t.file === undefined).length > 1) {
-        console.error('--output: at most one document can go to stdout');
-        return 2;
-      }
+      // the overrides of the declared forms (docs/tooling/05_render.md §3.4)
+      const over = formOverrides();
+      if (over === null) return 2;
       const { modules, entry, diags } = openUniverse(f);
       if (diags.length || !entry) {
         diags.forEach((d) => printDiag(f, d));
@@ -199,6 +247,25 @@ async function main(): Promise<number> {
           if (d.severity === 'error') bad++;
         }
       if (bad) return 1;
+      // each target's declared form (§3): an invalid @render is E7004 at
+      // emission and the root is not emitted; the others still are
+      const declOf = (n: string) =>
+        modules.flatMap((m) => m.decls).find((d) => d.d === 'output' && d.name === n);
+      const forms = new Map<string, Form | { error: string }>();
+      for (const t of targets) {
+        const d = declOf(t.name);
+        forms.set(t.name, d ? declaredForm(d) : { format: 'json' });
+      }
+      const toStdout = (t: { name: string; dest?: string }) => {
+        const form = forms.get(t.name)!;
+        if (t.dest === '-') return true;
+        if (t.dest !== undefined) return false;
+        return !('error' in form) && !form.file;
+      };
+      if (targets.filter(toStdout).length > 1) {
+        console.error('--output: at most one document can go to stdout');
+        return 2;
+      }
       const binds = inputBinds(modules, f);
       if (!Array.isArray(binds)) return 1;
       const { eng, diags: ed } = runUniverse(modules, entry, binds);
@@ -215,29 +282,43 @@ async function main(): Promise<number> {
           missing++;
         }
       if (missing) return 1;
-      const doc = (n: string) => eng.serialize(entry.env.roots.get(n), n);
+      const doc = (n: string) => readJson(eng.serialize(entry.env.roots.get(n), n));
       let text: string | null = null;
       if (targets.length === 0) {
         if (names.length === 0)
           console.error(`${f}: exports no output; --output <name> selects a root`);
-        text = `{${names.map((n) => `${JSON.stringify(n)}:${doc(n)}`).join(',')}}`;
+        const all = { __jobj: true, entries: names.map((n) => [n, doc(n)]) };
+        // a --json report carries the document itself, whatever the layout
+        text = jsonMode
+          ? toJson(all) + '\n'
+          : layout(all, { format: over.format ?? 'json', indent: over.indent });
       } else {
         for (const t of targets) {
-          if (t.file === undefined) {
-            text = doc(t.name);
+          const form = forms.get(t.name)!;
+          if ('error' in form) {
+            printDiag(f, { severity: 'error', code: 'E7004', message: form.error, path: t.name });
+            bad++;
             continue;
           }
+          const eff = { format: over.format ?? form.format, indent: over.indent ?? form.indent };
+          const dest = t.dest === '-' ? undefined : (t.dest ?? form.file);
+          if (dest === undefined) {
+            text = jsonMode ? toJson(doc(t.name)) + '\n' : layout(doc(t.name), eff);
+            continue;
+          }
+          const body = layout(doc(t.name), eff);
           try {
-            writeFileSync(t.file, doc(t.name) + '\n');
+            mkdirSync(dirname(dest), { recursive: true });
+            writeFileSync(dest, body);
           } catch {
-            console.error(`cannot write ${t.file}`);
+            console.error(`cannot write ${dest}`);
             return 1;
           }
         }
       }
-      if (jsonMode) evalOut = text;
-      else if (text !== null) console.log(text);
-      return 0;
+      if (jsonMode) evalOut = text === null ? null : text.trimEnd();
+      else if (text !== null) process.stdout.write(text);
+      return bad ? 1 : 0;
     }
     case 'validate': {
       const target = positional[0];
@@ -344,11 +425,12 @@ function usage(): number {
   console.error(`usage:
   decl --version
   decl check <files...>
-  decl evaluate <file> [--input name=doc.json]... [--output name[=file]]...
+  decl evaluate <file> [--input name=doc.(json|yaml)]... [--output name[=file|dir|-]]...
+                       [--format json|yaml] [--indent n | --pretty] [--template [root=]path]...
   decl validate <dir>
-  decl validate <file> [--input name=doc.json]... [--expect-errors E1,E2]
+  decl validate <file> [--input name=doc.(json|yaml)]... [--expect-errors E1,E2]
   decl fmt <files...> [--check]
-  decl repl [file.decl] [--input name=doc.json]... [--script session.txt | --script -] [--compact]
+  decl repl [file.decl] [--input name=doc.(json|yaml)]... [--script session.txt | --script -] [--compact]
   (check / validate accept --json: diagnostics as a JSON array on stdout)`);
   return 2;
 }

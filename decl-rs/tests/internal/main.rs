@@ -14,5 +14,7 @@ mod module_test;
 mod package_test;
 mod parse_test;
 mod pipeline_test;
+mod render_test;
 mod semantics_test;
 mod session_test;
+mod yaml_test;

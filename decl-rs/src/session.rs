@@ -19,6 +19,7 @@ use crate::semantics::{
     json_str, parse_path, path_str, read_json, rec_members, seg_text, sort_diags, Diag, Env, Fail,
     MKind, RTk, Scope, Seg, SegPath, SlotState, Value, RT,
 };
+use crate::yaml::{is_yaml_path, read_yaml};
 use regex::Regex;
 use std::cell::{Cell, RefCell};
 use std::collections::{HashMap, HashSet};
@@ -359,7 +360,12 @@ pub fn parse_decl(text: &str) -> SResult<(Decl, String)> {
     Ok((d, name))
 }
 
-fn parse_doc(text: &str, what: &str) -> SResult<Value> {
+// a document's text is JSON, or YAML when its file says so (docs/tooling/05_render.md §2)
+fn parse_doc(text: &str, what: &str, file: Option<&str>) -> SResult<Value> {
+    if file.is_some_and(is_yaml_path) {
+        return read_yaml(text)
+            .map_err(|e| SessionError::new(format!("{what} is not well-formed YAML: {e}")));
+    }
     read_json(text).map_err(|_| SessionError::new(format!("{what} is not well-formed JSON")))
 }
 
@@ -652,11 +658,13 @@ impl Session {
                 }
                 let (doc, origin, file) = match src {
                     BindSource::Expr { text } => (self.eval_to_doc(st, text)?, Origin::Expr, None),
-                    BindSource::File { file, text } => {
-                        (parse_doc(text, file)?, Origin::File, Some(file.clone()))
-                    }
+                    BindSource::File { file, text } => (
+                        parse_doc(text, file, Some(file))?,
+                        Origin::File,
+                        Some(file.clone()),
+                    ),
                     BindSource::Inline { text } => {
-                        (parse_doc(text, "the document")?, Origin::Inline, None)
+                        (parse_doc(text, "the document", None)?, Origin::Inline, None)
                     }
                 };
                 st.set_document(

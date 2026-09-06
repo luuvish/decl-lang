@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import sys
 from typing import Any
 
@@ -14,7 +15,9 @@ from .conformance import judge_corpus
 from .fmt import format_source
 from .module import load_modules, run_universe
 from .package import open_package_universe, verify_lock
-from .semantics import read_json
+from .render import Form, declared_form, layout
+from .semantics import JObj, read_json
+from .yaml import YamlError, is_yaml_path, read_yaml, to_json
 
 
 def _diag_json(file: str, d: dict[str, Any]) -> dict[str, Any]:
@@ -92,16 +95,60 @@ def input_binds(modules: list[Any], specs: list[str]) -> list[Any]:
                 text = f.read()
         except OSError:
             raise doc_error(name, f"bound document cannot be read: {file}") from None
-        try:
-            raw = read_json(text)
-        except Exception:
-            raise doc_error(name, f"bound document is not well-formed JSON: {file}") from None
+        # `name=doc.yaml` is read as YAML by its extension (docs/tooling/05_render.md §2)
+        if is_yaml_path(file):
+            try:
+                raw = read_yaml(text)
+            except YamlError as e:
+                raise doc_error(
+                    name, f"bound document is not well-formed YAML: {file}: {e}"
+                ) from None
+        else:
+            try:
+                raw = read_json(text)
+            except Exception:
+                raise doc_error(name, f"bound document is not well-formed JSON: {file}") from None
         binds.append({"module": module, "input": name, "raw": raw})
     return binds
 
 
+def form_overrides(flags: dict[str, Any]) -> dict[str, Any]:
+    """`--format json|yaml`, `--indent n`, `--pretty`: the layout of every
+    document emitted (docs/tooling/05_render.md §3.4, §4); raises CliError
+    (status 2) for a usage error. `json` is the --json report: it carries
+    the document itself, whatever the layout."""
+    out: dict[str, Any] = {"format": None, "indent": None, "json": bool(flags.get("json"))}
+    fmt = flags.get("format")
+    if fmt is not None:
+        if fmt not in ("json", "yaml"):
+            raise CliError(
+                f"--format expects json or yaml, got {'nothing' if fmt is True else fmt}", 2
+            )
+        if fmt == "yaml" and out["json"]:
+            raise CliError("--json reports are JSON: it cannot be combined with --format yaml", 2)
+        out["format"] = fmt
+    indent = flags.get("indent")
+    if indent is not None and flags.get("pretty"):
+        raise CliError("--indent and --pretty exclude each other", 2)
+    if indent is not None:
+        if (
+            not isinstance(indent, str)
+            or not re.match(r"^(0|[1-9][0-9]?)$", indent)
+            or int(indent) > 16
+        ):
+            got = "nothing" if indent is True else indent
+            raise CliError(f"--indent expects an integer in 0..16, got {got}", 2)
+        out["indent"] = int(indent)
+    elif flags.get("pretty"):
+        out["indent"] = 2
+    return out
+
+
 def evaluate_file(
-    path: str, outputs: list[str] | None, input_specs: list[str] | None = None
+    path: str,
+    outputs: list[str] | None,
+    input_specs: list[str] | None = None,
+    over: dict[str, Any] | None = None,
 ) -> Any:
     """Returns (exit_code, document_for_stdout, diagnostics, notes) — notes are
     bare stderr lines printed after the diagnostics; raises CliError for a bad
@@ -110,6 +157,11 @@ def evaluate_file(
     --input or demanded through its fallback — and the file its document goes
     to (stdout without one); with no --output, the entry module's exported
     outputs, as one object keyed by name, on stdout."""
+    over = over or {"format": None, "indent": None, "json": False}
+    # what to emit, and where (§5.5, docs/tooling/05_render.md §3.2): each
+    # `--output name[=file|dir|-]` names a root and where its document goes:
+    # the file given, `-` for stdout, or, alone, the file the root's @render
+    # declares, else stdout
     targets: list[tuple[str, str | None]] = []
     for spec in outputs or []:
         name, _, dest = spec.partition("=")
@@ -117,8 +169,6 @@ def evaluate_file(
         if not name or file == "":
             raise CliError(f"--output expects name or name=file, got {spec}", 2)
         targets.append((name, file))
-    if sum(1 for _, f in targets if f is None) > 1:
-        raise CliError("--output: at most one document can go to stdout", 2)
     r = open_universe(path)
     if r["diags"] or r["entry"] is None:
         return 1, None, r["diags"], []
@@ -130,6 +180,24 @@ def evaluate_file(
     ]
     if any(d["severity"] == "error" for d in checks):
         return 1, None, checks, []
+    # each target's declared form (§3): an invalid @render is E7004 at
+    # emission and the root is not emitted; the others still are
+    decls = [d for m in r["modules"] for d in m.decls]
+    forms: list[Form] = []
+    for n, _ in targets:
+        decl = next((d for d in decls if d["d"] == "output" and d["name"] == n), None)
+        forms.append(declared_form(decl) if decl is not None else Form())
+
+    def to_stdout(i: int) -> bool:
+        dest = targets[i][1]
+        if dest == "-":
+            return True
+        if dest is not None:
+            return False
+        return forms[i].error is None and forms[i].file is None
+
+    if sum(1 for i in range(len(targets)) if to_stdout(i)) > 1:
+        raise CliError("--output: at most one document can go to stdout", 2)
     u = run_universe(r["modules"], entry, input_binds(r["modules"], input_specs or []))
     # a warning of the checks (W0001) is reported with the run's diagnostics
     diags = checks + [dict(d, file=path) for d in u["diags"]]
@@ -146,26 +214,50 @@ def evaluate_file(
     if notes:
         return 1, None, diags, notes
 
-    def doc(n: str) -> str:
-        return eng.serialize(entry.env.roots[n], n)
+    def doc(n: str) -> Any:
+        return read_json(eng.serialize(entry.env.roots[n], n))
 
     text = None
+    bad = False
     if not targets:
         if not names:
             notes.append(f"{path}: exports no output; --output <name> selects a root")
-        text = "{" + ",".join(f"{json.dumps(n, ensure_ascii=False)}:{doc(n)}" for n in names) + "}"
+        all_docs = JObj([(n, doc(n)) for n in names])
+        # a --json report carries the document itself, whatever the layout
+        text = (
+            to_json(all_docs) + "\n"
+            if over["json"]
+            else layout(all_docs, over["format"] or "json", over["indent"])
+        )
     else:
-        for n, file in targets:
-            if file is None:
-                text = doc(n)
+        for i, (n, sel) in enumerate(targets):
+            form = forms[i]
+            if form.error is not None:
+                diags.append(
+                    {
+                        "file": path,
+                        "severity": "error",
+                        "code": "E7004",
+                        "message": form.error,
+                        "path": n,
+                    }
+                )
+                bad = True
+                continue
+            fmt = over["format"] or form.format
+            indent = over["indent"] if over["indent"] is not None else form.indent
+            where = None if sel == "-" else (sel if sel is not None else form.file)
+            if where is None:
+                text = to_json(doc(n)) + "\n" if over["json"] else layout(doc(n), fmt, indent)
                 continue
             try:
-                with open(file, "w", encoding="utf-8") as fh:
-                    fh.write(doc(n) + "\n")
+                os.makedirs(os.path.dirname(where) or ".", exist_ok=True)
+                with open(where, "w", encoding="utf-8") as fh:
+                    fh.write(layout(doc(n), fmt, indent))
             except OSError:
-                notes.append(f"cannot write {file}")
+                notes.append(f"cannot write {where}")
                 return 1, None, diags, notes
-    return 0, text, diags, notes
+    return (1 if bad else 0), text, diags, notes
 
 
 def validate_file(path: str, input_specs: list[str] | None = None) -> Any:
@@ -210,15 +302,22 @@ def check_files(paths: list[str]) -> list[Any]:
     return out
 
 
-USAGE = """usage:
-  decl --version
-  decl check <files...>
-  decl evaluate <file> [--input name=doc.json]... [--output name[=file]]...
-  decl validate <dir>
-  decl validate <file> [--input name=doc.json]... [--expect-errors E1,E2]
-  decl fmt <files...> [--check]
-  decl repl [file.decl] [--input name=doc.json]... [--script session.txt | --script -] [--compact]
-  (check / validate accept --json: diagnostics as a JSON array on stdout)"""
+USAGE = "\n".join(
+    [
+        "usage:",
+        "  decl --version",
+        "  decl check <files...>",
+        "  decl evaluate <file> [--input name=doc.(json|yaml)]... [--output name[=file|dir|-]]...",
+        "                       [--format json|yaml] [--indent n | --pretty] "
+        "[--template [root=]path]...",
+        "  decl validate <dir>",
+        "  decl validate <file> [--input name=doc.(json|yaml)]... [--expect-errors E1,E2]",
+        "  decl fmt <files...> [--check]",
+        "  decl repl [file.decl] [--input name=doc.(json|yaml)]... "
+        "[--script session.txt | --script -] [--compact]",
+        "  (check / validate accept --json: diagnostics as a JSON array on stdout)",
+    ]
+)
 
 
 def usage() -> int:
@@ -245,7 +344,8 @@ def main(argv: list[str] | None = None) -> int:
         return run_repl(args)
     flags: dict[str, Any] = {}
     input_flags: list[Any] = []  # --input name=doc.json, repeatable
-    output_flags: list[Any] = []  # --output name[=file], repeatable
+    output_flags: list[Any] = []  # --output name[=file|dir|-], repeatable
+    template_flags: list[Any] = []  # --template [root=]path, repeatable
     pos: list[Any] = []
     i = 0
     while i < len(args):
@@ -253,7 +353,7 @@ def main(argv: list[str] | None = None) -> int:
         if a.startswith("--"):
             name = a[2:]
             if (
-                name in ("output", "input", "expect-errors")
+                name in ("output", "input", "expect-errors", "format", "indent", "template")
                 and i + 1 < len(args)
                 and not args[i + 1].startswith("--")
             ):
@@ -261,6 +361,8 @@ def main(argv: list[str] | None = None) -> int:
                     input_flags.append(args[i + 1])
                 elif name == "output":
                     output_flags.append(args[i + 1])
+                elif name == "template":
+                    template_flags.append(args[i + 1])
                 else:
                     flags[name] = args[i + 1]
                 i += 2
@@ -316,7 +418,9 @@ def main(argv: list[str] | None = None) -> int:
         if not pos:
             return usage()
         try:
-            code, text, diags, notes = evaluate_file(pos[0], output_flags, input_flags)
+            over = form_overrides(flags)
+            del template_flags  # the templates of docs/tooling/05_render.md §5 follow
+            code, text, diags, notes = evaluate_file(pos[0], output_flags, input_flags, over)
         except CliError as e:
             if e.status == 2:
                 print(e, file=sys.stderr)
@@ -334,11 +438,11 @@ def main(argv: list[str] | None = None) -> int:
         if json_mode:
             print(
                 f'{{"ok":{"true" if code == 0 else "false"},'
-                f'"value":{text if text is not None else "null"},'
+                f'"value":{text.rstrip() if text is not None else "null"},'
                 f'"diagnostics":{_dumps(collected)}}}'
             )
         elif text is not None:
-            print(text)
+            sys.stdout.write(text)
         return code
     if cmd == "validate":
         if not pos:

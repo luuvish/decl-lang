@@ -15,6 +15,7 @@ import type { Module } from './module.ts';
 import { openPackageUniverse, verifyLock } from './package.ts';
 import { runPipeline } from './pipeline.ts';
 import { readJson } from './semantics.ts';
+import { isYamlPath, readYaml, toJson as jsonText, toYaml as yamlText } from './yaml.ts';
 import type { Diag } from './semantics.ts';
 import { format, initFormatter } from './fmt.ts';
 
@@ -29,7 +30,7 @@ export type Diagnostic = {
 };
 export type JsonValue =
   null | boolean | number | string | JsonValue[] | { [key: string]: JsonValue };
-/** a document to bind to an input: the path of a JSON file (a string), or the value itself */
+/** a document to bind to an input: the path of a JSON or YAML file (a string, YAML by its extension), or the value itself */
 export type InputDocument = string | JsonValue;
 export type EvaluateOptions = {
   /** documents to bind, by input name */
@@ -99,15 +100,18 @@ function bindInputs(modules: Module[], file: string, inputs: Record<string, Inpu
       }
     } else text = JSON.stringify(doc);
     let raw: any;
+    const yaml = typeof doc === 'string' && isYamlPath(doc);
     try {
-      raw = readJson(text!);
-    } catch {
+      raw = yaml ? readYaml(text!) : readJson(text!);
+    } catch (e: any) {
       fail('', [
         {
           file,
           code: 'E6004',
           severity: 'error',
-          message: `bound document is not well-formed JSON: ${typeof doc === 'string' ? doc : name}`,
+          message: yaml
+            ? `bound document is not well-formed YAML: ${doc}: ${e.message}`
+            : `bound document is not well-formed JSON: ${typeof doc === 'string' ? doc : name}`,
           path: name,
         },
       ]);
@@ -209,4 +213,18 @@ export async function formatSource(text: string): Promise<string> {
   } catch (e: any) {
     throw new DeclError(e.message);
   }
+}
+
+// a JSON value as the reader's shape: integers (safe ones) as ints, other
+// numbers as floats — canonical JSON text passes through exactly
+const rawOf = (v: string | JsonValue): any =>
+  typeof v === 'string' ? readJson(v) : readJson(JSON.stringify(v));
+
+/** The JSON text of a value: canonical for indent 0 (the default), laid out with `indent` spaces per level otherwise (docs/tooling/05_render.md §4.1). A string is canonical JSON text and passes through with its number texts. */
+export function toJson(value: string | JsonValue, indent = 0): string {
+  return jsonText(rawOf(value), indent);
+}
+/** The YAML text of a value (docs/tooling/05_render.md §4.2), no trailing newline. */
+export function toYaml(value: string | JsonValue, indent = 2): string {
+  return yamlText(rawOf(value), indent);
 }

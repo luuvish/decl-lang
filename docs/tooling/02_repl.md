@@ -131,7 +131,7 @@ the session does not have is reported on one line and changes nothing.
 
 | Command | Meaning |
 |---|---|
-| `:bind name=doc.json` | bind the document in the file to input `name` |
+| `:bind name=doc.json` | bind the document in the file to input `name` (`doc.yaml` / `doc.yml` is read as YAML, 05_render.md §2) |
 | `:bind name { … }` | bind an inline JSON document (multi-line by the §2.9 rule) |
 | `:bind name = expr` | bind the value of an expression as `name`'s document: `:bind oad = u_oic` puts an output's document into an input — the round trip of §10.5, inside the session |
 | `:unbind name` | drop the binding; the input falls back to its fallback, or is unbound |

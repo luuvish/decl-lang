@@ -15,6 +15,7 @@ use crate::parse::parse_source;
 use crate::pipeline::run_pipeline;
 pub use crate::pipeline::{evaluate_source, Report};
 use crate::semantics::{read_json, Diag};
+use crate::yaml::{is_yaml_path, read_yaml, to_json as json_text, to_yaml as yaml_text};
 use std::rc::Rc;
 
 /// One diagnostic, in the report's field order (§12.2).
@@ -53,7 +54,7 @@ impl std::error::Error for DeclError {}
 /// A document to bind to an input: the path of a JSON file, or its JSON text.
 #[derive(Clone, Debug)]
 pub enum Document {
-    /// a JSON file, by path
+    /// a JSON or YAML file, by path (YAML by its extension)
     File(PathBuf),
     /// JSON text
     Json(String),
@@ -130,15 +131,31 @@ fn bind_inputs(
             },
             Document::Json(t) => (t.clone(), name.clone()),
         };
-        let raw = match read_json(&text) {
-            Ok(v) => v,
-            Err(_) => {
-                return fail(
-                    "",
-                    vec![e6004(format!(
-                        "bound document is not well-formed JSON: {place}"
-                    ))],
-                )
+        // a file is YAML by its extension (docs/tooling/05_render.md §2)
+        let yaml = matches!(doc, Document::File(p) if is_yaml_path(&p.display().to_string()));
+        let raw = if yaml {
+            match read_yaml(&text) {
+                Ok(v) => v,
+                Err(e) => {
+                    return fail(
+                        "",
+                        vec![e6004(format!(
+                            "bound document is not well-formed YAML: {place}: {e}"
+                        ))],
+                    )
+                }
+            }
+        } else {
+            match read_json(&text) {
+                Ok(v) => v,
+                Err(_) => {
+                    return fail(
+                        "",
+                        vec![e6004(format!(
+                            "bound document is not well-formed JSON: {place}"
+                        ))],
+                    )
+                }
             }
         };
         binds.push(Bind {
@@ -271,4 +288,23 @@ pub fn format_source(text: &str) -> Result<String, DeclError> {
         message,
         diagnostics: vec![],
     })
+}
+
+// a document's text (canonical JSON) as the reader's shape; the text is the
+// library's document form, so its number texts pass through exactly
+fn raw_of(text: &str) -> Result<crate::semantics::Value, DeclError> {
+    read_json(text).map_err(|_| DeclError {
+        message: "not well-formed JSON".into(),
+        diagnostics: vec![],
+    })
+}
+
+/// The JSON text of a document given as JSON text: canonical for indent 0,
+/// laid out with `indent` spaces per level otherwise (docs/tooling/05_render.md §4.1).
+pub fn to_json(text: &str, indent: usize) -> Result<String, DeclError> {
+    Ok(json_text(&raw_of(text)?, indent))
+}
+/// The YAML text of a document given as JSON text (docs/tooling/05_render.md §4.2), no trailing newline.
+pub fn to_yaml(text: &str, indent: usize) -> Result<String, DeclError> {
+    Ok(yaml_text(&raw_of(text)?, indent))
 }

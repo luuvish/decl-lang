@@ -100,6 +100,36 @@
     "check": "walking tests/modules lists its eleven .decl files sorted; a valid fixture is judged ok; an invalid fixture judged as valid fails with the code in the detail and judged as invalid passes"
   },
   {
+    "module": "yaml",
+    "name": "core_schema",
+    "check": "`a: 1\\nb: 2.5\\nc: yes\\nd: 0x1F\\ne: ~\\nf: \"12\"\\ng: [x, {h: true}]` reads as the object with a the integer 1, b the float 2.5, c the string \"yes\", d the integer 31, e null, f the string \"12\", g an array of the string \"x\" and an object with h true — YAML 1.2's core schema, no 1.1 spelling (docs/tooling/05_render.md §2)"
+  },
+  {
+    "module": "yaml",
+    "name": "refused",
+    "check": "`a: !!str 1` is refused with `uses a tag at line 1`, `1: x` with `mapping key is not a string at line 1`, `a: 1\\na: 2` with `mapping repeats the key \"a\" at line 2`, and `a: 1\\n---\\nb: 2` with `stream holds more than one document at line 2`"
+  },
+  {
+    "module": "yaml",
+    "name": "plain_strings",
+    "check": "the writer leaves `my-service`, `with space`, and `a_b` plain and double-quotes `yes`, `n`, `true`, `12`, `1e3`, `a: b`, `-x`, the empty string, and `x #y` (§4.2's plain rule: a YAML 1.1 word is quoted too)"
+  },
+  {
+    "module": "yaml",
+    "name": "round_trip",
+    "check": "the canonical JSON document `{\"name\":\"s\",\"xs\":[{\"a\":1,\"b\":[]},2.0],\"m\":{},\"q\":{\"value\":3000.0,\"unit\":\"m\"}}` written as YAML with indent 2 is `name: s\\nxs:\\n  - a: 1\\n    b: []\\n  - 2.0\\nm: {}\\nq:\\n  value: 3000.0\\n  unit: m`, and read back it is the same document; its JSON layout with indent 2 parses back to it too"
+  },
+  {
+    "module": "render",
+    "name": "declared_form",
+    "check": "`@render({ format: \"yaml\", indent: 4, file: \"out/x.yaml\" })` on an output reads as the form yaml, indent 4, file out/x.yaml with no template and no fan-out; an output without an annotation is canonical JSON; `@render({ indent: 99 })` is the E7004 message `@render: indent must be an integer in 0..16` and `@render({ colour: 1 })` is `@render: unknown key colour`"
+  },
+  {
+    "module": "render",
+    "name": "layout",
+    "check": "the document `{\"a\":[1,2],\"b\":{}}` laid out as JSON with indent 2 is `{\\n  \"a\": [\\n    1,\\n    2\\n  ],\\n  \"b\": {}\\n}` plus a newline, as YAML `a:\\n  - 1\\n  - 2\\nb: {}` plus a newline, and with indent 0 the canonical line"
+  },
+  {
     "module": "pipeline",
     "name": "report",
     "check": "evaluating source text reports the phase that decided: a parse error → parse, not ok; a checker error → check, not ok, with the code; a clean module → evaluate, ok, with every output's canonical JSON and the declared inputs"

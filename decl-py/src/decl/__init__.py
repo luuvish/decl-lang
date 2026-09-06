@@ -16,6 +16,8 @@ from .api import (
     evaluate_source,
     format_file,
     format_source,
+    to_json,
+    to_yaml,
     validate,
 )
 
@@ -28,5 +30,7 @@ __all__ = [
     "evaluate_source",
     "format_file",
     "format_source",
+    "to_json",
+    "to_yaml",
     "validate",
 ]

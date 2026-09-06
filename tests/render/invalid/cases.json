@@ -1,0 +1,110 @@
+[
+  {
+    "file": "tag.yaml",
+    "message": "uses a tag at line 1"
+  },
+  {
+    "file": "custom_tag.yaml",
+    "message": "uses a tag at line 1"
+  },
+  {
+    "file": "tag_directive.yaml",
+    "message": "uses a tag at line 1"
+  },
+  {
+    "file": "int_key.yaml",
+    "message": "mapping key is not a string at line 1"
+  },
+  {
+    "file": "bool_key.yaml",
+    "message": "mapping key is not a string at line 2"
+  },
+  {
+    "file": "null_key.yaml",
+    "message": "mapping key is not a string at line 1"
+  },
+  {
+    "file": "complex_key.yaml",
+    "message": "mapping key is not a string at line 1"
+  },
+  {
+    "file": "flow_int_key.yaml",
+    "message": "mapping key is not a string at line 1"
+  },
+  {
+    "file": "duplicate_key.yaml",
+    "message": "mapping repeats the key \"a\" at line 3"
+  },
+  {
+    "file": "duplicate_key_flow.yaml",
+    "message": "mapping repeats the key \"a\" at line 1"
+  },
+  {
+    "file": "two_documents.yaml",
+    "message": "stream holds more than one document at line 2"
+  },
+  {
+    "file": "document_after_end.yaml",
+    "message": "stream holds more than one document at line 3"
+  },
+  {
+    "file": "yaml_11.yaml",
+    "message": "unsupported YAML version at line 1"
+  },
+  {
+    "file": "infinity.yaml",
+    "message": "non-finite float at line 1"
+  },
+  {
+    "file": "not_a_number.yaml",
+    "message": "non-finite float at line 2"
+  },
+  {
+    "file": "bad_indentation.yaml",
+    "message": "bad indentation at line 2"
+  },
+  {
+    "file": "tab_indentation.yaml",
+    "message": "tab in indentation at line 2"
+  },
+  {
+    "file": "unterminated_quote.yaml",
+    "message": "unterminated quoted scalar at line 1"
+  },
+  {
+    "file": "unterminated_flow.yaml",
+    "message": "expected ',' or ']' at line 2"
+  },
+  {
+    "file": "unknown_alias.yaml",
+    "message": "unknown alias *nope at line 1"
+  },
+  {
+    "file": "mapping_in_value.yaml",
+    "message": "unexpected mapping value at line 1"
+  },
+  {
+    "file": "sequence_in_value.yaml",
+    "message": "unexpected sequence at line 1"
+  },
+  {
+    "file": "missing_colon.yaml",
+    "message": "missing ':' after a mapping key at line 2"
+  },
+  {
+    "file": "bad_escape.yaml",
+    "message": "bad escape at line 1"
+  },
+  {
+    "file": "content_after_sequence.yaml",
+    "message": "unexpected content at line 2"
+  },
+  {
+    "file": "reserved_indicator.yaml",
+    "message": "reserved indicator @ at line 1"
+  },
+  {
+    "file": "trailing_content.yaml",
+    "message": "unexpected content after a flow collection at line 1"
+  }
+]

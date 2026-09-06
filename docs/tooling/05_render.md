@@ -58,12 +58,13 @@ round trip. The reader is **YAML 1.2, core schema**, and exactly that:
   arrays; plain scalars resolve by the core schema's rules — `true` /
   `false` (the four spellings `true`, `True`, `TRUE`, and the same for
   `false`), `null` / `Null` / `NULL` / `~` / an empty value, decimal and
-  hexadecimal and octal integers (`0x1F`, `0o17`), floats with the core
-  schema's forms including `.inf` and `.nan` — which are then rejected
-  as the language rejects them (§9.5, D18) — and everything else a
-  string. **YAML 1.1 is not read**: `yes`, `no`, `on`, `off`, `y`, `n`
-  are strings, so the Norway problem cannot arise; a sexagesimal `1:30`
-  is a string; timestamps are strings.
+  hexadecimal and octal integers (`0x1F`, `0o17`, exact at any size),
+  floats with the core schema's forms — `.inf` and `.nan` are refused,
+  since the language has no such value (§9.5, D18) — and everything
+  else a string. **YAML 1.1 is not read**: `yes`, `no`, `on`, `off`,
+  `y`, `n` are strings, so the Norway problem cannot arise; a
+  sexagesimal `1:30` is a string; timestamps are strings; `1_000` is a
+  string.
 - quoted scalars (single, double) and block scalars (`|`, `>`, with
   their chomping and indentation indicators) are strings.
 - anchors and aliases are resolved: an alias is a copy of the anchored
@@ -82,10 +83,18 @@ round trip. The reader is **YAML 1.2, core schema**, and exactly that:
 
 Every error above is **E6004** — the code the command line already
 reports for a document that cannot be read or is not well-formed —
-with a message naming the construct (`document uses a tag`, `mapping
-key is not a string`, `stream holds more than one document`, `not
-well-formed YAML: <reason> at line L`). The specification's scope rule
-stands: interchange is normatively JSON; the YAML reader is a tool-side
+with one message form, `bound document is not well-formed YAML:
+<file>: <reason> at line L`, the reason naming the construct: `uses a
+tag`, `mapping key is not a string`, `mapping repeats the key "k"`,
+`stream holds more than one document`, `unsupported YAML version`,
+`non-finite float`, `unknown alias *a`, and for the text itself `bad
+indentation`, `tab in indentation`, `unterminated quoted scalar`,
+`unterminated flow collection`, `missing ':' after a mapping key`,
+`unexpected mapping value` (`a: b: c`), `unexpected sequence` (`a: -
+b`), `bad escape`, `reserved indicator @`, `unexpected content`, and
+`unexpected content after …`. `tests/render/invalid/` holds one
+document per reason. The specification's scope rule stands:
+interchange is normatively JSON; the YAML reader is a tool-side
 conversion whose result is a JSON document, defined here.
 
 ## 3. `@render` — the declared form of an output
@@ -172,11 +181,14 @@ module could not have said; they are for scripts and for looking:
 | `--template [root=]path` | the `template` of that root, or of every root without a `--template root=` of its own; `-` reads the template from standard input, once |
 | `--output name=file\|dir\|-` | the destination (§3.2) |
 
-`--json` with `--format yaml` is a usage error; `--json` reports are
-JSON always. A `--template root=` naming a root that is not emitted, or
-the same root twice, is a usage error (exit 2). The options do not
-switch `each` on or off: fan-out is a property of the root's shape and
-its declaration.
+`--json` with `--format yaml` is a usage error, and `--indent` with
+`--pretty` too; `--json` reports are JSON always, and their `value` is
+the document itself in canonical JSON whatever the declared or
+requested layout — a template root's `value` is its text as a JSON
+string. A `--template root=` naming a root that is not emitted, or the
+same root twice, is a usage error (exit 2). The options do not switch
+`each` on or off: fan-out is a property of the root's shape and its
+declaration.
 
 ## 4. Structured text — formats and layouts
 
@@ -220,20 +232,23 @@ key. The document starts at column 0 with no `---`.
 | quantity | the mapping `value: …` / `unit: …` (the interchange form, §3.16) |
 | reference | its canonical path as a string (`$.services[1]`, quoted by the string rule since it starts with `$`) |
 
-A string is **plain** only when the core schema would read it back as
-exactly that string: it is non-empty; it does not resolve to a bool,
-null, integer, or float under the core schema (so `true`, `null`, `~`,
-`12`, `1e3`, `0x10`, `.inf`, `.5`, `+1` are quoted); it starts with a
-letter or `_`; it contains none of `: ` / ` #` / `#` at the start /
-the indicators `- ? : , [ ] { } & * ! | > ' " % @ \``; it has no
-leading or trailing whitespace, no newline, no tab, and no character
-outside the printable range; and it is not `---` or `...`. Everything
-else is double-quoted, escaped as in JSON (`\n`, `\t`, `\"`, `\\`,
-`\uXXXX` for control characters). Keys follow the same rule. Never an
-anchor, an alias, a tag, a flow collection except the two empties, a
-block scalar, or a folded line: a YAML 1.2 reader with the core schema
-reads the text back to the canonical JSON document, and a YAML 1.1
-reader is given nothing bare that it could reinterpret.
+A string is **plain** only when a YAML 1.2 reader with the core schema
+reads it back as exactly that string and a YAML 1.1 reader has nothing
+to reinterpret: it starts with an ASCII letter or `_` (so every string
+that looks like a number, a date, or a path, and every empty or
+space-led string, is quoted); it is not a word either schema reads as
+a bool or a null (`true`, `null`, and the 1.1 words `yes`, `no`, `on`,
+`off`, `y`, `n` in their spellings); it contains none of `: ` and
+` #`, none of `[ ] { } , & * ! | > ' " % @ \` #`, no tab, line break,
+control character, or other unprintable; and it ends in neither `:`
+nor a space. Everything else is double-quoted, escaped as in JSON
+(`\n`, `\t`, `\"`, `\\`, `\uXXXX` for control characters). Keys follow
+the same rule. Never an anchor, an alias, a tag, a flow collection
+except the two empties, a block scalar, or a folded line: a YAML 1.2
+reader with the core schema reads the text back to the canonical JSON
+document, and a YAML 1.1 reader is given nothing bare that it could
+reinterpret. So `my-service`, `with space`, and `a_b` are plain;
+`2024-01-01`, `10.0.0.0/8`, `yes`, `12`, `a: b`, and `-x` are quoted.
 
 ## 5. Templates
 
@@ -548,6 +563,9 @@ The three APIs grow in the `evaluate` vocabulary
 - `toJson(value, indent?)` and `toYaml(value, indent?)` — the text of a
   JSON value in the layouts of §4, pure functions with no universe
   behind them, for a program that has a document and wants its text.
+  The value may be given as canonical JSON text, which passes through
+  with its number texts (`1.0` stays a float); the Rust crate takes the
+  text only, since its documents are texts.
 - `evaluate` and `validate` accept a document path ending in `.yaml` /
   `.yml` and read it by §2; a document given as a value is unchanged.
 

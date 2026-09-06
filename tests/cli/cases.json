@@ -23,7 +23,7 @@
     "args": [],
     "exit": 2,
     "stdout": "",
-    "stderr": "usage:\n  decl --version\n  decl check <files...>\n  decl evaluate <file> [--input name=doc.json]... [--output name[=file]]...\n  decl validate <dir>\n  decl validate <file> [--input name=doc.json]... [--expect-errors E1,E2]\n  decl fmt <files...> [--check]\n  decl repl [file.decl] [--input name=doc.json]... [--script session.txt | --script -] [--compact]\n  (check / validate accept --json: diagnostics as a JSON array on stdout)\n"
+    "stderr": "usage:\n  decl --version\n  decl check <files...>\n  decl evaluate <file> [--input name=doc.(json|yaml)]... [--output name[=file|dir|-]]...\n                       [--format json|yaml] [--indent n | --pretty] [--template [root=]path]...\n  decl validate <dir>\n  decl validate <file> [--input name=doc.(json|yaml)]... [--expect-errors E1,E2]\n  decl fmt <files...> [--check]\n  decl repl [file.decl] [--input name=doc.(json|yaml)]... [--script session.txt | --script -] [--compact]\n  (check / validate accept --json: diagnostics as a JSON array on stdout)\n"
   },
   {
     "name": "check: a valid file",

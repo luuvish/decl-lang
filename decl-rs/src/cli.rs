@@ -7,13 +7,15 @@ use crate::conformance::judge_corpus;
 use crate::fmt::format;
 use crate::module::{load_modules, run_universe, Bind, LoadResult, Module};
 use crate::package::{open_package_universe, verify_lock};
-use crate::semantics::{json_str, read_json, Diag};
+use crate::render::{declared_form, layout, Form};
+use crate::semantics::{read_json, Diag, Value};
+use crate::yaml::{is_yaml_path, read_yaml, to_json};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
 
 fn usage() -> i32 {
-    eprintln!("usage:\n  decl --version\n  decl check <files...>\n  decl evaluate <file> [--input name=doc.json]... [--output name[=file]]...\n  decl validate <dir>\n  decl validate <file> [--input name=doc.json]... [--expect-errors E1,E2]\n  decl fmt <files...> [--check]\n  decl repl [file.decl] [--input name=doc.json]... [--script session.txt | --script -] [--compact]\n  (check / validate accept --json: diagnostics as a JSON array on stdout)");
+    eprintln!("usage:\n  decl --version\n  decl check <files...>\n  decl evaluate <file> [--input name=doc.(json|yaml)]... [--output name[=file|dir|-]]...\n                       [--format json|yaml] [--indent n | --pretty] [--template [root=]path]...\n  decl validate <dir>\n  decl validate <file> [--input name=doc.(json|yaml)]... [--expect-errors E1,E2]\n  decl fmt <files...> [--check]\n  decl repl [file.decl] [--input name=doc.(json|yaml)]... [--script session.txt | --script -] [--compact]\n  (check / validate accept --json: diagnostics as a JSON array on stdout)");
     2
 }
 
@@ -105,13 +107,26 @@ pub fn input_binds(
                 ))
             }
         };
-        let raw = match read_json(&text) {
-            Ok(v) => v,
-            Err(_) => {
-                return Err(doc_error(
-                    name,
-                    format!("bound document is not well-formed JSON: {file}"),
-                ));
+        // `name=doc.yaml` is read as YAML by its extension (docs/tooling/05_render.md §2)
+        let raw = if is_yaml_path(file) {
+            match read_yaml(&text) {
+                Ok(v) => v,
+                Err(e) => {
+                    return Err(doc_error(
+                        name,
+                        format!("bound document is not well-formed YAML: {file}: {e}"),
+                    ));
+                }
+            }
+        } else {
+            match read_json(&text) {
+                Ok(v) => v,
+                Err(_) => {
+                    return Err(doc_error(
+                        name,
+                        format!("bound document is not well-formed JSON: {file}"),
+                    ));
+                }
             }
         };
         binds.push(Bind {
@@ -130,14 +145,80 @@ pub fn input_binds(
 /// through its fallback — and the file its document goes to (stdout
 /// without one); with no --output, the entry module's exported outputs, as
 /// one object keyed by name, on stdout
+/// the overrides of the declared forms: `--format`, `--indent` / `--pretty`
+/// (docs/tooling/05_render.md §3.4); `json` is the --json report
+#[derive(Debug, Clone, Default)]
+pub struct Overrides {
+    /// `--format yaml`
+    pub yaml: Option<bool>,
+    /// `--indent n`, or 2 for `--pretty`
+    pub indent: Option<usize>,
+    /// `--json`: the report carries the document itself, whatever the layout
+    pub json: bool,
+}
+
+/// `--format json|yaml`, `--indent n`, `--pretty`: the layout of every
+/// document emitted (docs/tooling/05_render.md §3.4, §4); None for a usage error
+pub fn form_overrides(flags: &HashMap<String, String>) -> Option<Overrides> {
+    let json = flags.contains_key("json");
+    let mut out = Overrides {
+        json,
+        ..Default::default()
+    };
+    if let Some(format) = flags.get("format") {
+        if format != "json" && format != "yaml" {
+            eprintln!(
+                "--format expects json or yaml, got {}",
+                if format == "true" { "nothing" } else { format }
+            );
+            return None;
+        }
+        if format == "yaml" && json {
+            eprintln!("--json reports are JSON: it cannot be combined with --format yaml");
+            return None;
+        }
+        out.yaml = Some(format == "yaml");
+    }
+    let indent = flags.get("indent");
+    if indent.is_some() && flags.contains_key("pretty") {
+        eprintln!("--indent and --pretty exclude each other");
+        return None;
+    }
+    if let Some(indent) = indent {
+        let ok = indent.len() <= 2
+            && indent.bytes().all(|b| b.is_ascii_digit())
+            && !(indent.len() == 2 && indent.starts_with('0'))
+            && indent.parse::<usize>().is_ok_and(|n| n <= 16);
+        if indent == "true" || !ok {
+            eprintln!(
+                "--indent expects an integer in 0..16, got {}",
+                if indent == "true" { "nothing" } else { indent }
+            );
+            return None;
+        }
+        out.indent = Some(indent.parse().unwrap());
+    } else if flags.contains_key("pretty") {
+        out.indent = Some(2);
+    }
+    Some(out)
+}
+
+/// `decl evaluate`: (exit code, the text for stdout, the diagnostics tagged
+/// with their file, the bare stderr lines that follow them); a usage error
+/// is exit 2 with its line already printed
 pub fn evaluate(
     file: &str,
     outputs: &[String],
     inputs: &[String],
+    over: &Overrides,
 ) -> (i32, Option<String>, Vec<(String, Diag)>, Vec<String>) {
     let tag = |ds: Vec<Diag>| -> Vec<(String, Diag)> {
         ds.into_iter().map(|d| (file.to_string(), d)).collect()
     };
+    // what to emit, and where (§5.5, docs/tooling/05_render.md §3.2): each
+    // `--output name[=file|dir|-]` names a root and where its document goes:
+    // the file given, `-` for stdout, or, alone, the file the root's @render
+    // declares, else stdout
     let mut targets: Vec<(String, Option<String>)> = vec![];
     for spec in outputs {
         let (name, dest) = match spec.split_once('=') {
@@ -149,10 +230,6 @@ pub fn evaluate(
             return (2, None, vec![], vec![]);
         }
         targets.push((name, dest));
-    }
-    if targets.iter().filter(|(_, f)| f.is_none()).count() > 1 {
-        eprintln!("--output: at most one document can go to stdout");
-        return (2, None, vec![], vec![]);
     }
     let r = open_universe(file);
     let Some(entry) = r.entry else {
@@ -174,6 +251,28 @@ pub fn evaluate(
         .collect();
     if checks.iter().any(|(_, d)| d.severity == "error") {
         return (1, None, checks, vec![]);
+    }
+    // each target's declared form (§3): an invalid @render is E7004 at
+    // emission and the root is not emitted; the others still are
+    let decl_of = |n: &str| {
+        r.modules
+            .iter()
+            .flat_map(|m| m.decls.iter())
+            .find(|d| matches!(&d.body, DeclBody::Output { name, .. } if name == n))
+    };
+    let forms: Vec<Result<Form, String>> = targets
+        .iter()
+        .map(|(n, _)| decl_of(n).map(declared_form).unwrap_or(Ok(Form::default())))
+        .collect();
+    let to_stdout = |i: usize| -> bool {
+        match &targets[i].1 {
+            Some(d) => d == "-",
+            None => matches!(&forms[i], Ok(f) if f.file.is_none()),
+        }
+    };
+    if (0..targets.len()).filter(|&i| to_stdout(i)).count() > 1 {
+        eprintln!("--output: at most one document can go to stdout");
+        return (2, None, vec![], vec![]);
     }
     let binds = match input_binds(&r.modules, inputs) {
         Ok(b) => b,
@@ -211,28 +310,59 @@ pub fn evaluate(
     if !notes.is_empty() {
         return (1, None, all.clone(), notes);
     }
-    let doc = |n: &str| eng.serialize(&entry.env.root(n).unwrap(), n, false);
+    let doc = |n: &str| {
+        read_json(&eng.serialize(&entry.env.root(n).unwrap(), n, false))
+            .unwrap_or_else(|_| panic!("canonical JSON"))
+    };
     let mut text = None;
+    let mut bad = false;
     if targets.is_empty() {
         if names.is_empty() {
             notes.push(format!(
                 "{file}: exports no output; --output <name> selects a root"
             ));
         }
-        text = Some(format!(
-            "{{{}}}",
-            names
-                .iter()
-                .map(|n| format!("{}:{}", json_str(n), doc(n)))
-                .collect::<Vec<_>>()
-                .join(",")
-        ));
+        let all_docs = Value::JObj(Rc::new(names.iter().map(|n| (n.clone(), doc(n))).collect()));
+        // a --json report carries the document itself, whatever the layout
+        text = Some(if over.json {
+            to_json(&all_docs, 0) + "\n"
+        } else {
+            layout(&all_docs, over.yaml.unwrap_or(false), over.indent)
+        });
     } else {
-        for (n, dest) in &targets {
+        for (i, (n, dest)) in targets.iter().enumerate() {
+            let form = match &forms[i] {
+                Ok(f) => f.clone(),
+                Err(m) => {
+                    all.push((
+                        file.to_string(),
+                        Diag::error(m.clone(), n.clone(), Some("E7004")),
+                    ));
+                    bad = true;
+                    continue;
+                }
+            };
+            let yaml = over.yaml.unwrap_or(form.yaml);
+            let indent = over.indent.or(form.indent);
+            let dest = match dest {
+                Some(d) if d == "-" => None,
+                Some(d) => Some(d.clone()),
+                None => form.file.clone(),
+            };
             match dest {
-                None => text = Some(doc(n)),
+                None => {
+                    text = Some(if over.json {
+                        to_json(&doc(n), 0) + "\n"
+                    } else {
+                        layout(&doc(n), yaml, indent)
+                    })
+                }
                 Some(path) => {
-                    if std::fs::write(path, doc(n) + "\n").is_err() {
+                    let body = layout(&doc(n), yaml, indent);
+                    if let Some(dir) = std::path::Path::new(&path).parent() {
+                        let _ = std::fs::create_dir_all(dir);
+                    }
+                    if std::fs::write(&path, body).is_err() {
                         notes.push(format!("cannot write {path}"));
                         return (1, None, all.clone(), notes);
                     }
@@ -240,7 +370,7 @@ pub fn evaluate(
             }
         }
     }
-    (0, text, all.clone(), notes)
+    (if bad { 1 } else { 0 }, text, all.clone(), notes)
 }
 
 /// single-file validation, module-aware like `check` and `evaluate`: load
@@ -338,13 +468,22 @@ pub fn main(args: Vec<String>) -> i32 {
     }
     let mut flags: HashMap<String, String> = HashMap::new();
     let mut input_flags: Vec<String> = vec![]; // --input name=doc.json, repeatable
-    let mut output_flags: Vec<String> = vec![]; // --output name[=file], repeatable
+    let mut output_flags: Vec<String> = vec![]; // --output name[=file|dir|-], repeatable
+    let mut template_flags: Vec<String> = vec![]; // --template [root=]path, repeatable
     let mut pos: Vec<String> = vec![];
     let mut i = 1;
     while i < args.len() {
         let a = &args[i];
         if let Some(name) = a.strip_prefix("--") {
-            if ["output", "input", "expect-errors"].contains(&name)
+            if [
+                "output",
+                "input",
+                "expect-errors",
+                "format",
+                "indent",
+                "template",
+            ]
+            .contains(&name)
                 && i + 1 < args.len()
                 && !args[i + 1].starts_with("--")
             {
@@ -352,6 +491,8 @@ pub fn main(args: Vec<String>) -> i32 {
                     input_flags.push(args[i + 1].clone());
                 } else if name == "output" {
                     output_flags.push(args[i + 1].clone());
+                } else if name == "template" {
+                    template_flags.push(args[i + 1].clone());
                 } else {
                     flags.insert(name.to_string(), args[i + 1].clone());
                 }
@@ -389,7 +530,11 @@ pub fn main(args: Vec<String>) -> i32 {
         }
         "evaluate" => {
             let Some(f) = pos.first() else { return usage() };
-            let (code, text, diags, notes) = evaluate(f, &output_flags, &input_flags);
+            let Some(over) = form_overrides(&flags) else {
+                return 2;
+            };
+            let _ = &template_flags;
+            let (code, text, diags, notes) = evaluate(f, &output_flags, &input_flags, &over);
             if code == 2 {
                 return 2; // a usage error: already printed, no report
             }
@@ -403,11 +548,11 @@ pub fn main(args: Vec<String>) -> i32 {
                 println!(
                     "{{\"ok\":{},\"value\":{},\"diagnostics\":[{}]}}",
                     code == 0,
-                    text.clone().unwrap_or_else(|| "null".into()),
+                    text.as_deref().map(str::trim_end).unwrap_or("null"),
                     collected.join(",")
                 );
             } else if let Some(t) = text {
-                println!("{t}");
+                print!("{t}");
             }
             code
         }

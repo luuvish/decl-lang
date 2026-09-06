@@ -60,7 +60,7 @@ charter and chapters remains a defect to fix on sight (§1.4).
 | [02. REPL](tooling/02_repl.md) | `decl repl`: a session over the evaluation universe — bare expressions as partial evaluation, session outputs, document edits with exact undo/redo, incremental re-evaluation, and the commands that mirror the CLI verbs |
 | [03. Language server](tooling/03_lsp.md) | `decl-lsp`: the server's capabilities, one by one — diagnostics, hover, completion, navigation, hierarchies, rename, code actions, hints, lenses, semantic tokens, workspaces |
 | [04. Editor extensions](tooling/04_extension.md) | `vscode-decl` and `zed-decl`: the editor faces of the server and the REPL — VS Code's language contribution, server management, live output preview, bound inputs, trace view, tasks, Test Explorer, and web extension; Zed's grammar, queries, runnables, and server pointer; other editors |
-| [05. Renderer](tooling/05_render.md) | `--format yaml` and `decl render`: structured formats as tool-side conversions, and the template dialect implemented three times (planned, Phase 10) |
+| [05. Renderer](tooling/05_render.md) | `@render`, documents in YAML, `--format` / `--indent`, and the template dialect implemented three times: the form a module declares for its outputs, as tooling (Phase 10) |
 | [Development handbook](DEVELOPMENT.md) | How the repository is set up and worked on: layout and configuration files, toolchains and versions, getting started, building and testing, quality tools, CI, releases, editors, conventions |
 
 ### Validation cases (§0.5 desk-check artifacts)

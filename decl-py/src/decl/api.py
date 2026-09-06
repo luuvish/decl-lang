@@ -89,6 +89,7 @@ def _pairs(inputs: Any) -> list[Any]:
 def _bind_inputs(modules: list[Any], file: str, inputs: Any) -> list[Any]:
     """The documents to bind, each to the module that declares its input (§10)."""
     from .semantics import read_json
+    from .yaml import is_yaml_path, read_yaml
 
     binds = []
     for name, doc in _pairs(inputs):
@@ -115,9 +116,11 @@ def _bind_inputs(modules: list[Any], file: str, inputs: Any) -> list[Any]:
             where = str(doc)
         else:
             text, where = json.dumps(doc), name
+        # a file is YAML by its extension (docs/tooling/05_render.md §2)
+        yaml = isinstance(doc, (str, os.PathLike)) and is_yaml_path(str(doc))
         try:
-            raw = read_json(text)
-        except Exception:
+            raw = read_yaml(text) if yaml else read_json(text)
+        except Exception as e:
             _fail(
                 "",
                 [
@@ -125,7 +128,11 @@ def _bind_inputs(modules: list[Any], file: str, inputs: Any) -> list[Any]:
                         "file": file,
                         "code": "E6004",
                         "severity": "error",
-                        "message": f"bound document is not well-formed JSON: {where}",
+                        "message": (
+                            f"bound document is not well-formed YAML: {where}: {e}"
+                            if yaml
+                            else f"bound document is not well-formed JSON: {where}"
+                        ),
                         "path": name,
                     }
                 ],
@@ -258,3 +265,29 @@ def format_source(text: str) -> str:
         return fmt(text)
     except ValueError as e:
         raise DeclError(str(e)) from None
+
+
+def _raw_of(value: Any) -> Any:
+    """a JSON value as the reader's shape (a mapping in its order; a string is
+    canonical JSON text and passes through with its number texts)"""
+    from .semantics import read_json
+
+    if isinstance(value, str):
+        return read_json(value)
+    return read_json(json.dumps(value, ensure_ascii=False))
+
+
+def to_json(value: Any, indent: int = 0) -> str:
+    """The JSON text of a value: canonical for indent 0 (the default), laid
+    out with ``indent`` spaces per level otherwise (docs/tooling/05_render.md
+    §4.1). A string is canonical JSON text and passes through."""
+    from .yaml import to_json as json_text
+
+    return json_text(_raw_of(value), indent)
+
+
+def to_yaml(value: Any, indent: int = 2) -> str:
+    """The YAML text of a value (docs/tooling/05_render.md §4.2), no trailing newline."""
+    from .yaml import to_yaml as yaml_text
+
+    return yaml_text(_raw_of(value), indent)

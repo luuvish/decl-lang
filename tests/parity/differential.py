@@ -415,6 +415,58 @@ for g in golden_manifest:
             detail[n] = ("the reference differs from the golden — " if not ref_ok else "") + f"ref {describe(ref)} | {n} {describe(nat)}"
     row(f"golden {g['golden']}", verdicts, detail)
 
+# ---------------------------------------------------------------- render: documents in YAML, the layouts
+# (tests/render/README.md): every golden document bound from its YAML twin
+# must give the golden; the documents under invalid/ must be refused with
+# their messages; the layouts of formats.json (`--format yaml`, `--indent n`)
+# must print the committed bytes — the reference included
+def expect_row(label: str, args: list[str], stream: int, want_exit: int, expected: str) -> None:
+    """a reviewed text on one stream (1 stdout, 2 stderr) and an exit code, required of the reference and identical from every runtime"""
+    ref = outcome(REF, args)
+    verdicts, detail = {}, {}
+    ref_ok = ref[0] == want_exit and ref[stream] == expected
+    for n, prefix in RUNTIMES.items():
+        nat = outcome(prefix, args)
+        verdicts[n] = ref_ok and nat == ref
+        if not verdicts[n]:
+            detail[n] = ("the reference differs from the expectation — " if not ref_ok else "") + f"ref {describe(ref)} | {n} {describe(nat)}"
+    row(label, verdicts, detail)
+
+
+twin_of = lambda spec: re.sub(r"=tests/golden/inputs/(.*)\.json$", r"=tests/render/inputs/\1.yaml", spec)
+twin_rows = [g for g in golden_manifest if g.get("inputs") and [twin_of(s) for s in g["inputs"]] != g["inputs"]]
+invalid_docs = json.loads((ROOT / "tests/render/invalid/cases.json").read_text())
+print(f"== yaml-input: {len(twin_rows)} goldens bound from their YAML twins, {len(invalid_docs)} documents the reader refuses (exit, stdout, stderr)")
+for g in twin_rows:
+    rejected = g.get("rejected", False)
+    args = ["validate" if rejected else "evaluate", module_of(g)] + [x for spec in g["inputs"] for x in ("--input", twin_of(spec))] + ([] if "output" not in g else ["--output", g["output"]])
+    expect_row(f"yaml twin of {g['golden']}", args, 2 if rejected else 1, 1 if rejected else 0, (ROOT / g["golden"]).read_text())
+for c in invalid_docs:
+    doc = f"tests/render/invalid/{c['file']}"
+    cli_row(f"refused: {c['file']}", ["validate", "tests/render/invalid/doc.decl", "--input", f"doc={doc}"])
+    cli_row(f"refused: {c['file']} (evaluate --json)", ["evaluate", "tests/render/invalid/doc.decl", "--input", f"doc={doc}", "--output", "doc", "--json"])
+
+formats = json.loads((ROOT / "tests/render/formats.json").read_text())
+print(f"== format: {len(formats)} goldens laid out as YAML and indented JSON (exit, stdout, stderr; every implementation, the reference included)")
+for f in formats:
+    g = next(m for m in golden_manifest if m["golden"] == f["golden"])
+    base = ["evaluate", module_of(g)] + [x for spec in g.get("inputs", []) for x in ("--input", spec)] + ([] if "output" not in g else ["--output", g["output"]])
+    expect_row(f"{f['yaml']}: --format yaml", base + ["--format", "yaml"], 1, 0, (ROOT / f["yaml"]).read_text())
+    for n, file in f["indent"].items():
+        expect_row(f"{file}: --indent {n}", base + ["--indent", n], 1, 0, (ROOT / file).read_text())
+    cli_row(f"{f['golden']}: --pretty", base + ["--pretty"])
+    cli_row(f"{f['golden']}: --format yaml --indent 4", base + ["--format", "yaml", "--indent", "4"])
+    cli_row(f"{f['golden']}: --json --indent 2 (the report carries the document)", base + ["--json", "--indent", "2"])
+FMT0 = "docs/examples/02_config.decl"
+cli_row("format: --format of something else", ["evaluate", FMT0, "--format", "xml"])
+cli_row("format: --format without a value", ["evaluate", FMT0, "--format"])
+cli_row("format: --json with --format yaml", ["evaluate", FMT0, "--json", "--format", "yaml"])
+cli_row("format: --indent out of range", ["evaluate", FMT0, "--indent", "17"])
+cli_row("format: --indent not a number", ["evaluate", FMT0, "--indent", "two"])
+cli_row("format: --indent with --pretty", ["evaluate", FMT0, "--indent", "2", "--pretty"])
+cli_row("format: --output name=- to stdout", ["evaluate", FMT0, "--output", "prod=-", "--format", "yaml"])
+cli_row("format: a declared file is honoured and -", ["evaluate", "tests/validation/declarations/valid/annotations.decl", "--output", "demo"])
+
 # scale: the fabric site generator must reproduce the committed 2x4 site, and
 # a 10x20 site (200 links, 30 switches) must be accepted with identical output
 _spec = importlib.util.spec_from_file_location("gen_site", ROOT / "tests/golden/inputs/fabric/gen_site.py")
