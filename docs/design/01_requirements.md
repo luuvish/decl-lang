@@ -57,9 +57,12 @@ helps the third at the cost of the first is rejected.
 - **Does not replace natural-language specification documents.** A Decl file
   can be the executable expression of an agreed spec, but which artifact is
   the final authority on meaning is the adopting project's decision.
-- **Template/rendering engines are not language core.** Rendering evaluated
-  results into arbitrary text is tooling-layer work. The language is
-  responsible up to the resolved value tree and diagnostics.
+- **Rendering is tooling, not language core.** The language is responsible
+  up to the resolved value tree and its diagnostics. Emitting that tree in
+  another structured format (YAML) or through a template into text is the
+  tool chain's job — the renderer of the `decl` command line (`--format`,
+  `decl render`), specified in [05. Renderer](../tooling/05_render.md) and
+  implemented identically by the three implementations (ROADMAP Phase 10).
 
 ## 3. Requirements
 

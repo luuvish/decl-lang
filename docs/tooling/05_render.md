@@ -2,8 +2,8 @@
 
 Evaluation ends at a resolved value tree and its diagnostics; the
 specification defines interchange with JSON alone (§10.6) and the
-requirements keep rendering out of the language core (01_requirements
-§2). Rendering is therefore **tooling**: the `decl` command line emits
+requirements place rendering in the tool chain, not the language core
+(01_requirements §2). Rendering is therefore **tooling**: the `decl` command line emits
 an evaluated document in another structured format, or through a
 template into text, and the three implementations do so identically.
 This document is informative; it fixes the formats and the template
