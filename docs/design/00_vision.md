@@ -4,8 +4,7 @@ Why this language exists, what it must achieve, and what its previous
 iterations taught us. This is the founding document of the design series;
 [requirements](01_requirements.md) and design decisions build on it.
 
-- **Source**: distilled from a design-review conversation of 2026-08-14,
-  kept verbatim in [sources/2026-08-14_design_review.md](sources/2026-08-14_design_review.md)
+- **Source**: distilled from a design-review conversation of 2026-08-14
 - **Status**: informative background for the spec rewrite. Not normative.
 - **Note**: all section numbers (§) and decision numbers (D-numbers, E-codes)
   below refer to the **previous Decl spec iteration**, which this
