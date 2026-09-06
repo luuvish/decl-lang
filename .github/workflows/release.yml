@@ -245,8 +245,10 @@ jobs:
           node-version: ${{ steps.pins.outputs.node }}
           registry-url: https://registry.npmjs.org
           cache: npm
-      # trusted publishing needs npm 11.5.1 or newer
-      - run: npm install -g npm@latest && npm --version
+      # trusted publishing needs npm 11.5.1 or newer; the major is pinned so a
+      # release does not pick up the next major the day it appears (npm 12
+      # changed the shape of `npm pack --json` under the smoke's feet)
+      - run: npm install -g npm@11 && npm --version
       - run: PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1 npm ci
       - run: npm publish --access public -w decl-lang
 
@@ -349,7 +351,9 @@ jobs:
         run: |
           f=packaging/homebrew/Formula/decl-lang.rb
           cp "$f" /tmp/decl-lang.rb
-          git fetch -q origin main && git checkout -q main
+          # -f: on a re-run main already carries the formula, and the rendered copy in
+          # the working tree would otherwise block the switch (it is restored from /tmp)
+          git fetch -q origin main && git checkout -q -f main
           cp /tmp/decl-lang.rb "$f"
           if git diff --quiet; then echo "packaging/ is already current"; exit 0; fi
           git -c user.name=github-actions -c user.email=github-actions@github.com commit -qam "homebrew: decl-lang ${{ steps.tarball.outputs.version }} [skip ci]"
@@ -361,6 +365,8 @@ jobs:
           # the runner's Linuxbrew is installed but not on PATH
           eval "$(/home/linuxbrew/.linuxbrew/bin/brew shellenv)"
           brew tap luuvish/tap
+          # Homebrew loads a third-party formula only once it is trusted (docs.brew.sh/Tap-Trust)
+          brew trust --formula luuvish/tap/decl-lang
           brew install luuvish/tap/decl-lang
           decl --version
           brew test luuvish/tap/decl-lang

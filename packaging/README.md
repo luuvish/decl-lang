@@ -7,12 +7,12 @@ import name in Python is `decl`, and the binary is `decl` everywhere.
 
 | Channel | Package | Install | Status |
 |---|---|---|---|
-| GitHub release | `v0.3.0`: `decl` and `decl-lsp` for six platforms, the wheels, the `.vsix` | [releases/tag/v0.3.0](https://github.com/luuvish/decl-lang/releases/tag/v0.3.0) | **published 2026-09-05** by `release.yml` |
-| npm | `decl-lang` | `npm install -g decl-lang` | **published 2026-09-05** (0.3.0, by hand; from the next tag `release.yml` through trusted publishing; `decl-ts/`) |
-| PyPI | `decl-lang` | `pip install decl-lang` | **published 2026-09-05** (0.3.0: 39 wheels and the sdist, by `release.yml` through trusted publishing; `decl-py/`) |
-| Homebrew | tap `luuvish/tap`, formula `decl-lang` | `brew install luuvish/tap/decl-lang` | **published 2026-09-05**: [luuvish/homebrew-tap](https://github.com/luuvish/homebrew-tap), the formula mirrored from `homebrew/` |
-| crates.io | `decl-lang` (bins `decl`, `decl-lsp`) | `cargo install decl-lang` | **published 2026-09-05** (0.3.0, by hand; from the next tag `release.yml` through trusted publishing; `decl-rs/`) |
-| Visual Studio Marketplace, Open VSX | `luuvish.vscode-decl` (the VS Code extension, bundling npm `decl-lang`) | Extensions view: "Decl" | **published 2026-09-05** on both (`luuvish.vscode-decl` 0.3.0, by `release.yml` with `VSCE_PAT` / `OVSX_PAT`); the Open VSX namespace claim is filed |
+| GitHub release | `v0.4.0`: `decl` and `decl-lsp` for six platforms, the wheels, the `.vsix` | [releases/tag/v0.4.0](https://github.com/luuvish/decl-lang/releases/tag/v0.4.0) | **published 2026-09-06** by `release.yml` |
+| npm | `decl-lang` | `npm install -g decl-lang` | **published 2026-09-06** (0.4.0, by `release.yml` through trusted publishing, with provenance; `decl-ts/`) |
+| PyPI | `decl-lang` | `pip install decl-lang` | **published 2026-09-06** (0.4.0: 39 wheels and the sdist, by `release.yml` through trusted publishing; `decl-py/`) |
+| Homebrew | tap `luuvish/tap`, formula `decl-lang` | `brew install luuvish/tap/decl-lang` | **published 2026-09-06** (0.4.0, by `release.yml`): [luuvish/homebrew-tap](https://github.com/luuvish/homebrew-tap), the formula mirrored from `homebrew/` |
+| crates.io | `decl-lang` (bins `decl`, `decl-lsp`) | `cargo install decl-lang` | **published 2026-09-06** (0.4.0, by `release.yml` through trusted publishing; `decl-rs/`) |
+| Visual Studio Marketplace, Open VSX | `luuvish.vscode-decl` (the VS Code extension, bundling npm `decl-lang`) | Extensions view: "Decl" | **published 2026-09-06** on both (`luuvish.vscode-decl` 0.4.0, by `release.yml` with `VSCE_PAT` / `OVSX_PAT`); the Open VSX namespace claim is filed |
 | Zed extension registry | `decl` (the Zed extension: grammar, queries, `decl-lsp` pointer) | Zed: extensions, "Decl" | submitted 2026-09-05: [zed-industries/extensions#7488](https://github.com/zed-industries/extensions/pull/7488) (submodule at `extension/zed`; the `decl-lsp` binaries come from the GitHub release) |
 
 npm and Homebrew ship **the same bytes**: `decl-ts/dist/` — the esbuild
@@ -120,9 +120,14 @@ git add Formula && git commit -m "decl-lang 0.2.0" && git push
 Users then run:
 
 ```bash
-brew tap luuvish/tap
-brew install decl-lang
+brew install luuvish/tap/decl-lang
 ```
+
+Homebrew loads a formula from a third-party tap only once it is trusted
+([Tap Trust](https://docs.brew.sh/Tap-Trust)): the fully qualified name
+above trusts that one formula; a script (the `homebrew` job of
+`release.yml`) runs `brew trust --formula luuvish/tap/decl-lang` first,
+since there is nobody to answer the question.
 
 The formula depends on `node` and installs the npm tarball under
 `libexec` (`std_npm_args`), linking `decl` and `decl-lsp` into `bin` —
