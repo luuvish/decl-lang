@@ -118,12 +118,14 @@ export output report: Report = { … }     // no annotation: canonical JSON
 | `template` | a string | a template file (§5), relative to the module's directory; the root is emitted as text. `format` and `indent` then apply only inside `render.json` / `render.yaml` |
 | `file` | a string | the default destination, relative to the working directory: where `--output name` writes when no `=file` is given |
 | `each` | a string | fan-out (§6): the root is an array or a map, and every element is emitted as its own file — the string names the member of each element that holds the file's path, or is `"$key"` for a map's key |
+| `delimiters` | an object | the template's delimiters, when the defaults `{= =}` / `{% %}` / `{# #}` collide with the text generated (§5.2) |
 
 A `@render` that is not one object literal of literals, with a key
 outside this table, a value of the wrong type, `indent` out of range,
-`format` other than the two, or `each` on a root whose type is neither
-an array nor a map, is **E7004** at emission with a message naming the
-key; the root is not emitted. `@render` on a declaration other than an
+`format` other than the two, `delimiters` with an empty string or two
+equal openers, or `each` on a root whose type is neither an array nor a
+map, is **E7004** at emission with a message naming the key; the root
+is not emitted. `@render` on a declaration other than an
 `output` is the ordinary unknown-annotation warning of §5.10 and is
 ignored. A root without `@render` is emitted as canonical JSON, one
 file, as today.
@@ -249,27 +251,30 @@ implemented three times and never delegated to a host engine, because
 Jinja2, Nunjucks, minijinja, and Tera differ in whitespace control,
 filters, and number printing, and the three implementations must print
 identical bytes. Its surface is the Jinja family's, which template
-authors already know: `{{ }}` for values, `{% %}` for statements, `{#
-#}` for comments, `-` for whitespace control, `if` / `for` / `set` /
-`raw`, a `loop` object. What is deliberately different:
+authors already know: `{% %}` for statements, `{# #}` for comments,
+`-` for whitespace control, `if` / `for` / `set` / `include` / `raw`, a
+`loop` object — and `{= =}` for values, where the family writes
+`{{ }}` (§5.2 says why). What is deliberately different:
 
 - **Expressions are Decl expressions** (§4), evaluated by the language's
   own evaluator over the document — not a template expression
   language. There are no template filters: a Jinja filter is a
   function call, and Jinja's `x | f` is the language's pipeline
-  `x |> f` (§4.9, first-argument insertion), so `{{ services |>
-  std.array.count }}` and `{{ name |> std.string.length }}` read as a
+  `x |> f` (§4.9, first-argument insertion), so `{= services |>
+  std.array.count =}` and `{= name |> std.string.length =}` read as a
   Jinja author expects and mean what the language means.
 - **Nothing is coerced.** A condition must be a `bool`; a value with no
   text form does not render; an absent member is an error unless the
   expression gives it a default (`??`, §4.10). Jinja's truthiness and
   its silent `Undefined` are the class of defect the language exists to
   remove.
-- **One file, one document.** No `include`, `extends`, `block`,
-  `macro`, `import`, or `call` in this delivery: a template is one file
-  over one document, and the language's own `func` declarations, in
-  scope in the template, are the abstraction mechanism. Fan-out (§6)
-  covers "one template, many files".
+- **Files compose by inclusion, not inheritance.** `include` is in:
+  a header, a footer, or a fragment rendered in the current scope, and
+  with `set` before it, a parameterized fragment. `extends` / `block`
+  and `macro` are not: template inheritance is the largest and least
+  used part of the Jinja family outside HTML pages, and a Decl module's
+  `func` declarations, in scope in the template, already carry the
+  logic a macro would. Fan-out (§6) covers "one template, many files".
 - **Whitespace is predictable** by two rules stated in §5.2, with
   Jinja's `-` and `+` to override them.
 
@@ -291,10 +296,31 @@ ending the template used at that place.
 
 | Delimiters | Meaning |
 |---|---|
-| `{{ expr }}` | the text form of `expr` (§5.5) |
+| `{= expr =}` | the text form of `expr` (§5.5) |
 | `{% stmt %}` | a statement (§5.3) |
 | `{# … #}` | a comment; produces nothing, may span lines, does not nest |
-| `{% raw %} … {% endraw %}` | the text between, verbatim, delimiters included; the only way to write `{{` or `{%` literally |
+| `{% raw %} … {% endraw %}` | the text between, verbatim, delimiters included; the way to write `{=` or `{%` literally |
+
+The value delimiter is `{= =}`, not the Jinja family's `{{ }}`: the
+languages a Decl module most often generates — Verilog and
+SystemVerilog, with their concatenation `{a, b}` and replication
+`{n{x}}` — are full of `{{` and `}}`, and a template for them must be
+able to write those as ordinary text. Everything that is not a
+delimiter is text, `{{` and `}}` included.
+
+The delimiters can be declared per root, for a template that generates
+another template language or a text where `{%` or `{#` occur:
+
+```decl
+@render({ template: "chart.yaml.j2", delimiters: { value: ["<%=", "%>"], statement: ["<%", "%>"], comment: ["<%#", "%>"] } })
+```
+
+Each of the three is a pair of non-empty strings; the three openers
+are distinct and are matched longest first at every position, so an
+opener may extend another (`<%=` beside `<%`). The whitespace
+modifiers of this section attach inside whichever delimiters are in
+force (`<%-`, `-%>`). The declared delimiters apply to the root's
+template and to every file it includes (§5.3).
 
 Whitespace around statements follows two default rules, which are
 Jinja's `trim_blocks` and `lstrip_blocks` switched on:
@@ -304,10 +330,10 @@ Jinja's `trim_blocks` and `lstrip_blocks` switched on:
 2. whitespace between a line start and a statement tag `{%` on that
    line is removed, so an indented statement leaves no indentation.
 
-Neither rule touches `{{ }}` or `{# #}`. The Jinja modifiers override
+Neither rule touches `{= =}` or `{# #}`. The Jinja modifiers override
 both: `{%-` strips all whitespace before the tag (newlines included),
 `-%}` all whitespace after it; `{%+` and `+%}` keep the whitespace the
-default rules would remove. `{{-` and `-}}` strip around a value tag
+default rules would remove. `{=-` and `-=}` strip around a value tag
 the same way. Inside `{% raw %}` nothing is trimmed.
 
 ### 5.3 Statements
@@ -319,6 +345,7 @@ the same way. Inside `{% raw %}` nothing is trimmed.
 | `{% for x in e if c %}` | only the elements for which `c` (a `bool` over `x`) holds, as in a comprehension filter (§4.8); `loop` counts the kept ones |
 | `{% for k, v in e %}` | `e` an object or map: the body once per member, `k` the key (a string), `v` the value, in canonical order (§7.2) |
 | `{% set x = e %}` | binds `x` to `e` for the rest of the enclosing body (the template, or the `for`/`if` body it appears in); a name may be set once per scope |
+| `{% include "path" %}` | renders the named template file in place, with the current scope (names in scope are visible to it; a `set` inside it does not escape); the path is relative to the including file's directory; a cycle of includes is E7001 |
 | `{% raw %} … {% endraw %}` | verbatim text |
 
 Inside a `for` body, `loop` is bound to a record with exactly five
@@ -338,7 +365,7 @@ A template evaluates over the **context** of what it renders:
   root's completed document (`site`, `gateway`) — the only name when
   the document is an array or a scalar — and, when the document is a
   record, each of its members is bound by name as well, so
-  `{{ services[0].port }}` and `{{ site.services[0].port }}` are the
+  `{= services[0].port =}` and `{= site.services[0].port =}` are the
   same value;
 - for one element of a fan-out root (§6), `item` is bound to the
   element, `key` to its map key (a string) or array index (an integer),
@@ -356,7 +383,7 @@ context variables `$this`, `$parent`, `$root`, `$key`, `$path`, and
 member expression); the document is reached by its members and its
 names.
 
-### 5.5 The text form of `{{ expr }}`
+### 5.5 The text form of `{= expr =}`
 
 `expr` is evaluated as the language evaluates an expression (§9), and
 its value is written as text:
@@ -371,10 +398,10 @@ its value is written as text:
 | quantity | the base-unit magnitude then a space then the unit symbol: `3000.0 m`, `0.25 s` (the magnitude as a float) |
 | reference | its canonical path (`$.services[1]`) |
 | array, object, map | its canonical JSON on one line (§10.4) |
-| absent | E7002 — write `{{ x ?? "…" }}` to give it a text |
+| absent | E7002 — write `{= x ?? "…" =}` to give it a text |
 | a function | E7002 |
 
-The first four are §4.11's conversions, so `{{ x }}` and the module's
+The first four are §4.11's conversions, so `{= x =}` and the module's
 own `` `${x}` `` agree; the rest are the renderer's, defined here
 because a template, unlike a string template, is where a whole value
 is often wanted.
@@ -390,7 +417,7 @@ the pipeline:
 | `render.yaml(v)`, `render.yaml(v, indent: int)` | `v` as YAML (§4.2); the text has no trailing newline, so it composes inline |
 | `render.indent(s: string, n: int)` | `s` with `n` spaces inserted after every newline (not before the first line): the way to nest a rendered block under a key in YAML or under an indented line |
 
-`{{ site |> render.yaml |> render.indent(2) }}` places a document under
+`{= site |> render.yaml |> render.indent(2) =}` places a document under
 a parent key. There are no others; string work is `std.string`, and a
 template that needs more expresses it as a `func` in the module.
 
@@ -399,7 +426,7 @@ template that needs more expresses it as a `func` in the module.
 | Code | Condition |
 |---|---|
 | E7001 | the template does not parse: an unclosed or unknown tag, a tag out of place, an expression that is not a Decl expression; the message names the construct |
-| E7002 | a value with no text form in `{{ }}`: absent, or a function |
+| E7002 | a value with no text form in `{= =}`: absent, or a function |
 | E7003 | a template file cannot be read (also for `-` when standard input is not available) |
 | E7004 | an invalid `@render` annotation (§3): the message names the key |
 | E7005 | a fan-out path that is not a string, is empty, is absolute, leaves the destination directory, or repeats (§6) |
@@ -544,10 +571,13 @@ Decided for this phase:
   hand-built three times; YAML serves the need for a second structured
   form and templates serve the rest. If it comes, it comes fail-closed:
   an error naming the first path that cannot be represented.
-- The `loop` object has exactly five members; `set` and `raw` are in;
-  `include` / `extends` / `macro` are not; the default whitespace rules
-  are Jinja's trim/lstrip switched on; a template may come from
-  standard input as `-`.
+- The value delimiter is `{= =}` and the delimiters can be declared
+  per root; `{{ }}` is text.
+- The `loop` object has exactly five members; `set`, `include`, and
+  `raw` are in; `extends` / `block` / `macro` are not, until a template
+  in the wild needs inheritance; the default whitespace rules are
+  Jinja's trim/lstrip switched on; a template may come from standard
+  input as `-`.
 
 Open: whether `render.indent` should also take a first-line prefix;
 whether a `newline` key (`lf` | `crlf`) is wanted for templates on
