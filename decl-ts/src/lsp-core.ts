@@ -176,9 +176,15 @@ function locOfPath(decls: Decl[], segs: Seg[]): Loc | null {
 }
 const severityOf = (s: string) => (s === 'error' ? 1 : s === 'warning' ? 2 : 3);
 
-function analyze(uri: string) {
-  const src = docs.get(uri)!;
-  const path = pathOf(uri);
+/**
+ * The diagnostics of one document as the server publishes them — LSP items
+ * with a range, a severity, a code, and a message: the parse errors of the
+ * text, or else the universe's load, check, and evaluation diagnostics that
+ * belong to this file, anchored to a source range (an evaluation diagnostic
+ * at the literal its path leads to). Exported for the website's playground,
+ * which runs the same session in the browser and shows them in place.
+ */
+export function diagnosticsFor(src: string, path: string, run: Run | null): any[] {
   const out: any[] = [];
   const push = (loc: Loc, d: Diag) => {
     const item: any = { range: rangeOf(loc), severity: severityOf(d.severity), source: 'decl' };
@@ -199,9 +205,8 @@ function analyze(uri: string) {
         code: 'E2001',
         message: 'syntax error',
       });
-  } else {
-    const a = analysisOf(uri)!;
-    const r = a.run;
+  } else if (run) {
+    const r = run;
     for (const d of r.loadDiags) {
       // a loading problem is anchored to the import it concerns when one is named
       const imp = decls.find(
@@ -229,7 +234,16 @@ function analyze(uri: string) {
       push(loc, d);
     }
   }
-  notify('textDocument/publishDiagnostics', { uri, diagnostics: out });
+  return out;
+}
+
+function analyze(uri: string) {
+  const src = docs.get(uri)!;
+  const run = parseSource(src).errors.length ? null : analysisOf(uri)!.run;
+  notify('textDocument/publishDiagnostics', {
+    uri,
+    diagnostics: diagnosticsFor(src, pathOf(uri), run),
+  });
 }
 
 // ---------------- positions -> nodes ----------------

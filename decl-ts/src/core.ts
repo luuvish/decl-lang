@@ -21,8 +21,8 @@ export type { Pipeline, Report } from './pipeline.ts';
 /** The canonical formatter (`decl fmt`): idempotent, AST-preserving, the author's line structure kept (§2.9). */
 export { format, initFormatter } from './fmt.ts';
 /** Values and environments: `Env` loads declarations and resolves types; `readJson` reads a document (§10.2); the `is*` guards tell a value's kind. */
-export { Env, readJson, isArr, isMap, isRec, isRef, isQ } from './semantics.ts';
-export type { Diag, RT } from './semantics.ts';
+export { Env, readJson, isArr, isMap, isRec, isRef, isQ, parsePath, segText } from './semantics.ts';
+export type { Diag, RT, Seg } from './semantics.ts';
 /** The evaluator (§9): binds, forces lazily with dependency tracking, validates, serializes. */
 export { Engine } from './engine.ts';
 /** The subsumption judgment ⊑ (§3.17) and structural emptiness (§3.19). */
@@ -57,6 +57,6 @@ export {
 /** The evaluation session behind the REPL and the server: an operation log with undo and redo, incremental re-evaluation. */
 export { Session, SessionError, prettyJson, fmtDiag } from './session.ts';
 export type { Op, BindSource, Document, Run, RootInfo } from './session.ts';
-/** The language server's core over any transport: `connect` feeds it messages, `Io` is what it needs of the transport. */
-export { connect as connectLanguageServer } from './lsp-core.ts';
+/** The language server's core over any transport: `connect` feeds it messages, `Io` is what it needs of the transport; `diagnosticsFor` is its diagnostics of one document, anchored to source ranges. */
+export { connect as connectLanguageServer, diagnosticsFor } from './lsp-core.ts';
 export type { Io as LanguageServerIo } from './lsp-core.ts';

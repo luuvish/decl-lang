@@ -29,7 +29,7 @@ here, and nothing was migrated from earlier work.
 | 6 | REPL, language server & editors | `decl repl`, `decl-lsp` v2/v3, `vscode-decl`, `zed-decl` | **delivered — 2026-09-05**; v0.3.0 released 2026-09-05 |
 | 7 | Conformance depth | the corpora cover every surface: the command line, an API corpus, a language-server corpus, the goldens | **done — 2026-09-05** |
 | 8 | Crate documentation | rustdoc on docs.rs; the Python and JavaScript API docs to the same bar | **done — 2026-09-06** |
-| 9 | Website | design, content, playground | in progress — the identity and theme landed 2026-09-06, the content 2026-09-06 |
+| 9 | Website | design, content, playground | **done — 2026-09-06** (the identity and theme, the content, the playground) |
 | 10 | Renderer | `--format yaml`, `decl render` with a template dialect | planned |
 
 ---
@@ -321,8 +321,17 @@ library and the diagnostic codes as browsable references generated
 from the specification; the tools on the landing page; the stale
 version notes gone (docs/guide/, docs/README.md, site/README.md).
 
-**Exit criteria**: every ```decl block on the site evaluates clean · the
-playground runs every example · the site builds from `docs/` as before.
+**Delivered (2026-09-06)**: the playground — the reference
+implementation's session in the browser, input documents bound in an
+Inputs panel and evaluated like outputs, diagnostics in place (in the
+module by the server's anchoring, in a document at the value its path
+leads to), the tutorials with their documents in the example picker,
+links that carry the documents (site/README.md).
+
+**Exit criteria**: every ```decl module on the site evaluates clean (the
+guide's and the tutorials' blocks as modules of the golden corpus, the
+examples as the sync evaluates them) · the playground runs every
+example · the site builds from `docs/` as before.
 
 ---
 

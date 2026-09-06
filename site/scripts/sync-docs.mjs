@@ -190,6 +190,54 @@ if (existsSync(hero)) {
   writeFileSync(resolve(SAMPLES, 'hero.json'), value ? JSON.stringify(value, null, 2) + '\n' : '{}\n');
 }
 
+// ---------------------------------------------------------------- the playground's examples
+// One list, with the sources and the documents inlined: the landing page's
+// module; the tutorials, each assembled from its untitled ```decl blocks the
+// way the golden corpus assembles them, with the documents the corpus binds
+// (and any `<root>_<variant>.json` beside them, such as the one a tutorial
+// rejects); then the validation cases. Multi-module examples stay out: the
+// playground evaluates one module.
+{
+  const examples = [];
+  const blocks = (md) => [...md.matchAll(/```decl\n([\s\S]*?)```/g)].map((m) => m[1]).join('\n');
+  if (existsSync(hero)) examples.push({ id: 'hero', label: 'services (landing page)', source: readFileSync(hero, 'utf8') });
+  const manifest = JSON.parse(readFileSync(resolve(ROOT, 'tests/golden/manifest.json'), 'utf8'));
+  const guideDocs = resolve(ROOT, 'tests/golden/inputs/guide');
+  const seen = new Set();
+  const guide = [];
+  for (const e of manifest) {
+    if (!e.markdown?.startsWith('docs/guide/')) continue;
+    const stem = posix.basename(e.markdown, '.md');
+    const md = readFileSync(resolve(ROOT, e.markdown), 'utf8');
+    const title = (md.match(/^# (.+)$/m)?.[1] ?? stem).trim();
+    const source = blocks(md);
+    if (!source.trim()) continue;
+    const bindings = (e.inputs ?? []).map((spec) => spec.split('='));
+    const variants = [];
+    if (!bindings.length) {
+      if (!seen.has(stem)) variants.push({ suffix: '', inputs: undefined });
+    } else {
+      variants.push({ suffix: ` · ${bindings.map(([, f]) => posix.basename(f)).join(', ')}`, inputs: Object.fromEntries(bindings.map(([root, f]) => [root, readFileSync(resolve(ROOT, f), 'utf8')])) });
+      for (const [root] of bindings)
+        for (const f of existsSync(guideDocs) ? readdirSync(guideDocs).filter((x) => x.startsWith(`${root}_`) && x.endsWith('.json')).sort() : [])
+          variants.push({ suffix: ` · ${f}`, inputs: { [root]: readFileSync(resolve(guideDocs, f), 'utf8') } });
+    }
+    for (const v of variants) {
+      const id = `${stem}${v.suffix ? '-' + v.suffix.replace(/[^a-z0-9]+/gi, '-').replace(/^-|-$/g, '') : ''}`;
+      if (seen.has(id)) continue;
+      seen.add(id);
+      seen.add(stem);
+      guide.push({ id, label: `Guide: ${title}${v.suffix}`, source, ...(v.inputs ? { inputs: v.inputs } : {}) });
+    }
+  }
+  // a tutorial's variants together, the tutorials in the guide's order
+  guide.sort((a, b) => a.id.localeCompare(b.id));
+  examples.push(...guide);
+  for (const p of pages)
+    if (p.decl) examples.push({ id: posix.basename(p.src, '.decl'), label: p.title, source: readFileSync(resolve(ROOT, p.src), 'utf8') });
+  writeFileSync(resolve(SAMPLES, 'examples.json'), JSON.stringify(examples, null, 2) + '\n');
+}
+
 // ---------------------------------------------------------------- references
 // Two browsable indexes derived from the specification and regenerated with
 // it: every std function with its signature, and every diagnostic code

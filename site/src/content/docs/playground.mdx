@@ -8,6 +8,6 @@ sidebar:
 
 import Playground from '../../components/Playground.astro';
 
-The reference implementation runs in your browser (tree-sitter as WebAssembly, the evaluator as JavaScript). Edit the source and the outputs and diagnostics update as you type. Single-module only: `import` needs a file system, and `input` roots are declared but not bound here.
+The reference implementation runs in your browser (tree-sitter as WebAssembly, the evaluator as JavaScript), through the same session the REPL and the language server use. Edit the module and the outputs and diagnostics update as you type; diagnostics are also marked in place, in the module and in a document. When the module declares an `input`, an Inputs panel opens under the editor: paste a JSON document there to bind it, and the bound document is evaluated and validated like any output. The example picker includes the tutorials with their documents, and Copy link carries the module and its documents. Single-module only: `import` needs a file system.
 
 <Playground />

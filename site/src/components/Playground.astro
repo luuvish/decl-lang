@@ -1,8 +1,13 @@
 ---
-// The browser playground: a CodeMirror editor on the left, outputs and
-// diagnostics on the right, evaluated by the reference implementation's
-// platform-neutral core (`decl-lang/core`, bundled by Vite); the grammar
-// wasm files are static assets under public/playground/.
+// The browser playground: the module in a CodeMirror editor on the left,
+// its input documents below it, outputs and diagnostics on the right —
+// evaluated by the reference implementation's platform-neutral core
+// (`decl-lang/core`, bundled by Vite) through the same Session the REPL
+// and the language server use, over an in-memory host. Diagnostics are
+// shown in place: in the module by the server's own anchoring, in a
+// document at the value its path leads to. The grammar wasm files are
+// static assets under public/playground/; the examples come from
+// samples/synced/examples.json (scripts/sync-docs.mjs).
 const base = import.meta.env.BASE_URL;
 ---
 
@@ -25,6 +30,14 @@ const base = import.meta.env.BASE_URL;
     <span id="pg-status" class="pg-status" aria-live="polite">loading the runtime…</span>
   </div>
   <div id="pg-editor" class="pg-editor"></div>
+  <div id="pg-inputs" class="pg-inputs" hidden>
+    <div class="pg-inputs-head">
+      <span class="pg-inputs-title">Inputs</span>
+      <div id="pg-input-tabs" class="pg-input-tabs" role="tablist" aria-label="Input documents"></div>
+      <button id="pg-input-clear" type="button" title="Unbind this input: an empty document is no document">Unbind</button>
+    </div>
+    <div id="pg-inputs-body" class="pg-inputs-body"></div>
+  </div>
   <div class="pg-out">
     <pre id="pg-output" class="pg-pane" role="tabpanel" data-pane="output"></pre>
     <div id="pg-diags" class="pg-pane pg-diags" role="tabpanel" data-pane="diagnostics" hidden></div>
@@ -34,14 +47,23 @@ const base = import.meta.env.BASE_URL;
 
 <script>
   import { EditorView, basicSetup } from 'codemirror';
-  import { EditorState } from '@codemirror/state';
+  import { EditorState, Compartment } from '@codemirror/state';
   import { keymap } from '@codemirror/view';
   import { indentWithTab } from '@codemirror/commands';
+  import { json as jsonLanguage } from '@codemirror/lang-json';
+  import { setDiagnostics, lintGutter, type Diagnostic as CmDiagnostic } from '@codemirror/lint';
+  import { ensureSyntaxTree } from '@codemirror/language';
   import { declLanguage, declHighlight } from './decl-mode';
-  import { initParser, evaluateSource, format } from 'decl-lang/core';
-  import type { Report } from 'decl-lang/core';
+  import {
+    initParser, parseSource, format, Session, SessionError, memoryHost, setHost, diagnosticsFor, parsePath, segText,
+  } from 'decl-lang/core';
+  import type { Diag, Run, Seg } from 'decl-lang/core';
+  import examplesJson from '../samples/synced/examples.json';
 
-  const samples = import.meta.glob('../samples/**/*.decl', { query: '?raw', import: 'default', eager: true }) as Record<string, string>;
+  type Example = { id: string; label: string; source: string; inputs?: Record<string, string> };
+  const examples = examplesJson as Example[];
+
+  // -- the page
   const root = document.querySelector<HTMLElement>('.pg')!;
   const base = root.dataset.base ?? '/';
   const $ = <T extends HTMLElement>(id: string) => document.getElementById(id) as T;
@@ -50,94 +72,343 @@ const base = import.meta.env.BASE_URL;
   const diags = $('pg-diags');
   const count = $('pg-count');
   const select = $<HTMLSelectElement>('pg-sample');
+  const inputsPanel = $('pg-inputs');
+  const inputTabs = $('pg-input-tabs');
+  const inputsBody = $('pg-inputs-body');
 
-  // examples: the landing page's hero first, then the synced validation cases
-  const entries = Object.entries(samples).map(([path, src]) => ({ name: path.split('/').pop()!.replace(/\.decl$/, ''), src }));
-  entries.sort((a, b) => (a.name === 'hero' ? -1 : b.name === 'hero' ? 1 : a.name.localeCompare(b.name)));
-  for (const e of entries) {
+  for (const e of examples) {
     const o = document.createElement('option');
-    o.value = e.name;
-    o.textContent = e.name === 'hero' ? 'services (landing page)' : e.name;
+    o.value = e.id;
+    o.textContent = e.label;
     select.appendChild(o);
   }
 
-  const fromHash = (): string | null => {
-    const m = location.hash.match(/^#code=(.+)$/);
-    if (!m) return null;
-    try { return decodeURIComponent(escape(atob(decodeURIComponent(m[1])))); } catch { return null; }
+  // -- the share link: #code=… for the module, in.<root>=… for each document
+  const enc = (s: string) => encodeURIComponent(btoa(unescape(encodeURIComponent(s))));
+  const dec = (s: string) => decodeURIComponent(escape(atob(decodeURIComponent(s))));
+  const fromHash = (): { code: string; inputs: Record<string, string> } | null => {
+    if (!location.hash.startsWith('#code=')) return null;
+    try {
+      const params = new URLSearchParams(location.hash.slice(1));
+      const code = dec(params.get('code') ?? '');
+      const inputs: Record<string, string> = {};
+      for (const [k, v] of params) if (k.startsWith('in.')) inputs[k.slice(3)] = dec(v);
+      return { code, inputs };
+    } catch {
+      return null;
+    }
   };
-  const initial = fromHash() ?? entries[0]?.src ?? '';
+  const shared = fromHash();
+  const initial = shared ?? { code: examples[0]?.source ?? '', inputs: examples[0]?.inputs ?? {} };
+  // the documents a root starts with: kept until its editor exists, since the
+  // module's declarations can only be read once the parser has loaded
+  let pending: Record<string, string> = { ...initial.inputs };
+  if (shared) {
+    const o = document.createElement('option');
+    o.value = '';
+    o.textContent = '(from the link)';
+    o.disabled = true;
+    select.prepend(o);
+    select.value = '';
+  }
 
+  // -- the runtime: one in-memory host, the module at a fixed path
+  const files = new Map<string, string>();
+  setHost(memoryHost(files, { cwd: '/' }));
+  const MAIN = '/playground/main.decl';
   let ready = false;
   let timer: number | undefined;
+  const schedule = () => {
+    window.clearTimeout(timer);
+    timer = window.setTimeout(run, 300);
+  };
+
+  // -- the editors: the palette's six syntax roles and its severities, square corners, the tint for selection
+  const chrome = EditorView.theme({
+    '&': { height: '100%', fontSize: '0.9rem', backgroundColor: 'var(--sl-color-bg)', color: 'var(--sl-color-text)' },
+    '.cm-scroller': { fontFamily: 'var(--__sl-font-mono, ui-monospace, monospace)', lineHeight: '1.5' },
+    '.cm-line, .cm-gutterElement': { marginTop: '0' },
+    '.cm-gutters': { backgroundColor: 'var(--sl-color-bg-nav)', color: 'var(--sl-color-gray-3)', borderRight: '1px solid var(--sl-color-hairline)' },
+    '.cm-activeLine, .cm-activeLineGutter': { backgroundColor: 'var(--decl-field)' },
+    '.cm-selectionBackground, &.cm-focused .cm-selectionBackground, .cm-content ::selection': { backgroundColor: 'var(--decl-tint) !important' },
+    '.cm-cursor, .cm-dropCursor': { borderLeftColor: 'var(--sl-color-white)' },
+    '.cm-selectionMatch': { backgroundColor: 'var(--decl-field)' },
+    '&.cm-focused': { outline: 'none' },
+    '.cm-lintRange-error': { backgroundImage: 'none', textDecoration: 'underline wavy var(--decl-error)', textUnderlineOffset: '3px' },
+    '.cm-lintRange-warning': { backgroundImage: 'none', textDecoration: 'underline wavy var(--decl-warning)', textUnderlineOffset: '3px' },
+    '.cm-lintRange-info': { backgroundImage: 'none', textDecoration: 'underline dotted var(--decl-info)', textUnderlineOffset: '3px' },
+    '.cm-lint-marker': { width: '0.5rem', height: '0.5rem', marginTop: '0.35rem', borderRadius: '50%', content: 'none' },
+    '.cm-lint-marker-error': { backgroundColor: 'var(--decl-error)' },
+    '.cm-lint-marker-warning': { backgroundColor: 'var(--decl-warning)' },
+    '.cm-lint-marker-info': { backgroundColor: 'var(--decl-info)' },
+    '.cm-lint-marker > svg': { display: 'none' },
+    '.cm-tooltip': { backgroundColor: 'var(--sl-color-bg-nav)', border: '1px solid var(--sl-color-hairline)', borderRadius: 'var(--decl-radius, 0.125rem)', fontFamily: 'var(--decl-font-ui)', fontSize: '0.8rem', color: 'var(--sl-color-text)' },
+    '.cm-tooltip.cm-tooltip-lint': { padding: '0' },
+    '.cm-diagnostic': { padding: '0.35rem 0.6rem', borderLeft: '3px solid var(--sl-color-gray-4)' },
+    '.cm-diagnostic-error': { borderLeftColor: 'var(--decl-error)' },
+    '.cm-diagnostic-warning': { borderLeftColor: 'var(--decl-warning)' },
+    '.cm-diagnostic-info': { borderLeftColor: 'var(--decl-info)' },
+    '.cm-panels': { backgroundColor: 'var(--sl-color-bg-nav)', color: 'var(--sl-color-text)', borderColor: 'var(--sl-color-hairline)' },
+  });
+  const onChange = EditorView.updateListener.of((u) => {
+    if (u.docChanged) schedule();
+  });
 
   const view = new EditorView({
     parent: $('pg-editor'),
     state: EditorState.create({
-      doc: initial,
-      extensions: [
-        basicSetup,
-        keymap.of([indentWithTab]),
-        declLanguage,
-        declHighlight,
-        EditorView.theme({
-          '&': { height: '100%', fontSize: '0.9rem', backgroundColor: 'var(--sl-color-bg)', color: 'var(--sl-color-text)' },
-          '.cm-scroller': { fontFamily: 'var(--__sl-font-mono, ui-monospace, monospace)', lineHeight: '1.5' },
-          '.cm-line, .cm-gutterElement': { marginTop: '0' },
-          '.cm-gutters': { backgroundColor: 'var(--sl-color-bg-nav)', color: 'var(--sl-color-gray-3)', borderRight: '1px solid var(--sl-color-hairline)' },
-          '.cm-activeLine, .cm-activeLineGutter': { backgroundColor: 'var(--decl-field)' },
-          '.cm-selectionBackground, &.cm-focused .cm-selectionBackground, .cm-content ::selection': { backgroundColor: 'var(--decl-tint) !important' },
-          '.cm-cursor, .cm-dropCursor': { borderLeftColor: 'var(--sl-color-white)' },
-          '.cm-selectionMatch': { backgroundColor: 'var(--decl-field)' },
-          '&.cm-focused': { outline: 'none' },
-        }),
-        EditorView.updateListener.of(u => {
-          if (!u.docChanged) return;
-          window.clearTimeout(timer);
-          timer = window.setTimeout(run, 300);
-        }),
-      ],
+      doc: initial.code,
+      extensions: [basicSetup, keymap.of([indentWithTab]), declLanguage, declHighlight, lintGutter(), chrome, onChange],
     }),
   });
-
   const source = () => view.state.doc.toString();
   const setSource = (text: string) => view.dispatch({ changes: { from: 0, to: view.state.doc.length, insert: text } });
 
+  // -- the input documents: one JSON editor per declared input root, kept across runs by name
+  type InputEditor = { view: EditorView; tab: HTMLButtonElement; pane: HTMLElement };
+  const inputEditors = new Map<string, InputEditor>();
+  let activeInput: string | null = null;
+  const inputText = (name: string) => inputEditors.get(name)?.view.state.doc.toString() ?? '';
+  const jsonLint = new Compartment();
+
+  function inputEditor(name: string, text: string): InputEditor {
+    const pane = document.createElement('div');
+    pane.className = 'pg-input-pane';
+    pane.hidden = true;
+    inputsBody.appendChild(pane);
+    const tab = document.createElement('button');
+    tab.type = 'button';
+    tab.setAttribute('role', 'tab');
+    tab.dataset.input = name;
+    tab.addEventListener('click', () => showInput(name));
+    inputTabs.appendChild(tab);
+    const v = new EditorView({
+      parent: pane,
+      state: EditorState.create({
+        doc: text,
+        extensions: [basicSetup, keymap.of([indentWithTab]), jsonLanguage(), lintGutter(), jsonLint.of([]), chrome, onChange],
+      }),
+    });
+    return { view: v, tab, pane };
+  }
+  function showInput(name: string) {
+    activeInput = name;
+    for (const [n, e] of inputEditors) {
+      const on = n === name;
+      e.pane.hidden = !on;
+      e.tab.classList.toggle('active', on);
+      e.tab.setAttribute('aria-selected', String(on));
+    }
+  }
+  /** the declared input roots of the module text, in order */
+  const declaredInputs = (text: string): string[] => {
+    try {
+      return parseSource(text).decls.filter((d: any) => d.d === 'input').map((d: any) => d.name as string);
+    } catch {
+      return [];
+    }
+  };
+  /** the inputs panel follows the module's declarations: a root keeps its document while it is declared */
+  function syncInputs(names: string[], seed?: Record<string, string>) {
+    for (const [n, e] of [...inputEditors]) {
+      if (names.includes(n)) continue;
+      e.view.destroy();
+      e.pane.remove();
+      e.tab.remove();
+      inputEditors.delete(n);
+    }
+    for (const n of names) {
+      if (inputEditors.has(n)) continue;
+      const text = seed?.[n] ?? pending[n] ?? '';
+      delete pending[n];
+      inputEditors.set(n, inputEditor(n, text));
+    }
+    for (const [n, e] of inputEditors) {
+      const bound = inputText(n).trim() !== '';
+      e.tab.textContent = n;
+      e.tab.classList.toggle('bound', bound);
+      e.tab.title = bound ? `${n}: bound to this document` : `${n}: not bound — paste a JSON document`;
+    }
+    inputsPanel.hidden = names.length === 0;
+    if (names.length && (!activeInput || !inputEditors.has(activeInput))) showInput(names[0]);
+    root.classList.toggle('has-inputs', names.length > 0);
+  }
+  $('pg-input-clear').addEventListener('click', () => {
+    const e = activeInput ? inputEditors.get(activeInput) : undefined;
+    if (!e) return;
+    e.view.dispatch({ changes: { from: 0, to: e.view.state.doc.length, insert: '' } });
+    e.view.focus();
+  });
+
+  // -- diagnostics in place: LSP ranges into the module, document paths into a JSON document
+  const sev = (n: number): CmDiagnostic['severity'] => (n === 1 ? 'error' : n === 2 ? 'warning' : 'info');
+  const offset = (v: EditorView, line: number, ch: number) => {
+    const l = v.state.doc.line(Math.min(line + 1, v.state.doc.lines));
+    return Math.min(l.from + ch, l.to);
+  };
+  /** the span of the JSON value a document path leads to, or of the deepest value on the way — a container's opening line, not its whole extent */
+  function jsonSpan(v: EditorView, segs: Seg[]): { from: number; to: number } | null {
+    const doc = v.state.doc;
+    const tree = ensureSyntaxTree(v.state, doc.length, 1000);
+    let node = tree?.topNode.firstChild ?? null;
+    if (!node) return null;
+    const span = (n: typeof node) =>
+      n.name === 'Object' || n.name === 'Array' ? { from: n.from, to: Math.min(n.to, doc.lineAt(n.from).to) } : { from: n.from, to: n.to };
+    let best = span(node);
+    // the tree's punctuation is among the siblings; a value is one of these
+    const VALUE = new Set(['Object', 'Array', 'String', 'Number', 'True', 'False', 'Null']);
+    for (const s of segs) {
+      const k = segText(s);
+      let next = null;
+      if (node.name === 'Object' && typeof k === 'string') {
+        for (let p = node.firstChild; p; p = p.nextSibling) {
+          if (p.name !== 'Property') continue;
+          const key = p.firstChild;
+          if (key && key.name === 'PropertyName' && JSON.parse(doc.sliceString(key.from, key.to)) === k) {
+            for (let n = key.nextSibling; n; n = n.nextSibling) if (VALUE.has(n.name)) { next = n; break; }
+            break;
+          }
+        }
+      } else if (node.name === 'Array' && typeof k === 'number') {
+        let i = 0;
+        for (let c = node.firstChild; c; c = c.nextSibling) if (VALUE.has(c.name) && i++ === k) { next = c; break; }
+      }
+      if (!next) break;
+      node = next;
+      best = span(node);
+    }
+    return best;
+  }
+
+  type Row = { severity: string; code?: string; id?: string; path?: string; message: string; go?: () => void };
+
+  function render(rows: Row[], docs: { name: string; kind: 'output' | 'input'; json: string | null }[], ms: number, phase: string) {
+    const errors = rows.filter((r) => r.severity === 'error').length;
+    const warnings = rows.filter((r) => r.severity === 'warning').length;
+    count.textContent = String(rows.length);
+    count.hidden = rows.length === 0;
+    count.classList.toggle('is-error', errors > 0);
+    if (phase === 'parse') {
+      output.textContent = rows.map((r) => r.message).join('\n');
+      status.textContent = `${errors} syntax error${errors === 1 ? '' : 's'}`;
+    } else if (phase === 'check') {
+      output.textContent = 'static checks failed — see Diagnostics';
+      status.textContent = `${errors} error${errors === 1 ? '' : 's'} in static checks · ${ms} ms`;
+    } else {
+      const parts = docs.map((d) => `// ${d.kind} ${d.name}${d.kind === 'input' ? ' (bound)' : ''}\n${d.json === null ? '(invalid — see Diagnostics)' : pretty(d.json)}`);
+      output.textContent = parts.length ? parts.join('\n\n') : '(no outputs declared)';
+      const bound = docs.filter((d) => d.kind === 'input').length;
+      status.textContent = errors
+        ? `${errors} error${errors === 1 ? '' : 's'}${warnings ? `, ${warnings} warning${warnings === 1 ? '' : 's'}` : ''} · ${ms} ms`
+        : `ok · ${docs.length - bound} output${docs.length - bound === 1 ? '' : 's'}${bound ? ` · ${bound} input${bound === 1 ? '' : 's'} bound` : ''}${warnings ? ` · ${warnings} warning${warnings === 1 ? '' : 's'}` : ''} · ${ms} ms`;
+    }
+    diags.replaceChildren();
+    if (!rows.length) {
+      const p = document.createElement('p');
+      p.className = 'pg-empty';
+      p.textContent = 'No diagnostics.';
+      diags.appendChild(p);
+    } else {
+      const ul = document.createElement('ul');
+      for (const r of rows) {
+        const li = document.createElement('li');
+        li.className = `sev-${r.severity}${r.go ? ' has-loc' : ''}`;
+        const b = document.createElement('b');
+        b.textContent = r.severity;
+        li.appendChild(b);
+        if (r.code) { const c = document.createElement('code'); c.textContent = r.code; li.append(' ', c); }
+        if (r.id) { const i = document.createElement('i'); i.textContent = r.id; li.append(' ', i); }
+        if (r.path) { const s = document.createElement('span'); s.className = 'path'; s.textContent = `at ${r.path}`; li.append(' ', s); }
+        li.append(`: ${r.message}`);
+        if (r.go) li.addEventListener('click', r.go);
+        ul.appendChild(li);
+      }
+      diags.appendChild(ul);
+    }
+    showTab(errors ? 'diagnostics' : 'output');
+  }
   const pretty = (json: string) => {
     try { return JSON.stringify(JSON.parse(json), null, 2); } catch { return json; }
   };
-  const esc = (s: string) => s.replace(/[&<>]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' }[c]!));
+  const goTo = (v: EditorView, from: number, to: number) => () => {
+    v.dispatch({ selection: { anchor: from, head: to }, scrollIntoView: true });
+    v.focus();
+  };
 
-  function render(rep: Report, ms: number) {
-    const all = [...rep.checks, ...rep.diagnostics];
-    const errors = all.filter(d => d.severity === 'error').length + rep.parseErrors.length;
-    const total = all.length + rep.parseErrors.length;
-    count.textContent = String(total);
-    count.hidden = total === 0;
-    count.classList.toggle('is-error', errors > 0);
-    if (rep.phase === 'parse') {
-      output.textContent = rep.parseErrors.map(e => `syntax error at line ${e.row + 1}, column ${e.col + 1}`).join('\n');
-      status.textContent = `${rep.parseErrors.length} syntax error(s)`;
-    } else if (rep.phase === 'check') {
-      output.textContent = 'static checks failed — see Diagnostics';
-      status.textContent = `${errors} error(s) in static checks · ${ms} ms`;
-    } else if (!rep.ok) {
-      output.textContent = 'evaluation reported errors — see Diagnostics';
-      status.textContent = `${errors} error(s) · ${ms} ms`;
-    } else {
-      const parts = rep.outputs.map(o => `// output ${o.name}\n${pretty(o.json)}`);
-      if (rep.inputs.length) parts.push(`// input ${rep.inputs.join(', ')}: declared, not bound (the playground evaluates a single module)`);
-      output.textContent = parts.length ? parts.join('\n\n') : '(no outputs declared)';
-      const warns = all.filter(d => d.severity !== 'error').length;
-      status.textContent = `ok · ${rep.outputs.length} output${rep.outputs.length === 1 ? '' : 's'}${warns ? ` · ${warns} warning${warns === 1 ? '' : 's'}` : ''} · ${ms} ms`;
+  function run() {
+    if (!ready) return;
+    const text = source();
+    const names = declaredInputs(text);
+    syncInputs(names);
+    const t0 = performance.now();
+    const rows: Row[] = [];
+    const moduleDiags: CmDiagnostic[] = [];
+    const inputDiags = new Map<string, CmDiagnostic[]>();
+    const { errors } = parseSource(text);
+    if (errors.length) {
+      for (const e of errors) {
+        const from = offset(view, e.row, e.col);
+        rows.push({ severity: 'error', code: 'E2001', message: `syntax error at line ${e.row + 1}, column ${e.col + 1}`, go: goTo(view, from, from + 1) });
+      }
+      for (const d of diagnosticsFor(text, MAIN, null)) moduleDiags.push({ from: offset(view, d.range.start.line, d.range.start.character), to: offset(view, d.range.end.line, d.range.end.character), severity: sev(d.severity), message: d.message, source: 'decl' });
+      view.dispatch(setDiagnostics(view.state, moduleDiags));
+      for (const [, e] of inputEditors) e.view.dispatch(setDiagnostics(e.view.state, []));
+      render(rows, [], Math.round(performance.now() - t0), 'parse');
+      return;
     }
-    const rows = [
-      ...rep.parseErrors.map(e => `<li class="sev-error"><b>error</b> <code>E2001</code> syntax error at line ${e.row + 1}, column ${e.col + 1}</li>`),
-      ...all.map(d => `<li class="sev-${esc(d.severity)}"><b>${esc(d.severity)}</b> ${d.code ? `<code>${esc(d.code)}</code>` : ''} ${d.id ? `<i>${esc(d.id)}</i>` : ''}${d.path ? ` <span class="path">at ${esc(d.path)}</span>` : ''}: ${esc(d.message)}</li>`),
-    ];
-    diags.innerHTML = rows.length ? `<ul>${rows.join('')}</ul>` : '<p class="pg-empty">No diagnostics.</p>';
-    // errors bring the diagnostics forward; a clean run brings the output back
-    showTab(errors ? 'diagnostics' : 'output');
+    try {
+      files.set(MAIN, text);
+      const session = new Session(MAIN);
+      const bound: string[] = [];
+      for (const n of names) {
+        const t = inputText(n);
+        if (!t.trim()) continue;
+        try {
+          session.apply({ op: 'bind', name: n, src: { kind: 'inline', text: t } });
+          bound.push(n);
+        } catch (e) {
+          if (!(e instanceof SessionError)) throw e;
+          const ed = inputEditors.get(n)!;
+          const msg = e.message;
+          rows.push({ severity: 'error', code: 'E6004', path: n, message: msg, go: goTo(ed.view, 0, 0) });
+          inputDiags.set(n, [{ from: 0, to: Math.min(1, ed.view.state.doc.length), severity: 'error', message: msg, source: 'decl' }]);
+        }
+      }
+      const outputs = session.roots().filter((r) => r.kind === 'output').map((r) => r.name);
+      const { run: r, docs } = session.evaluate([...outputs, ...bound]);
+      const ms = Math.round(performance.now() - t0);
+      // the list: load, check, and evaluation diagnostics, each with a place to go when it has one
+      const anchored = diagnosticsFor(text, MAIN, r);
+      const place = (d: Diag): (() => void) | undefined => {
+        // a document path into a bound input: the value in that document
+        const rootName = d.path?.match(/^[A-Za-z_][A-Za-z0-9_]*/)?.[0];
+        if (rootName && bound.includes(rootName)) {
+          const ed = inputEditors.get(rootName)!;
+          let segs: Seg[] | null = null;
+          try { segs = parsePath(d.path!, ''); } catch { segs = null; }
+          const span = segs ? jsonSpan(ed.view, segs.slice(1)) : null;
+          if (span) {
+            (inputDiags.get(rootName) ?? inputDiags.set(rootName, []).get(rootName)!).push({ from: span.from, to: span.to, severity: sev(d.severity === 'error' ? 1 : d.severity === 'warning' ? 2 : 3), message: `${d.code ? `${d.code} ` : ''}${d.message}`, source: 'decl' });
+            return () => { showInput(rootName); goTo(ed.view, span.from, span.to)(); };
+          }
+        }
+        // otherwise where the server anchors it in the module
+        const item = anchored.find((a) => a.message === (d.path ? `${d.message} (at ${d.path})` : d.message) && (a.code ?? '') === (d.id ?? d.code ?? ''));
+        if (!item) return undefined;
+        return goTo(view, offset(view, item.range.start.line, item.range.start.character), offset(view, item.range.end.line, item.range.end.character));
+      };
+      const all: Diag[] = [...r.loadDiags, ...r.checks.map((c) => c.diag), ...r.diags];
+      for (const d of all) rows.push({ severity: d.severity, code: d.code, id: d.id, path: d.path || undefined, message: d.message, go: place(d) });
+      for (const a of anchored) moduleDiags.push({ from: offset(view, a.range.start.line, a.range.start.character), to: offset(view, a.range.end.line, a.range.end.character), severity: sev(a.severity), message: `${a.code ? `${a.code} ` : ''}${a.message}`, source: 'decl' });
+      view.dispatch(setDiagnostics(view.state, moduleDiags));
+      for (const [n, e] of inputEditors) e.view.dispatch(setDiagnostics(e.view.state, inputDiags.get(n) ?? []));
+      const phase = r.checks.some((c) => c.diag.severity === 'error') || r.loadDiags.some((d) => d.severity === 'error') ? 'check' : 'evaluate';
+      const kinds = new Map(session.roots().map((x) => [x.name, x.kind] as const));
+      render(rows, phase === 'check' ? [] : docs.map((d) => ({ name: d.name, kind: kinds.get(d.name) ?? 'output', json: d.json })), ms, phase);
+    } catch (e) {
+      output.textContent = `internal error: ${(e as Error).message}`;
+      status.textContent = 'internal error';
+    }
   }
 
   function showTab(name: string) {
@@ -151,7 +422,7 @@ const base = import.meta.env.BASE_URL;
   }
   for (const b of root.querySelectorAll<HTMLButtonElement>('.pg-tabs [role="tab"]')) {
     b.addEventListener('click', () => showTab(b.dataset.tab!));
-    b.addEventListener('keydown', e => {
+    b.addEventListener('keydown', (e) => {
       if (e.key === 'ArrowLeft' || e.key === 'ArrowRight') {
         showTab(b.dataset.tab === 'output' ? 'diagnostics' : 'output');
         root.querySelector<HTMLButtonElement>('.pg-tabs [role="tab"].active')?.focus();
@@ -159,21 +430,20 @@ const base = import.meta.env.BASE_URL;
     });
   }
 
-  function run() {
-    if (!ready) return;
-    const t0 = performance.now();
-    try {
-      const rep = evaluateSource(source());
-      render(rep, Math.round(performance.now() - t0));
-    } catch (e) {
-      output.textContent = `internal error: ${(e as Error).message}`;
-      status.textContent = 'internal error';
+  function load(e: Example) {
+    pending = {};
+    setSource(e.source);
+    syncInputs(declaredInputs(e.source), e.inputs);
+    for (const [n, ed] of inputEditors) {
+      const t = e.inputs?.[n] ?? '';
+      if (ed.view.state.doc.toString() !== t) ed.view.dispatch({ changes: { from: 0, to: ed.view.state.doc.length, insert: t } });
     }
+    history.replaceState(null, '', location.pathname);
+    run();
   }
-
   select.addEventListener('change', () => {
-    const e = entries.find(x => x.name === select.value);
-    if (e) { setSource(e.src); history.replaceState(null, '', location.pathname); run(); }
+    const e = examples.find((x) => x.id === select.value);
+    if (e) load(e);
   });
   $('pg-run').addEventListener('click', run);
   $('pg-fmt').addEventListener('click', () => {
@@ -182,13 +452,15 @@ const base = import.meta.env.BASE_URL;
     catch (e) { status.textContent = `format: ${(e as Error).message}`; }
   });
   $('pg-share').addEventListener('click', async () => {
-    const code = encodeURIComponent(btoa(unescape(encodeURIComponent(source()))));
-    const url = `${location.origin}${location.pathname}#code=${code}`;
-    history.replaceState(null, '', `#code=${code}`);
-    try { await navigator.clipboard.writeText(url); status.textContent = 'link copied'; }
+    const params = [`code=${enc(source())}`];
+    for (const [n] of inputEditors) if (inputText(n).trim()) params.push(`in.${n}=${enc(inputText(n))}`);
+    const hash = `#${params.join('&')}`;
+    history.replaceState(null, '', hash);
+    try { await navigator.clipboard.writeText(`${location.origin}${location.pathname}${hash}`); status.textContent = 'link copied'; }
     catch { status.textContent = 'link is in the address bar'; }
   });
 
+  syncInputs(declaredInputs(initial.code), initial.inputs);
   (async () => {
     try {
       const dir = new URL(`${base.replace(/\/$/, '')}/playground/`, location.origin).href;
@@ -203,32 +475,34 @@ const base = import.meta.env.BASE_URL;
 </script>
 
 <style>
-  /* one 2x2 grid: the header row is shared by the toolbar (over the editor)
-     and the tab strip (over the results), so the two always line up */
+  /* one grid: the toolbar over the module, the tab strip over the results;
+     the input documents sit under the module and appear only when the
+     module declares an input root */
   .pg-frame { margin-top: 1rem; container-type: inline-size; }
   .pg {
     --pg-head: 2.75rem;
     display: grid;
     grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
-    grid-template-rows: auto minmax(0, 1fr);
-    grid-template-areas: "bar tabs" "editor out";
+    grid-template-rows: auto minmax(0, 1fr) auto;
+    grid-template-areas: "bar tabs" "editor out" "inputs out";
     height: calc(100vh - 17rem);
-    min-height: 32rem;
+    min-height: 34rem;
     border: 1px solid var(--sl-color-hairline);
     border-radius: var(--decl-radius, 0.125rem);
     overflow: hidden;
     background: var(--sl-color-bg-nav);
   }
+  .pg.has-inputs { grid-template-rows: auto minmax(0, 1.6fr) minmax(0, 1fr); }
   /* stack the panes when the playground itself (not the viewport) gets narrow */
   @container (max-width: 56rem) {
-    .pg {
+    .pg, .pg.has-inputs {
       grid-template-columns: 1fr;
-      grid-template-rows: auto minmax(22rem, auto) auto minmax(16rem, auto);
-      grid-template-areas: "bar" "editor" "tabs" "out";
+      grid-template-rows: auto minmax(22rem, auto) auto auto minmax(16rem, auto);
+      grid-template-areas: "bar" "editor" "inputs" "tabs" "out";
       height: auto;
     }
-    .pg-bar, .pg-editor { border-right: 0; }
-    .pg-editor { border-bottom: 1px solid var(--sl-color-hairline); }
+    .pg-bar, .pg-editor, .pg-inputs { border-right: 0; }
+    .pg-editor, .pg-inputs { border-bottom: 1px solid var(--sl-color-hairline); }
   }
   .pg-head {
     display: flex;
@@ -246,8 +520,8 @@ const base = import.meta.env.BASE_URL;
     padding: 0.35rem 0.75rem;
     border-right: 1px solid var(--sl-color-hairline);
   }
-  .pg-sample { display: flex; align-items: center; gap: 0.4rem; }
-  .pg-bar select, .pg-bar button {
+  .pg-sample { display: flex; align-items: center; gap: 0.4rem; min-width: 0; }
+  .pg-bar select, .pg-bar button, .pg-inputs-head button {
     font: inherit;
     margin: 0;
     line-height: 1.4;
@@ -258,8 +532,8 @@ const base = import.meta.env.BASE_URL;
     color: var(--sl-color-text);
     cursor: pointer;
   }
-  .pg-bar select { max-width: 11rem; }
-  .pg-bar button:hover { border-color: var(--sl-color-white); color: var(--sl-color-white); }
+  .pg-bar select { max-width: 16rem; }
+  .pg-bar button:hover, .pg-inputs-head button:hover { border-color: var(--sl-color-white); color: var(--sl-color-white); }
   .pg-tabbar { grid-area: tabs; align-items: stretch; }
   .pg-status {
     align-self: center;
@@ -272,6 +546,63 @@ const base = import.meta.env.BASE_URL;
     color: var(--sl-color-gray-3);
   }
   .pg-editor { grid-area: editor; min-height: 0; border-right: 1px solid var(--sl-color-hairline); }
+  /* the input documents */
+  .pg-inputs {
+    grid-area: inputs;
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+    border-top: 1px solid var(--sl-color-hairline);
+    border-right: 1px solid var(--sl-color-hairline);
+  }
+  .pg-inputs[hidden] { display: none; }
+  .pg-inputs-head {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    min-height: 2.25rem;
+    padding: 0.2rem 0.5rem 0.2rem 0.75rem;
+    border-bottom: 1px solid var(--sl-color-hairline);
+    font-size: 0.8rem;
+  }
+  .pg-inputs-title {
+    font-family: var(--sl-font-mono);
+    font-size: 0.68rem;
+    font-weight: 500;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    color: var(--sl-color-gray-3);
+  }
+  .pg-input-tabs { display: flex; gap: 0.25rem; flex: 1; min-width: 0; overflow-x: auto; }
+  .pg-input-tabs [role="tab"] {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.4em;
+    margin: 0;
+    padding: 0.2rem 0.6rem;
+    border: 1px solid transparent;
+    border-radius: var(--decl-radius, 0.125rem);
+    background: transparent;
+    font: inherit;
+    font-family: var(--sl-font-mono);
+    font-size: 0.8rem;
+    color: var(--sl-color-gray-2);
+    cursor: pointer;
+    white-space: nowrap;
+  }
+  .pg-input-tabs [role="tab"]::before {
+    content: '';
+    width: 0.45rem;
+    height: 0.45rem;
+    border-radius: 50%;
+    border: 1px solid var(--sl-color-gray-3);
+  }
+  .pg-input-tabs [role="tab"].bound::before { background: var(--sl-color-white); border-color: var(--sl-color-white); }
+  .pg-input-tabs [role="tab"].active { background: var(--decl-field); color: var(--sl-color-white); }
+  .pg-inputs-head button { font-size: 0.75rem; padding: 0.15rem 0.5rem; }
+  .pg-inputs-body { flex: 1; min-height: 0; }
+  .pg-input-pane { height: 100%; }
+  .pg-input-pane[hidden] { display: none; }
   /* the results: one visible pane under the tab strip */
   .pg-out {
     grid-area: out;
@@ -280,12 +611,7 @@ const base = import.meta.env.BASE_URL;
     min-width: 0;
     min-height: 0;
   }
-  .pg-tabs {
-    display: flex;
-    align-items: stretch;
-    flex: none;
-    margin: 0;
-  }
+  .pg-tabs { display: flex; align-items: stretch; flex: none; margin: 0; }
   .pg-tabs [role="tab"] {
     display: inline-flex;
     align-items: center;
@@ -334,13 +660,15 @@ const base = import.meta.env.BASE_URL;
   .pg-diags { white-space: normal; }
   #pg-diags ul { list-style: none; padding: 0; margin: 0; }
   #pg-diags li { padding: 0.35rem 0.5rem; border-left: 3px solid var(--sl-color-gray-4); margin-bottom: 0.35rem; font-family: var(--__sl-font-mono, ui-monospace, monospace); font-size: 0.8rem; }
+  #pg-diags li.has-loc { cursor: pointer; }
+  #pg-diags li.has-loc:hover { background: var(--decl-field); }
   #pg-diags li.sev-error { border-left-color: var(--decl-error); }
-  #pg-diags li.sev-warn { border-left-color: var(--decl-warning); }
-  #pg-diags li.sev-info { border-left-color: var(--decl-info); }
+  #pg-diags li.sev-warning { border-left-color: var(--decl-warning); }
+  #pg-diags li.sev-information, #pg-diags li.sev-info { border-left-color: var(--decl-info); }
   #pg-diags li b { text-transform: uppercase; font-size: 0.7rem; letter-spacing: 0.06em; }
   #pg-diags li.sev-error b { color: var(--decl-error); }
-  #pg-diags li.sev-warn b { color: var(--decl-warning); }
-  #pg-diags li.sev-info b { color: var(--decl-info); }
+  #pg-diags li.sev-warning b { color: var(--decl-warning); }
+  #pg-diags li.sev-information b, #pg-diags li.sev-info b { color: var(--decl-info); }
   #pg-diags .path { color: var(--sl-color-gray-3); }
   .pg-empty { color: var(--sl-color-gray-3); margin: 0; }
 </style>

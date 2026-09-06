@@ -19,7 +19,16 @@ Actions, once).
 - The playground imports `decl-lang/core` (the reference implementation's
   platform-neutral core; Vite bundles it) and loads the grammar's two
   wasm files, which `scripts/playground.mjs` copies into
-  `public/playground/`.
+  `public/playground/`. It runs the core's `Session` over an in-memory
+  host — the session behind the REPL and the language server — so an
+  `input` root can be bound to a JSON document pasted into the Inputs
+  panel, and diagnostics are shown in place: in the module by the
+  server's own anchoring (`diagnosticsFor`), in a document at the value
+  its path leads to. The example picker is `src/samples/synced/examples.json`,
+  which `sync-docs.mjs` builds from the landing page's module, the
+  tutorials (assembled as the golden corpus assembles them, with the
+  documents it binds), and the validation cases; a shared link carries
+  the module and its documents (`#code=…&in.<root>=…`).
 
 ## The identity
 
