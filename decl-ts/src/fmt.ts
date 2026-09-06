@@ -154,6 +154,7 @@ function spaced(a: Leaf, b: Leaf, prev: Leaf | null): boolean {
     if (at === '<') return false; /* '>' */
   }
   if (isTypeAngle(b)) return false; // Vec<...>, no space before either angle
+  if (at === '@') return false; // an annotation's name follows its `@`
   if (at === '(' || at === '[') return false;
   if (bt === ')' || bt === ']' || bt === ',' || bt === ':') return false;
   if (bt === '?' || at === '?') return false; // int?, name?:

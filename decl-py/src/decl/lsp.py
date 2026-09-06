@@ -253,7 +253,7 @@ def loc_of_path(decls: list[Any], segs: list[Any]) -> dict[str, Any] | None:
 
 
 def severity_of(s: str) -> int:
-    return 1 if s == "error" else 2 if s == "warning" else 3
+    return 1 if s == "error" else 2 if s == "warn" else 3
 
 
 def analyze(uri: str) -> None:
@@ -1121,7 +1121,27 @@ def execute_command(command: str, args: Any) -> Any:
         run, ds = r["run"], r["docs"]
         diags = [fmt_diag(d) for d in run.load_diags + [c["diag"] for c in run.checks] + run.diags]
         if root:
-            return {"root": root, "document": ds[0]["json"] if ds else None, "diagnostics": diags}
+            answer: dict[str, Any] = {
+                "root": root,
+                "document": ds[0]["json"] if ds else None,
+                "diagnostics": diags,
+            }
+            # the root's declared form (docs/tooling/05_render.md §8), when one applies
+            rd = session.render(run, root)
+            if rd is not None:
+                if rd["kind"] == "error":
+                    answer["rendered"] = {
+                        "kind": "error",
+                        "diagnostic": fmt_diag(rd["diag"], rd["file"]),
+                    }
+                elif rd["kind"] == "files":
+                    answer["rendered"] = {
+                        "kind": "files",
+                        "files": [{"path": p, "text": t} for p, t in rd["files"]],
+                    }
+                else:
+                    answer["rendered"] = {"kind": rd["kind"], "text": rd["text"]}
+            return answer
         all_ = (
             "{" + ",".join(f"{json.dumps(d['name'])}:{d['json']}" for d in ds) + "}"
             if run.eng is not None and all(d["json"] is not None for d in ds)

@@ -8,9 +8,10 @@ a pair of *(resolved values, diagnostics)*.
 - **Describe** — declare types, schemas, constraints, and diagnostics in a
   form people can read and review.
 - **Generate** — deterministically evaluate defaults, derived properties, and
-  comprehensions into fully resolved value trees, emitted as canonical JSON
-  — and, through the renderer, as YAML or as text from a template
-  ([docs/tooling/05_render.md](docs/tooling/05_render.md), Phase 10).
+  comprehensions into canonical JSON, byte-identical on every run and every
+  implementation — and emit each output in the form its `@render`
+  declares: YAML, indented JSON, or text from a template, one file per
+  element ([docs/tooling/05_render.md](docs/tooling/05_render.md)).
 - **Validate** — check both language-defined values and externally supplied
   data against the same rules, producing diagnostics with stable ids.
 

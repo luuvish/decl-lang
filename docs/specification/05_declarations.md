@@ -267,8 +267,13 @@ type Service = {
 - `@name` and `@name(args)` annotations attach to declarations and to
   individual members. Annotations are **metadata only** (D4): no
   annotation affects typing, evaluation, or serialization. The known
-  set in v0.1 is `@deprecated` and `@doc("…")`; tools surface them
-  (deprecation warnings on use, hover documentation).
+  set is `@deprecated` and `@doc("…")`, which tools surface
+  (deprecation warnings on use, hover documentation), and — on an
+  `output` — `@render({ … })`, which declares the form the tools emit
+  the root in (a format and layout, a template, a destination, a
+  fan-out); its keys are fixed by the renderer's document
+  ([05. Renderer](../tooling/05_render.md) §3, D35), and the annotation
+  changes nothing about the root's value.
 - An **unknown** annotation is a *warning*, not an error — annotations
   are semantics-free, so unknown ones are safe to carry
   (forward-compatibility); the warning keeps typos visible.

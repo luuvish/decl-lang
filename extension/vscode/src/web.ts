@@ -65,6 +65,17 @@ class PreviewProvider implements vscode.TextDocumentContentProvider {
     if (!r) return '// the language server is not running';
     if (r.document === null)
       return `// not evaluated\n${(r.diagnostics ?? []).map((d: string) => `// ${d}`).join('\n')}`;
+    // the root's declared form (docs/tooling/05_render.md §8): its text, or
+    // a fan-out's files each under a `# path` line
+    if (r.rendered) {
+      const rd = r.rendered;
+      if (rd.kind === 'error') return `// not rendered\n// ${rd.diagnostic}\n`;
+      if (rd.kind === 'files')
+        return rd.files
+          .map((f: { path: string; text: string }) => `# ${f.path}\n${f.text}`)
+          .join('\n');
+      return rd.text;
+    }
     let text = r.document;
     if (!cfg().get<boolean>('preview.compact')) {
       try {
@@ -87,7 +98,13 @@ async function openPreview(root: string | null) {
   );
   previews.set(uri.toString(), { uri: doc.uri, root: name });
   const preview = await vscode.workspace.openTextDocument(uri);
-  await vscode.languages.setTextDocumentLanguage(preview, 'json');
+  // the language of the preview follows the root's declared form
+  const first = name ? await execute('decl.evaluate', doc.uri.toString(), name) : null;
+  const kind = first?.rendered?.kind;
+  await vscode.languages.setTextDocumentLanguage(
+    preview,
+    kind === 'yaml' ? 'yaml' : kind === 'text' || kind === 'files' ? 'plaintext' : 'json',
+  );
   await vscode.window.showTextDocument(preview, {
     viewColumn: vscode.ViewColumn.Beside,
     preserveFocus: true,

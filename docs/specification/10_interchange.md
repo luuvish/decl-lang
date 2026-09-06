@@ -167,6 +167,14 @@ Norway problem is the article that started this project, 00_vision
 §1), and a normative mapping would import it. This is a recorded
 decision, not an omission.
 
+The tool-side conversions the `decl` command line offers — a document
+written in YAML on the way in, a root written as YAML, indented JSON,
+or the text of a template on the way out, one file per element — are
+defined by the renderer's document ([05. Renderer](../tooling/05_render.md),
+D35): each is a reading into, or a writing of, exactly the JSON
+document this chapter defines, and none changes what the language
+means.
+
 ## Open questions
 
 None.

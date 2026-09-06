@@ -109,3 +109,32 @@ fn json_documents() {
         "trailing characters are refused"
     );
 }
+
+#[test]
+fn annotations() {
+    let r = parse_source("@deprecated\ntype T = {\n    @doc(\"x\")\n    a: int\n}\n");
+    assert!(r.errors.is_empty());
+    let d = &r.decls[0];
+    assert!(
+        d.annotations.len() == 1
+            && d.annotations[0].name == "deprecated"
+            && d.annotations[0].args.is_empty(),
+        "{:?}",
+        d.annotations
+    );
+    let DeclBody::Type {
+        ty: TypeAst::Record { members, .. },
+        ..
+    } = &d.body
+    else {
+        panic!("a record type")
+    };
+    let a = members[0].annotations();
+    assert!(
+        a.len() == 1
+            && a[0].name == "doc"
+            && a[0].args.len() == 1
+            && matches!(&*a[0].args[0], Expr::Lit(Value::Str(s)) if s == "x"),
+        "{a:?}"
+    );
+}

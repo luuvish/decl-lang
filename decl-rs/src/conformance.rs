@@ -72,11 +72,14 @@ pub fn judge_fixture(file: &Path, is_valid: bool) -> Verdict {
     };
     if is_valid {
         // a valid fixture must parse, check clean, AND evaluate its outputs
-        // without error-severity diagnostics
+        // without error-severity diagnostics (a warning is not a failure)
         if !parsed.errors.is_empty() {
             return verdict(false, format!("{} parse errors", parsed.errors.len()));
         }
-        let checks = check_module(&parsed.decls, None, None);
+        let checks: Vec<Diag> = check_module(&parsed.decls, None, None)
+            .into_iter()
+            .filter(|d| d.severity == "error")
+            .collect();
         let eval_errs: Vec<Diag> = if checks.is_empty() {
             run_pipeline(&parsed.decls)
                 .diags

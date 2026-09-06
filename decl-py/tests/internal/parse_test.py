@@ -55,3 +55,14 @@ def test_json_documents() -> None:
     assert isinstance(n, int) and n == 12345678901234567890
     with pytest.raises(EvalErr):  # trailing characters are refused
         read_json('{"a": 1} x')
+
+
+def test_annotations() -> None:
+    r = parse_source('@deprecated\ntype T = {\n    @doc("x")\n    a: int\n}\n')
+    assert not r["errors"]
+    d = r["decls"][0]
+    assert [(a["name"], a["args"]) for a in d["annotations"]] == [("deprecated", [])]
+    m = d["type"]["members"][0]
+    assert [a["name"] for a in m["annotations"]] == ["doc"]
+    (arg,) = m["annotations"][0]["args"]
+    assert arg["e"] == "lit" and arg["v"] == "x"

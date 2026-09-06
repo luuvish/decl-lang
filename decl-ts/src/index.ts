@@ -18,8 +18,25 @@ export * from './core.ts';
  * `DeclError` carrying the report. The Rust crate and the Python package
  * offer the same functions with the same semantics.
  */
-export { evaluate, check, validate, formatSource, DeclError } from './api.ts';
-export type { Diagnostic, EvaluateOptions, InputDocument, JsonValue } from './api.ts';
+export {
+  evaluate,
+  render,
+  check,
+  validate,
+  formatSource,
+  toJson,
+  toYaml,
+  DeclError,
+} from './api.ts';
+export type {
+  Diagnostic,
+  EvaluateOptions,
+  RenderOptions,
+  Rendered,
+  TemplateSource,
+  InputDocument,
+  JsonValue,
+} from './api.ts';
 
 /**
  * The Node.js platform: `initParser` locates the grammar's wasm files on

@@ -8,6 +8,8 @@ type Broken = {
 type Fine = { name: string }
 ---
 
+
+
 ==================
 unterminated declaration recovers
 :error
@@ -15,3 +17,5 @@ unterminated declaration recovers
 const x =
 type Next = { ok: bool }
 ---
+
+

@@ -1,0 +1,417 @@
+kind: fabric.node.site
+name: site_a
+params:
+  uplink: wan0
+  oversubscription: 4
+  subnets:
+    - cidr: "10.0.0.0/16"
+      vlan: 100
+      gateway: wan0
+    - cidr: "10.1.0.0/16"
+      vlan: 101
+    - cidr: "172.16.0.0/12"
+      vlan: 200
+ports:
+  wan0:
+    kind: fabric.port.eth
+    name: wan0
+    dir: up
+    params:
+      speed:
+        value: 400000000000
+        unit: bps
+      mtu: 9000
+nodes:
+  spine0:
+    kind: fabric.node.switch.spine
+    name: spine0
+    ports:
+      dn0:
+        kind: fabric.port.eth
+        name: dn0
+        dir: down
+        params:
+          speed:
+            value: 100000000000
+            unit: bps
+          mtu: 9000
+      dn1:
+        kind: fabric.port.eth
+        name: dn1
+        dir: down
+        params:
+          speed:
+            value: 100000000000
+            unit: bps
+          mtu: 9000
+      dn2:
+        kind: fabric.port.eth
+        name: dn2
+        dir: down
+        params:
+          speed:
+            value: 100000000000
+            unit: bps
+          mtu: 9000
+      dn3:
+        kind: fabric.port.eth
+        name: dn3
+        dir: down
+        params:
+          speed:
+            value: 100000000000
+            unit: bps
+          mtu: 9000
+  spine1:
+    kind: fabric.node.switch.spine
+    name: spine1
+    ports:
+      dn0:
+        kind: fabric.port.eth
+        name: dn0
+        dir: down
+        params:
+          speed:
+            value: 100000000000
+            unit: bps
+          mtu: 9000
+      dn1:
+        kind: fabric.port.eth
+        name: dn1
+        dir: down
+        params:
+          speed:
+            value: 100000000000
+            unit: bps
+          mtu: 9000
+      dn2:
+        kind: fabric.port.eth
+        name: dn2
+        dir: down
+        params:
+          speed:
+            value: 100000000000
+            unit: bps
+          mtu: 9000
+      dn3:
+        kind: fabric.port.eth
+        name: dn3
+        dir: down
+        params:
+          speed:
+            value: 100000000000
+            unit: bps
+          mtu: 9000
+  leaf0:
+    kind: fabric.node.switch.leaf
+    name: leaf0
+    ports:
+      up0:
+        kind: fabric.port.eth
+        name: up0
+        dir: up
+        params:
+          speed:
+            value: 100000000000
+            unit: bps
+          mtu: 9000
+      up1:
+        kind: fabric.port.eth
+        name: up1
+        dir: up
+        params:
+          speed:
+            value: 100000000000
+            unit: bps
+          mtu: 9000
+      host0:
+        kind: fabric.port.eth
+        name: host0
+        dir: down
+        params:
+          speed:
+            value: 25000000000
+            unit: bps
+          mtu: 9000
+          vlan: 100
+      host1:
+        kind: fabric.port.eth
+        name: host1
+        dir: down
+        params:
+          speed:
+            value: 25000000000
+            unit: bps
+          mtu: 9000
+          vlan: 100
+      host2:
+        kind: fabric.port.eth
+        name: host2
+        dir: down
+        params:
+          speed:
+            value: 25000000000
+            unit: bps
+          mtu: 9000
+          vlan: 100
+      host3:
+        kind: fabric.port.eth
+        name: host3
+        dir: down
+        params:
+          speed:
+            value: 25000000000
+            unit: bps
+          mtu: 9000
+          vlan: 100
+    nodes:
+      rack0:
+        kind: fabric.node.rack
+        name: rack0
+  leaf1:
+    kind: fabric.node.switch.leaf
+    name: leaf1
+    ports:
+      up0:
+        kind: fabric.port.eth
+        name: up0
+        dir: up
+        params:
+          speed:
+            value: 100000000000
+            unit: bps
+          mtu: 9000
+      up1:
+        kind: fabric.port.eth
+        name: up1
+        dir: up
+        params:
+          speed:
+            value: 100000000000
+            unit: bps
+          mtu: 9000
+      host0:
+        kind: fabric.port.eth
+        name: host0
+        dir: down
+        params:
+          speed:
+            value: 25000000000
+            unit: bps
+          mtu: 9000
+          vlan: 101
+      host1:
+        kind: fabric.port.eth
+        name: host1
+        dir: down
+        params:
+          speed:
+            value: 25000000000
+            unit: bps
+          mtu: 9000
+          vlan: 101
+      host2:
+        kind: fabric.port.eth
+        name: host2
+        dir: down
+        params:
+          speed:
+            value: 25000000000
+            unit: bps
+          mtu: 9000
+          vlan: 101
+      host3:
+        kind: fabric.port.eth
+        name: host3
+        dir: down
+        params:
+          speed:
+            value: 25000000000
+            unit: bps
+          mtu: 9000
+          vlan: 101
+    nodes:
+      rack1:
+        kind: fabric.node.rack
+        name: rack1
+  leaf2:
+    kind: fabric.node.switch.leaf
+    name: leaf2
+    ports:
+      up0:
+        kind: fabric.port.eth
+        name: up0
+        dir: up
+        params:
+          speed:
+            value: 100000000000
+            unit: bps
+          mtu: 9000
+      up1:
+        kind: fabric.port.eth
+        name: up1
+        dir: up
+        params:
+          speed:
+            value: 100000000000
+            unit: bps
+          mtu: 9000
+      host0:
+        kind: fabric.port.eth
+        name: host0
+        dir: down
+        params:
+          speed:
+            value: 25000000000
+            unit: bps
+          mtu: 9000
+          vlan: 102
+      host1:
+        kind: fabric.port.eth
+        name: host1
+        dir: down
+        params:
+          speed:
+            value: 25000000000
+            unit: bps
+          mtu: 9000
+          vlan: 102
+      host2:
+        kind: fabric.port.eth
+        name: host2
+        dir: down
+        params:
+          speed:
+            value: 25000000000
+            unit: bps
+          mtu: 9000
+          vlan: 102
+      host3:
+        kind: fabric.port.eth
+        name: host3
+        dir: down
+        params:
+          speed:
+            value: 25000000000
+            unit: bps
+          mtu: 9000
+          vlan: 102
+    nodes:
+      rack2:
+        kind: fabric.node.rack
+        name: rack2
+  leaf3:
+    kind: fabric.node.switch.leaf
+    name: leaf3
+    ports:
+      up0:
+        kind: fabric.port.eth
+        name: up0
+        dir: up
+        params:
+          speed:
+            value: 100000000000
+            unit: bps
+          mtu: 9000
+      up1:
+        kind: fabric.port.eth
+        name: up1
+        dir: up
+        params:
+          speed:
+            value: 100000000000
+            unit: bps
+          mtu: 9000
+      host0:
+        kind: fabric.port.eth
+        name: host0
+        dir: down
+        params:
+          speed:
+            value: 25000000000
+            unit: bps
+          mtu: 9000
+          vlan: 103
+      host1:
+        kind: fabric.port.eth
+        name: host1
+        dir: down
+        params:
+          speed:
+            value: 25000000000
+            unit: bps
+          mtu: 9000
+          vlan: 103
+      host2:
+        kind: fabric.port.eth
+        name: host2
+        dir: down
+        params:
+          speed:
+            value: 25000000000
+            unit: bps
+          mtu: 9000
+          vlan: 103
+      host3:
+        kind: fabric.port.eth
+        name: host3
+        dir: down
+        params:
+          speed:
+            value: 25000000000
+            unit: bps
+          mtu: 9000
+          vlan: 103
+    nodes:
+      rack3:
+        kind: fabric.node.rack
+        name: rack3
+edges:
+  sl0x0:
+    kind: fabric.edge.link
+    name: other
+    endpoints:
+      - spine0
+      - leaf0
+  sl0x1:
+    kind: fabric.edge.link
+    name: sl0x1
+    endpoints:
+      - spine0
+      - leaf1
+  sl0x2:
+    kind: fabric.edge.link
+    name: sl0x2
+    endpoints:
+      - spine0
+      - leaf2
+  sl0x3:
+    kind: fabric.edge.link
+    name: sl0x3
+    endpoints:
+      - spine0
+      - leaf3
+  sl1x0:
+    kind: fabric.edge.link
+    name: sl1x0
+    endpoints:
+      - spine1
+      - leaf0
+  sl1x1:
+    kind: fabric.edge.link
+    name: sl1x1
+    endpoints:
+      - spine1
+      - leaf1
+  sl1x2:
+    kind: fabric.edge.link
+    name: sl1x2
+    endpoints:
+      - spine1
+      - leaf2
+  sl1x3:
+    kind: fabric.edge.link
+    name: sl1x3
+    endpoints:
+      - spine1
+      - leaf3

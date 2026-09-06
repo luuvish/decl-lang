@@ -969,6 +969,7 @@ pub fn check_module(
                 MemberAst::When {
                     cond: a.cond.clone(),
                     body: a.body.clone(),
+                    annotations: vec![],
                     loc: None,
                 }
             } else {
@@ -976,6 +977,7 @@ pub fn check_module(
                     name: a.name.clone(),
                     cond: a.cond.clone(),
                     tail: a.tail.clone(),
+                    annotations: vec![],
                     loc: None,
                 }
             };
@@ -1160,9 +1162,96 @@ pub fn check_module(
             _ => {}
         }
     }
+
+    // ---------- §5.10: annotations are metadata; an unknown one is a warning ----------
+    // known: `@deprecated` and `@doc` anywhere, `@render` on an output
+    // (docs/tooling/05_render.md); the warning keeps a typo visible (W0001)
+    for d in decls {
+        let known: &[&str] = if matches!(d.body, DeclBody::Output { .. }) {
+            &["deprecated", "doc", "render"]
+        } else {
+            &["deprecated", "doc"]
+        };
+        warn_unknown(&out, &d.annotations, known);
+        match &d.body {
+            DeclBody::Type { ty, .. }
+            | DeclBody::Output { ty, .. }
+            | DeclBody::Input { ty, .. } => annotated_members(&out, Some(ty)),
+            DeclBody::Const { ty, .. } => annotated_members(&out, ty.as_ref()),
+            DeclBody::Func { params, ret, .. } => {
+                for p in params {
+                    annotated_members(&out, p.ty.as_ref());
+                }
+                annotated_members(&out, ret.as_ref());
+            }
+            _ => {}
+        }
+    }
     *env.const_diag_sink.borrow_mut() = None;
     let result = out.borrow().clone();
     result
+}
+
+fn warn_unknown(out: &RefCell<Vec<Diag>>, anns: &[Annotation], known: &[&str]) {
+    for a in anns {
+        if !known.contains(&a.name.as_str()) {
+            let mut d = Diag::error(
+                format!("unknown annotation @{}", a.name),
+                String::new(),
+                Some("W0001"),
+            );
+            d.severity = "warn".into();
+            d.loc = a.loc;
+            out.borrow_mut().push(d);
+        }
+    }
+}
+fn annotated_members(out: &RefCell<Vec<Diag>>, t: Option<&TypeAst>) {
+    match t {
+        Some(TypeAst::Record { members, .. }) => {
+            for m in members {
+                annotated_member(out, m);
+            }
+        }
+        Some(TypeAst::Map { key, val, .. }) => {
+            annotated_members(out, Some(key));
+            annotated_members(out, Some(val));
+        }
+        Some(TypeAst::Array { elem, .. }) => annotated_members(out, Some(elem)),
+        Some(TypeAst::Union { arms, .. }) | Some(TypeAst::Isect { arms, .. }) => {
+            for a in arms {
+                annotated_members(out, Some(a));
+            }
+        }
+        Some(TypeAst::Func { params, ret, .. }) => {
+            for p in params {
+                annotated_members(out, Some(p));
+            }
+            annotated_members(out, Some(ret));
+        }
+        Some(TypeAst::Named { args, ext, .. }) => {
+            for a in args {
+                annotated_members(out, Some(a));
+            }
+            annotated_members(out, ext.as_deref());
+        }
+        _ => {}
+    }
+}
+fn annotated_member(out: &RefCell<Vec<Diag>>, m: &MemberAst) {
+    warn_unknown(out, m.annotations(), &["deprecated", "doc"]);
+    match m {
+        MemberAst::Value { ty, .. } | MemberAst::Context { ty, .. } => {
+            annotated_members(out, Some(ty))
+        }
+        MemberAst::Derived { ty, .. } => annotated_members(out, ty.as_ref()),
+        MemberAst::When { body, .. } => {
+            for m in body {
+                annotated_member(out, m);
+            }
+        }
+        MemberAst::Assert { .. } => {}
+    }
 }
 
 #[allow(dead_code)]

@@ -84,20 +84,29 @@ def _parse_source_uncached(src: str) -> dict[str, Any]:
     errors: list[Any] = []
     _collect_errors(tree.root_node, errors)
     decls: list[Any] = []
+    # annotations precede the declaration they attach to as its siblings (§5.10)
+    pending: list[Any] = []
     for c in tree.root_node.named_children:
         if c.type == "ERROR":
             continue
         try:
+            if c.type == "annotation":
+                pending.append(lower_annotation(c))
+                continue
             d = lower_decl(c)
         except Exception:
             if not errors:
                 errors.append({"row": c.start_point[0], "col": c.start_point[1]})
+            pending = []
             continue
         if d is not None:
             prev = c.prev_sibling
             exported = prev is not None and _text(prev) == "export"
             if exported or d["d"] == "re_export":
                 d["exported"] = True
+            if pending:
+                d["annotations"] = pending
+            pending = []
             # the declaration's source range (Phase 6 foundations): the `export`
             # keyword, when present, is the previous sibling and is included
             start = prev.start_point if exported and prev is not None else c.start_point
@@ -112,6 +121,15 @@ def _collect_errors(n: Node, out: list[Any]) -> None:
     if n.has_error:
         for c in n.children:
             _collect_errors(c, out)
+
+
+# ---------------- annotations ----------------
+def lower_annotation(n: Node) -> dict[str, Any]:
+    return {
+        "name": _text(_req(n, "name")),
+        "args": [lower_expr(c) for c in _operands(n)[1:]],
+        "loc": _loc_of(n),
+    }
 
 
 # ---------------- declarations ----------------
@@ -313,12 +331,19 @@ def _lower_type0(n: Node) -> dict[str, Any]:
     if t == "record_type":
         open_ = False
         members: list[Any] = []
+        pending: list[Any] = []  # a member's annotations precede it as siblings (§5.10)
         for c in n.named_children:
             if c.type == "open_marker":
                 open_ = True
                 continue
+            if c.type == "annotation":
+                pending.append(lower_annotation(c))
+                continue
             m = lower_member(c)
             if m is not None:
+                if pending:
+                    m["annotations"] = pending
+                pending = []
                 members.append(m)
         return {"k": "record", "members": members, "open": open_}
     if t == "map_type":
@@ -630,3 +655,13 @@ def _lower_for(n: Node) -> dict[str, Any]:
         "iter": lower_expr(_req(n, "iterable")),
         "filters": [lower_expr(c) for c in n.children_by_field_name("filter")],
     }
+
+
+def parse_expr_text(text: str) -> dict[str, Any] | None:
+    """parse one expression's text: the text is wrapped in a constant
+    declaration; None when it does not parse"""
+    r = parse_source(f"const __e = {text}\n")
+    decls, errors = r["decls"], r["errors"]
+    if errors or len(decls) != 1 or decls[0]["d"] != "const":
+        return None
+    return decls[0]["expr"]

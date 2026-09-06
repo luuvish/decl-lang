@@ -1,0 +1,15 @@
+// annotations are metadata (§5.10, D4): they attach to declarations and
+// members and change nothing; the known set is @deprecated, @doc, and
+// @render on an output (docs/tooling/05_render.md)
+@deprecated
+type LegacyPort = int
+
+type Service = {
+    @doc("stable dns name")
+    name: string
+    @doc("the listening port") @deprecated
+    port: LegacyPort = 80
+}
+
+@render({ format: "yaml", indent: 2 })
+export output demo: Service = { name: "gateway" }

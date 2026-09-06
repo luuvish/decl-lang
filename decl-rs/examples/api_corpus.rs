@@ -7,7 +7,10 @@
 //!
 //!     cargo run --release --example api_corpus
 use decl_lang::semantics::{js_num_str, json_str, read_json, Value};
-use decl_lang::{check, evaluate, format_source, validate, Diagnostic, Document, EvaluateOptions};
+use decl_lang::{
+    check, evaluate, format_source, render, validate, Diagnostic, Document, EvaluateOptions,
+    RenderOptions, Rendered, TemplateSource,
+};
 use std::path::{Path, PathBuf};
 
 /// the repository root: the crate's parent
@@ -140,6 +143,62 @@ fn run_case(case: &Value) -> String {
                     .join(",")
             )
         })
+    } else if let Some(m) = get(case, "render") {
+        let outputs: Vec<String> = match get(case, "outputs") {
+            Some(Value::JArr(xs)) => xs.iter().map(|x| text(x).to_string()).collect(),
+            _ => vec![],
+        };
+        let yaml = get(case, "format").map(|f| text(f) == "yaml");
+        let indent = get(case, "indent").and_then(|i| match i {
+            Value::Int(n) => n.to_string().parse::<usize>().ok(),
+            _ => None,
+        });
+        let templates: Vec<(String, TemplateSource)> = match get(case, "templates") {
+            Some(Value::JObj(es)) => es
+                .iter()
+                .map(|(k, v)| {
+                    let src = match get(v, "file") {
+                        Some(f) => TemplateSource::File(std::path::PathBuf::from(text(f))),
+                        None => TemplateSource::Text(text(get(v, "text").unwrap()).to_string()),
+                    };
+                    (k.clone(), src)
+                })
+                .collect(),
+            _ => vec![],
+        };
+        render(
+            text(m),
+            &RenderOptions {
+                inputs: inputs_of(case),
+                outputs,
+                yaml,
+                indent,
+                templates,
+            },
+        )
+        .map(|roots| {
+            format!(
+                "{{{}}}",
+                roots
+                    .iter()
+                    .map(|(k, v)| {
+                        let value = match v {
+                            Rendered::Text(t) => json_str(t),
+                            Rendered::Files(files) => format!(
+                                "{{{}}}",
+                                files
+                                    .iter()
+                                    .map(|(p, t)| format!("{}:{}", json_str(p), json_str(t)))
+                                    .collect::<Vec<_>>()
+                                    .join(",")
+                            ),
+                        };
+                        format!("{}:{value}", json_str(k))
+                    })
+                    .collect::<Vec<_>>()
+                    .join(",")
+            )
+        })
     } else if let Some(Value::JArr(files)) = get(case, "check") {
         let names: Vec<String> = files.iter().map(|f| text(f).to_string()).collect();
         let refs: Vec<&str> = names.iter().map(String::as_str).collect();
@@ -151,14 +210,18 @@ fn run_case(case: &Value) -> String {
     } else {
         panic!("unknown call in {name}")
     };
-    match answer {
+    let text = match answer {
         Ok(value) => format!("{{\"name\":{name},\"ok\":true,\"value\":{value}}}"),
         Err(e) => format!(
             "{{\"name\":{name},\"ok\":false,\"message\":{},\"diagnostics\":{}}}",
             json_str(&e.message),
             diags_json(&e.diagnostics)
         ),
-    }
+    };
+    // a message may name a module by its absolute path: the repository root
+    // is spelled `<root>`, so that the recorded answers hold on every machine
+    let root = json_str(&repo_root().to_string_lossy());
+    text.replace(&root[1..root.len() - 1], "<root>")
 }
 
 /// every case's answer, as one JSON array

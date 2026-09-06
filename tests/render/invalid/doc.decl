@@ -1,0 +1,3 @@
+// the input every document of this directory is bound to: any mapping
+// (the reader refuses them before binding, so the type never matters)
+input doc: { ... }

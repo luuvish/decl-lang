@@ -34,7 +34,10 @@ report's field order (§12.2: `file, code, id, severity, message,
 path`, absent fields omitted); of `format_source` the text. A failure
 is the error's message and its diagnostics. Documents compare by value:
 `expected.json` is canonical JSON, and a driver whose language reads
-`6.0` as `6` is not wrong.
+`6.0` as `6` is not wrong. A message that names a module by its
+absolute path (a module-graph error, a file not found) spells the
+repository root as `<root>`, which every driver substitutes, so the
+answers hold on every machine.
 
 The drivers, one per language, each compared with `expected.json` by
 its suite and run by the parity harness:

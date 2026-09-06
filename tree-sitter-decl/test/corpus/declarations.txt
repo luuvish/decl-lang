@@ -151,3 +151,63 @@ unit ms = 1e-3 s
     (identifier)
     (float)
     (identifier)))
+
+==================
+annotations on declarations and members (§5.10)
+==================
+@deprecated
+type Legacy = int
+
+type S = {
+    @doc("stable dns name")
+    name: string
+    @doc("y") @deprecated
+    port = 80
+}
+
+@render({ format: "yaml" })
+export output o: S = { name: "x" }
+---
+
+(module
+  (annotation
+    (identifier))
+  (type_declaration
+    (identifier)
+    (named_type
+      (qualified_name
+        (identifier))))
+  (type_declaration
+    (identifier)
+    (record_type
+      (annotation
+        (identifier)
+        (string))
+      (value_member
+        (identifier)
+        (named_type
+          (qualified_name
+            (identifier))))
+      (annotation
+        (identifier)
+        (string))
+      (annotation
+        (identifier))
+      (derived_member
+        (identifier)
+        (int))))
+  (annotation
+    (identifier)
+    (object
+      (object_entry
+        (identifier)
+        (string))))
+  (output_declaration
+    (identifier)
+    (named_type
+      (qualified_name
+        (identifier)))
+    (object
+      (object_entry
+        (identifier)
+        (string)))))

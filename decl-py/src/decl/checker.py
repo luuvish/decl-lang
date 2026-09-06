@@ -673,4 +673,65 @@ def check_module(
             bad = const_violation(d["factor"])
             if bad:
                 report("E4021", f"non-constant unit factor for {d['name']}: {bad} (§3.16)")
+
+    # ---------- §5.10: annotations are metadata; an unknown one is a warning ----------
+    # known: `@deprecated` and `@doc` anywhere, `@render` on an output
+    # (docs/tooling/05_render.md); the warning keeps a typo visible (W0001)
+    def warn_unknown(anns: list[Any] | None, known: tuple[str, ...]) -> None:
+        for a in anns or []:
+            if a["name"] not in known:
+                d: dict[str, Any] = {
+                    "code": "W0001",
+                    "message": f"unknown annotation @{a['name']}",
+                    "severity": "warn",
+                    "path": "",
+                }
+                if a.get("loc"):
+                    d["loc"] = a["loc"]
+                out.append(d)
+
+    def annotated_members(t: dict[str, Any] | None) -> None:
+        if t is None:
+            return
+        k = t["k"]
+        if k == "record":
+            for m in t["members"]:
+                annotated_member(m)
+        elif k == "map":
+            annotated_members(t["key"])
+            annotated_members(t["val"])
+        elif k == "array":
+            annotated_members(t["elem"])
+        elif k in ("union", "isect"):
+            for a in t["arms"]:
+                annotated_members(a)
+        elif k == "func":
+            for a in t["params"]:
+                annotated_members(a)
+            annotated_members(t["ret"])
+        elif k == "named":
+            for a in t.get("args") or []:
+                annotated_members(a)
+            annotated_members(t.get("ext"))
+
+    def annotated_member(m: dict[str, Any]) -> None:
+        warn_unknown(m.get("annotations"), ("deprecated", "doc"))
+        if m["m"] in ("value", "context", "derived"):
+            annotated_members(m.get("type"))
+        elif m["m"] == "when":
+            for b in m["body"]:
+                annotated_member(b)
+
+    for d in decls:
+        k = d["d"]
+        warn_unknown(
+            d.get("annotations"),
+            ("deprecated", "doc", "render") if k == "output" else ("deprecated", "doc"),
+        )
+        if k in ("type", "output", "input", "const"):
+            annotated_members(d.get("type"))
+        elif k == "func":
+            for p in d["params"]:
+                annotated_members(p.get("type"))
+            annotated_members(d.get("ret"))
     return out

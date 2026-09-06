@@ -1,0 +1,19 @@
+machines:
+  - host: edge-1.sea
+    role: web
+    cores: 4
+  - host: db-primary
+    role: db
+    cores: 16
+    memory:
+      value: 64
+      unit: GiB
+    disks:
+      - value: 2
+        unit: TiB
+  - host: cache-1
+    role: cache
+    memory:
+      value: 8
+      unit: GiB
+primary: "$.machines[1]"

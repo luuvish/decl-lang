@@ -5,7 +5,7 @@ what they cannot see: invariants of the implementation's own functions
 (the number and string writers, path parsing, diagnostic ordering, the
 package hash, the session log) and one check at each module boundary
 (parse, semantics, infer, checker, engine, module, package, fmt,
-conformance, pipeline, session), so that a corpus failure can be
+conformance, pipeline, session, yaml, render), so that a corpus failure can be
 localized to the module that regressed.
 
 `checks.json` defines every check once — its module, its name, and the

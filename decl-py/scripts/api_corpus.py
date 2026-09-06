@@ -12,7 +12,7 @@ import json
 import os
 import sys
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "decl-py/src"))
@@ -26,6 +26,15 @@ def _document(spec: dict[str, Any]) -> Any:
 
 
 def run_case(case: dict[str, Any]) -> dict[str, Any]:
+    """one case's answer; a message naming a module by its absolute path
+    spells the repository root as `<root>`, so that the recorded answers
+    hold on every machine"""
+    answer = _run_case(case)
+    text = json.dumps(answer, ensure_ascii=False).replace(json.dumps(str(ROOT))[1:-1], "<root>")
+    return cast(dict[str, Any], json.loads(text))
+
+
+def _run_case(case: dict[str, Any]) -> dict[str, Any]:
     name = case["name"]
     try:
         if "evaluate" in case:
@@ -35,6 +44,19 @@ def run_case(case: dict[str, Any]) -> dict[str, Any]:
             if "outputs" in case:
                 kw["outputs"] = case["outputs"]
             value: Any = decl.evaluate(case["evaluate"], **kw)
+        elif "render" in case:
+            kw = {}
+            if "inputs" in case:
+                kw["inputs"] = {k: _document(v) for k, v in case["inputs"].items()}
+            for key in ("outputs", "format", "indent"):
+                if key in case:
+                    kw[key] = case[key]
+            if "templates" in case:
+                kw["templates"] = {
+                    k: v["file"] if "file" in v else {"text": v["text"]}
+                    for k, v in case["templates"].items()
+                }
+            value = decl.render(case["render"], **kw)
         elif "check" in case:
             value = decl.check(*case["check"])
         elif "validate" in case:

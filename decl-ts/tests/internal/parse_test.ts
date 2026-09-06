@@ -81,4 +81,22 @@ const j = (v: unknown) => JSON.stringify(v, (_k, x) => (typeof x === 'bigint' ? 
     j(v),
   );
 }
+{
+  const r = parseSource('@deprecated\ntype T = {\n    @doc("x")\n    a: int\n}\n');
+  const d: any = r.decls[0];
+  const m: any = d?.type?.members?.[0];
+  check(
+    'annotations',
+    r.errors.length === 0 &&
+      d.annotations?.length === 1 &&
+      d.annotations[0].name === 'deprecated' &&
+      d.annotations[0].args.length === 0 &&
+      m?.annotations?.length === 1 &&
+      m.annotations[0].name === 'doc' &&
+      m.annotations[0].args.length === 1 &&
+      m.annotations[0].args[0].e === 'lit' &&
+      m.annotations[0].args[0].v === 'x',
+    j(d),
+  );
+}
 total();

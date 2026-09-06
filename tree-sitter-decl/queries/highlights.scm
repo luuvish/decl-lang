@@ -26,6 +26,8 @@
 (context_variable) @variable.builtin
 "$referrers" @function.builtin
 
+(annotation "@" @punctuation.special name: (identifier) @attribute)
+
 (type_declaration name: (identifier) @type)
 (named_type (qualified_name (identifier) @type .))
 (type_parameter (identifier) @type)

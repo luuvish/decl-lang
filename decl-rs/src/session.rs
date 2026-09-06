@@ -14,11 +14,13 @@ use crate::fmt::format;
 use crate::infer::{infer, make_ctx, std_names, type_text, Ctx, Ty};
 use crate::module::{load_modules, Module};
 use crate::package::{open_package_universe, verify_lock};
-use crate::parse::parse_source;
+use crate::parse::{parse_expr_text, parse_source};
+use crate::render::{absolute, declared_form, emit_root, resolve_in, Emission, Emitted, Form};
 use crate::semantics::{
     json_str, parse_path, path_str, read_json, rec_members, seg_text, sort_diags, Diag, Env, Fail,
     MKind, RTk, Scope, Seg, SegPath, SlotState, Value, RT,
 };
+use crate::yaml::{is_yaml_path, read_yaml};
 use regex::Regex;
 use std::cell::{Cell, RefCell};
 use std::collections::{HashMap, HashSet};
@@ -263,6 +265,37 @@ pub enum Mode {
     Full,
 }
 
+/// the overrides of a root's declared form (docs/tooling/05_render.md §3.4)
+#[derive(Debug, Clone, Default)]
+pub struct RenderOverrides {
+    /// `--format yaml` / `--format json`
+    pub yaml: Option<bool>,
+    /// `--indent n`
+    pub indent: Option<usize>,
+    /// `--template path`
+    pub template: Option<String>,
+}
+/// a root in its declared form: one text, the files of a fan-out, or the error
+#[derive(Debug, Clone)]
+pub enum Rendered {
+    /// one text, of the kind `json`, `yaml`, or `text` (a template's)
+    Text {
+        /// `json`, `yaml`, or `text`
+        kind: String,
+        /// the text
+        text: String,
+    },
+    /// the files of a fan-out root, in element order
+    Files(Vec<(String, String)>),
+    /// the error, with the template's path when a template is at fault
+    Error {
+        /// the diagnostic
+        diag: Diag,
+        /// the file the diagnostic is reported against
+        file: Option<String>,
+    },
+}
+
 #[derive(Clone)]
 /// one run of the universe: the modules, the checks, the engine, the diagnostics
 pub struct Run {
@@ -328,16 +361,8 @@ pub fn is_root_diag(d: &Diag, root: &str) -> bool {
 
 /// parse one expression: the text is wrapped in a constant declaration
 pub fn parse_expr(text: &str) -> SResult<Rc<Expr>> {
-    let r = parse_source(&format!("const __e = {text}\n"));
-    if r.errors.is_empty() && r.decls.len() == 1 {
-        if let DeclBody::Const { expr, .. } = &r.decls[0].body {
-            return Ok(expr.clone());
-        }
-    }
-    Err(SessionError::new(format!(
-        "cannot parse expression: {}",
-        text.trim()
-    )))
+    parse_expr_text(text)
+        .ok_or_else(|| SessionError::new(format!("cannot parse expression: {}", text.trim())))
 }
 
 /// parse one module-level declaration; returns it with its name
@@ -359,7 +384,12 @@ pub fn parse_decl(text: &str) -> SResult<(Decl, String)> {
     Ok((d, name))
 }
 
-fn parse_doc(text: &str, what: &str) -> SResult<Value> {
+// a document's text is JSON, or YAML when its file says so (docs/tooling/05_render.md §2)
+fn parse_doc(text: &str, what: &str, file: Option<&str>) -> SResult<Value> {
+    if file.is_some_and(is_yaml_path) {
+        return read_yaml(text)
+            .map_err(|e| SessionError::new(format!("{what} is not well-formed YAML: {e}")));
+    }
     read_json(text).map_err(|_| SessionError::new(format!("{what} is not well-formed JSON")))
 }
 
@@ -652,11 +682,13 @@ impl Session {
                 }
                 let (doc, origin, file) = match src {
                     BindSource::Expr { text } => (self.eval_to_doc(st, text)?, Origin::Expr, None),
-                    BindSource::File { file, text } => {
-                        (parse_doc(text, file)?, Origin::File, Some(file.clone()))
-                    }
+                    BindSource::File { file, text } => (
+                        parse_doc(text, file, Some(file))?,
+                        Origin::File,
+                        Some(file.clone()),
+                    ),
                     BindSource::Inline { text } => {
-                        (parse_doc(text, "the document")?, Origin::Inline, None)
+                        (parse_doc(text, "the document", None)?, Origin::Inline, None)
                     }
                 };
                 st.set_document(
@@ -1686,6 +1718,105 @@ impl Session {
     }
 
     /// full evaluation of the named roots (`:evaluate`), or of the exported outputs
+    /// a root in the form its module declares (docs/tooling/05_render.md §3,
+    /// §8), with the overrides given: its text, or the files of a fan-out;
+    /// None when nothing applies (canonical JSON, no override); an error as
+    /// its diagnostic, with the template's path when a template is at fault
+    pub fn render(&self, run: &Run, name: &str, over: &RenderOverrides) -> Option<Rendered> {
+        let (Some(entry), Some(eng)) = (run.entry.clone(), run.eng.clone()) else {
+            return None;
+        };
+        let mut found: Option<(&Decl, &Rc<Module>)> = None;
+        for m in &run.modules {
+            for d in &m.decls {
+                if matches!(&d.body, DeclBody::Output { name: n, .. } if n == name) {
+                    found = Some((d, m));
+                }
+            }
+        }
+        let form = match found {
+            Some((d, _)) => match declared_form(d) {
+                Ok(f) => f,
+                Err(m) => {
+                    return Some(Rendered::Error {
+                        diag: Diag::error(m, name.to_string(), Some("E7004")),
+                        file: None,
+                    })
+                }
+            },
+            None => Form::default(),
+        };
+        let applies = form != Form::default()
+            || over.yaml.is_some()
+            || over.indent.is_some()
+            || over.template.is_some();
+        if !applies {
+            return None;
+        }
+        let v = entry.env.root(name)?;
+        let read_tpl = |abs: &str| std::fs::read_to_string(abs).ok();
+        let tpl_path = over.template.clone().or_else(|| form.template.clone());
+        let template = match &tpl_path {
+            None => None,
+            Some(t) => {
+                let abs = if over.template.is_some() {
+                    absolute(t)
+                } else {
+                    let dir = found
+                        .and_then(|(_, m)| m.path.parent().map(|p| p.to_string_lossy().to_string()))
+                        .unwrap_or_else(|| ".".into());
+                    resolve_in(&dir, t)
+                };
+                let Some(text) = read_tpl(&abs) else {
+                    return Some(Rendered::Error {
+                        diag: Diag::error(
+                            "template cannot be read",
+                            name.to_string(),
+                            Some("E7003"),
+                        ),
+                        file: Some(t.clone()),
+                    });
+                };
+                let dir = std::path::Path::new(&abs)
+                    .parent()
+                    .map(|p| p.to_string_lossy().to_string())
+                    .unwrap_or_else(|| ".".into());
+                Some((t.clone(), text, dir))
+            }
+        };
+        let has_template = template.is_some();
+        match emit_root(&Emission {
+            eng,
+            menv: entry.env.clone(),
+            root_name: name.to_string(),
+            value: v,
+            form: form.clone(),
+            yaml: over.yaml,
+            indent: over.indent,
+            template,
+            read_template: &read_tpl,
+        }) {
+            Ok(Emitted::Many(files)) => Some(Rendered::Files(files)),
+            Ok(Emitted::One(text)) => Some(Rendered::Text {
+                kind: if has_template {
+                    "text".into()
+                } else if over.yaml.unwrap_or(form.yaml) {
+                    "yaml".into()
+                } else {
+                    "json".into()
+                },
+                text,
+            }),
+            Err(e) => Some(Rendered::Error {
+                diag: e.diag(),
+                file: e.file.clone(),
+            }),
+        }
+    }
+
+    /// full evaluation of the named roots (`:evaluate`), or of the exported
+    /// outputs: the run, each root's document (None when invalid), and
+    /// whether the exported outputs were asked for
     pub fn evaluate(
         &self,
         names: &[String],
@@ -1789,7 +1920,7 @@ impl Session {
                 let warnings = r
                     .diags
                     .iter()
-                    .filter(|d| d.severity == "warning" && is_root_diag(d, name))
+                    .filter(|d| d.severity == "warn" && is_root_diag(d, name))
                     .count();
                 (name.clone(), errors, warnings)
             })

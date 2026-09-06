@@ -2257,12 +2257,14 @@ fn subst_member(
             opt,
             ty,
             dflt,
+            annotations,
             loc,
         } => MemberAst::Value {
             name: name.clone(),
             opt: *opt,
             ty: t(ty),
             dflt: dflt.as_ref().map(|d| subst_expr(d, values)),
+            annotations: annotations.clone(),
             loc: *loc,
         },
         MemberAst::Derived {
@@ -2270,36 +2272,52 @@ fn subst_member(
             ty,
             expr,
             hidden,
+            annotations,
             loc,
         } => MemberAst::Derived {
             name: name.clone(),
             ty: ty.as_ref().map(t),
             expr: subst_expr(expr, values),
             hidden: *hidden,
+            annotations: annotations.clone(),
             loc: *loc,
         },
-        MemberAst::Context { variable, ty, loc } => MemberAst::Context {
+        MemberAst::Context {
+            variable,
+            ty,
+            annotations,
+            loc,
+        } => MemberAst::Context {
             variable: variable.clone(),
             ty: t(ty),
+            annotations: annotations.clone(),
             loc: *loc,
         },
         MemberAst::Assert {
             name,
             cond,
             tail,
+            annotations,
             loc,
         } => MemberAst::Assert {
             name: name.clone(),
             cond: subst_expr(cond, values),
             tail: tail.clone(),
+            annotations: annotations.clone(),
             loc: *loc,
         },
-        MemberAst::When { cond, body, loc } => MemberAst::When {
+        MemberAst::When {
+            cond,
+            body,
+            annotations,
+            loc,
+        } => MemberAst::When {
             cond: subst_expr(cond, values),
             body: body
                 .iter()
                 .map(|b| subst_member(b, types, values))
                 .collect(),
+            annotations: annotations.clone(),
             loc: *loc,
         },
     }

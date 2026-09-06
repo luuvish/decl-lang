@@ -7,13 +7,18 @@ use crate::conformance::judge_corpus;
 use crate::fmt::format;
 use crate::module::{load_modules, run_universe, Bind, LoadResult, Module};
 use crate::package::{open_package_universe, verify_lock};
-use crate::semantics::{json_str, read_json, Diag};
+use crate::render::{
+    absolute, declared_form, emit_root, layout, resolve_in, Emission, Emitted, Form,
+};
+use crate::semantics::{json_str, read_json, Diag, Value};
+use crate::yaml::{is_yaml_path, read_yaml, to_json};
+use std::cell::RefCell;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
 
 fn usage() -> i32 {
-    eprintln!("usage:\n  decl --version\n  decl check <files...>\n  decl evaluate <file> [--input name=doc.json]... [--output name[=file]]...\n  decl validate <dir>\n  decl validate <file> [--input name=doc.json]... [--expect-errors E1,E2]\n  decl fmt <files...> [--check]\n  decl repl [file.decl] [--input name=doc.json]... [--script session.txt | --script -] [--compact]\n  (check / validate accept --json: diagnostics as a JSON array on stdout)");
+    eprintln!("usage:\n  decl --version\n  decl check <files...>\n  decl evaluate <file> [--input name=doc.(json|yaml)]... [--output name[=file|dir|-]]...\n                       [--format json|yaml] [--indent n | --pretty] [--template [root=]path]...\n  decl validate <dir>\n  decl validate <file> [--input name=doc.(json|yaml)]... [--expect-errors E1,E2]\n  decl fmt <files...> [--check]\n  decl repl [file.decl] [--input name=doc.(json|yaml)]... [--script session.txt | --script -] [--compact]\n  (check / validate accept --json: diagnostics as a JSON array on stdout)");
     2
 }
 
@@ -105,13 +110,26 @@ pub fn input_binds(
                 ))
             }
         };
-        let raw = match read_json(&text) {
-            Ok(v) => v,
-            Err(_) => {
-                return Err(doc_error(
-                    name,
-                    format!("bound document is not well-formed JSON: {file}"),
-                ));
+        // `name=doc.yaml` is read as YAML by its extension (docs/tooling/05_render.md §2)
+        let raw = if is_yaml_path(file) {
+            match read_yaml(&text) {
+                Ok(v) => v,
+                Err(e) => {
+                    return Err(doc_error(
+                        name,
+                        format!("bound document is not well-formed YAML: {file}: {e}"),
+                    ));
+                }
+            }
+        } else {
+            match read_json(&text) {
+                Ok(v) => v,
+                Err(_) => {
+                    return Err(doc_error(
+                        name,
+                        format!("bound document is not well-formed JSON: {file}"),
+                    ));
+                }
             }
         };
         binds.push(Bind {
@@ -130,14 +148,81 @@ pub fn input_binds(
 /// through its fallback — and the file its document goes to (stdout
 /// without one); with no --output, the entry module's exported outputs, as
 /// one object keyed by name, on stdout
+/// the overrides of the declared forms: `--format`, `--indent` / `--pretty`
+/// (docs/tooling/05_render.md §3.4); `json` is the --json report
+#[derive(Debug, Clone, Default)]
+pub struct Overrides {
+    /// `--format yaml`
+    pub yaml: Option<bool>,
+    /// `--indent n`, or 2 for `--pretty`
+    pub indent: Option<usize>,
+    /// `--json`: the report carries the document itself, whatever the layout
+    pub json: bool,
+}
+
+/// `--format json|yaml`, `--indent n`, `--pretty`: the layout of every
+/// document emitted (docs/tooling/05_render.md §3.4, §4); None for a usage error
+pub fn form_overrides(flags: &HashMap<String, String>) -> Option<Overrides> {
+    let json = flags.contains_key("json");
+    let mut out = Overrides {
+        json,
+        ..Default::default()
+    };
+    if let Some(format) = flags.get("format") {
+        if format != "json" && format != "yaml" {
+            eprintln!(
+                "--format expects json or yaml, got {}",
+                if format == "true" { "nothing" } else { format }
+            );
+            return None;
+        }
+        if format == "yaml" && json {
+            eprintln!("--json reports are JSON: it cannot be combined with --format yaml");
+            return None;
+        }
+        out.yaml = Some(format == "yaml");
+    }
+    let indent = flags.get("indent");
+    if indent.is_some() && flags.contains_key("pretty") {
+        eprintln!("--indent and --pretty exclude each other");
+        return None;
+    }
+    if let Some(indent) = indent {
+        let ok = indent.len() <= 2
+            && indent.bytes().all(|b| b.is_ascii_digit())
+            && !(indent.len() == 2 && indent.starts_with('0'))
+            && indent.parse::<usize>().is_ok_and(|n| n <= 16);
+        if indent == "true" || !ok {
+            eprintln!(
+                "--indent expects an integer in 0..16, got {}",
+                if indent == "true" { "nothing" } else { indent }
+            );
+            return None;
+        }
+        out.indent = Some(indent.parse().unwrap());
+    } else if flags.contains_key("pretty") {
+        out.indent = Some(2);
+    }
+    Some(out)
+}
+
+/// `decl evaluate`: (exit code, the text for stdout, the diagnostics tagged
+/// with their file, the bare stderr lines that follow them); a usage error
+/// is exit 2 with its line already printed
 pub fn evaluate(
     file: &str,
     outputs: &[String],
     inputs: &[String],
+    templates: &[String],
+    over: &Overrides,
 ) -> (i32, Option<String>, Vec<(String, Diag)>, Vec<String>) {
     let tag = |ds: Vec<Diag>| -> Vec<(String, Diag)> {
         ds.into_iter().map(|d| (file.to_string(), d)).collect()
     };
+    // what to emit, and where (§5.5, docs/tooling/05_render.md §3.2): each
+    // `--output name[=file|dir|-]` names a root and where its document goes:
+    // the file given, `-` for stdout, or, alone, the file the root's @render
+    // declares, else stdout
     let mut targets: Vec<(String, Option<String>)> = vec![];
     for spec in outputs {
         let (name, dest) = match spec.split_once('=') {
@@ -149,10 +234,6 @@ pub fn evaluate(
             return (2, None, vec![], vec![]);
         }
         targets.push((name, dest));
-    }
-    if targets.iter().filter(|(_, f)| f.is_none()).count() > 1 {
-        eprintln!("--output: at most one document can go to stdout");
-        return (2, None, vec![], vec![]);
     }
     let r = open_universe(file);
     let Some(entry) = r.entry else {
@@ -172,23 +253,116 @@ pub fn evaluate(
                 .collect::<Vec<_>>()
         })
         .collect();
-    if !checks.is_empty() {
+    if checks.iter().any(|(_, d)| d.severity == "error") {
         return (1, None, checks, vec![]);
+    }
+    // each target's declared form (§3): an invalid @render is E7004 at
+    // emission and the root is not emitted; the others still are
+    let decl_of = |n: &str| {
+        r.modules
+            .iter()
+            .flat_map(|m| m.decls.iter())
+            .find(|d| matches!(&d.body, DeclBody::Output { name, .. } if name == n))
+    };
+    let forms: Vec<Result<Form, String>> = targets
+        .iter()
+        .map(|(n, _)| decl_of(n).map(declared_form).unwrap_or(Ok(Form::default())))
+        .collect();
+    let module_dirs: Vec<String> = targets
+        .iter()
+        .map(|(n, _)| {
+            let m = r
+                .modules
+                .iter()
+                .find(|m| {
+                    m.decls
+                        .iter()
+                        .any(|d| matches!(&d.body, DeclBody::Output { name, .. } if name == n))
+                })
+                .map(|m| m.path.clone())
+                .unwrap_or_else(|| entry.path.clone());
+            m.parent()
+                .map(|p| p.to_string_lossy().to_string())
+                .unwrap_or_else(|| ".".into())
+        })
+        .collect();
+    // the templates named by --template (§3.4): `[root=]path`, `-` for
+    // standard input; a root named must be emitted, and once
+    let mut tpl_flags: HashMap<String, String> = HashMap::new(); // "" names every root
+    for spec in templates {
+        let (root, path) = match spec.split_once('=') {
+            Some((r, p))
+                if !r.is_empty()
+                    && r.starts_with(|c: char| c.is_ascii_alphabetic() || c == '_')
+                    && r.chars().all(|c| c.is_ascii_alphanumeric() || c == '_') =>
+            {
+                (r.to_string(), p.to_string())
+            }
+            _ => (String::new(), spec.clone()),
+        };
+        if path.is_empty() {
+            eprintln!("--template expects [root=]path, got {spec}");
+            return (2, None, vec![], vec![]);
+        }
+        if !root.is_empty() && !targets.iter().any(|(n, _)| *n == root) {
+            eprintln!("--template {root}=: no --output {root}");
+            return (2, None, vec![], vec![]);
+        }
+        if tpl_flags.contains_key(&root) {
+            if root.is_empty() {
+                eprintln!("--template given twice");
+            } else {
+                eprintln!("--template {root}= given twice");
+            }
+            return (2, None, vec![], vec![]);
+        }
+        tpl_flags.insert(root, path);
+    }
+    // destinations (§3.2, §6): one root at most to stdout; a fan-out root
+    // goes to a directory, never to stdout
+    let fan_out = |i: usize| -> bool { matches!(&forms[i], Ok(f) if f.each.is_some()) };
+    let to_stdout = |i: usize| -> bool {
+        match &targets[i].1 {
+            Some(d) => d == "-",
+            None => matches!(&forms[i], Ok(f) if f.file.is_none()),
+        }
+    };
+    for (i, (n, dest)) in targets.iter().enumerate() {
+        if !fan_out(i) {
+            continue;
+        }
+        if dest.as_deref() == Some("-") {
+            eprintln!("--output {n}=-: a fan-out root cannot go to stdout");
+            return (2, None, vec![], vec![]);
+        }
+        if dest.is_none() && matches!(&forms[i], Ok(f) if f.file.is_none()) {
+            eprintln!(
+                "--output {n}: a fan-out root needs a directory ({n}=dir, or file in @render)"
+            );
+            return (2, None, vec![], vec![]);
+        }
+    }
+    if (0..targets.len())
+        .filter(|&i| !fan_out(i) && to_stdout(i))
+        .count()
+        > 1
+    {
+        eprintln!("--output: at most one document can go to stdout");
+        return (2, None, vec![], vec![]);
     }
     let binds = match input_binds(&r.modules, inputs) {
         Ok(b) => b,
         Err((code, diag)) => {
-            return (
-                code,
-                None,
-                diag.into_iter().map(|d| (file.to_string(), d)).collect(),
-                vec![],
-            )
+            let mut all = checks;
+            all.extend(diag.into_iter().map(|d| (file.to_string(), d)));
+            return (code, None, all, vec![]);
         }
     };
     let (eng, diags) = run_universe(&r.modules, &entry, binds);
+    let mut all = checks; // a warning of the checks (W0001) is reported with the run's
+    all.extend(tag(diags.clone()));
     if diags.iter().any(|d| d.severity == "error") {
-        return (1, None, tag(diags), vec![]);
+        return (1, None, all, vec![]);
     }
     let names: Vec<String> = if targets.is_empty() {
         entry
@@ -210,38 +384,180 @@ pub fn evaluate(
         }
     }
     if !notes.is_empty() {
-        return (1, None, tag(diags), notes);
+        return (1, None, all.clone(), notes);
     }
-    let doc = |n: &str| eng.serialize(&entry.env.root(n).unwrap(), n, false);
+    let doc = |n: &str| {
+        read_json(&eng.serialize(&entry.env.root(n).unwrap(), n, false))
+            .unwrap_or_else(|_| panic!("canonical JSON"))
+    };
     let mut text = None;
+    let mut bad = false;
     if targets.is_empty() {
         if names.is_empty() {
             notes.push(format!(
                 "{file}: exports no output; --output <name> selects a root"
             ));
         }
-        text = Some(format!(
-            "{{{}}}",
-            names
-                .iter()
-                .map(|n| format!("{}:{}", json_str(n), doc(n)))
-                .collect::<Vec<_>>()
-                .join(",")
-        ));
+        let all_docs = Value::JObj(Rc::new(names.iter().map(|n| (n.clone(), doc(n))).collect()));
+        // a --json report carries the document itself, whatever the layout
+        text = Some(if over.json {
+            to_json(&all_docs, 0) + "\n"
+        } else {
+            layout(&all_docs, over.yaml.unwrap_or(false), over.indent)
+        });
     } else {
-        for (n, dest) in &targets {
-            match dest {
-                None => text = Some(doc(n)),
-                Some(path) => {
-                    if std::fs::write(path, doc(n) + "\n").is_err() {
-                        notes.push(format!("cannot write {path}"));
-                        return (1, None, tag(diags), notes);
+        // templates are read once (§3.3): by absolute path, or standard input
+        let texts: RefCell<HashMap<String, Option<String>>> = RefCell::new(HashMap::new());
+        let read_tpl = |abs: &str| -> Option<String> {
+            if !texts.borrow().contains_key(abs) {
+                let t = std::fs::read_to_string(abs).ok();
+                texts.borrow_mut().insert(abs.to_string(), t);
+            }
+            texts.borrow().get(abs).cloned().flatten()
+        };
+        let mut stdin_text: Option<String> = None;
+        for (i, (n, dest)) in targets.iter().enumerate() {
+            let form = match &forms[i] {
+                Ok(f) => f.clone(),
+                Err(m) => {
+                    all.push((
+                        file.to_string(),
+                        Diag::error(m.clone(), n.clone(), Some("E7004")),
+                    ));
+                    bad = true;
+                    continue;
+                }
+            };
+            // the template: the override, else the declared one, relative to the module's directory
+            let given = tpl_flags.get(n).or_else(|| tpl_flags.get(""));
+            let template: Option<(String, String, String)> = match given {
+                Some(g) if g == "-" => {
+                    if stdin_text.is_none() {
+                        let mut t = String::new();
+                        if std::io::Read::read_to_string(&mut std::io::stdin(), &mut t).is_err() {
+                            all.push((
+                                "-".to_string(),
+                                Diag::error("template cannot be read", n.clone(), Some("E7003")),
+                            ));
+                            bad = true;
+                            continue;
+                        }
+                        stdin_text = Some(t);
+                    }
+                    let cwd = std::env::current_dir()
+                        .map(|p| p.to_string_lossy().to_string())
+                        .unwrap_or_else(|_| ".".into());
+                    Some(("-".to_string(), stdin_text.clone().unwrap(), cwd))
+                }
+                Some(g) => {
+                    let abs = absolute(g);
+                    match read_tpl(&abs) {
+                        Some(t) => Some((g.clone(), t, parent_dir(&abs))),
+                        None => {
+                            all.push((
+                                g.clone(),
+                                Diag::error("template cannot be read", n.clone(), Some("E7003")),
+                            ));
+                            bad = true;
+                            continue;
+                        }
                     }
                 }
+                None => match &form.template {
+                    Some(t) => {
+                        let abs = resolve_in(&module_dirs[i], t);
+                        match read_tpl(&abs) {
+                            Some(text) => Some((t.clone(), text, parent_dir(&abs))),
+                            None => {
+                                all.push((
+                                    t.clone(),
+                                    Diag::error(
+                                        "template cannot be read",
+                                        n.clone(),
+                                        Some("E7003"),
+                                    ),
+                                ));
+                                bad = true;
+                                continue;
+                            }
+                        }
+                    }
+                    None => None,
+                },
+            };
+            let has_template = template.is_some();
+            let em = match emit_root(&Emission {
+                eng: eng.clone(),
+                menv: entry.env.clone(),
+                root_name: n.clone(),
+                value: entry.env.root(n).unwrap(),
+                form: form.clone(),
+                yaml: over.yaml,
+                indent: over.indent,
+                template,
+                read_template: &read_tpl,
+            }) {
+                Ok(e) => e,
+                Err(e) => {
+                    all.push((e.file.clone().unwrap_or_else(|| file.to_string()), e.diag()));
+                    bad = true;
+                    continue;
+                }
+            };
+            let dest = match dest {
+                Some(d) if d == "-" => None,
+                Some(d) => Some(d.clone()),
+                None => form.file.clone(),
+            };
+            match em {
+                Emitted::Many(files) => {
+                    // a fan-out's files, in element order, under the directory
+                    let dir = dest.unwrap();
+                    for (rel, body) in files {
+                        let path = absolute(&format!("{dir}/{rel}"));
+                        if let Some(d) = std::path::Path::new(&path).parent() {
+                            let _ = std::fs::create_dir_all(d);
+                        }
+                        if std::fs::write(&path, body).is_err() {
+                            notes.push(format!("cannot write {path}"));
+                            return (1, None, all.clone(), notes);
+                        }
+                    }
+                }
+                Emitted::One(body) => match dest {
+                    None => {
+                        // the report's value: the document itself, or a template's text as a string
+                        text = Some(if over.json {
+                            if has_template {
+                                json_str(&body) + "\n"
+                            } else {
+                                to_json(&doc(n), 0) + "\n"
+                            }
+                        } else {
+                            body
+                        })
+                    }
+                    Some(path) => {
+                        if let Some(dir) = std::path::Path::new(&path).parent() {
+                            let _ = std::fs::create_dir_all(dir);
+                        }
+                        if std::fs::write(&path, body).is_err() {
+                            notes.push(format!("cannot write {path}"));
+                            return (1, None, all.clone(), notes);
+                        }
+                    }
+                },
             }
         }
     }
-    (0, text, tag(diags), notes)
+    (if bad { 1 } else { 0 }, text, all.clone(), notes)
+}
+
+fn parent_dir(p: &str) -> String {
+    std::path::Path::new(p)
+        .parent()
+        .map(|d| d.to_string_lossy().to_string())
+        .unwrap_or_else(|| ".".into())
 }
 
 /// single-file validation, module-aware like `check` and `evaluate`: load
@@ -273,12 +589,16 @@ pub fn validate_file(file: &str, inputs: &[String]) -> Result<Vec<(String, Diag)
                 .collect::<Vec<_>>()
         })
         .collect();
-    if !checks.is_empty() {
+    if checks.iter().any(|(_, d)| d.severity == "error") {
         return Ok(checks);
     }
+    diags.extend(checks); // a warning (W0001) is reported beside the run's diagnostics
     let binds = match input_binds(&r.modules, inputs) {
         Ok(b) => b,
-        Err((_, Some(d))) => return Ok(vec![(file.to_string(), d)]),
+        Err((_, Some(d))) => {
+            diags.push((file.to_string(), d));
+            return Ok(diags);
+        }
         Err((code, None)) => return Err(-(code as i64)),
     };
     diags.extend(
@@ -335,13 +655,22 @@ pub fn main(args: Vec<String>) -> i32 {
     }
     let mut flags: HashMap<String, String> = HashMap::new();
     let mut input_flags: Vec<String> = vec![]; // --input name=doc.json, repeatable
-    let mut output_flags: Vec<String> = vec![]; // --output name[=file], repeatable
+    let mut output_flags: Vec<String> = vec![]; // --output name[=file|dir|-], repeatable
+    let mut template_flags: Vec<String> = vec![]; // --template [root=]path, repeatable
     let mut pos: Vec<String> = vec![];
     let mut i = 1;
     while i < args.len() {
         let a = &args[i];
         if let Some(name) = a.strip_prefix("--") {
-            if ["output", "input", "expect-errors"].contains(&name)
+            if [
+                "output",
+                "input",
+                "expect-errors",
+                "format",
+                "indent",
+                "template",
+            ]
+            .contains(&name)
                 && i + 1 < args.len()
                 && !args[i + 1].starts_with("--")
             {
@@ -349,6 +678,8 @@ pub fn main(args: Vec<String>) -> i32 {
                     input_flags.push(args[i + 1].clone());
                 } else if name == "output" {
                     output_flags.push(args[i + 1].clone());
+                } else if name == "template" {
+                    template_flags.push(args[i + 1].clone());
                 } else {
                     flags.insert(name.to_string(), args[i + 1].clone());
                 }
@@ -378,15 +709,19 @@ pub fn main(args: Vec<String>) -> i32 {
             if json {
                 println!("[{}]", collected.join(","));
             }
-            if diags.is_empty() {
-                0
+            if diags.iter().any(|(_, d)| d.severity == "error") {
+                1 // a warning (W0001) is reported, not a failure
             } else {
-                1
+                0
             }
         }
         "evaluate" => {
             let Some(f) = pos.first() else { return usage() };
-            let (code, text, diags, notes) = evaluate(f, &output_flags, &input_flags);
+            let Some(over) = form_overrides(&flags) else {
+                return 2;
+            };
+            let (code, text, diags, notes) =
+                evaluate(f, &output_flags, &input_flags, &template_flags, &over);
             if code == 2 {
                 return 2; // a usage error: already printed, no report
             }
@@ -400,11 +735,11 @@ pub fn main(args: Vec<String>) -> i32 {
                 println!(
                     "{{\"ok\":{},\"value\":{},\"diagnostics\":[{}]}}",
                     code == 0,
-                    text.clone().unwrap_or_else(|| "null".into()),
+                    text.as_deref().map(str::trim_end).unwrap_or("null"),
                     collected.join(",")
                 );
             } else if let Some(t) = text {
-                println!("{t}");
+                print!("{t}");
             }
             code
         }

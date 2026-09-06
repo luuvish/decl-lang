@@ -1,0 +1,218 @@
+dev:
+  env: dev
+  topology:
+    services:
+      - name: gateway
+        protocol: http
+        port: 8080
+        public: true
+        replicas: 1
+        resources:
+          cpu_millis: 500
+          memory:
+            value: 2147483648.0
+            unit: bit
+        health:
+          path: "/healthz"
+          interval:
+            value: 10.0
+            unit: s
+          timeout:
+            value: 2.0
+            unit: s
+        endpoint: gateway:8080
+        inbound: []
+        inbound_count: 0
+      - name: auth
+        protocol: grpc
+        port: 9001
+        resources:
+          cpu_millis: 1000
+          memory:
+            value: 2147483648.0
+            unit: bit
+        replicas: 1
+        public: false
+        health:
+          path: "/healthz"
+          interval:
+            value: 10.0
+            unit: s
+          timeout:
+            value: 2.0
+            unit: s
+        endpoint: auth:9001
+        inbound:
+          - "$.topology.links[0]"
+        inbound_count: 1
+      - name: billing
+        protocol: grpc
+        port: 9002
+        resources:
+          memory:
+            value: 4294967296.0
+            unit: bit
+          cpu_millis: 500
+        replicas: 1
+        public: false
+        health:
+          path: "/healthz"
+          interval:
+            value: 10.0
+            unit: s
+          timeout:
+            value: 2.0
+            unit: s
+        endpoint: billing:9002
+        inbound:
+          - "$.topology.links[1]"
+        inbound_count: 1
+      - name: ledger
+        protocol: tcp
+        port: 5432
+        resources:
+          cpu_millis: 2000
+          memory:
+            value: 8589934592.0
+            unit: bit
+        replicas: 1
+        public: false
+        health:
+          path: "/healthz"
+          interval:
+            value: 10.0
+            unit: s
+          timeout:
+            value: 2.0
+            unit: s
+        endpoint: ledger:5432
+        inbound:
+          - "$.topology.links[2]"
+          - "$.topology.links[3]"
+        inbound_count: 2
+    links:
+      - source: "$.topology.services[0]"
+        target: "$.topology.services[1]"
+        weight: 1
+      - source: "$.topology.services[0]"
+        target: "$.topology.services[2]"
+        weight: 3
+      - source: "$.topology.services[2]"
+        target: "$.topology.services[3]"
+        weight: 5
+      - source: "$.topology.services[1]"
+        target: "$.topology.services[3]"
+        weight: 1
+    service_count: 4
+    total_replicas: 4
+  public_count: 1
+  capacity_millis: 4000
+prod:
+  env: prod
+  topology:
+    services:
+      - name: gateway
+        protocol: http
+        port: 8080
+        public: true
+        replicas: 3
+        resources:
+          cpu_millis: 500
+          memory:
+            value: 2147483648.0
+            unit: bit
+        health:
+          path: "/healthz"
+          interval:
+            value: 10.0
+            unit: s
+          timeout:
+            value: 2.0
+            unit: s
+        endpoint: gateway:8080
+        inbound: []
+        inbound_count: 0
+      - name: auth
+        protocol: grpc
+        port: 9001
+        resources:
+          cpu_millis: 1000
+          memory:
+            value: 2147483648.0
+            unit: bit
+        replicas: 2
+        public: false
+        health:
+          path: "/healthz"
+          interval:
+            value: 10.0
+            unit: s
+          timeout:
+            value: 2.0
+            unit: s
+        endpoint: auth:9001
+        inbound:
+          - "$.topology.links[0]"
+        inbound_count: 1
+      - name: billing
+        protocol: grpc
+        port: 9002
+        resources:
+          memory:
+            value: 4294967296.0
+            unit: bit
+          cpu_millis: 500
+        replicas: 2
+        public: false
+        health:
+          path: "/healthz"
+          interval:
+            value: 10.0
+            unit: s
+          timeout:
+            value: 2.0
+            unit: s
+        endpoint: billing:9002
+        inbound:
+          - "$.topology.links[1]"
+        inbound_count: 1
+      - name: ledger
+        protocol: tcp
+        port: 5432
+        resources:
+          cpu_millis: 2000
+          memory:
+            value: 8589934592.0
+            unit: bit
+        replicas: 2
+        public: false
+        health:
+          path: "/healthz"
+          interval:
+            value: 10.0
+            unit: s
+          timeout:
+            value: 2.0
+            unit: s
+        endpoint: ledger:5432
+        inbound:
+          - "$.topology.links[2]"
+          - "$.topology.links[3]"
+        inbound_count: 2
+    links:
+      - source: "$.topology.services[0]"
+        target: "$.topology.services[1]"
+        weight: 1
+      - source: "$.topology.services[0]"
+        target: "$.topology.services[2]"
+        weight: 3
+      - source: "$.topology.services[2]"
+        target: "$.topology.services[3]"
+        weight: 5
+      - source: "$.topology.services[1]"
+        target: "$.topology.services[3]"
+        weight: 1
+    service_count: 4
+    total_replicas: 9
+  public_count: 1
+  capacity_millis: 8500

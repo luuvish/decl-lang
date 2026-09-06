@@ -89,6 +89,7 @@ def _pairs(inputs: Any) -> list[Any]:
 def _bind_inputs(modules: list[Any], file: str, inputs: Any) -> list[Any]:
     """The documents to bind, each to the module that declares its input (§10)."""
     from .semantics import read_json
+    from .yaml import is_yaml_path, read_yaml
 
     binds = []
     for name, doc in _pairs(inputs):
@@ -115,9 +116,11 @@ def _bind_inputs(modules: list[Any], file: str, inputs: Any) -> list[Any]:
             where = str(doc)
         else:
             text, where = json.dumps(doc), name
+        # a file is YAML by its extension (docs/tooling/05_render.md §2)
+        yaml = isinstance(doc, (str, os.PathLike)) and is_yaml_path(str(doc))
         try:
-            raw = read_json(text)
-        except Exception:
+            raw = read_yaml(text) if yaml else read_json(text)
+        except Exception as e:
             _fail(
                 "",
                 [
@@ -125,7 +128,11 @@ def _bind_inputs(modules: list[Any], file: str, inputs: Any) -> list[Any]:
                         "file": file,
                         "code": "E6004",
                         "severity": "error",
-                        "message": f"bound document is not well-formed JSON: {where}",
+                        "message": (
+                            f"bound document is not well-formed YAML: {where}: {e}"
+                            if yaml
+                            else f"bound document is not well-formed JSON: {where}"
+                        ),
                         "path": name,
                     }
                 ],
@@ -160,7 +167,7 @@ def evaluate(
         for m in r["modules"]
         for d in check_module(m.decls, m.env)
     ]
-    if checks:
+    if any(d["severity"] == "error" for d in checks):
         _fail("", checks)
     u = run_universe(r["modules"], entry, _bind_inputs(r["modules"], file, inputs))
     report = [_tagged(file, d) for d in u["diags"]]
@@ -176,6 +183,141 @@ def evaluate(
         if n not in entry.env.roots:
             raise DeclError(f"no root named {n}", report)
         out[n] = json.loads(u["eng"].serialize(entry.env.roots[n], n))
+    return out
+
+
+def render(
+    path: str | os.PathLike[str],
+    *,
+    inputs: Mapping[str, Any] | Iterable[tuple[str, Any]] | None = None,
+    outputs: Iterable[str] | None = None,
+    format: str | None = None,
+    indent: int | None = None,
+    templates: Mapping[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Render a module's roots in the forms their ``@render`` annotations
+    declare (docs/tooling/05_render.md), with the options as overrides:
+    bind the ``inputs`` documents, evaluate, and return each root's text —
+    or, for a fan-out root, its files by path. ``format`` (``"json"`` /
+    ``"yaml"``) and ``indent`` override every root's declared layout;
+    ``templates`` maps a root name (``"*"`` for every root without one of
+    its own) to a template file path or to ``{"text": …}``. Nothing is
+    written to disk. Raises DeclError with the diagnostics on any
+    error-severity outcome."""
+    from .checker import check_module
+    from .cli import open_universe
+    from .module import run_universe
+    from .render import Emission, Form, RenderError, absolute, declared_form, emit_root, resolve_in
+
+    file = str(path)
+    r = open_universe(file)
+    if r["diags"] or r["entry"] is None:
+        _fail(f"{file}: cannot be loaded", [_tagged(file, d) for d in r["diags"]])
+    entry = r["entry"]
+    checks = [
+        _tagged(_file_tag(file, entry, m.path), d)
+        for m in r["modules"]
+        for d in check_module(m.decls, m.env)
+    ]
+    if any(d["severity"] == "error" for d in checks):
+        _fail("", checks)
+    u = run_universe(r["modules"], entry, _bind_inputs(r["modules"], file, inputs))
+    report = [_tagged(file, d) for d in u["diags"]]
+    if any(d["severity"] == "error" for d in report):
+        _fail("", report)
+    names = (
+        list(outputs)
+        if outputs is not None
+        else [o["name"] for o in entry.env.outputs if o.get("exported")]
+    )
+    texts: dict[str, str | None] = {}
+
+    def read_tpl(abs_: str) -> str | None:
+        if abs_ not in texts:
+            try:
+                with open(abs_, encoding="utf-8") as fh:
+                    texts[abs_] = fh.read()
+            except OSError:
+                texts[abs_] = None
+        return texts[abs_]
+
+    def e7003(tpl: str, n: str) -> None:
+        _fail(
+            "",
+            [
+                {
+                    "file": tpl,
+                    "code": "E7003",
+                    "severity": "error",
+                    "message": "template cannot be read",
+                    "path": n,
+                }
+            ],
+        )
+
+    tpls = dict(templates or {})
+    out: dict[str, Any] = {}
+    for n in names:
+        if n not in entry.env.roots:
+            raise DeclError(f"no root named {n}", report)
+        found = next(
+            (
+                (d, m)
+                for m in r["modules"]
+                for d in m.decls
+                if d["d"] == "output" and d["name"] == n
+            ),
+            None,
+        )
+        form = declared_form(found[0]) if found is not None else Form()
+        if form.error is not None:
+            _fail(
+                "",
+                [
+                    {
+                        "file": file,
+                        "code": "E7004",
+                        "severity": "error",
+                        "message": form.error,
+                        "path": n,
+                    }
+                ],
+            )
+        src = tpls.get(n, tpls.get("*"))
+        template: tuple[str, str, str] | None = None
+        if src is not None:
+            if isinstance(src, (str, os.PathLike)):
+                given = str(src)
+                abs_ = absolute(given)
+                text = read_tpl(abs_)
+                if text is None:
+                    e7003(given, n)
+                template = (given, cast(str, text), os.path.dirname(abs_))
+            else:
+                template = ("<text>", str(src["text"]), os.getcwd())
+        elif form.template is not None:
+            abs_ = resolve_in(os.path.dirname(found[1].path) if found else ".", form.template)
+            text = read_tpl(abs_)
+            if text is None:
+                e7003(form.template, n)
+            template = (form.template, cast(str, text), os.path.dirname(abs_))
+        try:
+            em = emit_root(
+                Emission(
+                    u["eng"],
+                    entry.env,
+                    n,
+                    entry.env.roots[n],
+                    form,
+                    format,
+                    indent,
+                    template,
+                    read_tpl,
+                )
+            )
+        except RenderError as e:
+            _fail("", [_tagged(e.file if e.file is not None else file, e.diag())])
+        out[n] = dict(em) if isinstance(em, list) else em
     return out
 
 
@@ -214,13 +356,14 @@ def validate(
         raise DeclError(f"{file}: {len(parsed['errors'])} parse error(s)")
     decls = parsed["decls"]
     diags = [_tagged(file, d) for d in check_module(decls)]
-    if not diags:
+    # a warning of the checks (W0001) is returned beside the run's diagnostics
+    if not any(d["severity"] == "error" for d in diags):
         if _pairs(inputs):
             r = open_universe(file)
             u = run_universe(r["modules"], r["entry"], _bind_inputs(r["modules"], file, inputs))
-            diags = [_tagged(file, d) for d in u["diags"]]
+            diags += [_tagged(file, d) for d in u["diags"]]
         else:
-            diags = [_tagged(file, d) for d in run_pipeline(decls)["diags"]]
+            diags += [_tagged(file, d) for d in run_pipeline(decls)["diags"]]
     if expect_errors is not None:
         want = sorted(expect_errors)
         got = sorted(d.get("code") or "" for d in diags if d["severity"] == "error")
@@ -257,3 +400,29 @@ def format_source(text: str) -> str:
         return fmt(text)
     except ValueError as e:
         raise DeclError(str(e)) from None
+
+
+def _raw_of(value: Any) -> Any:
+    """a JSON value as the reader's shape (a mapping in its order; a string is
+    canonical JSON text and passes through with its number texts)"""
+    from .semantics import read_json
+
+    if isinstance(value, str):
+        return read_json(value)
+    return read_json(json.dumps(value, ensure_ascii=False))
+
+
+def to_json(value: Any, indent: int = 0) -> str:
+    """The JSON text of a value: canonical for indent 0 (the default), laid
+    out with ``indent`` spaces per level otherwise (docs/tooling/05_render.md
+    §4.1). A string is canonical JSON text and passes through."""
+    from .yaml import to_json as json_text
+
+    return json_text(_raw_of(value), indent)
+
+
+def to_yaml(value: Any, indent: int = 2) -> str:
+    """The YAML text of a value (docs/tooling/05_render.md §4.2), no trailing newline."""
+    from .yaml import to_yaml as yaml_text
+
+    return yaml_text(_raw_of(value), indent)

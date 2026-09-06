@@ -12,11 +12,12 @@ behavior it describes is fixed by the [specification](../specification/01_introd
 ```
 decl --version
 decl check <file>... [--json]
-decl evaluate <file> [--input name=doc.json]... [--output name[=file]]... [--json]
-decl validate <file> [--input name=doc.json]... [--expect-errors E1,E2] [--json]
+decl evaluate <file> [--input name=doc.(json|yaml)]... [--output name[=file|dir|-]]...
+                     [--format json|yaml] [--indent n | --pretty] [--template [root=]path]... [--json]
+decl validate <file> [--input name=doc.(json|yaml)]... [--expect-errors E1,E2] [--json]
 decl validate <dir>
 decl fmt <file>... [--check]
-decl repl [file.decl] [--input name=doc.json]... [--script session.txt | --script -] [--compact]
+decl repl [file.decl] [--input name=doc.(json|yaml)]... [--script session.txt | --script -] [--compact]
 ```
 
 ## 1. Conventions
@@ -74,9 +75,10 @@ and a file that cannot be written is reported by name (exit 1).
 
 Loads each entry file's universe and statically checks every module in
 it (§8 for loading, §6 and §9.7 for what the checker decides). Prints
-every diagnostic of every entry; when every entry is clean,
-`ok: N entry file(s) check clean` on standard error. Exit 1 iff a
-diagnostic was reported.
+every diagnostic of every entry; when nothing was reported,
+`ok: N entry file(s) check clean` on standard error. Exit 1 iff an
+error was reported: a warning (an unknown annotation, W0001) is
+printed and leaves the exit code 0.
 
 ### `decl evaluate`
 
@@ -86,7 +88,16 @@ Diagnostics of every severity go to standard error; an error-severity
 diagnostic means no document is emitted and exit 1. Documents are
 canonical JSON (§10.4): compact, full-precision integers, shortest
 round-trip floats, quantities as `{ "value", "unit" }`, references as
-canonical paths — document-relative (`$.…`) within the emitted root.
+canonical paths — document-relative (`$.…`) within the emitted root —
+unless the root's `@render` annotation or the options say otherwise
+([05. Renderer](05_render.md)): `--format json|yaml` and `--indent n`
+(`--pretty` = `--indent 2`) lay a document out, an output's `@render({
+format, indent, file, template, each })` declares its own form, and
+`--output name` alone writes to the declared `file` when there is one
+(`name=-` forces standard output). A `--input name=doc.yaml` document
+is read as YAML by its extension (05_render.md §2). Under `--json` the
+report's `value` is the document in canonical JSON whatever the
+layout.
 Evaluation is total: every root demanded is evaluated whole, every
 assertion visited — the verdict a document gets here is the document's
 verdict, not a partial one (§9.8).

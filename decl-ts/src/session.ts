@@ -7,7 +7,7 @@
 // language server drive it; nothing here prints, and every answer is the
 // same checker, inference, and engine the command line runs.
 import { host, resolvePath as absPath, basename, dirname, relative } from './host.ts';
-import { parseSource } from './parse.ts';
+import { parseSource, parseExprText } from './parse.ts';
 import { checkModule } from './checker.ts';
 import { loadModules } from './module.ts';
 import type { Module } from './module.ts';
@@ -35,6 +35,8 @@ import {
 import type { Diag, Seg, RT } from './semantics.ts';
 import { makeCtx, infer, typeText, STD } from './infer.ts';
 import type { Decl, Expr } from './ast.ts';
+import { isYamlPath, readYaml } from './yaml.ts';
+import { CANONICAL, declaredForm, emitRoot, RenderError } from './render.ts';
 import { format } from './fmt.ts';
 
 // ---------------- operations ----------------
@@ -94,6 +96,14 @@ export type Run = {
   timing: Timing;
 };
 
+/** the overrides of a root's declared form (docs/tooling/05_render.md §3.4) */
+export type RenderOverrides = { format?: 'json' | 'yaml'; indent?: number; template?: string };
+/** a root in its declared form: one text, the files of a fan-out, or the error */
+export type Rendered =
+  | { kind: 'json' | 'yaml' | 'text'; text: string }
+  | { kind: 'files'; files: [string, string][] }
+  | { kind: 'error'; diag: Diag; file?: string };
+
 export type RootInfo = {
   kind: 'output' | 'input';
   name: string;
@@ -111,10 +121,9 @@ const isRootDiag = (d: Diag, root: string) =>
 
 /** parse one expression: the text is wrapped in a constant declaration */
 export function parseExpr(text: string): Expr {
-  const { decls, errors } = parseSource(`const __e = ${text}\n`);
-  if (errors.length || decls.length !== 1 || decls[0].d !== 'const')
-    throw new SessionError(`cannot parse expression: ${text.trim()}`);
-  return (decls[0] as any).expr;
+  const e = parseExprText(text);
+  if (!e) throw new SessionError(`cannot parse expression: ${text.trim()}`);
+  return e;
 }
 
 /** parse one module-level declaration; returns it with its name */
@@ -132,7 +141,15 @@ export function parseDecl(text: string): { decl: Decl; name: string } {
   return { decl: decls[0], name };
 }
 
-function parseDoc(text: string, what: string): any {
+// a document's text is JSON, or YAML when its file says so (docs/tooling/05_render.md §2)
+function parseDoc(text: string, what: string, file?: string): any {
+  if (file !== undefined && isYamlPath(file)) {
+    try {
+      return readYaml(text);
+    } catch (e: any) {
+      throw new SessionError(`${what} is not well-formed YAML: ${e.message}`);
+    }
+  }
   try {
     return readJson(text);
   } catch {
@@ -313,7 +330,11 @@ export class Session {
         const doc =
           op.src.kind === 'expr'
             ? this.evalToDoc(st, op.src.text)
-            : parseDoc(op.src.text, op.src.kind === 'file' ? op.src.file : 'the document');
+            : parseDoc(
+                op.src.text,
+                op.src.kind === 'file' ? op.src.file : 'the document',
+                op.src.kind === 'file' ? op.src.file : undefined,
+              );
         st.documents.set(op.name, {
           origin: op.src.kind,
           file: op.src.kind === 'file' ? op.src.file : undefined,
@@ -1016,6 +1037,72 @@ export class Session {
     return { run: r, docs, exported: names.length === 0 };
   }
 
+  /**
+   * a root in the form its module declares (docs/tooling/05_render.md §3,
+   * §8), with the overrides given: its text, or the files of a fan-out;
+   * null when nothing applies (canonical JSON, no override); an error as
+   * its diagnostic, with the template's path when a template is at fault
+   */
+  render(run: Run, name: string, over: RenderOverrides = {}): Rendered | null {
+    if (!run.entry || !run.eng) return null;
+    let found: { d: Decl; m: Module } | null = null;
+    for (const m of run.modules)
+      for (const d of m.decls) if (d.d === 'output' && d.name === name) found = { d, m };
+    const form = found ? declaredForm(found.d) : CANONICAL;
+    if ('error' in form)
+      return {
+        kind: 'error',
+        diag: { severity: 'error', code: 'E7004', message: form.error, path: name },
+      };
+    const applies =
+      form !== CANONICAL ||
+      over.format !== undefined ||
+      over.indent !== undefined ||
+      over.template !== undefined;
+    if (!applies) return null;
+    const v = run.entry.env.roots.get(name);
+    if (v === undefined) return null;
+    const readTpl = (abs: string) => host.readFile(abs);
+    let template: { path: string; text: string; dir: string } | undefined;
+    const tplPath = over.template ?? form.template;
+    if (tplPath !== undefined) {
+      const abs =
+        over.template !== undefined ? absPath(tplPath) : absPath(dirname(found!.m.path), tplPath);
+      const text = readTpl(abs);
+      if (text === null)
+        return {
+          kind: 'error',
+          diag: {
+            severity: 'error',
+            code: 'E7003',
+            message: 'template cannot be read',
+            path: name,
+          },
+          file: tplPath,
+        };
+      template = { path: tplPath, text, dir: dirname(abs) };
+    }
+    try {
+      const em = emitRoot({
+        eng: run.eng,
+        menv: run.entry.env,
+        rootName: name,
+        value: v,
+        form,
+        format: over.format,
+        indent: over.indent,
+        template,
+        readTemplate: readTpl,
+      });
+      if (em.kind === 'many') return { kind: 'files', files: em.files };
+      return { kind: template ? 'text' : (over.format ?? form.format), text: em.text };
+    } catch (e) {
+      if (e instanceof RenderError)
+        return { kind: 'error', diag: e.diag(), file: e.file ?? undefined };
+      throw e;
+    }
+  }
+
   /** whole-document validation of the named roots (`:validate`), or of every root */
   validate(names: string[]): {
     run: Run;
@@ -1033,7 +1120,7 @@ export class Session {
       errors:
         r.diags.filter((d) => d.severity === 'error' && isRootDiag(d, name)).length +
         (r.entry?.env.roots.has(name) ? 0 : r.eng ? 1 : 0),
-      warnings: r.diags.filter((d) => d.severity === 'warning' && isRootDiag(d, name)).length,
+      warnings: r.diags.filter((d) => d.severity === 'warn' && isRootDiag(d, name)).length,
     }));
     return { run: r, verdicts, diags };
   }

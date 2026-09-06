@@ -131,7 +131,7 @@ the session does not have is reported on one line and changes nothing.
 
 | Command | Meaning |
 |---|---|
-| `:bind name=doc.json` | bind the document in the file to input `name` |
+| `:bind name=doc.json` | bind the document in the file to input `name` (`doc.yaml` / `doc.yml` is read as YAML, 05_render.md §2) |
 | `:bind name { … }` | bind an inline JSON document (multi-line by the §2.9 rule) |
 | `:bind name = expr` | bind the value of an expression as `name`'s document: `:bind oad = u_oic` puts an output's document into an input — the round trip of §10.5, inside the session |
 | `:unbind name` | drop the binding; the input falls back to its fallback, or is unbound |
@@ -156,7 +156,7 @@ the session does not have is reported on one line and changes nothing.
 | Command | Meaning |
 |---|---|
 | `:check` | static diagnostics of every module, as `decl check` prints them |
-| `:evaluate [root…]` | full evaluation of the named roots — every member, every assertion — printing each root's document; with no root, the entry module's exported outputs, as one object keyed by name. Exactly `decl evaluate --output root…` |
+| `:evaluate [--format f] [--indent n] [--template p] [root…]` | full evaluation of the named roots — every member, every assertion — printing each root's document in the form its `@render` declares, with the options as overrides (05_render.md §8: a fan-out root as its files, each under a `# path` line); with no root, the entry module's exported outputs, as one object keyed by name. Exactly `decl evaluate --output root…` |
 | `:validate [root…]` | full validation of the named roots: every diagnostic of every severity, then a verdict per root (`ok`, or the count of errors); with no root, every root of the universe, bound inputs included — the only way to a whole-document verdict |
 | `:fmt` | the session's scratch module, canonically formatted |
 
@@ -373,7 +373,12 @@ is what a transcript diffs (§9).
   document under a line naming the root (`u_oic:`); with none, the
   exported outputs as one object, as `decl evaluate` does. An
   error-severity diagnostic in a root prints the diagnostics and
-  `(invalid)` in the document's place.
+  `(invalid)` in the document's place. A root whose `@render` declares
+  a form — or one given `--format`, `--indent`, or `--template` before
+  the roots — prints in that form (05_render.md §8): YAML, indented
+  JSON, or a template's text as written, a fan-out root as its files
+  each under a `# path` line; a rendering diagnostic (E7003, E7004, an
+  error in the template) is printed and the root is `(invalid)`.
 - `:validate` prints every diagnostic of the roots asked, then one
   verdict line per root — `oad: ok`, or `oad: 2 errors, 1 warning` — and,
   for several roots, nothing more: the verdict lines are the summary.

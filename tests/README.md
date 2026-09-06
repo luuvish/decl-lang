@@ -19,6 +19,7 @@ alone (a library API's shape, a package's packaging).
 | `cli/` | the command line case by case, with the outcome recorded from the reference ([README](cli/README.md)) | `decl-ts/tests/cli_test.ts`, `decl-rs/tests/cli_test.rs`, `decl-py/tests/cli_test.py`; the harness |
 | `api/` | the library API's cases and the reviewed answers ([README](api/README.md)): `evaluate`, `check`, `validate`, `format_source` in one vocabulary | one driver per language (`decl-ts/scripts/api-corpus.ts`, `decl-rs/examples/api_corpus.rs`, `decl-py/scripts/api_corpus.py`), each suite against `expected.json`; the harness runs the three |
 | `lsp/` | language-server sessions by capability, with their transcripts ([README](lsp/README.md)) | one replay driver per language (`decl-ts/tests/lsp_test.ts` and `lsp-core.ts` over the in-memory host, `decl-rs/tests/lsp_test.rs`, `tests/lsp/replay.py` for Python and the harness); the harness replays every session over the three servers |
+| `render/` | the renderer's data ([README](render/README.md)): `cases.json` (templates, `@render`, fan-out — the recorded outcome, in the shape of `cli/`), `formats.json` (a golden's YAML and indented JSON forms), `inputs/` (the YAML twin of every bound document), `invalid/` (documents the reader refuses, with their messages) | `decl-ts/tests/render_test.ts`, `decl-rs/tests/render_test.rs`, `decl-py/tests/render_test.py`; the harness's `yaml-input`, `format`, and `render` sections |
 | `internal/` | `checks.json`: the internal checks — invariants no tool surface observes, and one check per module boundary ([README](internal/README.md)); `coverage.py` holds the three suites to the list | `decl-ts/tests/internal/`, `decl-rs/tests/internal/`, `decl-py/tests/internal/`, one file per source module; the harness's last section |
 | `parity/` | `differential.py`: every command line (the whole surface: usage, `--version`, `--expect-errors`, `validate <dir>`, `fmt --check`, every error path), REPL session, API case, and language-server session of the reference against the Rust and Python implementations — exit code, stdout, stderr, answers — and the goldens | `make verify`, CI |
 
@@ -35,6 +36,7 @@ every language, under each implementation's `tests/`, named
 | `golden/` | `golden_test.ts` | `golden_test.rs` | `golden_test.py` |
 | `lsp/` | `lsp_test.ts`, `lsp_core_test.ts` | `lsp_test.rs` | `lsp_test.py` (driver: `../../tests/lsp/replay.py`) |
 | `packages/` | `packages_test.ts` | `packages_test.rs` | `packages_test.py` |
+| `render/` | `render_test.ts` | `render_test.rs` | `render_test.py` |
 | `repl/` | `repl_test.ts` | `repl_test.rs` | `repl_test.py` |
 | `subsume/` | `subsume_test.ts` | `subsume_test.rs` | `subsume_test.py` |
 

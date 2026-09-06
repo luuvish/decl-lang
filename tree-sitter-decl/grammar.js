@@ -32,10 +32,20 @@ module.exports = grammar({
     // ---------------- module ----------------
     module: $ => repeat(choice($._declaration, $._newline)),
 
-    _declaration: $ => choice(
-      $.import_declaration,
-      $.re_export_declaration,
-      seq(optional('export'), $._plain_declaration),
+    // annotations (§5.10, §11.3): `@name` / `@name(args)` before a
+    // declaration or a member — metadata only (D4). The nodes precede the
+    // declaration (member) as its siblings, like the `export` keyword
+    _declaration: $ => seq(
+      repeat($.annotation),
+      choice(
+        $.import_declaration,
+        $.re_export_declaration,
+        seq(optional('export'), $._plain_declaration),
+      ),
+    ),
+    annotation: $ => seq(
+      '@', field('name', $.identifier),
+      optional(seq('(', optional(commaList($._expression)), ')')),
     ),
 
     _plain_declaration: $ => choice(
@@ -200,13 +210,16 @@ module.exports = grammar({
     // member, `= e` says the schema computes it — required `x: T`, optional
     // `x?: T`, defaulted `x?: T = e`, derived `x: T = e` / `x = e`; a hidden
     // member `x$ = e` (D34) is computed but never part of the value
-    _member: $ => choice(
-      $.value_member,
-      $.derived_member,
-      $.hidden_member,
-      $.context_declaration,
-      $.assert_member,
-      $.when_member,
+    _member: $ => seq(
+      repeat($.annotation),
+      choice(
+        $.value_member,
+        $.derived_member,
+        $.hidden_member,
+        $.context_declaration,
+        $.assert_member,
+        $.when_member,
+      ),
     ),
     value_member: $ => seq(
       field('name', $._member_name), optional(field('optional', '?')),

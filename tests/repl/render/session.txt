@@ -1,0 +1,19 @@
+// declared forms (docs/tooling/05_render.md §8): YAML, a template, a fan-out
+:evaluate site
+:evaluate conf
+:evaluate units
+:evaluate site conf
+// overrides before the roots
+:evaluate --format json --indent 2 site
+:evaluate --format yaml plain
+:evaluate --template other.j2 plain
+:evaluate plain
+:set compact
+:evaluate plain
+// what fails
+:evaluate broken
+:evaluate --format xml site
+:evaluate --indent 99 site
+:evaluate --template missing.j2 plain
+// the aggregate is canonical JSON, as before
+:evaluate

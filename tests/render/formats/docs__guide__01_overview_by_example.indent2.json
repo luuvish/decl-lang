@@ -1,0 +1,58 @@
+{
+  "demo": {
+    "services": [
+      {
+        "name": "svc-0",
+        "protocol": "grpc",
+        "port": 9000,
+        "replicas": 1,
+        "timeout": {
+          "value": 0.25,
+          "unit": "s"
+        },
+        "endpoint": "svc-0:9000",
+        "inbound": []
+      },
+      {
+        "name": "svc-1",
+        "protocol": "grpc",
+        "port": 9001,
+        "replicas": 1,
+        "timeout": {
+          "value": 0.25,
+          "unit": "s"
+        },
+        "endpoint": "svc-1:9001",
+        "inbound": [
+          "$.links[0]",
+          "$.links[1]"
+        ]
+      },
+      {
+        "name": "svc-2",
+        "protocol": "grpc",
+        "port": 9002,
+        "replicas": 1,
+        "timeout": {
+          "value": 0.25,
+          "unit": "s"
+        },
+        "endpoint": "svc-2:9002",
+        "inbound": []
+      }
+    ],
+    "links": [
+      {
+        "source": "$.services[0]",
+        "target": "$.services[1]",
+        "weight": 1
+      },
+      {
+        "source": "$.services[2]",
+        "target": "$.services[1]",
+        "weight": 2
+      }
+    ],
+    "service_count": 3
+  }
+}

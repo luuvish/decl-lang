@@ -1,0 +1,6 @@
+dist:
+  value: 2
+  unit: km
+dur:
+  value: 1
+  unit: s

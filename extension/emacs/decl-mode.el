@@ -93,7 +93,8 @@
 
    :language 'decl :feature 'builtin
    '((context_variable) @font-lock-builtin-face
-     "$referrers" @font-lock-builtin-face)
+     "$referrers" @font-lock-builtin-face
+     (annotation "@" @font-lock-preprocessor-face name: (identifier) @font-lock-preprocessor-face))
 
    :language 'decl :feature 'operator
    `([,@decl-ts-mode--operators] @font-lock-operator-face)

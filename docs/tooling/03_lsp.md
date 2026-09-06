@@ -235,7 +235,12 @@ Each hint is a setting, off or on:
   `decl.validate`, `decl.bindInput`, `decl.trace` (a path's derivation or
   root cause, as the REPL's `:trace`), `decl.openRepl` (a REPL attached to
   the workspace's session object), `decl.showSyntaxTree` (the tree-sitter
-  tree of the buffer), `decl.reloadWorkspace`.
+  tree of the buffer), `decl.reloadWorkspace`. `decl.evaluate` with a
+  root answers `{ root, document, diagnostics }` — the document in
+  canonical JSON — and, when the root's `@render` declares a form
+  (05_render.md §8), `rendered`: `{ kind: "json" | "yaml" | "text",
+  text }`, `{ kind: "files", files: [{ path, text }] }` for a fan-out
+  root, or `{ kind: "error", diagnostic }`.
 
 ## 13. Semantic tokens
 

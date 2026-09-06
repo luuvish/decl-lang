@@ -1,0 +1,46 @@
+[
+  {
+    "golden": "tests/golden/docs__examples__02_config.json",
+    "yaml": "tests/render/formats/docs__examples__02_config.yaml",
+    "indent": {
+      "2": "tests/render/formats/docs__examples__02_config.indent2.json",
+      "4": "tests/render/formats/docs__examples__02_config.indent4.json"
+    }
+  },
+  {
+    "golden": "tests/golden/fabric__site_2x4.json",
+    "yaml": "tests/render/formats/fabric__site_2x4.yaml",
+    "indent": {
+      "2": "tests/render/formats/fabric__site_2x4.indent2.json"
+    }
+  },
+  {
+    "golden": "tests/golden/quantity__trip.json",
+    "yaml": "tests/render/formats/quantity__trip.yaml",
+    "indent": {
+      "2": "tests/render/formats/quantity__trip.indent2.json",
+      "4": "tests/render/formats/quantity__trip.indent4.json"
+    }
+  },
+  {
+    "golden": "tests/golden/docs__guide__01_overview_by_example.json",
+    "yaml": "tests/render/formats/docs__guide__01_overview_by_example.yaml",
+    "indent": {
+      "2": "tests/render/formats/docs__guide__01_overview_by_example.indent2.json"
+    }
+  },
+  {
+    "golden": "tests/golden/examples__svcgraph__main.json",
+    "yaml": "tests/render/formats/examples__svcgraph__main.yaml",
+    "indent": {
+      "2": "tests/render/formats/examples__svcgraph__main.indent2.json"
+    }
+  },
+  {
+    "golden": "tests/golden/match__port_grpc.json",
+    "yaml": "tests/render/formats/match__port_grpc.yaml",
+    "indent": {
+      "2": "tests/render/formats/match__port_grpc.indent2.json"
+    }
+  }
+]

@@ -13,7 +13,7 @@ repository = "https://github.com/luuvish/decl-lang"
 [grammars.decl]
 repository = "https://github.com/luuvish/decl-lang"
 path = "tree-sitter-decl"
-rev = "827ebd6cb2b8efd9b1f6bbd77622bf03f14a14b1"
+rev = "881f52a79da626f48d214f21e1a7c1f06de45af3"
 
 [language_servers.decl-lsp]
 name = "decl-lsp"

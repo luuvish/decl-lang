@@ -67,9 +67,23 @@ fn parse_source_uncached(src: &str) -> ParseResult {
         src: src.as_bytes(),
     };
     let mut decls = Vec::new();
+    // annotations precede the declaration they attach to as its siblings (§5.10)
+    let mut pending: Vec<Annotation> = Vec::new();
     let mut cur = root.walk();
     for c in root.named_children(&mut cur) {
         if c.kind() == "ERROR" {
+            continue;
+        }
+        if c.kind() == "annotation" {
+            match lw.annotation(c) {
+                Ok(a) => pending.push(a),
+                Err(_) => {
+                    if errors.is_empty() {
+                        errors.push((c.start_position().row, c.start_position().column));
+                    }
+                    pending.clear();
+                }
+            }
             continue;
         }
         match lw.decl(c) {
@@ -91,6 +105,7 @@ fn parse_source_uncached(src: &str) -> ParseResult {
                     el: c.end_position().row,
                     ec: lw.col16(c.end_byte()),
                 });
+                d.annotations = std::mem::take(&mut pending);
                 decls.push(d);
             }
             Ok(None) => {}
@@ -98,6 +113,7 @@ fn parse_source_uncached(src: &str) -> ParseResult {
                 if errors.is_empty() {
                     errors.push((c.start_position().row, c.start_position().column));
                 }
+                pending.clear();
             }
         }
     }
@@ -179,6 +195,19 @@ impl<'a> Lower<'a> {
     }
     fn json_string(&self, n: Node) -> LR<String> {
         json_unquote(&self.text(n).replace('\n', "\\n"))
+    }
+
+    // ---------------- annotations ----------------
+    fn annotation(&self, n: Node) -> LR<Annotation> {
+        let mut args = Vec::new();
+        for c in self.operands(n).into_iter().skip(1) {
+            args.push(self.expr(c)?);
+        }
+        Ok(Annotation {
+            name: self.text(self.req(n, "name")?),
+            args,
+            loc: Some(self.loc_of(n)),
+        })
     }
 
     // ---------------- declarations ----------------
@@ -290,6 +319,7 @@ impl<'a> Lower<'a> {
         Ok(Some(Decl {
             body,
             exported: false,
+            annotations: vec![],
             loc: None,
         }))
     }
@@ -496,12 +526,19 @@ impl<'a> Lower<'a> {
             "record_type" => {
                 let mut open = false;
                 let mut members = Vec::new();
+                // a member's annotations precede it as siblings (§5.10)
+                let mut pending: Vec<Annotation> = Vec::new();
                 for c in self.named(n) {
                     if c.kind() == "open_marker" {
                         open = true;
                         continue;
                     }
-                    if let Some(m) = self.member(c)? {
+                    if c.kind() == "annotation" {
+                        pending.push(self.annotation(c)?);
+                        continue;
+                    }
+                    if let Some(mut m) = self.member(c)? {
+                        m.set_annotations(std::mem::take(&mut pending));
                         members.push(m);
                     }
                 }
@@ -665,6 +702,7 @@ impl<'a> Lower<'a> {
                         ty: Some(self.ty(self.req(n, "type")?)?),
                         expr,
                         hidden: false,
+                        annotations: vec![],
                         loc: None,
                     },
                     dflt => MemberAst::Value {
@@ -672,6 +710,7 @@ impl<'a> Lower<'a> {
                         opt,
                         ty: self.ty(self.req(n, "type")?)?,
                         dflt,
+                        annotations: vec![],
                         loc: None,
                     },
                 }
@@ -687,6 +726,7 @@ impl<'a> Lower<'a> {
                     ty: None,
                     expr: self.expr(self.req(n, "value")?)?,
                     hidden: false,
+                    annotations: vec![],
                     loc: None,
                 }
             }
@@ -699,17 +739,20 @@ impl<'a> Lower<'a> {
                 },
                 expr: self.expr(self.req(n, "value")?)?,
                 hidden: true,
+                annotations: vec![],
                 loc: None,
             },
             "context_declaration" => MemberAst::Context {
                 variable: self.text(self.req(n, "variable")?),
                 ty: self.ty(self.req(n, "type")?)?,
+                annotations: vec![],
                 loc: None,
             },
             "assert_member" => MemberAst::Assert {
                 name: self.text(self.req(n, "name")?),
                 cond: self.expr(self.req(n, "condition")?)?,
                 tail: self.maybe_tail(n)?,
+                annotations: vec![],
                 loc: None,
             },
             "when_member" => {
@@ -722,6 +765,7 @@ impl<'a> Lower<'a> {
                 MemberAst::When {
                     cond: self.expr(self.req(n, "condition")?)?,
                     body,
+                    annotations: vec![],
                     loc: None,
                 }
             }
@@ -1024,4 +1068,15 @@ pub fn json_unquote(s: &str) -> LR<String> {
         }
     }
     Ok(out)
+}
+
+/// parse one expression's text: the text is wrapped in a constant declaration; None when it does not parse
+pub fn parse_expr_text(text: &str) -> Option<Rc<Expr>> {
+    let r = parse_source(&format!("const __e = {text}\n"));
+    if r.errors.is_empty() && r.decls.len() == 1 {
+        if let DeclBody::Const { expr, .. } = &r.decls[0].body {
+            return Some(expr.clone());
+        }
+    }
+    None
 }

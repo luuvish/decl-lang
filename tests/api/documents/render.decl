@@ -1,0 +1,22 @@
+type Service = { name: string, port: int, public: bool }
+type Site = { name: string, services: Service[] }
+type Unit = { name: string, path = `units/${name}.conf`, port: int }
+func label(s: Service): string = `${s.name}:${s.port}`
+
+@render({ format: "yaml" })
+export output site: Site = { name: "edge", services: [{ name: "a", port: 80, public: true }, { name: "b", port: 443, public: false }] }
+
+@render({ template: "render.j2" })
+export output conf: Site = site
+
+@render({ each: "path", template: "unit.j2" })
+export output units: Unit[] = [{ name: "auth", port: 1 }, { name: "web", port: 2 }]
+
+export output plain: { n: int } = { n: 3 }
+
+input cfg: { n: int } = { n: 1 }
+@render({ format: "yaml", indent: 4 })
+export output derived: { doubled: int, tags: string[] } = { doubled: cfg.n * 2, tags: ["x"] }
+
+@render({ indent: 99 })
+output broken: int = 1
