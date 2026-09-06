@@ -3005,6 +3005,12 @@ impl Engine {
         }
         let mut mp = inst.borrow().path.clone();
         mp.push(Seg::Name(name.to_string()));
+        if state == SlotState::Deferred {
+            if self.phase.get() < 2 {
+                return Err(Fail::Defer); // known to wait for phase 2: not attempted again
+            }
+            inst.borrow_mut().slot_mut(name).unwrap().state = SlotState::Unforced;
+        }
         if state == SlotState::Forcing {
             self.env.report(Diag::error(
                 format!("dependency cycle at {name}"),
@@ -3031,7 +3037,7 @@ impl Engine {
                 Ok(v)
             }
             Err(Fail::Defer) => {
-                inst.borrow_mut().slot_mut(name).unwrap().state = SlotState::Unforced;
+                inst.borrow_mut().slot_mut(name).unwrap().state = SlotState::Deferred;
                 self.deferred_slots
                     .borrow_mut()
                     .push((inst.clone(), name.to_string()));
@@ -3453,7 +3459,10 @@ impl Engine {
                     if s.hidden
                         || matches!(
                             s.state,
-                            SlotState::Invalid | SlotState::Absent | SlotState::Unforced
+                            SlotState::Invalid
+                                | SlotState::Absent
+                                | SlotState::Unforced
+                                | SlotState::Deferred
                         )
                     {
                         continue;

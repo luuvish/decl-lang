@@ -28,7 +28,9 @@ export const isClo = (v: any) => v && v.__clo === true;
 export type Slot = {
   kind: 'req' | 'opt' | 'dflt' | 'der';
   hidden?: boolean; // `x$ = e`: computed, never part of the value (D34)
-  state: 'unforced' | 'forcing' | 'ok' | 'invalid' | 'absent';
+  // `deferred`: the computation reached `$referrers` before the universe was complete — it is
+  // not attempted again until phase 2 (a demand meanwhile defers at once)
+  state: 'unforced' | 'forcing' | 'ok' | 'invalid' | 'absent' | 'deferred';
   value?: Value;
   deferred: boolean; // expression mentions $referrers
   compute?: () => Value; // throws Taint/EvalError
@@ -45,14 +47,21 @@ export type RecInst = {
   extras: Map<string, any>; // open pass-through (opaque)
 };
 
+// thrown by the thousands: no stack trace is captured for either signal
 export class Taint extends Error {
   constructor() {
+    const limit = Error.stackTraceLimit;
+    Error.stackTraceLimit = 0;
     super('taint');
+    Error.stackTraceLimit = limit;
   }
 }
 export class DeferSig extends Error {
   constructor() {
+    const limit = Error.stackTraceLimit;
+    Error.stackTraceLimit = 0;
     super('defer');
+    Error.stackTraceLimit = limit;
   }
 }
 export class EvalErr extends Error {

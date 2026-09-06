@@ -255,6 +255,9 @@ pub enum MKind {
 pub enum SlotState {
     /// not forced yet
     Unforced,
+    /// the computation reached `$referrers` before the universe was complete: not attempted again
+    /// until phase 2 (a demand meanwhile defers at once)
+    Deferred,
     /// being forced
     Forcing,
     /// forced, with a value

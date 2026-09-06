@@ -1646,6 +1646,10 @@ export class Engine {
     if (s.state === 'ok') return s.value;
     if (s.state === 'absent') return ABSENT;
     if (s.state === 'invalid') throw new Taint();
+    if (s.state === 'deferred') {
+      if (this.phase < 2) throw new DeferSig(); // known to wait for phase 2: not attempted again
+      s.state = 'unforced';
+    }
     if (s.state === 'forcing') {
       this.env.report({
         severity: 'error',
@@ -1665,7 +1669,7 @@ export class Engine {
       return v;
     } catch (e) {
       if (e instanceof DeferSig) {
-        s.state = 'unforced'; // retry in phase 2
+        s.state = 'deferred'; // retry in phase 2
         this.deferredSlots.push({ inst, name });
         throw e;
       }
@@ -1871,7 +1875,8 @@ export class Engine {
             s.hidden ||
             s.state === 'invalid' ||
             s.state === 'absent' ||
-            s.state === 'unforced'
+            s.state === 'unforced' ||
+            s.state === 'deferred'
           )
             continue;
           const g = go(s.value);

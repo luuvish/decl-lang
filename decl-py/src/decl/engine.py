@@ -1691,6 +1691,10 @@ class Engine:
             return ABSENT
         if s.state == "invalid":
             raise Taint()
+        if s.state == "deferred":
+            if self.phase < 2:
+                raise DeferSig()  # known to wait for phase 2: not attempted again
+            s.state = "unforced"
         if s.state == "forcing":
             self.env.report(
                 {
@@ -1709,7 +1713,7 @@ class Engine:
             s.state, s.value = "ok", v
             return v
         except DeferSig:
-            s.state = "unforced"
+            s.state = "deferred"
             self.deferred_slots.append((inst, name))
             raise
         except EvalErr as e:
@@ -1956,7 +1960,11 @@ class Engine:
                     if settable_only and m["kind"] == "der":
                         continue
                     s = x.slots.get(m["name"])
-                    if s is None or s.hidden or s.state in ("invalid", "absent", "unforced"):
+                    if (
+                        s is None
+                        or s.hidden
+                        or s.state in ("invalid", "absent", "unforced", "deferred")
+                    ):
                         continue
                     g = go(s.value)
                     if g is not None:
