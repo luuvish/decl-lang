@@ -32,6 +32,8 @@ const list = (dir, ext) => (existsSync(resolve(ROOT, dir)) ? readdirSync(resolve
 for (const f of list('docs/specification', '.md')) add(`docs/specification/${f}`, `specification/${f.slice(0, -3)}`, { group: 'specification' });
 for (const f of list('docs/guide', '.md')) add(`docs/guide/${f}`, `guide/${f.slice(0, -3)}`);
 for (const f of list('docs/design', '.md')) add(`docs/design/${f}`, `design/${f.slice(0, -3)}`);
+// the sources the design documents distill: verbatim records, a subgroup of the design pages
+for (const f of list('docs/design/sources', '.md')) add(`docs/design/sources/${f}`, `design/sources/${f.slice(0, -3)}`, { order: 90 });
 add('docs/REVISIONS.md', 'revisions');
 add('docs/README.md', 'documentation', { hidden: true });
 // the index of the examples group lives inside its directory so the

@@ -22,6 +22,7 @@ charter and chapters remains a defect to fix on sight (§1.4).
 | [01. Design Requirements](design/01_requirements.md) | Goals, non-goals, capability requirements (describe / generate / validate / modules / tooling), the generality benchmark, and the quality bar — with the vision checklist promoted to requirements |
 | [02. Design Decisions](design/02_design_decisions.md) | The charter: principles P1–P7, decisions D1–D33, the rejected-syntax table, the comprehensive example, vision-checklist traceability, and the revision-tracked decision log — spec chapters must not contradict it |
 | [03. v0.2 Revision Candidates](design/03_v02_revision_candidates.md) | Findings from implementing Phases 2–4 and the Phase 5 real-world sweeps, adjudicated 2026-09-01 into revisions v0.1.4–v0.1.8 (the v0.2 cycle); each entry records its outcome |
+| [Sources: design review, 2026-08-14](design/sources/2026-08-14_design_review.md) | The record the vision document distills, kept verbatim: the design-review conversation of 2026-08-14 |
 
 ### Language specification (normative — the single source of truth)
 
