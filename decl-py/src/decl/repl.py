@@ -39,7 +39,11 @@ COMMANDS: list[Any] = [
     (":reset", "drop every binding, edit, and declaration", "declarations"),
     # evaluation and validation
     (":check", "static diagnostics of every module", "evaluation"),
-    (":evaluate [root…]", "full evaluation: the documents of the roots", "evaluation"),
+    (
+        ":evaluate [--format f] [--indent n] [--template p] [root…]",
+        "full evaluation: the documents of the roots, in their declared forms",
+        "evaluation",
+    ),
     (
         ":validate [root…]",
         "full validation: every diagnostic, then a verdict per root",
@@ -342,7 +346,33 @@ class Repl:
                 self._out("ok")
             return
         if cmd == ":evaluate":
-            names = [n for n in re.split(r"[\s,]+", rest) if n] if rest else []
+            # the overrides of a declared form come before the roots (05_render.md §8)
+            words = [n for n in re.split(r"[\s,]+", rest) if n] if rest else []
+            over: dict[str, Any] = {}
+            names = []
+            i = 0
+            while i < len(words):
+                w = words[i]
+                if w in ("--format", "--indent", "--template"):
+                    i += 1
+                    if i >= len(words):
+                        raise SessionError(f"{w} expects a value")
+                    v = words[i]
+                    if w == "--format":
+                        if v not in ("json", "yaml"):
+                            raise SessionError(f"--format expects json or yaml, got {v}")
+                        over["format"] = v
+                    elif w == "--indent":
+                        if not re.match(r"^(0|[1-9][0-9]?)$", v) or int(v) > 16:
+                            raise SessionError(f"--indent expects an integer in 0..16, got {v}")
+                        over["indent"] = int(v)
+                    else:
+                        over["template"] = v
+                elif w.startswith("--"):
+                    raise SessionError(f"unknown option {w}")
+                else:
+                    names.append(w)
+                i += 1
             r = s.evaluate(names)
             run, docs, exported = r["run"], r["docs"], r["exported"]
             for d in run.load_diags:
@@ -373,8 +403,20 @@ class Repl:
                     self._out(f"{d['name']}:")
                 if d["json"] is None:
                     self._out("(invalid)")
-                else:
+                    continue
+                # the root's declared form, with the overrides (05_render.md §8)
+                rd = s.render(run, d["name"], over)
+                if rd is None:
                     self._value(d["json"])
+                elif rd["kind"] == "error":
+                    self._diag(rd["diag"], rd["file"])
+                    self._out("(invalid)")
+                elif rd["kind"] == "files":
+                    for p, t in rd["files"]:
+                        self._out(f"# {p}")
+                        self._out(t[:-1] if t.endswith("\n") else t)
+                else:
+                    self._out(rd["text"][:-1] if rd["text"].endswith("\n") else rd["text"])
             return
         if cmd == ":validate":
             names = [n for n in re.split(r"[\s,]+", rest) if n] if rest else []

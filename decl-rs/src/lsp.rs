@@ -16,7 +16,7 @@ use crate::semantics::{
     is_rec, json_str, parse_path, read_json, rec_members, seg_text, Diag, MKind, RTk, Seg,
     SlotState, Value, RT,
 };
-use crate::session::{fmt_diag, BindSource, Mode, Op, Run, Session};
+use crate::session::{fmt_diag, BindSource, Mode, Op, RenderOverrides, Rendered, Run, Session};
 use regex::Regex;
 use std::cell::RefCell;
 use std::collections::HashMap;
@@ -2381,11 +2381,44 @@ fn execute_command(st: &mut State, command: &str, args: Option<&Value>) -> J {
             let diagnostics = diags_of(&run, &run.diags);
             if let Some(r) = root {
                 let doc = ds.first().and_then(|(_, j)| j.clone());
-                return J::obj(vec![
-                    ("root", J::s(r)),
+                let mut fields = vec![
+                    ("root", J::s(r.clone())),
                     ("document", doc.map(J::s).unwrap_or(J::Null)),
                     ("diagnostics", diagnostics),
-                ]);
+                ];
+                // the root's declared form (docs/tooling/05_render.md §8), when one applies
+                match session.render(&run, &r, &RenderOverrides::default()) {
+                    None => {}
+                    Some(Rendered::Error { diag, file }) => fields.push((
+                        "rendered",
+                        J::obj(vec![
+                            ("kind", J::s("error")),
+                            ("diagnostic", J::s(fmt_diag(&diag, file.as_deref()))),
+                        ]),
+                    )),
+                    Some(Rendered::Files(files)) => fields.push((
+                        "rendered",
+                        J::obj(vec![
+                            ("kind", J::s("files")),
+                            (
+                                "files",
+                                J::Arr(
+                                    files
+                                        .into_iter()
+                                        .map(|(p, t)| {
+                                            J::obj(vec![("path", J::s(p)), ("text", J::s(t))])
+                                        })
+                                        .collect(),
+                                ),
+                            ),
+                        ]),
+                    )),
+                    Some(Rendered::Text { kind, text }) => fields.push((
+                        "rendered",
+                        J::obj(vec![("kind", J::s(kind)), ("text", J::s(text))]),
+                    )),
+                }
+                return J::obj(fields);
             }
             let all = if run.eng.is_some() && ds.iter().all(|(_, j)| j.is_some()) {
                 Some(format!(

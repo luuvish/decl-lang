@@ -1,0 +1,168 @@
+[
+  [
+    "initialize",
+    {
+      "capabilities": {
+        "textDocumentSync": 1,
+        "hoverProvider": true,
+        "definitionProvider": true,
+        "typeDefinitionProvider": true,
+        "referencesProvider": true,
+        "documentHighlightProvider": true,
+        "documentSymbolProvider": true,
+        "foldingRangeProvider": true,
+        "documentFormattingProvider": true,
+        "renameProvider": {
+          "prepareProvider": true
+        },
+        "completionProvider": {
+          "triggerCharacters": [
+            ".",
+            "$",
+            ":"
+          ]
+        },
+        "codeLensProvider": {
+          "resolveProvider": false
+        },
+        "signatureHelpProvider": {
+          "triggerCharacters": [
+            "(",
+            ","
+          ]
+        },
+        "workspaceSymbolProvider": true,
+        "selectionRangeProvider": true,
+        "semanticTokensProvider": {
+          "legend": {
+            "tokenTypes": [
+              "type",
+              "property",
+              "function",
+              "variable",
+              "namespace",
+              "parameter"
+            ],
+            "tokenModifiers": [
+              "declaration",
+              "required",
+              "optional",
+              "defaulted",
+              "derived",
+              "hidden",
+              "unresolved",
+              "readonly"
+            ]
+          },
+          "full": true
+        },
+        "inlayHintProvider": true,
+        "callHierarchyProvider": true,
+        "typeHierarchyProvider": true,
+        "codeActionProvider": {
+          "codeActionKinds": [
+            "quickfix",
+            "refactor.rewrite",
+            "refactor.extract",
+            "refactor.inline"
+          ]
+        },
+        "linkedEditingRangeProvider": true,
+        "documentOnTypeFormattingProvider": {
+          "firstTriggerCharacter": "\n",
+          "moreTriggerCharacter": [
+            "}",
+            "]",
+            ")"
+          ]
+        },
+        "executeCommandProvider": {
+          "commands": [
+            "decl.evaluate",
+            "decl.validate",
+            "decl.trace",
+            "decl.showSyntaxTree",
+            "decl.reloadWorkspace"
+          ]
+        }
+      },
+      "serverInfo": {
+        "name": "decl-lsp",
+        "version": "<version>"
+      }
+    }
+  ],
+  [
+    "open main.decl",
+    []
+  ],
+  [
+    "decl.evaluate site (yaml)",
+    {
+      "root": "site",
+      "document": "{\"name\":\"edge\",\"services\":[{\"name\":\"a\",\"port\":80,\"public\":true},{\"name\":\"b\",\"port\":443,\"public\":false}]}",
+      "diagnostics": [],
+      "rendered": {
+        "kind": "yaml",
+        "text": "name: edge\nservices:\n  - name: a\n    port: 80\n    public: true\n  - name: b\n    port: 443\n    public: false\n"
+      }
+    }
+  ],
+  [
+    "decl.evaluate conf (a template)",
+    {
+      "root": "conf",
+      "document": "{\"name\":\"edge\",\"services\":[{\"name\":\"a\",\"port\":80,\"public\":true},{\"name\":\"b\",\"port\":443,\"public\":false}]}",
+      "diagnostics": [],
+      "rendered": {
+        "kind": "text",
+        "text": "# edge\nserver a:80;\n"
+      }
+    }
+  ],
+  [
+    "decl.evaluate units (a fan-out)",
+    {
+      "root": "units",
+      "document": "[{\"name\":\"auth\",\"port\":1,\"path\":\"units/auth.conf\"},{\"name\":\"web\",\"port\":2,\"path\":\"units/web.conf\"}]",
+      "diagnostics": [],
+      "rendered": {
+        "kind": "files",
+        "files": [
+          {
+            "path": "units/auth.conf",
+            "text": "unit auth (0) port=1\n"
+          },
+          {
+            "path": "units/web.conf",
+            "text": "unit web (1) port=2\n"
+          }
+        ]
+      }
+    }
+  ],
+  [
+    "decl.evaluate broken (E7004)",
+    {
+      "root": "broken",
+      "document": "1",
+      "diagnostics": [],
+      "rendered": {
+        "kind": "error",
+        "diagnostic": "error [E7004] at broken: @render: indent must be an integer in 0..16"
+      }
+    }
+  ],
+  [
+    "decl.evaluate plain (no form: no rendered field)",
+    {
+      "root": "plain",
+      "document": "{\"n\":3}",
+      "diagnostics": []
+    }
+  ],
+  [
+    "shutdown",
+    null
+  ]
+]

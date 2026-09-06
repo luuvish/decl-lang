@@ -9,19 +9,23 @@
 import { readFileSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { evaluate, check, validate, formatSource, DeclError } from '../src/index.ts';
-import type { InputDocument } from '../src/api.ts';
+import { evaluate, render, check, validate, formatSource, DeclError } from '../src/index.ts';
+import type { InputDocument, TemplateSource } from '../src/api.ts';
 
 export const root = join(dirname(fileURLToPath(import.meta.url)), '..', '..');
 
 export type Case = {
   name: string;
   evaluate?: string;
+  render?: string;
   check?: string[];
   validate?: string;
   format_source?: string;
   inputs?: Record<string, { file?: string; json?: unknown }>;
   outputs?: string[];
+  format?: 'json' | 'yaml';
+  indent?: number;
+  templates?: Record<string, { file?: string; text?: string }>;
 };
 export type Answer =
   | { name: string; ok: true; value: unknown }
@@ -41,6 +45,20 @@ export async function runCase(c: Case): Promise<Answer> {
       if (c.inputs) opts.inputs = documents(c.inputs);
       if (c.outputs) opts.outputs = c.outputs;
       value = await evaluate(c.evaluate, opts);
+    } else if (c.render !== undefined) {
+      const opts: Parameters<typeof render>[1] = {};
+      if (c.inputs) opts.inputs = documents(c.inputs);
+      if (c.outputs) opts.outputs = c.outputs;
+      if (c.format) opts.format = c.format;
+      if (c.indent !== undefined) opts.indent = c.indent;
+      if (c.templates)
+        opts.templates = Object.fromEntries(
+          Object.entries(c.templates).map(([k, v]): [string, TemplateSource] => [
+            k,
+            'file' in v ? v.file! : { text: v.text! },
+          ]),
+        );
+      value = await render(c.render, opts);
     } else if (c.check) value = await check(...c.check);
     else if (c.validate !== undefined)
       value = await validate(c.validate, c.inputs ? { inputs: documents(c.inputs) } : {});

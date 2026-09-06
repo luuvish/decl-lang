@@ -36,6 +36,7 @@ import type { Diag, Seg, RT } from './semantics.ts';
 import { makeCtx, infer, typeText, STD } from './infer.ts';
 import type { Decl, Expr } from './ast.ts';
 import { isYamlPath, readYaml } from './yaml.ts';
+import { CANONICAL, declaredForm, emitRoot, RenderError } from './render.ts';
 import { format } from './fmt.ts';
 
 // ---------------- operations ----------------
@@ -94,6 +95,14 @@ export type Run = {
   diags: Diag[];
   timing: Timing;
 };
+
+/** the overrides of a root's declared form (docs/tooling/05_render.md §3.4) */
+export type RenderOverrides = { format?: 'json' | 'yaml'; indent?: number; template?: string };
+/** a root in its declared form: one text, the files of a fan-out, or the error */
+export type Rendered =
+  | { kind: 'json' | 'yaml' | 'text'; text: string }
+  | { kind: 'files'; files: [string, string][] }
+  | { kind: 'error'; diag: Diag; file?: string };
 
 export type RootInfo = {
   kind: 'output' | 'input';
@@ -1026,6 +1035,72 @@ export class Session {
       docs.push({ name, json: bad ? null : r.eng.serialize(v, name) });
     }
     return { run: r, docs, exported: names.length === 0 };
+  }
+
+  /**
+   * a root in the form its module declares (docs/tooling/05_render.md §3,
+   * §8), with the overrides given: its text, or the files of a fan-out;
+   * null when nothing applies (canonical JSON, no override); an error as
+   * its diagnostic, with the template's path when a template is at fault
+   */
+  render(run: Run, name: string, over: RenderOverrides = {}): Rendered | null {
+    if (!run.entry || !run.eng) return null;
+    let found: { d: Decl; m: Module } | null = null;
+    for (const m of run.modules)
+      for (const d of m.decls) if (d.d === 'output' && d.name === name) found = { d, m };
+    const form = found ? declaredForm(found.d) : CANONICAL;
+    if ('error' in form)
+      return {
+        kind: 'error',
+        diag: { severity: 'error', code: 'E7004', message: form.error, path: name },
+      };
+    const applies =
+      form !== CANONICAL ||
+      over.format !== undefined ||
+      over.indent !== undefined ||
+      over.template !== undefined;
+    if (!applies) return null;
+    const v = run.entry.env.roots.get(name);
+    if (v === undefined) return null;
+    const readTpl = (abs: string) => host.readFile(abs);
+    let template: { path: string; text: string; dir: string } | undefined;
+    const tplPath = over.template ?? form.template;
+    if (tplPath !== undefined) {
+      const abs =
+        over.template !== undefined ? absPath(tplPath) : absPath(dirname(found!.m.path), tplPath);
+      const text = readTpl(abs);
+      if (text === null)
+        return {
+          kind: 'error',
+          diag: {
+            severity: 'error',
+            code: 'E7003',
+            message: 'template cannot be read',
+            path: name,
+          },
+          file: tplPath,
+        };
+      template = { path: tplPath, text, dir: dirname(abs) };
+    }
+    try {
+      const em = emitRoot({
+        eng: run.eng,
+        menv: run.entry.env,
+        rootName: name,
+        value: v,
+        form,
+        format: over.format,
+        indent: over.indent,
+        template,
+        readTemplate: readTpl,
+      });
+      if (em.kind === 'many') return { kind: 'files', files: em.files };
+      return { kind: template ? 'text' : (over.format ?? form.format), text: em.text };
+    } catch (e) {
+      if (e instanceof RenderError)
+        return { kind: 'error', diag: e.diag(), file: e.file ?? undefined };
+      throw e;
+    }
   }
 
   /** whole-document validation of the named roots (`:validate`), or of every root */

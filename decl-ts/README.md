@@ -23,6 +23,9 @@ decl evaluate site.decl                        # evaluate every exported output 
 decl evaluate site.decl --output site          # one output -> its canonical JSON on stdout
 decl evaluate site.decl --json                 # {"ok", "value", "diagnostics"} report
 decl evaluate cfg.decl --input deployed=doc.json --output deployed=out.json   # bind a document, write its completed value
+decl evaluate cfg.decl --input deployed=doc.yaml --format yaml --pretty      # a document in YAML in, the outputs as YAML out
+decl evaluate site.decl --output gateway                # a root in the form its @render declares: YAML, a template's text, one file per element
+decl evaluate site.decl --output units=out --template units=unit.j2   # …or with the template and the destination given here
 decl validate cfg.decl --input deployed=doc.json   # bind a document to an input root (diagnostics only)
 decl validate tests/validation                 # judge a fixture corpus
 decl fmt src/*.decl                            # canonical formatting in place (--check: exit 1 if not canonical)
@@ -32,28 +35,39 @@ decl-lsp                                       # language server over stdio
 
 Diagnostics go to stderr as `file: severity [code] id at path: message`,
 or into the JSON report with `--json`. The exit code is 1 when any error
-was reported. The command line, the REPL, and the server are documented
-in the repository (`docs/tooling/`), and the VS Code and Zed extensions
-are clients of `decl-lsp`.
+was reported. An output declares the form it is emitted in with
+`@render({ format, indent, template, file, each })` — canonical or
+indented JSON, YAML, or the text of a template in a small Jinja-like
+dialect with Decl expressions inside, one file per element — and
+`--format`, `--indent`, `--template`, `--output` override it
+(`docs/tooling/05_render.md`). The command line, the REPL, and the
+server are documented in the repository (`docs/tooling/`), and the VS
+Code and Zed extensions are clients of `decl-lsp`.
 
 ## Library
 
 ```ts
-import { evaluate, check, validate, formatSource, DeclError } from 'decl-lang';
+import { evaluate, render, check, validate, formatSource, toYaml, DeclError } from 'decl-lang';
 
 const docs = await evaluate('site.decl');                         // { site: {...} } — the exported outputs, by name
 const { site } = await evaluate('site.decl', { outputs: ['site'] });
-const done = await evaluate('cfg.decl', { inputs: { deployed: 'doc.json' }, outputs: ['deployed'] });
+const done = await evaluate('cfg.decl', { inputs: { deployed: 'doc.yaml' }, outputs: ['deployed'] });   // YAML by its extension
+const texts = await render('site.decl');                          // { site: 'name: edge\n…', units: { 'units/a.conf': '…' } } — each root in its declared form
+const yaml = await render('site.decl', { outputs: ['site'], format: 'yaml', indent: 4 });   // the options override
+const conf = await render('site.decl', { outputs: ['site'], templates: { site: 'nginx.conf.j2' } });   // or { text }
 const problems = await check('schema.decl');                      // [] when clean
 const report = await validate('cfg.decl', { inputs: { deployed: { host: 'h' } } });   // a document may be a value
 const text = await formatSource('const x=1+2\n');                 // 'const x = 1 + 2\n'
+const y = toYaml({ a: [1, 2] });                                   // 'a:\n  - 1\n  - 2' — the layouts, as pure functions
 ```
 
 The functions are the `decl` command line in its own vocabulary:
-`inputs` binds documents by input name (a JSON file path, or the value
-itself), `outputs` names the roots to return — outputs, or inputs bound
-here or demanded through their fallback — and defaults to the entry
-module's exported outputs; a failure throws `DeclError`, whose
+`inputs` binds documents by input name (a JSON or YAML file path, or the
+value itself), `outputs` names the roots to return — outputs, or inputs
+bound here or demanded through their fallback — and defaults to the
+entry module's exported outputs; `render` returns each root's text in
+its declared form (a fan-out root as its files by path), `toJson` and
+`toYaml` lay a value out; a failure throws `DeclError`, whose
 `diagnostics` carry the report. The PyPI package (`decl.evaluate`, …)
 and the Rust crate (`decl_lang::evaluate`, …) offer the same functions
 with the same semantics; the modules the functions are built from are
@@ -78,10 +92,12 @@ repository), and each is exported:
 
 | Module | Holds |
 |---|---|
-| `api` | the high-level API above: `evaluate`, `check`, `validate`, `evaluateSource`, `formatSource`, `DeclError` |
+| `api` | the high-level API above: `evaluate`, `render`, `check`, `validate`, `evaluateSource`, `formatSource`, `toJson`, `toYaml`, `DeclError` |
 | `ast` | the syntax tree (specification chapter 11): declarations, types, members, expressions, source ranges |
 | `parse` | the tree-sitter binding: `initParser`, `parseSource`, source text to `ast` |
 | `semantics` | values, the environment (`Env`), resolved types, diagnostics (`Diag`), canonical paths, the JSON reader and writers |
+| `yaml` | documents in YAML: the YAML 1.2 core-schema reader into the JSON model, the block-style writer, the JSON layouts |
+| `render` | the renderer: `@render`'s form, the template dialect, the fan-out — one root to its text or files |
 | `subsume` | the subsumption judgment ⊑ (§3.17) and structural emptiness (§3.19) |
 | `infer` | expression inference and the static assignability of §4 |
 | `checker` | the static checks of a module (`checkModule`) |
@@ -106,7 +122,8 @@ inference, assignability, the absence discipline, `match`
 exhaustiveness), binding with lazy slots and cycle detection,
 `$referrers`, assertions with diagnostic templates, canonical
 serialization, modules and packages (`decl.toml`, `decl.lock`), the
-canonical formatter, the REPL, and the language server. It is the
+canonical formatter, the renderer (documents in YAML, `@render`,
+templates, fan-out), the REPL, and the language server. It is the
 reference the other two implementations are held to: the repository's
 parity harness (`tests/parity/differential.py`, run by `make verify`)
 diffs the Rust and Python runtimes against it, byte for byte, over

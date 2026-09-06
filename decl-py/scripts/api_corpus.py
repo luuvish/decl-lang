@@ -35,6 +35,19 @@ def run_case(case: dict[str, Any]) -> dict[str, Any]:
             if "outputs" in case:
                 kw["outputs"] = case["outputs"]
             value: Any = decl.evaluate(case["evaluate"], **kw)
+        elif "render" in case:
+            kw = {}
+            if "inputs" in case:
+                kw["inputs"] = {k: _document(v) for k, v in case["inputs"].items()}
+            for key in ("outputs", "format", "indent"):
+                if key in case:
+                    kw[key] = case[key]
+            if "templates" in case:
+                kw["templates"] = {
+                    k: v["file"] if "file" in v else {"text": v["text"]}
+                    for k, v in case["templates"].items()
+                }
+            value = decl.render(case["render"], **kw)
         elif "check" in case:
             value = decl.check(*case["check"])
         elif "validate" in case:

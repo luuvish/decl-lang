@@ -1,0 +1,73 @@
+> // declared forms (docs/tooling/05_render.md §8): YAML, a template, a fan-out
+> :evaluate site
+name: edge
+services:
+  - name: a
+    port: 80
+    public: true
+  - name: b
+    port: 443
+    public: false
+> :evaluate conf
+# edge
+server a:80;
+> :evaluate units
+# units/auth.conf
+unit auth (0) port=1
+# units/web.conf
+unit web (1) port=2
+> :evaluate site conf
+site:
+name: edge
+services:
+  - name: a
+    port: 80
+    public: true
+  - name: b
+    port: 443
+    public: false
+conf:
+# edge
+server a:80;
+> // overrides before the roots
+> :evaluate --format json --indent 2 site
+{
+  "name": "edge",
+  "services": [
+    {
+      "name": "a",
+      "port": 80,
+      "public": true
+    },
+    {
+      "name": "b",
+      "port": 443,
+      "public": false
+    }
+  ]
+}
+> :evaluate --format yaml plain
+"n": 3
+> :evaluate --template other.j2 plain
+plain n=3
+> :evaluate plain
+{
+  "n": 3
+}
+> :set compact
+> :evaluate plain
+{"n":3}
+> // what fails
+> :evaluate broken
+error [E7004] at broken: @render: indent must be an integer in 0..16
+(invalid)
+> :evaluate --format xml site
+error: --format expects json or yaml, got xml
+> :evaluate --indent 99 site
+error: --indent expects an integer in 0..16, got 99
+> :evaluate --template missing.j2 plain
+error [E7003] at plain: template cannot be read (in missing.j2)
+(invalid)
+> // the aggregate is canonical JSON, as before
+> :evaluate
+{"site":{"name":"edge","services":[{"name":"a","port":80,"public":true},{"name":"b","port":443,"public":false}]},"conf":{"name":"edge","services":[{"name":"a","port":80,"public":true},{"name":"b","port":443,"public":false}]},"units":[{"name":"auth","port":1,"path":"units/auth.conf"},{"name":"web","port":2,"path":"units/web.conf"}],"broken":1,"plain":{"n":3}}

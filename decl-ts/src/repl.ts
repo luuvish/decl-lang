@@ -9,6 +9,7 @@ import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { createInterface } from 'node:readline';
 import { Session, SessionError, fmtDiag, prettyJson } from './session.ts';
+import type { RenderOverrides } from './session.ts';
 import type { Op } from './session.ts';
 import { parseDecl, parseExpr } from './session.ts';
 
@@ -34,7 +35,11 @@ export const COMMANDS: [string, string, string][] = [
   [':reset', 'drop every binding, edit, and declaration', 'declarations'],
   // evaluation and validation
   [':check', 'static diagnostics of every module', 'evaluation'],
-  [':evaluate [root…]', 'full evaluation: the documents of the roots', 'evaluation'],
+  [
+    ':evaluate [--format f] [--indent n] [--template p] [root…]',
+    'full evaluation: the documents of the roots, in their declared forms',
+    'evaluation',
+  ],
   [':validate [root…]', 'full validation: every diagnostic, then a verdict per root', 'evaluation'],
   [':fmt', 'the scratch module, canonically formatted', 'evaluation'],
   // inspection
@@ -305,7 +310,27 @@ export class Repl {
         return;
       }
       case ':evaluate': {
-        const names = rest ? rest.split(/[\s,]+/).filter(Boolean) : [];
+        // the overrides of a declared form come before the roots (05_render.md §8)
+        const words = rest ? rest.split(/[\s,]+/).filter(Boolean) : [];
+        const over: RenderOverrides = {};
+        const names: string[] = [];
+        for (let i = 0; i < words.length; i++) {
+          const w = words[i];
+          if (w === '--format' || w === '--indent' || w === '--template') {
+            const v = words[++i];
+            if (v === undefined) throw new SessionError(`${w} expects a value`);
+            if (w === '--format') {
+              if (v !== 'json' && v !== 'yaml')
+                throw new SessionError(`--format expects json or yaml, got ${v}`);
+              over.format = v;
+            } else if (w === '--indent') {
+              if (!/^(0|[1-9][0-9]?)$/.test(v) || Number(v) > 16)
+                throw new SessionError(`--indent expects an integer in 0..16, got ${v}`);
+              over.indent = Number(v);
+            } else over.template = v;
+          } else if (w.startsWith('--')) throw new SessionError(`unknown option ${w}`);
+          else names.push(w);
+        }
         const { run, docs, exported } = s.evaluate(names);
         for (const d of run.loadDiags) this.diag(d);
         for (const c of run.checks) this.diag(c.diag, c.file === s.entryAbs ? undefined : c.file);
@@ -330,8 +355,22 @@ export class Repl {
         }
         for (const d of docs) {
           if (docs.length > 1) this.out(`${d.name}:`);
-          if (d.json === null) this.out('(invalid)');
-          else this.value(d.json);
+          if (d.json === null) {
+            this.out('(invalid)');
+            continue;
+          }
+          // the root's declared form, with the overrides (05_render.md §8)
+          const r = s.render(run, d.name, over);
+          if (r === null) this.value(d.json);
+          else if (r.kind === 'error') {
+            this.diag(r.diag, r.file);
+            this.out('(invalid)');
+          } else if (r.kind === 'files') {
+            for (const [p, t] of r.files) {
+              this.out(`# ${p}`);
+              this.out(t.replace(/\n$/, ''));
+            }
+          } else this.out(r.text.replace(/\n$/, ''));
         }
         return;
       }

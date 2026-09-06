@@ -30,7 +30,7 @@ here, and nothing was migrated from earlier work.
 | 7 | Conformance depth | the corpora cover every surface: the command line, an API corpus, a language-server corpus, the goldens | **done — 2026-09-05** |
 | 8 | Crate documentation | rustdoc on docs.rs; the Python and JavaScript API docs to the same bar | **done — 2026-09-06** |
 | 9 | Website | design, content, playground | **done — 2026-09-06** (the identity and theme, the content, the playground) |
-| 10 | Renderer | `@render`, documents in YAML, `--format` / `--indent`, templates and fan-out | in progress |
+| 10 | Renderer | `@render`, documents in YAML, `--format` / `--indent`, templates and fan-out | done (2026-09-06) |
 
 ---
 
@@ -314,6 +314,17 @@ example · the site builds from `docs/` as before.
   times, as tooling (§10.6 unchanged) —
   [docs/tooling/05_render.md](docs/tooling/05_render.md); released as
   v0.4.0. Annotations (§5.10) landed first, as the prerequisite.
+
+**Delivered** (2026-09-06): annotations in the grammar and the three
+parsers (W0001); the YAML reader and writer, `--format` / `--indent`
+/ `--pretty`; `@render` with every key; the template dialect, the
+`render` namespace, `--template`, fan-out; the library's `render`,
+`toJson`, `toYaml`; the REPL's `:evaluate` options and the editor
+preview in the declared form; the corpus `tests/render/` (44 recorded
+cases, the goldens' YAML and indented forms, the YAML twins, the
+refused documents) replayed by the harness; the specification's
+revision v0.3.1 (D35, `@render` in §5.10, §10.6's pointer, the E7xxx
+band).
 
 **Exit criteria**: every renderer row of the harness identical across
 the three · every key of `@render`, every construct of the dialect, and

@@ -351,5 +351,93 @@
     "ok": false,
     "message": "cannot format: file has parse errors",
     "diagnostics": []
+  },
+  {
+    "name": "render: every exported output in its declared form",
+    "ok": true,
+    "value": {
+      "site": "name: edge\nservices:\n  - name: a\n    port: 80\n    public: true\n  - name: b\n    port: 443\n    public: false\n",
+      "conf": "# edge\nserver a:80;\n",
+      "units": {
+        "units/auth.conf": "unit auth (0) port=1\n",
+        "units/web.conf": "unit web (1) port=2\n"
+      },
+      "plain": "{\"n\":3}\n",
+      "derived": "doubled: 2\ntags:\n    - x\n"
+    }
+  },
+  {
+    "name": "render: outputs selects roots",
+    "ok": true,
+    "value": {
+      "site": "name: edge\nservices:\n  - name: a\n    port: 80\n    public: true\n  - name: b\n    port: 443\n    public: false\n"
+    }
+  },
+  {
+    "name": "render: format and indent override the declared forms",
+    "ok": true,
+    "value": {
+      "site": "{\n  \"name\": \"edge\",\n  \"services\": [\n    {\n      \"name\": \"a\",\n      \"port\": 80,\n      \"public\": true\n    },\n    {\n      \"name\": \"b\",\n      \"port\": 443,\n      \"public\": false\n    }\n  ]\n}\n",
+      "plain": "{\n  \"n\": 3\n}\n"
+    }
+  },
+  {
+    "name": "render: a template by file, and by text",
+    "ok": true,
+    "value": {
+      "plain": "plain n=3\n",
+      "site": "site edge with 2 services\n"
+    }
+  },
+  {
+    "name": "render: a fan-out root is its files by path",
+    "ok": true,
+    "value": {
+      "units": {
+        "units/auth.conf": "unit auth (0) port=1\n",
+        "units/web.conf": "unit web (1) port=2\n"
+      }
+    }
+  },
+  {
+    "name": "render: inputs bind documents",
+    "ok": true,
+    "value": {
+      "derived": "doubled: 10\ntags:\n    - x\n"
+    }
+  },
+  {
+    "name": "render: an invalid @render fails with E7004",
+    "ok": false,
+    "message": "@render: indent must be an integer in 0..16",
+    "diagnostics": [
+      {
+        "file": "tests/api/documents/render.decl",
+        "code": "E7004",
+        "severity": "error",
+        "message": "@render: indent must be an integer in 0..16",
+        "path": "broken"
+      }
+    ]
+  },
+  {
+    "name": "render: a template that cannot be read fails with E7003",
+    "ok": false,
+    "message": "template cannot be read",
+    "diagnostics": [
+      {
+        "file": "tests/api/documents/missing.j2",
+        "code": "E7003",
+        "severity": "error",
+        "message": "template cannot be read",
+        "path": "plain"
+      }
+    ]
+  },
+  {
+    "name": "render: a root that does not exist",
+    "ok": false,
+    "message": "no root named nope",
+    "diagnostics": []
   }
 ]

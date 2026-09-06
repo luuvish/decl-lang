@@ -14,6 +14,7 @@ use crate::module::{run_universe, Bind, Module};
 use crate::parse::parse_source;
 use crate::pipeline::run_pipeline;
 pub use crate::pipeline::{evaluate_source, Report};
+use crate::render::{absolute, declared_form, emit_root, resolve_in, Emission, Emitted, Form};
 use crate::semantics::{read_json, Diag};
 use crate::yaml::{is_yaml_path, read_yaml, to_json as json_text, to_yaml as yaml_text};
 use std::rc::Rc;
@@ -225,6 +226,210 @@ pub fn evaluate(path: &str, opts: &EvaluateOptions) -> Result<IndexMap<String, S
         out.insert(n.clone(), eng.serialize(&v, n, false));
     }
     Ok(out)
+}
+
+/// a template for `render`: the path of a template file, or its text
+#[derive(Debug, Clone)]
+pub enum TemplateSource {
+    /// a template file, by path
+    File(PathBuf),
+    /// the template's text
+    Text(String),
+}
+/// the options of `render` (docs/tooling/05_render.md §7)
+#[derive(Debug, Clone, Default)]
+pub struct RenderOptions {
+    /// documents to bind, by input name
+    pub inputs: Vec<(String, Document)>,
+    /// the roots to return; empty: the entry module's exported outputs
+    pub outputs: Vec<String>,
+    /// `Some(true)` for YAML, `Some(false)` for JSON: overrides every root's declared format
+    pub yaml: Option<bool>,
+    /// the layout: overrides every root's declared indent
+    pub indent: Option<usize>,
+    /// templates by root name (`"*"` for every root without one of its own)
+    pub templates: Vec<(String, TemplateSource)>,
+}
+/// a rendered root: one text, or the files of a fan-out root by path
+#[derive(Debug, Clone, PartialEq)]
+pub enum Rendered {
+    /// one text
+    Text(String),
+    /// the files of a fan-out root, by path, in element order
+    Files(IndexMap<String, String>),
+}
+
+/// Render a module's roots in the forms their `@render` annotations declare
+/// (docs/tooling/05_render.md), with the options as overrides: bind the
+/// input documents, evaluate, and return each root's text — or, for a
+/// fan-out root, its files by path. Nothing is written to disk. Fails with
+/// the diagnostics on any error-severity outcome.
+pub fn render(path: &str, opts: &RenderOptions) -> Result<IndexMap<String, Rendered>, DeclError> {
+    let r = open_universe(path);
+    let Some(entry) = r.entry.clone() else {
+        return fail(
+            &format!("{path}: cannot be loaded"),
+            r.diags.iter().map(|d| tagged(path, d)).collect(),
+        );
+    };
+    if !r.diags.is_empty() {
+        return fail("", r.diags.iter().map(|d| tagged(path, d)).collect());
+    }
+    let checks: Vec<Diagnostic> = r
+        .modules
+        .iter()
+        .flat_map(|m| {
+            let tag = file_tag(path, Some(entry.path.as_path()), &m.path);
+            check_module(&m.decls, Some(m.env.clone()), None)
+                .iter()
+                .map(|d| tagged(&tag, d))
+                .collect::<Vec<_>>()
+        })
+        .collect();
+    if checks.iter().any(|d| d.severity == "error") {
+        return fail("", checks);
+    }
+    let binds = bind_inputs(&r.modules, path, &opts.inputs)?;
+    let (eng, diags) = run_universe(&r.modules, &entry, binds);
+    let report: Vec<Diagnostic> = diags.iter().map(|d| tagged(path, d)).collect();
+    if report.iter().any(|d| d.severity == "error") {
+        return fail("", report);
+    }
+    let names: Vec<String> = if opts.outputs.is_empty() {
+        entry
+            .decls
+            .iter()
+            .filter(|d| d.exported)
+            .filter_map(|d| match &d.body {
+                crate::ast::DeclBody::Output { name, .. } => Some(name.clone()),
+                _ => None,
+            })
+            .collect()
+    } else {
+        opts.outputs.clone()
+    };
+    let texts: std::cell::RefCell<std::collections::HashMap<String, Option<String>>> =
+        std::cell::RefCell::new(std::collections::HashMap::new());
+    let read_tpl = |abs: &str| -> Option<String> {
+        if !texts.borrow().contains_key(abs) {
+            let t = std::fs::read_to_string(abs).ok();
+            texts.borrow_mut().insert(abs.to_string(), t);
+        }
+        texts.borrow().get(abs).cloned().flatten()
+    };
+    let e7003 = |file: &str, n: &str| -> DeclError {
+        DeclError {
+            message: "template cannot be read".into(),
+            diagnostics: vec![Diagnostic {
+                file: file.to_string(),
+                code: Some("E7003".into()),
+                id: None,
+                severity: "error".into(),
+                message: "template cannot be read".into(),
+                path: n.to_string(),
+            }],
+        }
+    };
+    let mut out: IndexMap<String, Rendered> = IndexMap::new();
+    for n in &names {
+        let Some(v) = entry.env.root(n) else {
+            return Err(DeclError {
+                message: format!("no root named {n}"),
+                diagnostics: report,
+            });
+        };
+        let found = r.modules.iter().find_map(|m| {
+            m.decls
+                .iter()
+                .find(|d| matches!(&d.body, crate::ast::DeclBody::Output { name, .. } if name == n))
+                .map(|d| (d, m))
+        });
+        let form = match found {
+            Some((d, _)) => match declared_form(d) {
+                Ok(f) => f,
+                Err(m) => {
+                    return fail(
+                        "",
+                        vec![Diagnostic {
+                            file: path.to_string(),
+                            code: Some("E7004".into()),
+                            id: None,
+                            severity: "error".into(),
+                            message: m,
+                            path: n.clone(),
+                        }],
+                    )
+                }
+            },
+            None => Form::default(),
+        };
+        let src = opts
+            .templates
+            .iter()
+            .find(|(k, _)| k == n)
+            .or_else(|| opts.templates.iter().find(|(k, _)| k == "*"))
+            .map(|(_, t)| t);
+        let template: Option<(String, String, String)> = match src {
+            Some(TemplateSource::File(p)) => {
+                let given = p.to_string_lossy().to_string();
+                let abs = absolute(&given);
+                let Some(text) = read_tpl(&abs) else {
+                    return Err(e7003(&given, n));
+                };
+                Some((given, text, parent_of(&abs)))
+            }
+            Some(TemplateSource::Text(t)) => {
+                let cwd = std::env::current_dir()
+                    .map(|p| p.to_string_lossy().to_string())
+                    .unwrap_or_else(|_| ".".into());
+                Some(("<text>".into(), t.clone(), cwd))
+            }
+            None => match &form.template {
+                Some(t) => {
+                    let dir = found
+                        .and_then(|(_, m)| m.path.parent().map(|p| p.to_string_lossy().to_string()))
+                        .unwrap_or_else(|| ".".into());
+                    let abs = resolve_in(&dir, t);
+                    let Some(text) = read_tpl(&abs) else {
+                        return Err(e7003(t, n));
+                    };
+                    Some((t.clone(), text, parent_of(&abs)))
+                }
+                None => None,
+            },
+        };
+        match emit_root(&Emission {
+            eng: eng.clone(),
+            menv: entry.env.clone(),
+            root_name: n.clone(),
+            value: v,
+            form,
+            yaml: opts.yaml,
+            indent: opts.indent,
+            template,
+            read_template: &read_tpl,
+        }) {
+            Ok(Emitted::One(text)) => {
+                out.insert(n.clone(), Rendered::Text(text));
+            }
+            Ok(Emitted::Many(files)) => {
+                out.insert(n.clone(), Rendered::Files(files.into_iter().collect()));
+            }
+            Err(e) => {
+                return fail(
+                    "",
+                    vec![tagged(e.file.as_deref().unwrap_or(path), &e.diag())],
+                )
+            }
+        }
+    }
+    Ok(out)
+}
+fn parent_of(p: &str) -> String {
+    std::path::Path::new(p)
+        .parent()
+        .map(|d| d.to_string_lossy().to_string())
+        .unwrap_or_else(|| ".".into())
 }
 
 /// Parse and statically check entry files (module-aware); empty means clean.

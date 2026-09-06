@@ -138,7 +138,11 @@ in the form `decl fmt --check` accepts.
   `decl-evaluate://<file>/<root>`: the document of the chosen root — a
   picker when the module has several, the exported outputs as one object
   when none is chosen — exactly as `decl evaluate --output root` prints
-  it, pretty-printed (`decl.preview.compact` for the wire form). It
+  it, pretty-printed (`decl.preview.compact` for the wire form). A root
+  whose `@render` declares a form (05_render.md §8) is shown in that
+  form — YAML, indented JSON, or a template's text, with the buffer's
+  language set to match; a fan-out root as its files, each under a
+  `# path` line — and a rendering error in the document's place. It
   refreshes on save, or while typing after the idle delay, or only on
   demand (`decl.preview.refresh`). When the root is invalid the preview
   shows the diagnostics in the document's place, and the Problems panel

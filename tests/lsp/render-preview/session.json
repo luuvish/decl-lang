@@ -1,0 +1,96 @@
+{
+  "steps": [
+    {
+      "label": "initialize",
+      "request": "initialize",
+      "params": {
+        "processId": null,
+        "rootUri": null,
+        "capabilities": {}
+      }
+    },
+    {
+      "notify": "initialized",
+      "params": {}
+    },
+    {
+      "label": "open main.decl",
+      "open": "main.decl",
+      "text": "type Service = { name: string, port: int, public: bool }\ntype Site = { name: string, services: Service[] }\ntype Unit = { name: string, path = `units/${name}.conf`, port: int }\nfunc label(s: Service): string = `${s.name}:${s.port}`\n\n@render({ format: \"yaml\" })\nexport output site: Site = { name: \"edge\", services: [{ name: \"a\", port: 80, public: true }, { name: \"b\", port: 443, public: false }] }\n\n@render({ template: \"site.conf.j2\" })\nexport output conf: Site = site\n\n@render({ each: \"path\", template: \"unit.j2\" })\nexport output units: Unit[] = [{ name: \"auth\", port: 1 }, { name: \"web\", port: 2 }]\n\n@render({ indent: 99 })\nexport output broken: int = 1\n\nexport output plain: { n: int } = { n: 3 }\n"
+    },
+    {
+      "label": "decl.evaluate site (yaml)",
+      "request": "workspace/executeCommand",
+      "params": {
+        "command": "decl.evaluate",
+        "arguments": [
+          {
+            "$uri": "main.decl"
+          },
+          "site"
+        ]
+      }
+    },
+    {
+      "label": "decl.evaluate conf (a template)",
+      "request": "workspace/executeCommand",
+      "params": {
+        "command": "decl.evaluate",
+        "arguments": [
+          {
+            "$uri": "main.decl"
+          },
+          "conf"
+        ]
+      }
+    },
+    {
+      "label": "decl.evaluate units (a fan-out)",
+      "request": "workspace/executeCommand",
+      "params": {
+        "command": "decl.evaluate",
+        "arguments": [
+          {
+            "$uri": "main.decl"
+          },
+          "units"
+        ]
+      }
+    },
+    {
+      "label": "decl.evaluate broken (E7004)",
+      "request": "workspace/executeCommand",
+      "params": {
+        "command": "decl.evaluate",
+        "arguments": [
+          {
+            "$uri": "main.decl"
+          },
+          "broken"
+        ]
+      }
+    },
+    {
+      "label": "decl.evaluate plain (no form: no rendered field)",
+      "request": "workspace/executeCommand",
+      "params": {
+        "command": "decl.evaluate",
+        "arguments": [
+          {
+            "$uri": "main.decl"
+          },
+          "plain"
+        ]
+      }
+    },
+    {
+      "label": "shutdown",
+      "request": "shutdown",
+      "params": {}
+    },
+    {
+      "notify": "exit",
+      "params": {}
+    }
+  ]
+}

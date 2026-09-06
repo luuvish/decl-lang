@@ -6,7 +6,9 @@
 // in the Node entry. The Python package and the Rust crate offer the same
 // functions with the same semantics.
 import { readFileSync } from 'node:fs';
-import { resolve as absPath } from 'node:path';
+import { resolve as absPath, dirname } from 'node:path';
+import { CANONICAL, declaredForm, emitRoot, RenderError } from './render.ts';
+import type { Form } from './render.ts';
 import { initParser } from './node.ts';
 import { parseSource } from './parse.ts';
 import { checkModule } from './checker.ts';
@@ -154,6 +156,114 @@ export async function evaluate(
   for (const n of names) {
     if (!entry!.env.roots.has(n)) throw new DeclError(`no root named ${n}`, report);
     out[n] = JSON.parse(eng.serialize(entry!.env.roots.get(n), n));
+  }
+  return out;
+}
+
+/** a template for `render`: the path of a template file, or its text */
+export type TemplateSource = string | { text: string };
+export type RenderOptions = EvaluateOptions & {
+  /** `"json"` or `"yaml"`: overrides every root's declared format (docs/tooling/05_render.md §3.4) */
+  format?: 'json' | 'yaml';
+  /** the layout: overrides every root's declared indent */
+  indent?: number;
+  /** templates by root name (`"*"` for every root without one of its own): a file path, or `{ text }` */
+  templates?: Record<string, TemplateSource>;
+};
+/** a rendered root: one text, or the files of a fan-out root by path */
+export type Rendered = string | Record<string, string>;
+
+/**
+ * Render a module's roots in the forms their `@render` annotations declare
+ * (docs/tooling/05_render.md), with the options as overrides: bind the
+ * input documents, evaluate, and return each root's text — or, for a
+ * fan-out root, its files by path. Nothing is written to disk. Throws
+ * DeclError with the diagnostics on any error-severity outcome.
+ */
+export async function render(
+  path: string,
+  opts: RenderOptions = {},
+): Promise<Record<string, Rendered>> {
+  await init();
+  const { modules, entry, diags } = openUniverse(path);
+  if (diags.length || !entry)
+    fail(
+      `${path}: cannot be loaded`,
+      diags.map((d) => tagged(path, d)),
+    );
+  const checks = modules.flatMap((m) =>
+    checkModule(m.decls, m.env).map((d) => tagged(fileTag(path, entry!.path, m.path), d)),
+  );
+  if (checks.some((d) => d.severity === 'error')) fail('', checks);
+  const { eng, diags: ed } = runUniverse(
+    modules,
+    entry!,
+    bindInputs(modules, path, opts.inputs ?? {}),
+  );
+  const report = ed.map((d) => tagged(path, d));
+  if (report.some((d) => d.severity === 'error')) fail('', report);
+  const names =
+    opts.outputs ?? entry!.env.outputs.filter((o: any) => o.exported).map((o: any) => o.name);
+  const declOf = (n: string) => {
+    for (const m of modules)
+      for (const d of m.decls) if (d.d === 'output' && d.name === n) return { d, m };
+    return null;
+  };
+  const texts = new Map<string, string | null>();
+  const readTpl = (abs: string): string | null => {
+    if (!texts.has(abs)) {
+      try {
+        texts.set(abs, readFileSync(abs, 'utf8'));
+      } catch {
+        texts.set(abs, null);
+      }
+    }
+    return texts.get(abs)!;
+  };
+  const e7003 = (file: string, n: string): never =>
+    fail('', [
+      { file, code: 'E7003', severity: 'error', message: 'template cannot be read', path: n },
+    ]);
+  const out: Record<string, Rendered> = {};
+  for (const n of names) {
+    if (!entry!.env.roots.has(n)) throw new DeclError(`no root named ${n}`, report);
+    const found = declOf(n);
+    const declared = found ? declaredForm(found.d) : CANONICAL;
+    if ('error' in declared)
+      fail('', [
+        { file: path, code: 'E7004', severity: 'error', message: declared.error, path: n },
+      ]);
+    const form = declared as Form;
+    const src = opts.templates?.[n] ?? opts.templates?.['*'];
+    let template: { path: string; text: string; dir: string } | undefined;
+    if (src !== undefined) {
+      if (typeof src === 'string') {
+        const abs = absPath(src);
+        const text = readTpl(abs) ?? e7003(src, n);
+        template = { path: src, text, dir: dirname(abs) };
+      } else template = { path: '<text>', text: src.text, dir: process.cwd() };
+    } else if (form.template !== undefined) {
+      const abs = absPath(dirname(found!.m.path), form.template);
+      const text = readTpl(abs) ?? e7003(form.template, n);
+      template = { path: form.template, text, dir: dirname(abs) };
+    }
+    try {
+      const em = emitRoot({
+        eng,
+        menv: entry!.env,
+        rootName: n,
+        value: entry!.env.roots.get(n),
+        form,
+        format: opts.format,
+        indent: opts.indent,
+        template,
+        readTemplate: readTpl,
+      });
+      out[n] = em.kind === 'one' ? em.text : Object.fromEntries(em.files);
+    } catch (e) {
+      if (e instanceof RenderError) fail('', [tagged(e.file ?? path, e.diag())]);
+      throw e;
+    }
   }
   return out;
 }

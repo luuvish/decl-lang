@@ -7,6 +7,9 @@ vocabulary; the modules it is built from (parse, semantics, subsume, infer,
 checker, engine, module, package, fmt, conformance, session, repl,
 pipeline, lsp, cli) are importable as well."""
 
+# the render module is loaded before the function of the same name below
+# takes the package attribute; a later import of the module leaves it
+from . import render as _render_module  # noqa: F401
 from .api import (
     DeclError,
     Diagnostic,
@@ -16,6 +19,7 @@ from .api import (
     evaluate_source,
     format_file,
     format_source,
+    render,
     to_json,
     to_yaml,
     validate,
@@ -30,6 +34,7 @@ __all__ = [
     "evaluate_source",
     "format_file",
     "format_source",
+    "render",
     "to_json",
     "to_yaml",
     "validate",

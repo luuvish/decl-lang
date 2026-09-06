@@ -6,8 +6,8 @@
 //! session (`--script`) prints the transcript the terminal would show, so
 //! the three implementations can be diffed.
 use crate::session::{
-    fmt_diag, parse_decl, parse_expr, pretty_json, BindSource, EditKind, Mode, Op, Session,
-    SessionError,
+    fmt_diag, parse_decl, parse_expr, pretty_json, BindSource, EditKind, Mode, Op, RenderOverrides,
+    Rendered, Session, SessionError,
 };
 use regex::Regex;
 use std::io::{BufRead, IsTerminal, Read, Write};
@@ -93,8 +93,8 @@ pub const COMMANDS: &[(&str, &str, &str)] = &[
     // evaluation and validation
     (":check", "static diagnostics of every module", "evaluation"),
     (
-        ":evaluate [root…]",
-        "full evaluation: the documents of the roots",
+        ":evaluate [--format f] [--indent n] [--template p] [root…]",
+        "full evaluation: the documents of the roots, in their declared forms",
         "evaluation",
     ),
     (
@@ -579,7 +579,8 @@ impl Repl {
                 Ok(())
             }
             ":evaluate" => {
-                let names: Vec<String> = if rest.is_empty() {
+                // the overrides of a declared form come before the roots (05_render.md §8)
+                let words: Vec<String> = if rest.is_empty() {
                     vec![]
                 } else {
                     Regex::new(r"[\s,]+")
@@ -589,6 +590,44 @@ impl Repl {
                         .map(|s| s.to_string())
                         .collect()
                 };
+                let mut over = RenderOverrides::default();
+                let mut names: Vec<String> = vec![];
+                let mut i = 0;
+                while i < words.len() {
+                    let w = words[i].as_str();
+                    if w == "--format" || w == "--indent" || w == "--template" {
+                        i += 1;
+                        let Some(v) = words.get(i) else {
+                            return Err(SessionError(format!("{w} expects a value")));
+                        };
+                        if w == "--format" {
+                            if v != "json" && v != "yaml" {
+                                return Err(SessionError(format!(
+                                    "--format expects json or yaml, got {v}"
+                                )));
+                            }
+                            over.yaml = Some(v == "yaml");
+                        } else if w == "--indent" {
+                            let digits = v.len() <= 2
+                                && v.bytes().all(|b| b.is_ascii_digit())
+                                && !(v.len() == 2 && v.starts_with('0'));
+                            let ok = digits && v.parse::<usize>().is_ok_and(|n| n <= 16);
+                            if !ok {
+                                return Err(SessionError(format!(
+                                    "--indent expects an integer in 0..16, got {v}"
+                                )));
+                            }
+                            over.indent = Some(v.parse().unwrap());
+                        } else {
+                            over.template = Some(v.clone());
+                        }
+                    } else if w.starts_with("--") {
+                        return Err(SessionError(format!("unknown option {w}")));
+                    } else {
+                        names.push(w.to_string());
+                    }
+                    i += 1;
+                }
                 let (run, docs, exported) = self.session.evaluate(&names)?;
                 for d in &run.load_diags {
                     self.diag(d, None);
@@ -633,9 +672,26 @@ impl Repl {
                     if many {
                         self.out(&format!("{name}:"));
                     }
-                    match json {
-                        None => self.out("(invalid)"),
-                        Some(j) => self.value(j),
+                    let Some(j) = json else {
+                        self.out("(invalid)");
+                        continue;
+                    };
+                    // the root's declared form, with the overrides (05_render.md §8)
+                    match self.session.render(&run, name, &over) {
+                        None => self.value(j),
+                        Some(Rendered::Error { diag, file }) => {
+                            self.diag(&diag, file.as_deref());
+                            self.out("(invalid)");
+                        }
+                        Some(Rendered::Files(files)) => {
+                            for (p, t) in files {
+                                self.out(&format!("# {p}"));
+                                self.out(t.strip_suffix('\n').unwrap_or(&t));
+                            }
+                        }
+                        Some(Rendered::Text { text, .. }) => {
+                            self.out(text.strip_suffix('\n').unwrap_or(&text));
+                        }
                     }
                 }
                 Ok(())

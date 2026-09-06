@@ -1,0 +1,4 @@
+# {= name =}
+{% for s in services if s.public %}
+server {= label(s) =};
+{% endfor %}

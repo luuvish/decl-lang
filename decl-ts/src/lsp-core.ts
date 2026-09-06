@@ -892,7 +892,24 @@ function executeCommand(command: string, args: any[]): any {
       const diags = [...run.loadDiags, ...run.checks.map((c) => c.diag), ...run.diags].map((d) =>
         fmtDiag(d),
       );
-      if (root) return { root, document: ds[0]?.json ?? null, diagnostics: diags };
+      if (root) {
+        // the root's declared form (docs/tooling/05_render.md §8), when one applies
+        const r = session.render(run, root);
+        const rendered =
+          r === null
+            ? undefined
+            : r.kind === 'error'
+              ? { kind: 'error', diagnostic: fmtDiag(r.diag, r.file) }
+              : r.kind === 'files'
+                ? { kind: 'files', files: r.files.map(([path, text]) => ({ path, text })) }
+                : { kind: r.kind, text: r.text };
+        return {
+          root,
+          document: ds[0]?.json ?? null,
+          diagnostics: diags,
+          ...(rendered ? { rendered } : {}),
+        };
+      }
       const all =
         run.eng && ds.every((d) => d.json !== null)
           ? `{${ds.map((d) => `${JSON.stringify(d.name)}:${d.json}`).join(',')}}`

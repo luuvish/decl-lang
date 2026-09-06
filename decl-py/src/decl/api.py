@@ -186,6 +186,141 @@ def evaluate(
     return out
 
 
+def render(
+    path: str | os.PathLike[str],
+    *,
+    inputs: Mapping[str, Any] | Iterable[tuple[str, Any]] | None = None,
+    outputs: Iterable[str] | None = None,
+    format: str | None = None,
+    indent: int | None = None,
+    templates: Mapping[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Render a module's roots in the forms their ``@render`` annotations
+    declare (docs/tooling/05_render.md), with the options as overrides:
+    bind the ``inputs`` documents, evaluate, and return each root's text —
+    or, for a fan-out root, its files by path. ``format`` (``"json"`` /
+    ``"yaml"``) and ``indent`` override every root's declared layout;
+    ``templates`` maps a root name (``"*"`` for every root without one of
+    its own) to a template file path or to ``{"text": …}``. Nothing is
+    written to disk. Raises DeclError with the diagnostics on any
+    error-severity outcome."""
+    from .checker import check_module
+    from .cli import open_universe
+    from .module import run_universe
+    from .render import Emission, Form, RenderError, absolute, declared_form, emit_root, resolve_in
+
+    file = str(path)
+    r = open_universe(file)
+    if r["diags"] or r["entry"] is None:
+        _fail(f"{file}: cannot be loaded", [_tagged(file, d) for d in r["diags"]])
+    entry = r["entry"]
+    checks = [
+        _tagged(_file_tag(file, entry, m.path), d)
+        for m in r["modules"]
+        for d in check_module(m.decls, m.env)
+    ]
+    if any(d["severity"] == "error" for d in checks):
+        _fail("", checks)
+    u = run_universe(r["modules"], entry, _bind_inputs(r["modules"], file, inputs))
+    report = [_tagged(file, d) for d in u["diags"]]
+    if any(d["severity"] == "error" for d in report):
+        _fail("", report)
+    names = (
+        list(outputs)
+        if outputs is not None
+        else [o["name"] for o in entry.env.outputs if o.get("exported")]
+    )
+    texts: dict[str, str | None] = {}
+
+    def read_tpl(abs_: str) -> str | None:
+        if abs_ not in texts:
+            try:
+                with open(abs_, encoding="utf-8") as fh:
+                    texts[abs_] = fh.read()
+            except OSError:
+                texts[abs_] = None
+        return texts[abs_]
+
+    def e7003(tpl: str, n: str) -> None:
+        _fail(
+            "",
+            [
+                {
+                    "file": tpl,
+                    "code": "E7003",
+                    "severity": "error",
+                    "message": "template cannot be read",
+                    "path": n,
+                }
+            ],
+        )
+
+    tpls = dict(templates or {})
+    out: dict[str, Any] = {}
+    for n in names:
+        if n not in entry.env.roots:
+            raise DeclError(f"no root named {n}", report)
+        found = next(
+            (
+                (d, m)
+                for m in r["modules"]
+                for d in m.decls
+                if d["d"] == "output" and d["name"] == n
+            ),
+            None,
+        )
+        form = declared_form(found[0]) if found is not None else Form()
+        if form.error is not None:
+            _fail(
+                "",
+                [
+                    {
+                        "file": file,
+                        "code": "E7004",
+                        "severity": "error",
+                        "message": form.error,
+                        "path": n,
+                    }
+                ],
+            )
+        src = tpls.get(n, tpls.get("*"))
+        template: tuple[str, str, str] | None = None
+        if src is not None:
+            if isinstance(src, (str, os.PathLike)):
+                given = str(src)
+                abs_ = absolute(given)
+                text = read_tpl(abs_)
+                if text is None:
+                    e7003(given, n)
+                template = (given, cast(str, text), os.path.dirname(abs_))
+            else:
+                template = ("<text>", str(src["text"]), os.getcwd())
+        elif form.template is not None:
+            abs_ = resolve_in(os.path.dirname(found[1].path) if found else ".", form.template)
+            text = read_tpl(abs_)
+            if text is None:
+                e7003(form.template, n)
+            template = (form.template, cast(str, text), os.path.dirname(abs_))
+        try:
+            em = emit_root(
+                Emission(
+                    u["eng"],
+                    entry.env,
+                    n,
+                    entry.env.roots[n],
+                    form,
+                    format,
+                    indent,
+                    template,
+                    read_tpl,
+                )
+            )
+        except RenderError as e:
+            _fail("", [_tagged(e.file if e.file is not None else file, e.diag())])
+        out[n] = dict(em) if isinstance(em, list) else em
+    return out
+
+
 def check(*paths: str | os.PathLike[str]) -> list[Diagnostic]:
     """Parse and statically check entry files (module-aware) on the native
     runtime. Returns diagnostics; empty means clean."""

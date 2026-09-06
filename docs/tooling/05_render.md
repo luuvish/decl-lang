@@ -561,11 +561,12 @@ The three APIs grow in the `evaluate` vocabulary
 - `render(path, { inputs?, outputs?, format?, indent?, templates? })`
   → `{ [root]: text | { [file]: text } }`: each root in its declared
   form with the options as overrides (`templates` a map from root name
-  to a template path or the template text, `"*"` for the default), a
-  single text for a one-file root and a map from path to text for a
-  fan-out root. Nothing is written to disk; a failure throws / raises /
-  returns the same error type as `evaluate` with the diagnostics of
-  §5.8.
+  to a template — the path of a template file, or `{ text }` for its
+  text; `"*"` for every root without one of its own), a single text
+  for a one-file root and a map from path to text for a fan-out root.
+  Nothing is written to disk; a failure throws / raises / returns the
+  same error type as `evaluate` with the diagnostics of §5.8 (E7003
+  and E7004 included). `tests/api/` holds the cases.
 - `toJson(value, indent?)` and `toYaml(value, indent?)` — the text of a
   JSON value in the layouts of §4, pure functions with no universe
   behind them, for a program that has a document and wants its text.
@@ -584,15 +585,20 @@ fan-out).
 
 The REPL ([02. REPL](02_repl.md)) binds `:bind name=doc.yaml` by §2;
 `:evaluate root…` prints each root in its declared form (a fan-out root
-as its files in order, each preceded by a line `# <path>`), and accepts
-`--format`, `--indent`, and `--template path` before the roots as
-overrides; `:evaluate` with no root prints the aggregate as before.
-`:help` says so.
+as its files in order, each preceded by a line `# <path>`; a rendering
+diagnostic, then `(invalid)`), and accepts `--format`, `--indent`, and
+`--template path` before the roots as overrides; `:evaluate` with no
+root prints the aggregate as before. `:help` says so; `tests/repl/render`
+is the session.
 
-The VS Code extension's output preview ([04. Extension](04_extension.md))
-shows the previewed root in its declared form (a fan-out root as the
-list of its files, each openable); no setting is needed. Zed and the
-other configurations have no preview and change nothing.
+The language server's `decl.evaluate` command ([03. Language server](03_lsp.md)
+§12) answers the root's declared form beside its document, and the VS
+Code extension's output preview ([04. Extension](04_extension.md))
+shows it: YAML, indented JSON, or a template's text with the buffer's
+language set to match, a fan-out root as its files each under a
+`# <path>` line, a rendering error in the document's place; no setting
+is needed. Zed and the other configurations have no preview and change
+nothing. `tests/lsp/render-preview` is the session.
 
 ## 9. The corpus
 
@@ -674,9 +680,12 @@ fan-out root should also be able to emit an index file.
 
 ## 12. Status
 
-Planned (Phase 10). This document is the specification the
-implementation follows; its Status becomes *Delivered* when the corpus
-of §9 passes in the three implementations and the harness.
+Delivered (Phase 10, 2026-09-06): documents in YAML, `@render` with
+every key of §3, the layouts of §4, the template dialect of §5, the
+fan-out of §6, the library of §7, the REPL and the preview of §8, and
+the corpus of §9, identical across the three implementations under the
+parity harness; the specification's revision v0.3.1 (§10) recorded. The
+open questions of §11 stay open.
 
 ## 13. Verification
 

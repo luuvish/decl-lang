@@ -24,6 +24,7 @@ from .infer import STD, infer, make_ctx, type_text
 from .module import Module, load_modules
 from .package import open_package_universe, verify_lock
 from .parse import parse_expr_text, parse_source
+from .render import Emission, Form, RenderError, absolute, declared_form, emit_root, resolve_in
 from .semantics import (
     ABSENT,
     ArrV,
@@ -1050,6 +1051,90 @@ class Session:
             + r.checks
             + [{"file": self.entry_abs, "diag": d} for d in r.session_checks]
         )
+
+    def render(
+        self, run: Run, name: str, over: dict[str, Any] | None = None
+    ) -> dict[str, Any] | None:
+        """a root in the form its module declares (docs/tooling/05_render.md §3,
+        §8), with the overrides given (`format`, `indent`, `template`): its
+        text, or the files of a fan-out; None when nothing applies (canonical
+        JSON, no override); an error as its diagnostic, with the template's
+        path when a template is at fault. The answer's `kind` is `json`,
+        `yaml`, `text`, `files`, or `error`."""
+        over = over or {}
+        if run.entry is None or run.eng is None:
+            return None
+        found = None
+        for m in run.modules:
+            for d in m.decls:
+                if d["d"] == "output" and d["name"] == name:
+                    found = (d, m)
+        form = declared_form(found[0]) if found is not None else Form()
+        if form.error is not None:
+            return {
+                "kind": "error",
+                "diag": {"severity": "error", "code": "E7004", "message": form.error, "path": name},
+                "file": None,
+            }
+        applies = (
+            form != Form()
+            or over.get("format") is not None
+            or over.get("indent") is not None
+            or over.get("template") is not None
+        )
+        if not applies:
+            return None
+        v = run.entry.env.roots.get(name, _UNDEF)
+        if v is _UNDEF:
+            return None
+
+        def read_tpl(abs_: str) -> str | None:
+            try:
+                with open(abs_, encoding="utf-8") as fh:
+                    return fh.read()
+            except OSError:
+                return None
+
+        tpl_path = over.get("template") if over.get("template") is not None else form.template
+        template = None
+        if tpl_path is not None:
+            if over.get("template") is not None:
+                abs_ = absolute(tpl_path)
+            else:
+                abs_ = resolve_in(os.path.dirname(found[1].path) if found else ".", tpl_path)
+            text = read_tpl(abs_)
+            if text is None:
+                return {
+                    "kind": "error",
+                    "diag": {
+                        "severity": "error",
+                        "code": "E7003",
+                        "message": "template cannot be read",
+                        "path": name,
+                    },
+                    "file": tpl_path,
+                }
+            template = (tpl_path, text, os.path.dirname(abs_))
+        try:
+            em = emit_root(
+                Emission(
+                    run.eng,
+                    run.entry.env,
+                    name,
+                    v,
+                    form,
+                    over.get("format"),
+                    over.get("indent"),
+                    template,
+                    read_tpl,
+                )
+            )
+        except RenderError as e:
+            return {"kind": "error", "diag": e.diag(), "file": e.file}
+        if isinstance(em, list):
+            return {"kind": "files", "files": em}
+        kind = "text" if template is not None else (over.get("format") or form.format)
+        return {"kind": kind, "text": em}
 
     def evaluate(self, names: list[Any]) -> dict[str, Any]:
         """full evaluation of the named roots (`:evaluate`), or of the exported outputs"""

@@ -25,6 +25,6 @@ pub mod yaml;
 
 // the high-level API, in the command line's vocabulary
 pub use api::{
-    check, evaluate, evaluate_source, format_source, to_json, to_yaml, validate, DeclError,
-    Diagnostic, Document, EvaluateOptions, Report,
+    check, evaluate, evaluate_source, format_source, render, to_json, to_yaml, validate, DeclError,
+    Diagnostic, Document, EvaluateOptions, RenderOptions, Rendered, Report, TemplateSource,
 };
