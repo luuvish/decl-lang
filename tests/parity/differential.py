@@ -302,14 +302,20 @@ cli_row("fmt --check: a missing file", ["fmt", "--check", f"{tmp}/missing.decl"]
 # ---------------------------------------------------------------- the command-line corpus
 cli_cases = json.loads((ROOT / "tests/cli/cases.json").read_text(encoding="utf-8"))
 REF_VERSION = json.loads((ROOT / "decl-ts/package.json").read_text(encoding="utf-8"))["version"]
-print(f"== cli: {len(cli_cases)} cases of tests/cli (the recorded outcome; exit, stdout, stderr, the files left)")
-for c in cli_cases:
+def replay_cases(corpus: str, cases: list[dict]) -> None:
+    """a recorded corpus (tests/cli/README.md's shape): every case through the three, in its own copy of the files"""
+    for c in cases:
+        replay_case(corpus, c)
+
+
+def replay_case(corpus: str, c: dict) -> None:
     dirs: dict[str, Path] = {}
 
     def dir_of(n: str, c=c, dirs=dirs) -> Path:
-        d = tmp / f"cli-{len(dirs)}-{n}"
+        d = tmp / f"{corpus}-{len(dirs)}-{n}-{abs(hash(c['name'])) % 100000}"
         d.mkdir(parents=True, exist_ok=True)
         for f, t in (c.get("files") or {}).items():
+            (d / f).parent.mkdir(parents=True, exist_ok=True)
             (d / f).write_text(t, encoding="utf-8")
         dirs[n] = d
         return d
@@ -333,7 +339,11 @@ for c in cli_cases:
         nat = run_case(programs[n], n)
         verdicts[n] = ref_ok and nat == want
         detail[n] = ("the reference differs from the recorded outcome — " if not ref_ok else "") + f"expected {describe(want[:3])} | ref {describe(ref[:3])} | {n} {describe(nat[:3])}" + ("" if ref[3] == nat[3] == want[3] else " (the files left differ)")
-    row(f"cli: {c['name']}", verdicts, detail)
+    row(f"{corpus}: {c['name']}", verdicts, detail)
+
+
+print(f"== cli: {len(cli_cases)} cases of tests/cli (the recorded outcome; exit, stdout, stderr, the files left)")
+replay_cases("cli", cli_cases)
 
 # ---------------------------------------------------------------- fmt
 fmt_files: list[Path] = []
@@ -466,6 +476,10 @@ cli_row("format: --indent not a number", ["evaluate", FMT0, "--indent", "two"])
 cli_row("format: --indent with --pretty", ["evaluate", FMT0, "--indent", "2", "--pretty"])
 cli_row("format: --output name=- to stdout", ["evaluate", FMT0, "--output", "prod=-", "--format", "yaml"])
 cli_row("format: a declared file is honoured and -", ["evaluate", "tests/validation/declarations/valid/annotations.decl", "--output", "demo"])
+
+render_cases = json.loads((ROOT / "tests/render/cases.json").read_text())
+print(f"== render: {len(render_cases)} cases of tests/render (templates, @render, fan-out — the recorded outcome; exit, stdout, stderr, the files left)")
+replay_cases("render", render_cases)
 
 # scale: the fabric site generator must reproduce the committed 2x4 site, and
 # a 10x20 site (200 links, 30 switches) must be accepted with identical output

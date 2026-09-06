@@ -859,7 +859,8 @@ impl Engine {
         }
     }
 
-    fn iterate(&self, v: &Value) -> R<Vec<Value>> {
+    /// the items of an array (or a range); an error for anything else
+    pub fn iterate(&self, v: &Value) -> R<Vec<Value>> {
         match v {
             Value::PreArr(_) | Value::PreObj(_) => self.mat_arr(v),
             Value::Arr(a) => Ok(a.borrow().items.clone()),
@@ -1152,7 +1153,8 @@ impl Engine {
         Ok(cur)
     }
 
-    fn access(&self, x: &Value, name: &str) -> R<Value> {
+    /// a member of a record (or an unbound literal) by name; ABSENT when absent
+    pub fn access(&self, x: &Value, name: &str) -> R<Value> {
         match x {
             Value::Rec(r) => {
                 let (has, is_extra) = {

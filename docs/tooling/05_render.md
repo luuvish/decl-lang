@@ -254,10 +254,10 @@ reinterpret. So `my-service`, `with space`, and `a_b` are plain;
 
 A root with a `template` is emitted as the text the template produces
 over the root's document. A root that fails validation is not
-rendered: its diagnostics are reported as `evaluate` reports them, the
-exit code is 1, nothing is written for it; the other roots are still
-emitted. Rendering errors (§5.8) are diagnostics too, on standard
-error, exit code 1, the partial text discarded.
+rendered: as `evaluate` has it, an error-severity diagnostic of the
+run means no document is emitted and exit 1. Rendering errors (§5.8)
+are diagnostics too, on standard error, exit code 1, that root's text
+discarded; the other roots are still emitted.
 
 ### 5.1 The dialect, and where it comes from
 
@@ -510,16 +510,22 @@ comprehension in the module and then walked by `for` in the template.
 | E7004 | an invalid `@render` annotation (§3): the message names the key |
 | E7005 | a fan-out path that is not a string, is empty, is absolute, leaves the destination directory, or repeats (§6) |
 
-A rendering diagnostic's `file` is the template's path as given (or
-the module's, for E7004 and E7005), its `path` is `L:C`, the line and
-column of the tag it arose in (for E7005, the element's document
-path), and it has no `id`. An expression that fails to check or to
-evaluate is reported with the language's own code (E3003 for an
-unknown name, E4001 for a non-`bool` condition, E5001 for a division by
-zero, …), anchored the same way. Diagnostics of the evaluation itself
-(binding, assertions) keep their document paths, as `evaluate` prints
-them. The report is ordered as §12.3 orders it, the template's
-diagnostics after the document's.
+A rendering diagnostic's `file` is the template's path as given — the
+`@render` string, the `--template` argument, `-`, or the `include`
+string for an included file — or the module's for E7004 and E7005; its
+`path` is `L:C`, the line and column of the tag it arose in (for E7003
+on a root's own template and for E7004, the root's name; for E7005,
+the element's document path), and it has no `id`. An expression that
+fails to evaluate is reported with the language's own code, anchored
+the same way: E3003 for an unknown name, E5001 for a division by zero,
+E3019 for a `for` variable or a `set` that repeats a name in scope,
+and E4001 for a value of the wrong kind — a condition or filter that
+is not a `bool`, a `for` over something that is not an array (or, with
+two variables, not an object or a map), an argument a `render`
+function refuses. Diagnostics of the evaluation itself (binding,
+assertions) keep their document paths, as `evaluate` prints them. The
+report is ordered as §12.3 orders it, the template's diagnostics after
+the document's.
 
 ## 6. Fan-out — `each`
 
@@ -594,15 +600,14 @@ other configurations have no preview and change nothing.
 (`decl-ts/tests/render_test.ts`, `decl-rs/tests/render_test.rs`,
 `decl-py/tests/render_test.py`), and the harness replays it:
 
-- `cases.json` — one entry per case: the module (its outputs carry
-  their `@render`), its documents (`inputs`), the options of the
-  invocation (`outputs`, and any `format` / `indent` / `template`
-  override), and the expectation — standard output, or a directory
-  tree under `expected/<case>/` for files and fan-out, or `rejected`
-  with the expected standard error. Every key of §3, every statement of
-  §5.3, every text form of §5.5, every function of §5.6, every error of
-  §5.8, the whitespace rules of §5.2, and fan-out over an array and a
-  map have a case.
+- `cases.json` — one entry per case, in the shape of
+  `tests/cli/cases.json`: the files of the case (the module with its
+  `@render`, its templates and documents), the command line, and the
+  recorded outcome — exit status, standard output and error, the
+  files left. Every key of §3, every statement of §5.3, every text form
+  of §5.5, every function of §5.6, every error of §5.8, the whitespace
+  rules of §5.2, the template sources of §3.4, and fan-out over an
+  array and a map have a case.
 - `formats.json` — pairs of a golden document (`tests/golden/`) and its
   YAML form under `yaml/`, plus its indented JSON forms for the indents
   the entry names; the harness runs `evaluate --format yaml` /
@@ -613,8 +618,9 @@ other configurations have no preview and change nothing.
   reader must reject, each with its E6004 message.
 - the parity harness gains sections `yaml-input`, `format`, and
   `render` (byte for byte, exit code, both streams, and the files
-  written under a temporary directory), and the REPL corpus gains a
-  session exercising `:evaluate` on declared forms.
+  written under a temporary directory, each implementation in its own
+  copy of the case), and the REPL corpus gains a session exercising
+  `:evaluate` on declared forms.
 
 The expected texts are produced once by the reference and reviewed,
 like every golden (tests/golden/README.md).

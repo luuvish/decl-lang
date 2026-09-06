@@ -7,9 +7,12 @@ use crate::conformance::judge_corpus;
 use crate::fmt::format;
 use crate::module::{load_modules, run_universe, Bind, LoadResult, Module};
 use crate::package::{open_package_universe, verify_lock};
-use crate::render::{declared_form, layout, Form};
-use crate::semantics::{read_json, Diag, Value};
+use crate::render::{
+    absolute, declared_form, emit_root, layout, resolve_in, Emission, Emitted, Form,
+};
+use crate::semantics::{json_str, read_json, Diag, Value};
 use crate::yaml::{is_yaml_path, read_yaml, to_json};
+use std::cell::RefCell;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
@@ -210,6 +213,7 @@ pub fn evaluate(
     file: &str,
     outputs: &[String],
     inputs: &[String],
+    templates: &[String],
     over: &Overrides,
 ) -> (i32, Option<String>, Vec<(String, Diag)>, Vec<String>) {
     let tag = |ds: Vec<Diag>| -> Vec<(String, Diag)> {
@@ -264,13 +268,85 @@ pub fn evaluate(
         .iter()
         .map(|(n, _)| decl_of(n).map(declared_form).unwrap_or(Ok(Form::default())))
         .collect();
+    let module_dirs: Vec<String> = targets
+        .iter()
+        .map(|(n, _)| {
+            let m = r
+                .modules
+                .iter()
+                .find(|m| {
+                    m.decls
+                        .iter()
+                        .any(|d| matches!(&d.body, DeclBody::Output { name, .. } if name == n))
+                })
+                .map(|m| m.path.clone())
+                .unwrap_or_else(|| entry.path.clone());
+            m.parent()
+                .map(|p| p.to_string_lossy().to_string())
+                .unwrap_or_else(|| ".".into())
+        })
+        .collect();
+    // the templates named by --template (§3.4): `[root=]path`, `-` for
+    // standard input; a root named must be emitted, and once
+    let mut tpl_flags: HashMap<String, String> = HashMap::new(); // "" names every root
+    for spec in templates {
+        let (root, path) = match spec.split_once('=') {
+            Some((r, p))
+                if !r.is_empty()
+                    && r.starts_with(|c: char| c.is_ascii_alphabetic() || c == '_')
+                    && r.chars().all(|c| c.is_ascii_alphanumeric() || c == '_') =>
+            {
+                (r.to_string(), p.to_string())
+            }
+            _ => (String::new(), spec.clone()),
+        };
+        if path.is_empty() {
+            eprintln!("--template expects [root=]path, got {spec}");
+            return (2, None, vec![], vec![]);
+        }
+        if !root.is_empty() && !targets.iter().any(|(n, _)| *n == root) {
+            eprintln!("--template {root}=: no --output {root}");
+            return (2, None, vec![], vec![]);
+        }
+        if tpl_flags.contains_key(&root) {
+            if root.is_empty() {
+                eprintln!("--template given twice");
+            } else {
+                eprintln!("--template {root}= given twice");
+            }
+            return (2, None, vec![], vec![]);
+        }
+        tpl_flags.insert(root, path);
+    }
+    // destinations (§3.2, §6): one root at most to stdout; a fan-out root
+    // goes to a directory, never to stdout
+    let fan_out = |i: usize| -> bool { matches!(&forms[i], Ok(f) if f.each.is_some()) };
     let to_stdout = |i: usize| -> bool {
         match &targets[i].1 {
             Some(d) => d == "-",
             None => matches!(&forms[i], Ok(f) if f.file.is_none()),
         }
     };
-    if (0..targets.len()).filter(|&i| to_stdout(i)).count() > 1 {
+    for (i, (n, dest)) in targets.iter().enumerate() {
+        if !fan_out(i) {
+            continue;
+        }
+        if dest.as_deref() == Some("-") {
+            eprintln!("--output {n}=-: a fan-out root cannot go to stdout");
+            return (2, None, vec![], vec![]);
+        }
+        if dest.is_none() && matches!(&forms[i], Ok(f) if f.file.is_none()) {
+            eprintln!(
+                "--output {n}: a fan-out root needs a directory ({n}=dir, or file in @render)"
+            );
+            return (2, None, vec![], vec![]);
+        }
+    }
+    if (0..targets.len())
+        .filter(|&i| !fan_out(i) && to_stdout(i))
+        .count()
+        > 1
+    {
         eprintln!("--output: at most one document can go to stdout");
         return (2, None, vec![], vec![]);
     }
@@ -330,6 +406,16 @@ pub fn evaluate(
             layout(&all_docs, over.yaml.unwrap_or(false), over.indent)
         });
     } else {
+        // templates are read once (§3.3): by absolute path, or standard input
+        let texts: RefCell<HashMap<String, Option<String>>> = RefCell::new(HashMap::new());
+        let read_tpl = |abs: &str| -> Option<String> {
+            if !texts.borrow().contains_key(abs) {
+                let t = std::fs::read_to_string(abs).ok();
+                texts.borrow_mut().insert(abs.to_string(), t);
+            }
+            texts.borrow().get(abs).cloned().flatten()
+        };
+        let mut stdin_text: Option<String> = None;
         for (i, (n, dest)) in targets.iter().enumerate() {
             let form = match &forms[i] {
                 Ok(f) => f.clone(),
@@ -342,35 +428,136 @@ pub fn evaluate(
                     continue;
                 }
             };
-            let yaml = over.yaml.unwrap_or(form.yaml);
-            let indent = over.indent.or(form.indent);
+            // the template: the override, else the declared one, relative to the module's directory
+            let given = tpl_flags.get(n).or_else(|| tpl_flags.get(""));
+            let template: Option<(String, String, String)> = match given {
+                Some(g) if g == "-" => {
+                    if stdin_text.is_none() {
+                        let mut t = String::new();
+                        if std::io::Read::read_to_string(&mut std::io::stdin(), &mut t).is_err() {
+                            all.push((
+                                "-".to_string(),
+                                Diag::error("template cannot be read", n.clone(), Some("E7003")),
+                            ));
+                            bad = true;
+                            continue;
+                        }
+                        stdin_text = Some(t);
+                    }
+                    let cwd = std::env::current_dir()
+                        .map(|p| p.to_string_lossy().to_string())
+                        .unwrap_or_else(|_| ".".into());
+                    Some(("-".to_string(), stdin_text.clone().unwrap(), cwd))
+                }
+                Some(g) => {
+                    let abs = absolute(g);
+                    match read_tpl(&abs) {
+                        Some(t) => Some((g.clone(), t, parent_dir(&abs))),
+                        None => {
+                            all.push((
+                                g.clone(),
+                                Diag::error("template cannot be read", n.clone(), Some("E7003")),
+                            ));
+                            bad = true;
+                            continue;
+                        }
+                    }
+                }
+                None => match &form.template {
+                    Some(t) => {
+                        let abs = resolve_in(&module_dirs[i], t);
+                        match read_tpl(&abs) {
+                            Some(text) => Some((t.clone(), text, parent_dir(&abs))),
+                            None => {
+                                all.push((
+                                    t.clone(),
+                                    Diag::error(
+                                        "template cannot be read",
+                                        n.clone(),
+                                        Some("E7003"),
+                                    ),
+                                ));
+                                bad = true;
+                                continue;
+                            }
+                        }
+                    }
+                    None => None,
+                },
+            };
+            let has_template = template.is_some();
+            let em = match emit_root(&Emission {
+                eng: eng.clone(),
+                menv: entry.env.clone(),
+                root_name: n.clone(),
+                value: entry.env.root(n).unwrap(),
+                form: form.clone(),
+                yaml: over.yaml,
+                indent: over.indent,
+                template,
+                read_template: &read_tpl,
+            }) {
+                Ok(e) => e,
+                Err(e) => {
+                    all.push((e.file.clone().unwrap_or_else(|| file.to_string()), e.diag()));
+                    bad = true;
+                    continue;
+                }
+            };
             let dest = match dest {
                 Some(d) if d == "-" => None,
                 Some(d) => Some(d.clone()),
                 None => form.file.clone(),
             };
-            match dest {
-                None => {
-                    text = Some(if over.json {
-                        to_json(&doc(n), 0) + "\n"
-                    } else {
-                        layout(&doc(n), yaml, indent)
-                    })
-                }
-                Some(path) => {
-                    let body = layout(&doc(n), yaml, indent);
-                    if let Some(dir) = std::path::Path::new(&path).parent() {
-                        let _ = std::fs::create_dir_all(dir);
-                    }
-                    if std::fs::write(&path, body).is_err() {
-                        notes.push(format!("cannot write {path}"));
-                        return (1, None, all.clone(), notes);
+            match em {
+                Emitted::Many(files) => {
+                    // a fan-out's files, in element order, under the directory
+                    let dir = dest.unwrap();
+                    for (rel, body) in files {
+                        let path = absolute(&format!("{dir}/{rel}"));
+                        if let Some(d) = std::path::Path::new(&path).parent() {
+                            let _ = std::fs::create_dir_all(d);
+                        }
+                        if std::fs::write(&path, body).is_err() {
+                            notes.push(format!("cannot write {path}"));
+                            return (1, None, all.clone(), notes);
+                        }
                     }
                 }
+                Emitted::One(body) => match dest {
+                    None => {
+                        // the report's value: the document itself, or a template's text as a string
+                        text = Some(if over.json {
+                            if has_template {
+                                json_str(&body) + "\n"
+                            } else {
+                                to_json(&doc(n), 0) + "\n"
+                            }
+                        } else {
+                            body
+                        })
+                    }
+                    Some(path) => {
+                        if let Some(dir) = std::path::Path::new(&path).parent() {
+                            let _ = std::fs::create_dir_all(dir);
+                        }
+                        if std::fs::write(&path, body).is_err() {
+                            notes.push(format!("cannot write {path}"));
+                            return (1, None, all.clone(), notes);
+                        }
+                    }
+                },
             }
         }
     }
     (if bad { 1 } else { 0 }, text, all.clone(), notes)
+}
+
+fn parent_dir(p: &str) -> String {
+    std::path::Path::new(p)
+        .parent()
+        .map(|d| d.to_string_lossy().to_string())
+        .unwrap_or_else(|| ".".into())
 }
 
 /// single-file validation, module-aware like `check` and `evaluate`: load
@@ -533,8 +720,8 @@ pub fn main(args: Vec<String>) -> i32 {
             let Some(over) = form_overrides(&flags) else {
                 return 2;
             };
-            let _ = &template_flags;
-            let (code, text, diags, notes) = evaluate(f, &output_flags, &input_flags, &over);
+            let (code, text, diags, notes) =
+                evaluate(f, &output_flags, &input_flags, &template_flags, &over);
             if code == 2 {
                 return 2; // a usage error: already printed, no report
             }

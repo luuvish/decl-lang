@@ -655,3 +655,13 @@ def _lower_for(n: Node) -> dict[str, Any]:
         "iter": lower_expr(_req(n, "iterable")),
         "filters": [lower_expr(c) for c in n.children_by_field_name("filter")],
     }
+
+
+def parse_expr_text(text: str) -> dict[str, Any] | None:
+    """parse one expression's text: the text is wrapped in a constant
+    declaration; None when it does not parse"""
+    r = parse_source(f"const __e = {text}\n")
+    decls, errors = r["decls"], r["errors"]
+    if errors or len(decls) != 1 or decls[0]["d"] != "const":
+        return None
+    return decls[0]["expr"]

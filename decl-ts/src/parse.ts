@@ -641,3 +641,10 @@ function lowerFor(n: Node) {
       .map((c) => lowerExpr(c)),
   };
 }
+
+/** parse one expression's text: the text is wrapped in a constant declaration; null when it does not parse */
+export function parseExprText(text: string): Expr | null {
+  const { decls, errors } = parseSource(`const __e = ${text}\n`);
+  if (errors.length || decls.length !== 1 || decls[0].d !== 'const') return null;
+  return (decls[0] as any).expr;
+}

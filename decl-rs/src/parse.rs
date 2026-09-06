@@ -1069,3 +1069,14 @@ pub fn json_unquote(s: &str) -> LR<String> {
     }
     Ok(out)
 }
+
+/// parse one expression's text: the text is wrapped in a constant declaration; None when it does not parse
+pub fn parse_expr_text(text: &str) -> Option<Rc<Expr>> {
+    let r = parse_source(&format!("const __e = {text}\n"));
+    if r.errors.is_empty() && r.decls.len() == 1 {
+        if let DeclBody::Const { expr, .. } = &r.decls[0].body {
+            return Some(expr.clone());
+        }
+    }
+    None
+}

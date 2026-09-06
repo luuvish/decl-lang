@@ -15,8 +15,17 @@ from .conformance import judge_corpus
 from .fmt import format_source
 from .module import load_modules, run_universe
 from .package import open_package_universe, verify_lock
-from .render import Form, declared_form, layout
-from .semantics import JObj, read_json
+from .render import (
+    Emission,
+    Form,
+    RenderError,
+    absolute,
+    declared_form,
+    emit_root,
+    layout,
+    resolve_in,
+)
+from .semantics import JObj, json_str, read_json
 from .yaml import YamlError, is_yaml_path, read_yaml, to_json
 
 
@@ -149,6 +158,7 @@ def evaluate_file(
     outputs: list[str] | None,
     input_specs: list[str] | None = None,
     over: dict[str, Any] | None = None,
+    templates: list[str] | None = None,
 ) -> Any:
     """Returns (exit_code, document_for_stdout, diagnostics, notes) — notes are
     bare stderr lines printed after the diagnostics; raises CliError for a bad
@@ -182,11 +192,40 @@ def evaluate_file(
         return 1, None, checks, []
     # each target's declared form (§3): an invalid @render is E7004 at
     # emission and the root is not emitted; the others still are
-    decls = [d for m in r["modules"] for d in m.decls]
     forms: list[Form] = []
+    module_dirs: list[str] = []
     for n, _ in targets:
-        decl = next((d for d in decls if d["d"] == "output" and d["name"] == n), None)
-        forms.append(declared_form(decl) if decl is not None else Form())
+        found = next(
+            (
+                (d, m)
+                for m in r["modules"]
+                for d in m.decls
+                if d["d"] == "output" and d["name"] == n
+            ),
+            None,
+        )
+        forms.append(declared_form(found[0]) if found is not None else Form())
+        module_dirs.append(os.path.dirname(found[1].path if found is not None else entry.path))
+    # the templates named by --template (§3.4): `[root=]path`, `-` for
+    # standard input; a root named must be emitted, and once
+    tpl_flags: dict[str, str] = {}  # "" names every root
+    for spec in templates or []:
+        m = re.match(r"^([A-Za-z_][A-Za-z0-9_]*)=([\s\S]+)$", spec)
+        root, tpath = (m.group(1), m.group(2)) if m else ("", spec)
+        if not tpath:
+            raise CliError(f"--template expects [root=]path, got {spec}", 2)
+        if root and not any(n == root for n, _ in targets):
+            raise CliError(f"--template {root}=: no --output {root}", 2)
+        if root in tpl_flags:
+            raise CliError(
+                f"--template {root}= given twice" if root else "--template given twice", 2
+            )
+        tpl_flags[root] = tpath
+
+    # destinations (§3.2, §6): one root at most to stdout; a fan-out root
+    # goes to a directory, never to stdout
+    def fan_out(i: int) -> bool:
+        return forms[i].error is None and forms[i].each is not None
 
     def to_stdout(i: int) -> bool:
         dest = targets[i][1]
@@ -196,7 +235,16 @@ def evaluate_file(
             return False
         return forms[i].error is None and forms[i].file is None
 
-    if sum(1 for i in range(len(targets)) if to_stdout(i)) > 1:
+    for i, (n, sel) in enumerate(targets):
+        if not fan_out(i):
+            continue
+        if sel == "-":
+            raise CliError(f"--output {n}=-: a fan-out root cannot go to stdout", 2)
+        if sel is None and forms[i].file is None:
+            raise CliError(
+                f"--output {n}: a fan-out root needs a directory ({n}=dir, or file in @render)", 2
+            )
+    if sum(1 for i in range(len(targets)) if not fan_out(i) and to_stdout(i)) > 1:
         raise CliError("--output: at most one document can go to stdout", 2)
     u = run_universe(r["modules"], entry, input_binds(r["modules"], input_specs or []))
     # a warning of the checks (W0001) is reported with the run's diagnostics
@@ -230,6 +278,19 @@ def evaluate_file(
             else layout(all_docs, over["format"] or "json", over["indent"])
         )
     else:
+        # templates are read once (§3.3): by absolute path, or standard input
+        texts: dict[str, str | None] = {}
+
+        def read_tpl(abs_: str) -> str | None:
+            if abs_ not in texts:
+                try:
+                    with open(abs_, encoding="utf-8") as fh:
+                        texts[abs_] = fh.read()
+                except OSError:
+                    texts[abs_] = None
+            return texts[abs_]
+
+        stdin_text: str | None = None
         for i, (n, sel) in enumerate(targets):
             form = forms[i]
             if form.error is not None:
@@ -244,16 +305,89 @@ def evaluate_file(
                 )
                 bad = True
                 continue
-            fmt = over["format"] or form.format
-            indent = over["indent"] if over["indent"] is not None else form.indent
+            # the template: the override, else the declared one, relative to the module's directory
+            given = tpl_flags.get(n, tpl_flags.get(""))
+            template: tuple[str, str, str] | None = None
+            unreadable: str | None = None
+            if given == "-":
+                if stdin_text is None:
+                    try:
+                        stdin_text = sys.stdin.read()
+                    except OSError:
+                        stdin_text = None
+                if stdin_text is None:
+                    unreadable = "-"
+                else:
+                    template = ("-", stdin_text, os.getcwd())
+            elif given is not None:
+                abs_ = absolute(given)
+                body = read_tpl(abs_)
+                if body is None:
+                    unreadable = given
+                else:
+                    template = (given, body, os.path.dirname(abs_))
+            elif form.template is not None:
+                abs_ = resolve_in(module_dirs[i], form.template)
+                body = read_tpl(abs_)
+                if body is None:
+                    unreadable = form.template
+                else:
+                    template = (form.template, body, os.path.dirname(abs_))
+            if unreadable is not None:
+                diags.append(
+                    {
+                        "file": unreadable,
+                        "severity": "error",
+                        "code": "E7003",
+                        "message": "template cannot be read",
+                        "path": n,
+                    }
+                )
+                bad = True
+                continue
+            try:
+                em = emit_root(
+                    Emission(
+                        eng,
+                        entry.env,
+                        n,
+                        entry.env.roots[n],
+                        form,
+                        over["format"],
+                        over["indent"],
+                        template,
+                        read_tpl,
+                    )
+                )
+            except RenderError as e:
+                diags.append(dict(e.diag(), file=e.file if e.file is not None else path))
+                bad = True
+                continue
             where = None if sel == "-" else (sel if sel is not None else form.file)
+            if isinstance(em, list):
+                # a fan-out's files, in element order, under the directory
+                for rel, body in em:
+                    target = absolute(os.path.join(where or ".", rel))
+                    try:
+                        os.makedirs(os.path.dirname(target) or ".", exist_ok=True)
+                        with open(target, "w", encoding="utf-8") as fh:
+                            fh.write(body)
+                    except OSError:
+                        notes.append(f"cannot write {target}")
+                        return 1, None, diags, notes
+                continue
             if where is None:
-                text = to_json(doc(n)) + "\n" if over["json"] else layout(doc(n), fmt, indent)
+                # the report's value: the document itself, or a template's text as a string
+                text = (
+                    (json_str(em) if template is not None else to_json(doc(n))) + "\n"
+                    if over["json"]
+                    else em
+                )
                 continue
             try:
                 os.makedirs(os.path.dirname(where) or ".", exist_ok=True)
                 with open(where, "w", encoding="utf-8") as fh:
-                    fh.write(layout(doc(n), fmt, indent))
+                    fh.write(em)
             except OSError:
                 notes.append(f"cannot write {where}")
                 return 1, None, diags, notes
@@ -419,8 +553,9 @@ def main(argv: list[str] | None = None) -> int:
             return usage()
         try:
             over = form_overrides(flags)
-            del template_flags  # the templates of docs/tooling/05_render.md §5 follow
-            code, text, diags, notes = evaluate_file(pos[0], output_flags, input_flags, over)
+            code, text, diags, notes = evaluate_file(
+                pos[0], output_flags, input_flags, over, template_flags
+            )
         except CliError as e:
             if e.status == 2:
                 print(e, file=sys.stderr)

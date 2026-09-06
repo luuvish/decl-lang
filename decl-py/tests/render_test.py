@@ -90,3 +90,37 @@ def test_invalid_documents(case: dict[str, Any], python: str) -> None:
         f"bound document is not well-formed YAML: {file}: {case['message']}\n"
     )
     assert r.returncode == 1 and r.stderr == want
+
+
+CASES = json.loads((ROOT / "tests/render/cases.json").read_text(encoding="utf-8"))
+
+
+@pytest.mark.parametrize("case", CASES, ids=[c["name"] for c in CASES])
+def test_case(case: dict[str, Any], python: str, tmp_path: Path) -> None:
+    """the cases of tests/render/cases.json: templates, @render, fan-out — the
+    recorded outcome, in the shape of tests/cli (exit, stdout, stderr, the files left)"""
+    import decl
+
+    for name, text in case.get("files", {}).items():
+        (tmp_path / name).parent.mkdir(parents=True, exist_ok=True)
+        (tmp_path / name).write_text(text, encoding="utf-8")
+    args = [a.replace("<dir>", str(tmp_path)) for a in case["args"]]
+    r = subprocess.run(
+        [python, "-m", "decl", *args],
+        cwd=ROOT,
+        capture_output=True,
+        text=True,
+        input=case.get("stdin", ""),
+    )
+
+    def norm(s: str) -> str:
+        return s.replace(str(tmp_path), "<dir>").replace(decl.__version__, "<version>")
+
+    assert (r.returncode, norm(r.stdout), norm(r.stderr)) == (
+        case["exit"],
+        case["stdout"],
+        case["stderr"],
+    )
+    for name, text in case.get("after", {}).items():
+        p = tmp_path / name
+        assert (p.read_text(encoding="utf-8") if p.exists() else None) == text

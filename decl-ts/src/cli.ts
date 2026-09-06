@@ -13,8 +13,8 @@ import { resolve as absPath, dirname } from 'node:path';
 import { initParser } from './node.ts';
 import { readJson } from './semantics.ts';
 import { isYamlPath, readYaml, toJson } from './yaml.ts';
-import { declaredForm, layout } from './render.ts';
-import type { Form } from './render.ts';
+import { declaredForm, layout, emitRoot, RenderError } from './render.ts';
+import type { Form, Emitted } from './render.ts';
 import type { Diag } from './semantics.ts';
 import { checkModule } from './checker.ts';
 import { loadModules, runUniverse } from './module.ts';
@@ -249,20 +249,67 @@ async function main(): Promise<number> {
       if (bad) return 1;
       // each target's declared form (§3): an invalid @render is E7004 at
       // emission and the root is not emitted; the others still are
-      const declOf = (n: string) =>
-        modules.flatMap((m) => m.decls).find((d) => d.d === 'output' && d.name === n);
+      // each target's declared form (§3): an invalid @render is E7004 at
+      // emission and the root is not emitted; the others still are
+      const declOf = (n: string) => {
+        for (const m of modules)
+          for (const d of m.decls) if (d.d === 'output' && d.name === n) return { d, m };
+        return null;
+      };
       const forms = new Map<string, Form | { error: string }>();
+      const moduleDirs = new Map<string, string>();
       for (const t of targets) {
-        const d = declOf(t.name);
-        forms.set(t.name, d ? declaredForm(d) : { format: 'json' });
+        const found = declOf(t.name);
+        forms.set(t.name, found ? declaredForm(found.d) : { format: 'json' });
+        moduleDirs.set(t.name, found ? dirname(found.m.path) : dirname(absPath(f)));
       }
+      // the templates named by --template (§3.4): `[root=]path`, `-` for
+      // standard input; a root named must be emitted, and once
+      const tplFlags = new Map<string, string>(); // '' names every root
+      for (const spec of templateFlags) {
+        const m = /^([A-Za-z_][A-Za-z0-9_]*)=([\s\S]+)$/.exec(spec);
+        const root = m ? m[1] : '';
+        const path = m ? m[2] : spec;
+        if (!path) {
+          console.error(`--template expects [root=]path, got ${spec}`);
+          return 2;
+        }
+        if (root && !targets.some((t) => t.name === root)) {
+          console.error(`--template ${root}=: no --output ${root}`);
+          return 2;
+        }
+        if (tplFlags.has(root)) {
+          console.error(root ? `--template ${root}= given twice` : '--template given twice');
+          return 2;
+        }
+        tplFlags.set(root, path);
+      }
+      // destinations (§3.2, §6): one root at most to stdout; a fan-out root
+      // goes to a directory, never to stdout
+      const fanOut = (t: { name: string; dest?: string }) => {
+        const form = forms.get(t.name)!;
+        return !('error' in form) && !!form.each;
+      };
       const toStdout = (t: { name: string; dest?: string }) => {
         const form = forms.get(t.name)!;
         if (t.dest === '-') return true;
         if (t.dest !== undefined) return false;
         return !('error' in form) && !form.file;
       };
-      if (targets.filter(toStdout).length > 1) {
+      for (const t of targets) {
+        if (!fanOut(t)) continue;
+        if (t.dest === '-') {
+          console.error(`--output ${t.name}=-: a fan-out root cannot go to stdout`);
+          return 2;
+        }
+        if (t.dest === undefined && !(forms.get(t.name) as Form).file) {
+          console.error(
+            `--output ${t.name}: a fan-out root needs a directory (${t.name}=dir, or file in @render)`,
+          );
+          return 2;
+        }
+      }
+      if (targets.filter((t) => !fanOut(t) && toStdout(t)).length > 1) {
         console.error('--output: at most one document can go to stdout');
         return 2;
       }
@@ -293,6 +340,48 @@ async function main(): Promise<number> {
           ? toJson(all) + '\n'
           : layout(all, { format: over.format ?? 'json', indent: over.indent });
       } else {
+        // templates are read once (§3.3): by absolute path, or standard input
+        const texts = new Map<string, string | null>();
+        const readTpl = (abs: string): string | null => {
+          if (!texts.has(abs)) {
+            try {
+              texts.set(abs, readFileSync(abs, 'utf8'));
+            } catch {
+              texts.set(abs, null);
+            }
+          }
+          return texts.get(abs)!;
+        };
+        let stdinText: string | null = null;
+        const templateFor = (
+          t: { name: string },
+          form: Form,
+        ): { path: string; text: string; dir: string } | null | { unreadable: string } => {
+          const given = tplFlags.get(t.name) ?? tplFlags.get('');
+          if (given !== undefined) {
+            if (given === '-') {
+              if (stdinText === null) {
+                try {
+                  stdinText = readFileSync(0, 'utf8');
+                } catch {
+                  return { unreadable: '-' };
+                }
+              }
+              return { path: '-', text: stdinText, dir: process.cwd() };
+            }
+            const abs = absPath(given);
+            const body = readTpl(abs);
+            return body === null
+              ? { unreadable: given }
+              : { path: given, text: body, dir: dirname(abs) };
+          }
+          if (!form.template) return null;
+          const abs = absPath(moduleDirs.get(t.name)!, form.template);
+          const body = readTpl(abs);
+          return body === null
+            ? { unreadable: form.template }
+            : { path: form.template, text: body, dir: dirname(abs) };
+        };
         for (const t of targets) {
           const form = forms.get(t.name)!;
           if ('error' in form) {
@@ -300,16 +389,63 @@ async function main(): Promise<number> {
             bad++;
             continue;
           }
-          const eff = { format: over.format ?? form.format, indent: over.indent ?? form.indent };
-          const dest = t.dest === '-' ? undefined : (t.dest ?? form.file);
-          if (dest === undefined) {
-            text = jsonMode ? toJson(doc(t.name)) + '\n' : layout(doc(t.name), eff);
+          const tpl = templateFor(t, form);
+          if (tpl && 'unreadable' in tpl) {
+            printDiag(tpl.unreadable, {
+              severity: 'error',
+              code: 'E7003',
+              message: 'template cannot be read',
+              path: t.name,
+            });
+            bad++;
             continue;
           }
-          const body = layout(doc(t.name), eff);
+          let em: Emitted;
+          try {
+            em = emitRoot({
+              eng,
+              menv: entry.env,
+              rootName: t.name,
+              value: entry.env.roots.get(t.name),
+              form,
+              format: over.format,
+              indent: over.indent,
+              template: tpl ?? undefined,
+              readTemplate: readTpl,
+            });
+          } catch (e: any) {
+            if (e instanceof RenderError) {
+              printDiag(e.file ?? f, e.diag());
+              bad++;
+              continue;
+            }
+            throw e;
+          }
+          const dest = t.dest === '-' ? undefined : (t.dest ?? form.file);
+          if (em.kind === 'many') {
+            // a fan-out's files, in element order, under the directory
+            for (const [rel, body] of em.files) {
+              const file = absPath(dest!, rel);
+              try {
+                mkdirSync(dirname(file), { recursive: true });
+                writeFileSync(file, body);
+              } catch {
+                console.error(`cannot write ${file}`);
+                return 1;
+              }
+            }
+            continue;
+          }
+          if (dest === undefined) {
+            // the report's value: the document itself, or a template's text as a string
+            text = jsonMode
+              ? (tpl ? JSON.stringify(em.text) : toJson(doc(t.name))) + '\n'
+              : em.text;
+            continue;
+          }
           try {
             mkdirSync(dirname(dest), { recursive: true });
-            writeFileSync(dest, body);
+            writeFileSync(dest, em.text);
           } catch {
             console.error(`cannot write ${dest}`);
             return 1;

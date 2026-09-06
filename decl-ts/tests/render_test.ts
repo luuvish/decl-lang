@@ -1,11 +1,13 @@
-// The render corpus (tests/render) through the reference: the format
-// goldens of formats.json (`--format yaml`, `--indent n`, and the YAML
-// read back to the golden document), every golden document bound from
-// its YAML twin under inputs/, and the documents under invalid/ that the
-// reader must refuse with their messages (tests/render/README.md).
+// The render corpus (tests/render) through the reference: the cases of
+// cases.json (templates, @render, fan-out — the recorded outcome, in the
+// shape of tests/cli), the format goldens of formats.json (`--format
+// yaml`, `--indent n`, and the YAML read back to the golden document),
+// every golden document bound from its YAML twin under inputs/, and the
+// documents under invalid/ that the reader must refuse with their
+// messages (tests/render/README.md).
 import { spawnSync } from 'node:child_process';
-import { readFileSync, writeFileSync, mkdtempSync } from 'node:fs';
-import { join } from 'node:path';
+import { readFileSync, writeFileSync, mkdtempSync, mkdirSync, existsSync, rmSync } from 'node:fs';
+import { join, dirname } from 'node:path';
 import { tmpdir } from 'node:os';
 import { check, total, root, cli, firstDiff } from './common/check.ts';
 import { readJson } from '../src/semantics.ts';
@@ -93,5 +95,41 @@ for (const c of invalid) {
   const r = run(['validate', 'tests/render/invalid/doc.decl', '--input', `doc=${file}`]);
   const want = `tests/render/invalid/doc.decl: error [E6004] at doc: bound document is not well-formed YAML: ${file}: ${c.message}\n`;
   check(`${c.file}: E6004 on the command line`, r.status === 1 && r.stderr === want, firstDiff(want, r.stderr));
+}
+console.log('== render: cases.json — templates, @render, fan-out (the recorded outcome) ==');
+type Case = {
+  name: string;
+  files?: Record<string, string>;
+  args: string[];
+  stdin?: string;
+  exit: number;
+  stdout: string;
+  stderr: string;
+  after?: Record<string, string | null>;
+};
+const version = JSON.parse(readFileSync(join(root, 'decl-ts/package.json'), 'utf8')).version;
+const cases: Case[] = JSON.parse(readFileSync(join(root, 'tests/render/cases.json'), 'utf8'));
+for (const c of cases) {
+  const dir = mkdtempSync(join(tmpdir(), 'decl-render-'));
+  for (const [name, text] of Object.entries(c.files ?? {})) {
+    mkdirSync(dirname(join(dir, name)), { recursive: true });
+    writeFileSync(join(dir, name), text);
+  }
+  const args = c.args.map((a) => a.split('<dir>').join(dir));
+  const r = spawnSync(process.execPath, [cli, ...args], {
+    encoding: 'utf8',
+    cwd: root,
+    input: c.stdin ?? '',
+  });
+  const norm = (s: string) => s.split(dir).join('<dir>').split(version).join('<version>');
+  const got = { exit: r.status, stdout: norm(r.stdout), stderr: norm(r.stderr) };
+  const same = got.exit === c.exit && got.stdout === c.stdout && got.stderr === c.stderr;
+  check(c.name, same, same ? '' : JSON.stringify({ got, want: [c.exit, c.stdout, c.stderr] }));
+  for (const [name, text] of Object.entries(c.after ?? {})) {
+    const p = join(dir, name);
+    const actual = existsSync(p) ? readFileSync(p, 'utf8') : null;
+    check(`${c.name}: ${name} afterwards`, actual === text, JSON.stringify({ actual, text }));
+  }
+  rmSync(dir, { recursive: true, force: true });
 }
 total();

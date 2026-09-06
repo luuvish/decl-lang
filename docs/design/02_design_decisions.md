@@ -827,6 +827,43 @@ diagnostic width_mismatch(src: int, dst: int) {
 
 ---
 
+### D35. A module declares the form its outputs are emitted in; rendering is tooling *(revision, 2026-09-06)*
+
+- Evaluation ends at a resolved value tree; interchange is JSON (D29,
+  §10.6). What a user then needs — the same document as YAML, laid out
+  for reading, or as the text of a configuration file, one file per
+  element — is **rendering**, and it stays outside the language: no
+  expression, type, or constraint depends on how a root is written
+  out. The requirements said so from the start (01_requirements §2);
+  this decision fixes where the choice is made and who implements it.
+- **Form**: an `output` carries `@render({ format, indent, template,
+  file, each, delimiters })`, an annotation (D4: metadata, semantics-
+  free) the tools read when they emit the root — the Pkl `output`
+  block's idea, without a value that evaluation could observe. The
+  command line's `--format`, `--indent`, `--template`, and `--output`
+  override it for one invocation; `decl evaluate` stays the one verb.
+- **Documents in YAML** are read by a YAML 1.2 core-schema reader into
+  the JSON document of §10 — never YAML 1.1's spellings (the Norway
+  problem, 00_vision §1) — and written back in a block form that a 1.2
+  reader reads to the canonical document and a 1.1 reader is given
+  nothing bare to reinterpret. TOML is not in: it has no null and its
+  root must be a table, so it would need a loss rule.
+- **Templates** are a small fixed dialect in the Jinja family's surface
+  (`{% %}`, `{# #}`, `-`/`+` whitespace control, `if` / `for` / `set`
+  / `include` / `raw`, `loop`), with `{= =}` for values because the
+  languages a Decl module most often generates are full of `{{`
+  (Verilog's concatenations), and with **Decl expressions** inside the
+  tags, evaluated by the language's own engine over the root's
+  document: no template expression language, no coercion, no silent
+  undefined, a module's `func` where Jinja has filters and macros.
+  Inheritance (`extends` / `block`) is out until a template in the
+  wild needs it.
+- Everything is implemented three times and held identical by a corpus
+  (tests/render) the parity harness replays; the E7xxx band is
+  registered in §12 so that the three report the same codes. The
+  renderer's own document, docs/tooling/05_render.md, is the
+  specification of all of it.
+
 ## Syntax deliberately absent
 
 One concept, one syntax (P5). The left column does not exist in Decl; use

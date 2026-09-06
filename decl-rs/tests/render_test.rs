@@ -223,3 +223,87 @@ fn invalid_documents() {
         failures.join("\n  ")
     );
 }
+
+/// the cases of tests/render/cases.json: templates, @render, fan-out — the
+/// recorded outcome, in the shape of tests/cli (exit, stdout, stderr, the files left)
+#[test]
+fn cases() {
+    let root = root();
+    let version = env!("CARGO_PKG_VERSION");
+    let cases = parse(&std::fs::read_to_string(root.join("tests/render/cases.json")).unwrap());
+    let Value::JArr(cases) = cases else {
+        panic!("a list")
+    };
+    let mut failures = vec![];
+    for c in cases.iter() {
+        let name = text(get(c, "name").unwrap());
+        let dir = temp_dir("render-case");
+        if let Some(Value::JObj(files)) = get(c, "files") {
+            for (f, t) in files.iter() {
+                let p = dir.join(f);
+                std::fs::create_dir_all(p.parent().unwrap()).unwrap();
+                std::fs::write(&p, text(t)).unwrap();
+            }
+        }
+        let d = dir.to_string_lossy().to_string();
+        let Some(Value::JArr(args)) = get(c, "args") else {
+            panic!("args")
+        };
+        let args: Vec<String> = args.iter().map(|a| text(a).replace("<dir>", &d)).collect();
+        let stdin = get(c, "stdin")
+            .map(|s| text(s).to_string())
+            .unwrap_or_default();
+        let mut child = std::process::Command::new(env!("CARGO_BIN_EXE_decl"))
+            .args(&args)
+            .current_dir(&root)
+            .stdin(std::process::Stdio::piped())
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::piped())
+            .spawn()
+            .unwrap();
+        {
+            use std::io::Write;
+            let mut si = child.stdin.take().unwrap();
+            si.write_all(stdin.as_bytes()).unwrap();
+        }
+        let out = child.wait_with_output().unwrap();
+        let norm = |s: &[u8]| {
+            String::from_utf8_lossy(s)
+                .replace(&d, "<dir>")
+                .replace(version, "<version>")
+        };
+        let got = (
+            out.status.code().unwrap_or(-1),
+            norm(&out.stdout),
+            norm(&out.stderr),
+        );
+        let want = (
+            int_of(get(c, "exit").unwrap()) as i32,
+            text(get(c, "stdout").unwrap()).to_string(),
+            text(get(c, "stderr").unwrap()).to_string(),
+        );
+        if got != want {
+            failures.push(format!("{name}: got {got:?}, want {want:?}"));
+        }
+        if let Some(Value::JObj(after)) = get(c, "after") {
+            for (f, t) in after.iter() {
+                let actual = std::fs::read_to_string(dir.join(f)).ok();
+                let expected = match t {
+                    Value::Null => None,
+                    v => Some(text(v).to_string()),
+                };
+                if actual != expected {
+                    failures.push(format!(
+                        "{name}: {f} afterwards: got {actual:?}, want {expected:?}"
+                    ));
+                }
+            }
+        }
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+    assert!(
+        failures.is_empty(),
+        "case failures:\n  {}",
+        failures.join("\n  ")
+    );
+}

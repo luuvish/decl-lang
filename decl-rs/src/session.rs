@@ -14,7 +14,7 @@ use crate::fmt::format;
 use crate::infer::{infer, make_ctx, std_names, type_text, Ctx, Ty};
 use crate::module::{load_modules, Module};
 use crate::package::{open_package_universe, verify_lock};
-use crate::parse::parse_source;
+use crate::parse::{parse_expr_text, parse_source};
 use crate::semantics::{
     json_str, parse_path, path_str, read_json, rec_members, seg_text, sort_diags, Diag, Env, Fail,
     MKind, RTk, Scope, Seg, SegPath, SlotState, Value, RT,
@@ -329,16 +329,8 @@ pub fn is_root_diag(d: &Diag, root: &str) -> bool {
 
 /// parse one expression: the text is wrapped in a constant declaration
 pub fn parse_expr(text: &str) -> SResult<Rc<Expr>> {
-    let r = parse_source(&format!("const __e = {text}\n"));
-    if r.errors.is_empty() && r.decls.len() == 1 {
-        if let DeclBody::Const { expr, .. } = &r.decls[0].body {
-            return Ok(expr.clone());
-        }
-    }
-    Err(SessionError::new(format!(
-        "cannot parse expression: {}",
-        text.trim()
-    )))
+    parse_expr_text(text)
+        .ok_or_else(|| SessionError::new(format!("cannot parse expression: {}", text.trim())))
 }
 
 /// parse one module-level declaration; returns it with its name

@@ -18,6 +18,7 @@ format, the ordering and conformance rules, and the registry itself.
   | E4000–E4999 | types |
   | E5000–E5999 | evaluation |
   | E6000–E6999 | validation and binding |
+  | E7000–E7999 | rendering (tooling: [05. Renderer](../tooling/05_render.md)) |
 
 - **Codes are immutable and append-only** (D20): a code's meaning never
   changes; retired conditions keep their number reserved; new
@@ -76,34 +77,6 @@ A diagnostic serializes as:
   grammar will in practice agree on E2xxx too.)
 
 ## 12.4 Registry
-
-### E1xxx — lexical (§2.11)
-
-| Code | Condition |
-|---|---|
-| E1001 | invalid UTF-8, or byte-order mark |
-| E1002 | unterminated string literal |
-| E1003 | unterminated template literal |
-| E1004 | unterminated pattern literal |
-| E1005 | unterminated block comment |
-| E1006 | unknown escape sequence |
-| E1007 | number with leading zeros |
-| E1008 | misplaced digit separator `_` |
-| E1009 | float missing digits beside the dot |
-| E1010 | unit literal on a non-decimal base |
-| E1011 | unknown context variable (`$…`) |
-| E1012 | unknown character |
-| E1013 | keyword used as identifier |
-| E1014 | documentation comment with nothing to document |
-
-### E2xxx — syntax (ch. 11)
-
-| Code | Condition |
-|---|---|
-| E2001 | unexpected token |
-| E2002 | unclosed bracket or brace |
-| E2003 | malformed declaration |
-| E2004 | misplaced separator |
 
 ### E1xxx — lexical (§2.11)
 
@@ -221,7 +194,22 @@ A diagnostic serializes as:
 | E6001 | `assert` failed (error severity — user or default diagnostic) |
 | E6002 | dangling reference: path does not resolve, or is non-canonical (§7.5) |
 | E6003 | reference target root not in the evaluation universe |
-| E6004 | bound document is not well-formed JSON, or cannot be read (§10.2) |
+| E6004 | bound document cannot be read, or is not well-formed JSON or YAML, or uses a YAML construct outside the core schema (§10.2; the YAML reader is tooling, [05. Renderer](../tooling/05_render.md) §2) |
+
+### E7xxx — rendering (tooling: [05. Renderer](../tooling/05_render.md))
+
+The renderer is tooling, not language (§10.6, D35): these codes are
+registered here so that the band is reserved and the three
+implementations report them alike; their conditions are fixed by the
+renderer's own document.
+
+| Code | Condition |
+|---|---|
+| E7001 | a template does not parse: an unclosed or unknown tag, a tag out of place, an expression that is not a Decl expression, an include cycle (05_render §5.8) |
+| E7002 | a value with no text form in a value tag: absent, or a function (05_render §5.5) |
+| E7003 | a template file cannot be read (05_render §3.3) |
+| E7004 | an invalid `@render` annotation (05_render §3) |
+| E7005 | a fan-out path that is not a string, is empty, is absolute, leaves the destination directory, or repeats (05_render §6) |
 
 ### Warnings and information
 

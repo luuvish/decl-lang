@@ -7,7 +7,7 @@
 // language server drive it; nothing here prints, and every answer is the
 // same checker, inference, and engine the command line runs.
 import { host, resolvePath as absPath, basename, dirname, relative } from './host.ts';
-import { parseSource } from './parse.ts';
+import { parseSource, parseExprText } from './parse.ts';
 import { checkModule } from './checker.ts';
 import { loadModules } from './module.ts';
 import type { Module } from './module.ts';
@@ -112,10 +112,9 @@ const isRootDiag = (d: Diag, root: string) =>
 
 /** parse one expression: the text is wrapped in a constant declaration */
 export function parseExpr(text: string): Expr {
-  const { decls, errors } = parseSource(`const __e = ${text}\n`);
-  if (errors.length || decls.length !== 1 || decls[0].d !== 'const')
-    throw new SessionError(`cannot parse expression: ${text.trim()}`);
-  return (decls[0] as any).expr;
+  const e = parseExprText(text);
+  if (!e) throw new SessionError(`cannot parse expression: ${text.trim()}`);
+  return e;
 }
 
 /** parse one module-level declaration; returns it with its name */

@@ -23,7 +23,7 @@ from .fmt import format_source
 from .infer import STD, infer, make_ctx, type_text
 from .module import Module, load_modules
 from .package import open_package_universe, verify_lock
-from .parse import parse_source
+from .parse import parse_expr_text, parse_source
 from .semantics import (
     ABSENT,
     ArrV,
@@ -71,11 +71,10 @@ def _is_root_diag(d: dict[str, Any], root: str) -> bool:
 
 def parse_expr(text: str) -> dict[str, Any]:
     """parse one expression: the text is wrapped in a constant declaration"""
-    r = parse_source(f"const __e = {text}\n")
-    decls, errors = r["decls"], r["errors"]
-    if errors or len(decls) != 1 or decls[0]["d"] != "const":
+    e = parse_expr_text(text)
+    if e is None:
         raise SessionError(f"cannot parse expression: {text.strip()}")
-    return decls[0]["expr"]
+    return e
 
 
 def parse_decl(text: str) -> dict[str, Any]:

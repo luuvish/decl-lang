@@ -1,0 +1,769 @@
+[
+  {
+    "name": "value tags: every text form, and the root's members by name",
+    "files": {
+      "site.decl": "type Service = { name: string, port: int, public: bool, replicas?: int = 1 }\ntype Subnet = { base: string, prefix: int }\ntype Site = {\n    name: string\n    network: Subnet\n    services: Service[]\n    ratio: float\n    limit: int\n    enabled: bool\n    note?: string\n    tags: string[]\n    labels: { [string]: string }\n    latency: quantity<Time>\n    primary: ref<Service>\n}\nfunc label(s: Service): string = `${s.name}:${s.port}`\nfunc cidr(net: Subnet): string = `${net.base}/${net.prefix}`\n@render({ template: \"site.txt\" })\nexport output site: Site = {\n    name: \"edge\", network: { base: \"10.0.0.0\", prefix: 8 },\n    services: [{ name: \"a\", port: 80, public: true }, { name: \"b\", port: 443, public: false, replicas: 3 }],\n    ratio: 0.25, limit: 12000, enabled: true, tags: [\"x\", \"y\"], labels: { k: \"v\" },\n    latency: 250ms, primary: services[1],\n}\n",
+      "site.txt": "name={= name =} {= site.name =}\nratio={= ratio =} limit={= limit =} enabled={= enabled =} note={= note ?? \"none\" =}\nbig={= 1e21 =} float={= 12000.0 =} q={= latency =} ref={= primary =}\ntags={= tags =} labels={= labels =} first={= services[0] =}\nlabel={= label(services[1]) =} cidr={= network |> cidr =}\n"
+    },
+    "args": [
+      "evaluate",
+      "<dir>/site.decl",
+      "--output",
+      "site"
+    ],
+    "exit": 0,
+    "stdout": "name=edge edge\nratio=0.25 limit=12000 enabled=true note=none\nbig=1e+21 float=12000.0 q=0.25 s ref=$.services[1]\ntags=[\"x\",\"y\"] labels={\"k\":\"v\"} first={\"name\":\"a\",\"port\":80,\"public\":true,\"replicas\":1}\nlabel=b:443 cidr=10.0.0.0/8\n",
+    "stderr": ""
+  },
+  {
+    "name": "value tag: an absent member has no text form (E7002)",
+    "files": {
+      "m.decl": "@render({ template: \"t.txt\" })\nexport output o: { a: int, b: int? } = { a: 1 }\n",
+      "t.txt": "a={= a =}\nb={= b =}\n"
+    },
+    "args": [
+      "evaluate",
+      "<dir>/m.decl",
+      "--output",
+      "o"
+    ],
+    "exit": 1,
+    "stdout": "",
+    "stderr": "<dir>/m.decl: error [E4002]: required member b missing in the construction\n"
+  },
+  {
+    "name": "value tag: a function has no text form (E7002)",
+    "files": {
+      "m.decl": "func f(x: int): int = x\n@render({ template: \"t.txt\" })\nexport output o: int = 1\n",
+      "t.txt": "{= f =}\n"
+    },
+    "args": [
+      "evaluate",
+      "<dir>/m.decl",
+      "--output",
+      "o"
+    ],
+    "exit": 1,
+    "stdout": "",
+    "stderr": "t.txt: error [E7002] at 1:1: value has no text form: a function\n"
+  },
+  {
+    "name": "value tag: the language's own codes pass through (E3003, E5001)",
+    "files": {
+      "m.decl": "@render({ template: \"t.txt\" })\nexport output o: { a: int } = { a: 1 }\n",
+      "t.txt": "{= nope =}\n"
+    },
+    "args": [
+      "evaluate",
+      "<dir>/m.decl",
+      "--output",
+      "o"
+    ],
+    "exit": 1,
+    "stdout": "",
+    "stderr": "t.txt: error [E3003] at 1:1: unknown name nope\n"
+  },
+  {
+    "name": "value tag: a division by zero is E5001 at the tag",
+    "files": {
+      "m.decl": "@render({ template: \"t.txt\" })\nexport output o: { a: int } = { a: 1 }\n",
+      "t.txt": "x\n  {= a / 0 =}\n"
+    },
+    "args": [
+      "evaluate",
+      "<dir>/m.decl",
+      "--output",
+      "o"
+    ],
+    "exit": 1,
+    "stdout": "",
+    "stderr": "t.txt: error [E5001] at 2:3: division by zero\n"
+  },
+  {
+    "name": "if / elif / else",
+    "files": {
+      "m.decl": "@render({ template: \"t.txt\" })\nexport output o: { n: int } = { n: 2 }\n",
+      "t.txt": "{% if n == 1 %}\none\n{% elif n == 2 %}\ntwo\n{% else %}\nmany\n{% endif %}\n{% if n > 5 %}big{% else %}small{% endif %}\n"
+    },
+    "args": [
+      "evaluate",
+      "<dir>/m.decl",
+      "--output",
+      "o"
+    ],
+    "exit": 0,
+    "stdout": "two\nsmall",
+    "stderr": ""
+  },
+  {
+    "name": "if: a condition that is not a bool is E4001",
+    "files": {
+      "m.decl": "@render({ template: \"t.txt\" })\nexport output o: { n: int } = { n: 2 }\n",
+      "t.txt": "{% if n %}x{% endif %}\n"
+    },
+    "args": [
+      "evaluate",
+      "<dir>/m.decl",
+      "--output",
+      "o"
+    ],
+    "exit": 1,
+    "stdout": "",
+    "stderr": "t.txt: error [E4001] at 1:1: condition is not a bool\n"
+  },
+  {
+    "name": "for: loop, a filter, else on an empty array, nested loops",
+    "files": {
+      "m.decl": "@render({ template: \"t.txt\" })\nexport output o: { xs: int[], none: int[] } = { xs: [3, 4, 5, 6], none: [] }\n",
+      "t.txt": "{% for x in xs %}\n{= loop.index =}/{= loop.length =} {= x =}{% if loop.first %} first{% endif %}{% if loop.last %} last{% endif %} ({= loop.index0 =})\n{% endfor %}\n{% for x in xs if x % 2 == 0 %}\neven {= x =} #{= loop.index =} of {= loop.length =}\n{% endfor %}\n{% for x in none %}\nnever\n{% else %}\nempty\n{% endfor %}\n{% for x in xs if x > 4 %}\n{% for y in xs if y < x %}\n{= x =}>{= y =}\n{% endfor %}\n{% endfor %}\n"
+    },
+    "args": [
+      "evaluate",
+      "<dir>/m.decl",
+      "--output",
+      "o"
+    ],
+    "exit": 0,
+    "stdout": "1/4 3 first (0)\n2/4 4 (1)\n3/4 5 (2)\n4/4 6 last (3)\neven 4 #1 of 2\neven 6 #2 of 2\nempty\n5>3\n5>4\n6>3\n6>4\n6>5\n",
+    "stderr": ""
+  },
+  {
+    "name": "for k, v over an object and over a map, in canonical order",
+    "files": {
+      "m.decl": "type R = { b: int, a: int, c = a + b }\n@render({ template: \"t.txt\" })\nexport output o: { r: R, m: { [string]: int } } = { r: { a: 1, b: 2 }, m: { z: 26, y: 25 } }\n",
+      "t.txt": "{% for k, v in r %}\n{= k =}={= v =}\n{% endfor %}\n{% for k, v in m %}\n{= k =}: {= v =}\n{% endfor %}\n"
+    },
+    "args": [
+      "evaluate",
+      "<dir>/m.decl",
+      "--output",
+      "o"
+    ],
+    "exit": 0,
+    "stdout": "a=1\nb=2\nc=3\nz: 26\ny: 25\n",
+    "stderr": ""
+  },
+  {
+    "name": "for over a value that is not an array is E4001",
+    "files": {
+      "m.decl": "@render({ template: \"t.txt\" })\nexport output o: { n: int } = { n: 1 }\n",
+      "t.txt": "{% for x in n %}{= x =}{% endfor %}\n"
+    },
+    "args": [
+      "evaluate",
+      "<dir>/m.decl",
+      "--output",
+      "o"
+    ],
+    "exit": 1,
+    "stdout": "",
+    "stderr": "t.txt: error [E4001] at 1:1: for over a value that is not an array\n"
+  },
+  {
+    "name": "set: a temporary per scope, and shadowing a name in scope is E3019",
+    "files": {
+      "m.decl": "@render({ template: \"t.txt\" })\nexport output o: { xs: int[], n: int } = { xs: [1, 2, 3], n: 7 }\n",
+      "t.txt": "{% set total = xs |> std.array.sum %}\ntotal={= total =}\n{% for x in xs %}\n{% set double = x * 2 %}\n{= double =}\n{% endfor %}\n{% set n = 1 %}\n"
+    },
+    "args": [
+      "evaluate",
+      "<dir>/m.decl",
+      "--output",
+      "o"
+    ],
+    "exit": 1,
+    "stdout": "",
+    "stderr": "t.txt: error [E3019] at 7:1: n shadows a name in scope\n"
+  },
+  {
+    "name": "set: a for variable that repeats a name in scope is E3019",
+    "files": {
+      "m.decl": "@render({ template: \"t.txt\" })\nexport output o: { xs: int[], n: int } = { xs: [1], n: 7 }\n",
+      "t.txt": "{% for n in xs %}{= n =}{% endfor %}\n"
+    },
+    "args": [
+      "evaluate",
+      "<dir>/m.decl",
+      "--output",
+      "o"
+    ],
+    "exit": 1,
+    "stdout": "",
+    "stderr": "t.txt: error [E3019] at 1:1: n shadows a name in scope\n"
+  },
+  {
+    "name": "include: a fragment in the current scope, parameterized with set",
+    "files": {
+      "m.decl": "@render({ template: \"t.txt\" })\nexport output o: { xs: string[] } = { xs: [\"a\", \"b\"] }\n",
+      "t.txt": "{% for x in xs %}\n{% set svc = x %}\n{% include \"parts/block.txt\" %}\n{% endfor %}\n{% include \"parts/footer.txt\" %}\n",
+      "parts/block.txt": "  block {= svc =} ({= loop.index =})\n",
+      "parts/footer.txt": "-- {= xs |> std.array.count =} blocks\n"
+    },
+    "args": [
+      "evaluate",
+      "<dir>/m.decl",
+      "--output",
+      "o"
+    ],
+    "exit": 0,
+    "stdout": "  block a (1)\n  block b (2)\n-- 2 blocks\n",
+    "stderr": ""
+  },
+  {
+    "name": "include: what a fragment sets stays inside it",
+    "files": {
+      "m.decl": "@render({ template: \"t.txt\" })\nexport output o: int = 1\n",
+      "t.txt": "{% include \"a.txt\" %}{= inner =}\n",
+      "a.txt": "{% set inner = 5 %}"
+    },
+    "args": [
+      "evaluate",
+      "<dir>/m.decl",
+      "--output",
+      "o"
+    ],
+    "exit": 1,
+    "stdout": "",
+    "stderr": "t.txt: error [E3003] at 1:22: unknown name inner\n"
+  },
+  {
+    "name": "include: a cycle is E7001",
+    "files": {
+      "m.decl": "@render({ template: \"t.txt\" })\nexport output o: int = 1\n",
+      "t.txt": "{% include \"a.txt\" %}\n",
+      "a.txt": "x{% include \"t.txt\" %}"
+    },
+    "args": [
+      "evaluate",
+      "<dir>/m.decl",
+      "--output",
+      "o"
+    ],
+    "exit": 1,
+    "stdout": "",
+    "stderr": "a.txt: error [E7001] at 1:2: include cycle: t.txt -> a.txt -> t.txt\n"
+  },
+  {
+    "name": "include: a file that cannot be read is E7003",
+    "files": {
+      "m.decl": "@render({ template: \"t.txt\" })\nexport output o: int = 1\n",
+      "t.txt": "x\n{% include \"missing.txt\" %}\n"
+    },
+    "args": [
+      "evaluate",
+      "<dir>/m.decl",
+      "--output",
+      "o"
+    ],
+    "exit": 1,
+    "stdout": "",
+    "stderr": "t.txt: error [E7003] at 2:1: template cannot be read: missing.txt\n"
+  },
+  {
+    "name": "whitespace: trim_blocks and lstrip_blocks by default, - and + override",
+    "files": {
+      "m.decl": "@render({ template: \"t.txt\" })\nexport output o: { xs: int[] } = { xs: [1, 2] }\n",
+      "t.txt": "begin\n    {% for x in xs %}\n  item {= x =}\n    {% endfor %}\na {%- if true -%} b {%- endif -%} c\nd\n{%+ if true +%}\ne\n{% endif %}\n{= \"v\" -=}   w\nx   {=- \"y\" =}\n{# a comment\n  over lines #}z\nend\n"
+    },
+    "args": [
+      "evaluate",
+      "<dir>/m.decl",
+      "--output",
+      "o"
+    ],
+    "exit": 0,
+    "stdout": "begin\n  item 1\n  item 2\nabc\nd\n\ne\nvw\nxy\nz\nend\n",
+    "stderr": ""
+  },
+  {
+    "name": "raw: verbatim text, the delimiters included",
+    "files": {
+      "m.decl": "@render({ template: \"t.txt\" })\nexport output o: { n: int } = { n: 1 }\n",
+      "t.txt": "assign x = {{a, b}};\n{% raw %}\n{= n =} {% if %} {# c #} {{n{x}}}\n{% endraw %}\nn={= n =}\n"
+    },
+    "args": [
+      "evaluate",
+      "<dir>/m.decl",
+      "--output",
+      "o"
+    ],
+    "exit": 0,
+    "stdout": "assign x = {{a, b}};\n{= n =} {% if %} {# c #} {{n{x}}}\nn=1\n",
+    "stderr": ""
+  },
+  {
+    "name": "delimiters: declared per root, longest opener first",
+    "files": {
+      "m.decl": "@render({ template: \"t.txt\", delimiters: { value: [\"<%=\", \"%>\"], statement: [\"<%\", \"%>\"], comment: [\"<%#\", \"%>\"] } })\nexport output o: { xs: int[] } = { xs: [1, 2] }\n",
+      "t.txt": "{= not a tag =} {% nor this %} {# nor #}\n<%# a comment %>\n<% for x in xs %>\nx=<%= x %>\n<% endfor %>\n"
+    },
+    "args": [
+      "evaluate",
+      "<dir>/m.decl",
+      "--output",
+      "o"
+    ],
+    "exit": 0,
+    "stdout": "{= not a tag =} {% nor this %} {# nor #}\n\nx=1\nx=2\n",
+    "stderr": ""
+  },
+  {
+    "name": "render.json, render.yaml, render.indent",
+    "files": {
+      "m.decl": "@render({ template: \"t.txt\" })\nexport output o: { cfg: { a: int, b: string[] }, n: float } = { cfg: { a: 1, b: [\"x\", \"yes\"] }, n: 2.5 }\n",
+      "t.txt": "json: {= cfg |> render.json =}\njson2:\n{= render.json(cfg, 2) =}\nyaml:\n{= cfg |> render.yaml =}\nnested:\n  cfg:\n    {= cfg |> render.yaml |> render.indent(4) =}\nyaml4:\n{= render.yaml(cfg, 4) =}\nscalar: {= n |> render.yaml =}\n"
+    },
+    "args": [
+      "evaluate",
+      "<dir>/m.decl",
+      "--output",
+      "o"
+    ],
+    "exit": 0,
+    "stdout": "json: {\"a\":1,\"b\":[\"x\",\"yes\"]}\njson2:\n{\n  \"a\": 1,\n  \"b\": [\n    \"x\",\n    \"yes\"\n  ]\n}\nyaml:\na: 1\nb:\n  - x\n  - \"yes\"\nnested:\n  cfg:\n    a: 1\n    b:\n      - x\n      - \"yes\"\nyaml4:\na: 1\nb:\n    - x\n    - \"yes\"\nscalar: 2.5\n",
+    "stderr": ""
+  },
+  {
+    "name": "render.json with a bad indent is an error at the tag",
+    "files": {
+      "m.decl": "@render({ template: \"t.txt\" })\nexport output o: { a: int } = { a: 1 }\n",
+      "t.txt": "{= render.json(a, 99) =}\n"
+    },
+    "args": [
+      "evaluate",
+      "<dir>/m.decl",
+      "--output",
+      "o"
+    ],
+    "exit": 1,
+    "stdout": "",
+    "stderr": "t.txt: error [E4001] at 1:1: render: indent must be an integer in 0..16\n"
+  },
+  {
+    "name": "functions: a module func called directly, through the pipeline, with a lambda",
+    "files": {
+      "site.decl": "type Service = { name: string, port: int, public: bool, replicas?: int = 1 }\ntype Subnet = { base: string, prefix: int }\ntype Site = {\n    name: string\n    network: Subnet\n    services: Service[]\n    ratio: float\n    limit: int\n    enabled: bool\n    note?: string\n    tags: string[]\n    labels: { [string]: string }\n    latency: quantity<Time>\n    primary: ref<Service>\n}\nfunc label(s: Service): string = `${s.name}:${s.port}`\nfunc cidr(net: Subnet): string = `${net.base}/${net.prefix}`\nfunc ports_csv(ss: Service[]): string = std.string.join([std.string.of(s.port) for s in ss], \",\")\n@render({ template: \"nginx.conf.j2\" })\nexport output site: Site = {\n    name: \"edge\", network: { base: \"10.0.0.0\", prefix: 8 },\n    services: [{ name: \"a\", port: 80, public: true }, { name: \"b\", port: 443, public: false }, { name: \"c\", port: 8080, public: true, replicas: 2 }],\n    ratio: 0.25, limit: 1, enabled: true, tags: [], labels: {}, latency: 1ms, primary: services[0],\n}\n",
+      "nginx.conf.j2": "upstream backend {\n{% for s in services if s.public %}\n    server {= label(s) =} weight={= s.replicas =};\n{% endfor %}\n}\nallow {= network |> cidr =};\n# ports: {= services |> std.array.filter((s) => s.public) |> ports_csv =}\n"
+    },
+    "args": [
+      "evaluate",
+      "<dir>/site.decl",
+      "--output",
+      "site"
+    ],
+    "exit": 0,
+    "stdout": "upstream backend {\n    server a:80 weight=1;\n    server c:8080 weight=2;\n}\nallow 10.0.0.0/8;\n# ports: 80,8080\n",
+    "stderr": ""
+  },
+  {
+    "name": "E7001: an unknown tag",
+    "files": {
+      "m.decl": "@render({ template: \"t.txt\" })\nexport output o: int = 1\n",
+      "t.txt": "{% macro x %}\n"
+    },
+    "args": [
+      "evaluate",
+      "<dir>/m.decl",
+      "--output",
+      "o"
+    ],
+    "exit": 1,
+    "stdout": "",
+    "stderr": "t.txt: error [E7001] at 1:1: unknown tag {% macro %}\n"
+  },
+  {
+    "name": "E7001: an unclosed if",
+    "files": {
+      "m.decl": "@render({ template: \"t.txt\" })\nexport output o: int = 1\n",
+      "t.txt": "a\n{% if true %}\nb\n"
+    },
+    "args": [
+      "evaluate",
+      "<dir>/m.decl",
+      "--output",
+      "o"
+    ],
+    "exit": 1,
+    "stdout": "",
+    "stderr": "t.txt: error [E7001] at 2:1: unclosed {% if %}\n"
+  },
+  {
+    "name": "E7001: an endfor without a for",
+    "files": {
+      "m.decl": "@render({ template: \"t.txt\" })\nexport output o: int = 1\n",
+      "t.txt": "{% endfor %}\n"
+    },
+    "args": [
+      "evaluate",
+      "<dir>/m.decl",
+      "--output",
+      "o"
+    ],
+    "exit": 1,
+    "stdout": "",
+    "stderr": "t.txt: error [E7001] at 1:1: {% endfor %} without {% for %}\n"
+  },
+  {
+    "name": "E7001: an unclosed value tag",
+    "files": {
+      "m.decl": "@render({ template: \"t.txt\" })\nexport output o: int = 1\n",
+      "t.txt": "a {= o \n"
+    },
+    "args": [
+      "evaluate",
+      "<dir>/m.decl",
+      "--output",
+      "o"
+    ],
+    "exit": 1,
+    "stdout": "",
+    "stderr": "t.txt: error [E7001] at 1:3: unclosed {= tag\n"
+  },
+  {
+    "name": "E7001: an expression that does not parse",
+    "files": {
+      "m.decl": "@render({ template: \"t.txt\" })\nexport output o: int = 1\n",
+      "t.txt": "{= o + =}\n"
+    },
+    "args": [
+      "evaluate",
+      "<dir>/m.decl",
+      "--output",
+      "o"
+    ],
+    "exit": 1,
+    "stdout": "",
+    "stderr": "t.txt: error [E7001] at 1:1: expression does not parse: o +\n"
+  },
+  {
+    "name": "E7001: an else after an else",
+    "files": {
+      "m.decl": "@render({ template: \"t.txt\" })\nexport output o: int = 1\n",
+      "t.txt": "{% if true %}{% else %}{% else %}{% endif %}\n"
+    },
+    "args": [
+      "evaluate",
+      "<dir>/m.decl",
+      "--output",
+      "o"
+    ],
+    "exit": 1,
+    "stdout": "",
+    "stderr": "t.txt: error [E7001] at 1:24: {% else %} after {% else %}\n"
+  },
+  {
+    "name": "--template overrides the declared template; root=path names one root",
+    "files": {
+      "m.decl": "@render({ template: \"a.txt\" })\nexport output o: int = 1\nexport output p: int = 2\n",
+      "a.txt": "a {= o =}\n",
+      "b.txt": "b {= o =}\n",
+      "c.txt": "c {= p =}\n"
+    },
+    "args": [
+      "evaluate",
+      "<dir>/m.decl",
+      "--output",
+      "o",
+      "--template",
+      "<dir>/b.txt",
+      "--output",
+      "p=<dir>/p.out",
+      "--template",
+      "p=<dir>/c.txt"
+    ],
+    "exit": 0,
+    "stdout": "b 1\n",
+    "stderr": "",
+    "after": {
+      "p.out": "c 2\n"
+    }
+  },
+  {
+    "name": "--template - reads the template from standard input",
+    "files": {
+      "m.decl": "export output o: { a: int } = { a: 4 }\n"
+    },
+    "args": [
+      "evaluate",
+      "<dir>/m.decl",
+      "--output",
+      "o",
+      "--template",
+      "-"
+    ],
+    "stdin": "a is {= a =}\n",
+    "exit": 0,
+    "stdout": "a is 4\n",
+    "stderr": ""
+  },
+  {
+    "name": "--template root= of a root that is not emitted is a usage error",
+    "files": {
+      "m.decl": "export output o: int = 1\n",
+      "t.txt": "x"
+    },
+    "args": [
+      "evaluate",
+      "<dir>/m.decl",
+      "--output",
+      "o",
+      "--template",
+      "q=<dir>/t.txt"
+    ],
+    "exit": 2,
+    "stdout": "",
+    "stderr": "--template q=: no --output q\n"
+  },
+  {
+    "name": "--template root= twice for one root is a usage error",
+    "files": {
+      "m.decl": "export output o: int = 1\n",
+      "t.txt": "x"
+    },
+    "args": [
+      "evaluate",
+      "<dir>/m.decl",
+      "--output",
+      "o",
+      "--template",
+      "o=<dir>/t.txt",
+      "--template",
+      "o=<dir>/t.txt"
+    ],
+    "exit": 2,
+    "stdout": "",
+    "stderr": "--template o= given twice\n"
+  },
+  {
+    "name": "E7003: the declared template cannot be read",
+    "files": {
+      "m.decl": "@render({ template: \"missing.txt\" })\nexport output o: int = 1\nexport output p: int = 2\n"
+    },
+    "args": [
+      "evaluate",
+      "<dir>/m.decl",
+      "--output",
+      "o",
+      "--output",
+      "p=<dir>/p.json"
+    ],
+    "exit": 1,
+    "stdout": "",
+    "stderr": "missing.txt: error [E7003] at o: template cannot be read\n",
+    "after": {
+      "p.json": "2\n"
+    }
+  },
+  {
+    "name": "the aggregate ignores templates; --json carries a template root's text as a string",
+    "files": {
+      "m.decl": "@render({ template: \"t.txt\" })\nexport output o: { a: int } = { a: 1 }\n",
+      "t.txt": "a={= a =}\n"
+    },
+    "args": [
+      "evaluate",
+      "<dir>/m.decl",
+      "--json",
+      "--output",
+      "o"
+    ],
+    "exit": 0,
+    "stdout": "{\"ok\":true,\"value\":\"a=1\\n\",\"diagnostics\":[]}\n",
+    "stderr": ""
+  },
+  {
+    "name": "the aggregate: templates do not apply",
+    "files": {
+      "m.decl": "@render({ template: \"t.txt\" })\nexport output o: { a: int } = { a: 1 }\n",
+      "t.txt": "a={= a =}\n"
+    },
+    "args": [
+      "evaluate",
+      "<dir>/m.decl"
+    ],
+    "exit": 0,
+    "stdout": "{\"o\":{\"a\":1}}\n",
+    "stderr": ""
+  },
+  {
+    "name": "E7004: an unknown key, and the other roots are still emitted",
+    "files": {
+      "m.decl": "@render({ colour: \"red\" })\nexport output o: int = 1\nexport output p: int = 2\n"
+    },
+    "args": [
+      "evaluate",
+      "<dir>/m.decl",
+      "--output",
+      "o=<dir>/o.json",
+      "--output",
+      "p"
+    ],
+    "exit": 1,
+    "stdout": "2\n",
+    "stderr": "<dir>/m.decl: error [E7004] at o: @render: unknown key colour\n",
+    "after": {
+      "o.json": null
+    }
+  },
+  {
+    "name": "E7004: indent out of range, format unknown, two @render, not an object",
+    "files": {
+      "m.decl": "@render({ indent: 17 })\nexport output a: int = 1\n@render({ format: \"toml\" })\nexport output b: int = 1\n@render({ file: \"x\" })\n@render({ file: \"y\" })\nexport output c: int = 1\n@render(\"x\")\nexport output d: int = 1\n@render({ delimiters: { value: [\"\", \"}}\"] } })\nexport output e: int = 1\n@render({ delimiters: { value: [\"{%\", \"%}\"] } })\nexport output f: int = 1\n@render({ each: \"path\" })\nexport output g: int = 1\n"
+    },
+    "args": [
+      "evaluate",
+      "<dir>/m.decl",
+      "--output",
+      "a=<dir>/a",
+      "--output",
+      "b=<dir>/b",
+      "--output",
+      "c=<dir>/c",
+      "--output",
+      "d=<dir>/d",
+      "--output",
+      "e=<dir>/e",
+      "--output",
+      "f=<dir>/f",
+      "--output",
+      "g=<dir>/g"
+    ],
+    "exit": 1,
+    "stdout": "",
+    "stderr": "<dir>/m.decl: error [E7004] at a: @render: indent must be an integer in 0..16\n<dir>/m.decl: error [E7004] at b: @render: format must be \"json\" or \"yaml\"\n<dir>/m.decl: error [E7004] at c: more than one @render\n<dir>/m.decl: error [E7004] at d: @render takes one object literal\n<dir>/m.decl: error [E7004] at e: @render: delimiters: value must be a pair of non-empty strings\n<dir>/m.decl: error [E7004] at f: @render: delimiters: the three openers must differ\n<dir>/m.decl: error [E7004] at g: @render: each on a root that is neither an array nor a map\n"
+  },
+  {
+    "name": "@render on an input is an unknown annotation (W0001), the input emitted as JSON",
+    "files": {
+      "m.decl": "@render({ format: \"yaml\" })\ninput i: { a: int } = { a: 1 }\nexport output o: int = i.a\n"
+    },
+    "args": [
+      "evaluate",
+      "<dir>/m.decl",
+      "--output",
+      "i"
+    ],
+    "exit": 0,
+    "stdout": "{\"a\":1}\n",
+    "stderr": "<dir>/m.decl: warn [W0001]: unknown annotation @render\n"
+  },
+  {
+    "name": "fan-out: an array with each: path through a template, into a directory",
+    "files": {
+      "m.decl": "type Unit = { name: string, path = `units/${name}.service`, port: int }\n@render({ each: \"path\", template: \"unit.j2\" })\nexport output units: Unit[] = [{ name: \"auth\", port: 1 }, { name: \"web\", port: 2 }]\n",
+      "unit.j2": "[Unit]\nDescription={= name =} ({= key =}) of {= units |> std.array.count =}\nPort={= item.port =}\n"
+    },
+    "args": [
+      "evaluate",
+      "<dir>/m.decl",
+      "--output",
+      "units=<dir>/out"
+    ],
+    "exit": 0,
+    "stdout": "",
+    "stderr": "",
+    "after": {
+      "out/units/auth.service": "[Unit]\nDescription=auth (0) of 2\nPort=1\n",
+      "out/units/web.service": "[Unit]\nDescription=web (1) of 2\nPort=2\n"
+    }
+  },
+  {
+    "name": "fan-out: a map with each: $key in YAML, the declared file as the directory",
+    "files": {
+      "m.decl": "type Manifest = { kind: string, name: string }\n@render({ each: \"$key\", format: \"yaml\", file: \"k8s\" })\nexport output manifests: { [string]: Manifest } = { `${n}.yaml`: { kind: \"Service\", name: n } for n in [\"a\", \"b\"] }\n"
+    },
+    "args": [
+      "evaluate",
+      "<dir>/m.decl",
+      "--output",
+      "manifests=<dir>/dist"
+    ],
+    "exit": 0,
+    "stdout": "",
+    "stderr": "",
+    "after": {
+      "dist/a.yaml": "kind: Service\nname: a\n",
+      "dist/b.yaml": "kind: Service\nname: b\n"
+    }
+  },
+  {
+    "name": "fan-out: the aggregate carries the root as one value; --output name to stdout is refused",
+    "files": {
+      "m.decl": "type Unit = { name: string, path = name }\n@render({ each: \"path\" })\nexport output units: Unit[] = [{ name: \"a\" }]\n"
+    },
+    "args": [
+      "evaluate",
+      "<dir>/m.decl",
+      "--output",
+      "units=-"
+    ],
+    "exit": 2,
+    "stdout": "",
+    "stderr": "--output units=-: a fan-out root cannot go to stdout\n"
+  },
+  {
+    "name": "fan-out: without a directory is a usage error",
+    "files": {
+      "m.decl": "type Unit = { name: string, path = name }\n@render({ each: \"path\" })\nexport output units: Unit[] = [{ name: \"a\" }]\n"
+    },
+    "args": [
+      "evaluate",
+      "<dir>/m.decl",
+      "--output",
+      "units"
+    ],
+    "exit": 2,
+    "stdout": "",
+    "stderr": "--output units: a fan-out root needs a directory (units=dir, or file in @render)\n"
+  },
+  {
+    "name": "E7005: a path that repeats, an absolute one, one leaving the directory, a non-string, a missing member",
+    "files": {
+      "m.decl": "type U = { name: string, path: string }\n@render({ each: \"path\" })\nexport output rep: U[] = [{ name: \"a\", path: \"x\" }, { name: \"b\", path: \"x\" }]\n@render({ each: \"path\" })\nexport output abs: U[] = [{ name: \"a\", path: \"/x\" }]\n@render({ each: \"path\" })\nexport output up: U[] = [{ name: \"a\", path: \"a/../x\" }]\n@render({ each: \"name\" })\nexport output nostr: { name: int, path: string }[] = [{ name: 1, path: \"x\" }]\n@render({ each: \"nope\" })\nexport output nomember: U[] = [{ name: \"a\", path: \"x\" }]\n@render({ each: \"$key\" })\nexport output nokey: U[] = [{ name: \"a\", path: \"x\" }]\n"
+    },
+    "args": [
+      "evaluate",
+      "<dir>/m.decl",
+      "--output",
+      "rep=<dir>/o1",
+      "--output",
+      "abs=<dir>/o2",
+      "--output",
+      "up=<dir>/o3",
+      "--output",
+      "nostr=<dir>/o4",
+      "--output",
+      "nomember=<dir>/o5",
+      "--output",
+      "nokey=<dir>/o6"
+    ],
+    "exit": 1,
+    "stdout": "",
+    "stderr": "<dir>/m.decl: error [E7005] at rep[1]: fan-out path repeats: x\n<dir>/m.decl: error [E7005] at abs[0]: fan-out path is absolute: /x\n<dir>/m.decl: error [E7005] at up[0]: fan-out path leaves the destination directory: a/../x\n<dir>/m.decl: error [E7005] at nostr[0]: fan-out path is not a string\n<dir>/m.decl: error [E7005] at nomember[0]: fan-out path: the element has no member nope\n<dir>/m.decl: error [E7005] at nokey[0]: fan-out path: $key names no key (the root is an array)\n",
+    "after": {
+      "o1/x": null
+    }
+  },
+  {
+    "name": "a root that fails validation: an error means nothing is emitted, as evaluate has it",
+    "files": {
+      "m.decl": "type T = { n: int, assert positive: n > 0 }\n@render({ template: \"t.txt\" })\nexport output bad: T = { n: -1 }\n@render({ template: \"t.txt\" })\nexport output good: T = { n: 1 }\n",
+      "t.txt": "n={= n =}\n"
+    },
+    "args": [
+      "evaluate",
+      "<dir>/m.decl",
+      "--output",
+      "bad=<dir>/bad.txt",
+      "--output",
+      "good=<dir>/good.txt"
+    ],
+    "exit": 1,
+    "stdout": "",
+    "stderr": "<dir>/m.decl: error [E6001] T.positive at bad: assert positive failed\n",
+    "after": {
+      "bad.txt": null,
+      "good.txt": null
+    }
+  }
+]
