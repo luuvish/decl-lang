@@ -61,6 +61,9 @@ pub struct Engine {
     /// the edges being computed: a query for one of them from inside its own
     /// computation is unanswerable in this round (the member is excluded)
     computing_edges: RefCell<HashSet<String>>,
+    /// the depth of the forcing stack when each edge computation began: a
+    /// slot forcing below that depth waits on the answer the edge serves
+    edge_bases: RefCell<Vec<usize>>,
     /// the environments whose constants this engine forced
     const_envs: RefCell<Vec<Rc<Env>>>,
     /// the answers' references into the previous round, by identity
@@ -352,6 +355,7 @@ impl Engine {
             snap: RefCell::new(None),
             queried: RefCell::new(BTreeSet::new()),
             computing_edges: RefCell::new(HashSet::new()),
+            edge_bases: RefCell::new(vec![]),
             const_envs: RefCell::new(vec![]),
             snap_refs: RefCell::new(HashMap::new()),
             mat_cache: RefCell::new(HashMap::new()),
@@ -1957,7 +1961,11 @@ impl Engine {
             .get(type_name)
             .cloned()
             .unwrap_or_default();
+        self.edge_bases
+            .borrow_mut()
+            .push(self.computing.borrow().len());
         let edge = self.edge_of(&insts, member);
+        self.edge_bases.borrow_mut().pop();
         self.computing_edges.borrow_mut().remove(&key);
         self.snap
             .borrow_mut()
@@ -3109,6 +3117,14 @@ impl Engine {
             inst.borrow_mut().slot_mut(name).unwrap().state = SlotState::Unforced;
         }
         if state == SlotState::Forcing {
+            // re-entered from inside an edge computation it was waiting on: the
+            // candidate reading it is unanswerable in this round, not a cycle
+            if let Some(&base) = self.edge_bases.borrow().last() {
+                let at = self.computing.borrow().iter().position(|k| *k == key);
+                if at.is_none_or(|i| i < base) {
+                    return Err(Fail::Defer);
+                }
+            }
             self.env.report(Diag::error(
                 format!("dependency cycle at {name}"),
                 path_str(&mp, None),

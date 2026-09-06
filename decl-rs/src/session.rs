@@ -1451,7 +1451,7 @@ impl Session {
         let eng = Engine::evaluate(&entry.env, &bind);
         out.session_roots = session_roots;
         out.eng = Some(eng.clone());
-        out.timing.bind = ms(t2) - ms(t3);
+        out.timing.bind = t3.duration_since(t2).as_secs_f64() * 1000.0; // between two instants: never negative
         eng.validate_all("");
         out.diags = entry.env.diagnostics_vec(); // sorted by drive's caller? no: sorted here (§6.7)
         let sorted = sort_diags(out.diags.clone());

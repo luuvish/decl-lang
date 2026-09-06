@@ -156,6 +156,9 @@ class Engine:
         # the edges being computed: a query for one of them from inside its own
         # computation is unanswerable in this round (the member is excluded)
         self.computing_edges: set[str] = set()
+        # the depth of the forcing stack when each edge computation began: a
+        # slot forcing below that depth waits on the answer the edge serves
+        self.edge_bases: list[int] = []
         self.const_envs: list[Env] = []
         env.tagger = lambda: self.computing[-1] if self.computing else None
         env.const_eval = lambda name: self.force_const_in(env, name, "")
@@ -1110,9 +1113,11 @@ class Engine:
             if key in self.computing_edges:
                 raise DeferSig()
             self.computing_edges.add(key)
+            self.edge_bases.append(len(self.computing))
             try:
                 edge = self.edge_of(snap["insts"].get(type_name, []), member)
             finally:
+                self.edge_bases.pop()
                 self.computing_edges.discard(key)
             snap["edges"][key] = edge
         return edge
@@ -1740,6 +1745,12 @@ class Engine:
                 raise DeferSig()  # known to wait for phase 2: not attempted again
             s.state = "unforced"
         if s.state == "forcing":
+            # re-entered from inside an edge computation it was waiting on: the
+            # candidate reading it is unanswerable in this round, not a cycle
+            if self.edge_bases:
+                at = self.computing.index(key) if key in self.computing else -1
+                if at < self.edge_bases[-1]:
+                    raise DeferSig()
             self.env.report(
                 {
                     "severity": "error",

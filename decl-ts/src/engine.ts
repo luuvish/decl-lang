@@ -150,6 +150,9 @@ export class Engine {
   // the edges being computed: a query for one of them from inside its own
   // computation is unanswerable in this round (the member is excluded)
   computingEdges = new Set<string>();
+  // the depth of the forcing stack when each edge computation began: a
+  // slot forcing below that depth waits on the answer the edge serves
+  edgeBases: number[] = [];
   constEnvs = new Set<Env>();
   static readonly ROUNDS = 8;
   /** the roots this engine's expressions read: its own universe once frozen */
@@ -1072,9 +1075,11 @@ export class Engine {
     if (!edge) {
       if (this.computingEdges.has(key)) throw new DeferSig();
       this.computingEdges.add(key);
+      this.edgeBases.push(this.computing.length);
       try {
         edge = this.edgeOf(this.snap!.insts.get(typeName) ?? [], member);
       } finally {
+        this.edgeBases.pop();
         this.computingEdges.delete(key);
       }
       this.snap!.edges.set(key, edge);
@@ -1712,6 +1717,10 @@ export class Engine {
       s.state = 'unforced';
     }
     if (s.state === 'forcing') {
+      // re-entered from inside an edge computation it was waiting on: the
+      // candidate reading it is unanswerable in this round, not a cycle
+      const base = this.edgeBases[this.edgeBases.length - 1];
+      if (base !== undefined && this.computing.indexOf(key) < base) throw new DeferSig();
       this.env.report({
         severity: 'error',
         message: `dependency cycle at ${name}`,

@@ -350,8 +350,10 @@ type Service = {
   evaluation is complete at the first round whose queried edges (every
   referrer of every queried `(T, "m")` and the places its `m` refers
   to) equal the previous round's. A round never sees what it creates
-  itself, so demand order cannot leak into an answer; when the rounds
-  end, every answer holds over the universe that is the result. A
+  itself — a candidate whose `m` itself waits on an answer of the
+  round is not a cycle but a referrer the *next* round finds — so
+  demand order cannot leak into an answer; when the rounds end, every
+  answer holds over the universe that is the result. A
   universe still changing after eight rounds — a link that exists
   exactly when its target has no link — is an error (E5009) at the
   first referrer, in canonical order, whose entry still differs, and

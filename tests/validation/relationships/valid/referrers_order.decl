@@ -1,0 +1,24 @@
+// the answer a port waits on is demanded before the link that refers to
+// the port is computed, and that link's target reads a member of the
+// port that depends on the answer: the link is a referrer the next
+// round finds, not a dependency cycle — the answer never depends on
+// demand order (§7.6)
+type Port = {
+    $key: string
+    inbound$ = $referrers(Link, "target")
+    // a port keeps taking links while it has fewer than a hundred
+    open = std.array.count(inbound$) < 100
+    degree: int = std.array.count(inbound$)
+}
+type Link = {
+    $parent: ref<{ ports: { [string]: Port }, ... }>
+    name: string
+    // the link lands on its named port while that port is open, else on the spare
+    target: ref<Port> =
+        if ($parent.ports[name]?.open ?? false) then $parent.ports[name] else $parent.ports["spare"]
+}
+type Hub = {
+    ports: { [string]: Port } = { a: {}, spare: {} }
+    links: Link[] = [{ name: "a" }]
+}
+export output hub: Hub = {}
