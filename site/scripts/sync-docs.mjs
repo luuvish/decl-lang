@@ -6,6 +6,7 @@
 import { readFileSync, writeFileSync, mkdirSync, rmSync, readdirSync, existsSync, statSync } from 'node:fs';
 import { resolve, dirname, posix } from 'node:path';
 import { execFileSync } from 'node:child_process';
+import { createRequire } from 'node:module';
 
 const SITE = resolve(import.meta.dirname, '..');
 const ROOT = resolve(SITE, '..');
@@ -14,6 +15,8 @@ const SAMPLES = resolve(SITE, 'src/samples/synced');
 const BASE = (process.env.SITE_BASE ?? '/decl-lang').replace(/\/$/, '');
 const REPO = 'https://github.com/luuvish/decl-lang';
 const CLI = resolve(ROOT, 'decl-ts/src/cli.ts');
+// the specification's version is the language's: the major and minor of the reference implementation
+const SPEC = createRequire(import.meta.url)('decl-lang/package.json').version.split('.').slice(0, 2).join('.');
 
 /** repo-relative source path -> site route (no base, no trailing slash) */
 const routes = new Map();
@@ -174,7 +177,7 @@ for (const p of pages) {
   };
   let banner = '';
   if (p.group === 'specification') {
-    banner = ':::note[Normative]\nThis chapter is part of the frozen v0.2 specification — the single source of truth for every implementation. Changes land as recorded [revisions](' + BASE + '/revisions/).\n:::\n\n';
+    banner = ':::note[Normative]\nThis chapter is part of the frozen v' + SPEC + ' specification — the single source of truth for every implementation. Changes land as recorded [revisions](' + BASE + '/revisions/).\n:::\n\n';
   }
   write(p.file ?? p.route, frontmatter(fm) + banner + md.trimStart());
   n++;

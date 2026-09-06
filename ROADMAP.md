@@ -29,7 +29,7 @@ here, and nothing was migrated from earlier work.
 | 6 | REPL, language server & editors | `decl repl`, `decl-lsp` v2/v3, `vscode-decl`, `zed-decl` | **delivered — 2026-09-05**; v0.3.0 released 2026-09-05 |
 | 7 | Conformance depth | the corpora cover every surface: the command line, an API corpus, a language-server corpus, the goldens | **done — 2026-09-05** |
 | 8 | Crate documentation | rustdoc on docs.rs; the Python and JavaScript API docs to the same bar | **done — 2026-09-06** |
-| 9 | Website | design, content, playground | planned |
+| 9 | Website | design, content, playground | in progress — the identity and theme landed 2026-09-06 |
 | 10 | Renderer | `--format yaml`, `decl render` with a template dialect | planned |
 
 ---
@@ -304,6 +304,13 @@ the generated documentation.
   library as a browsable reference; the stale version notes
 - Playground: an example picker, bound input documents, shareable URLs,
   diagnostics in place — [site/README.md](site/README.md)
+
+**Delivered (2026-09-06)**: the identity — the mark ⊑, the Graphite
+palette in both themes, Literata / IBM Plex Sans / IBM Plex Mono — as
+the site's theme: tokens generated from one palette, the code-block
+themes and the playground editor on the same six syntax roles, the
+logo, favicon, and social card, the landing page opening with the
+sign and its evaluated output (site/README.md, "The identity").
 
 **Exit criteria**: every ```decl block on the site evaluates clean · the
 playground runs every example · the site builds from `docs/` as before.

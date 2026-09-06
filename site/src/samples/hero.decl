@@ -10,7 +10,7 @@ type Service = {
 }
 
 // generate: values from the description
-output demo: Service[] = [
+export output demo: Service[] = [
     { name: "gateway" }
     { name: "auth", port: 9001, replicas: 2 }
 ]

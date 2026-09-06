@@ -40,6 +40,9 @@ site/src/content/docs/tooling/
 site/src/content/docs/revisions.md
 site/src/content/docs/documentation.md
 site/src/samples/synced/
+site/src/styles/tokens.css
+site/public/og.png
+site/public/favicon.png
 
 # the editor extensions: bundles, packages, downloaded test hosts
 extension/vscode/server/

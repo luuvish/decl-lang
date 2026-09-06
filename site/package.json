@@ -6,20 +6,27 @@
   "scripts": {
     "sync": "node scripts/sync-docs.mjs",
     "playground": "node scripts/playground.mjs",
-    "prepare:content": "npm run sync && npm run playground",
+    "prepare:content": "npm run sync && npm run playground && npm run brand",
     "dev": "npm run prepare:content && astro dev",
     "build": "npm run prepare:content && astro build --force",
-    "preview": "astro preview"
+    "preview": "astro preview",
+    "brand": "node scripts/brand.mjs"
   },
   "dependencies": {
-    "decl-lang": "0.3.0",
     "@astrojs/starlight": "^0.41.11",
     "@codemirror/commands": "^6.11.0",
     "@codemirror/language": "^6.12.4",
     "@codemirror/state": "^6.7.2",
     "@codemirror/view": "^6.43.10",
+    "@fontsource-variable/literata": "^5.3.0",
+    "@fontsource/ibm-plex-mono": "^5.3.0",
+    "@fontsource/ibm-plex-sans": "^5.3.0",
     "@lezer/highlight": "^1.2.1",
     "astro": "^7.2.10",
-    "codemirror": "^6.0.2"
+    "codemirror": "^6.0.2",
+    "decl-lang": "0.3.0"
+  },
+  "devDependencies": {
+    "opentype.js": "^2.0.0"
   }
 }

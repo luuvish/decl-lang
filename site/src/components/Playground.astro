@@ -85,7 +85,10 @@ const base = import.meta.env.BASE_URL;
           '.cm-scroller': { fontFamily: 'var(--__sl-font-mono, ui-monospace, monospace)', lineHeight: '1.5' },
           '.cm-line, .cm-gutterElement': { marginTop: '0' },
           '.cm-gutters': { backgroundColor: 'var(--sl-color-bg-nav)', color: 'var(--sl-color-gray-3)', borderRight: '1px solid var(--sl-color-hairline)' },
-          '.cm-activeLine, .cm-activeLineGutter': { backgroundColor: 'var(--sl-color-gray-6)' },
+          '.cm-activeLine, .cm-activeLineGutter': { backgroundColor: 'var(--decl-field)' },
+          '.cm-selectionBackground, &.cm-focused .cm-selectionBackground, .cm-content ::selection': { backgroundColor: 'var(--decl-tint) !important' },
+          '.cm-cursor, .cm-dropCursor': { borderLeftColor: 'var(--sl-color-white)' },
+          '.cm-selectionMatch': { backgroundColor: 'var(--decl-field)' },
           '&.cm-focused': { outline: 'none' },
         }),
         EditorView.updateListener.of(u => {
@@ -212,7 +215,7 @@ const base = import.meta.env.BASE_URL;
     height: calc(100vh - 17rem);
     min-height: 32rem;
     border: 1px solid var(--sl-color-hairline);
-    border-radius: 0.5rem;
+    border-radius: var(--decl-radius, 0.125rem);
     overflow: hidden;
     background: var(--sl-color-bg-nav);
   }
@@ -250,13 +253,13 @@ const base = import.meta.env.BASE_URL;
     line-height: 1.4;
     padding: 0.25rem 0.6rem;
     border: 1px solid var(--sl-color-hairline);
-    border-radius: 0.3rem;
+    border-radius: var(--decl-radius, 0.125rem);
     background: var(--sl-color-bg);
     color: var(--sl-color-text);
     cursor: pointer;
   }
   .pg-bar select { max-width: 11rem; }
-  .pg-bar button:hover { border-color: var(--sl-color-accent); }
+  .pg-bar button:hover { border-color: var(--sl-color-white); color: var(--sl-color-white); }
   .pg-tabbar { grid-area: tabs; align-items: stretch; }
   .pg-status {
     align-self: center;
@@ -301,8 +304,8 @@ const base = import.meta.env.BASE_URL;
     cursor: pointer;
   }
   .pg-tabs [role="tab"]:hover { color: var(--sl-color-text); }
-  .pg-tabs [role="tab"].active { color: var(--sl-color-text); border-bottom-color: var(--sl-color-accent); }
-  .pg-tabs [role="tab"]:focus-visible { outline: 2px solid var(--sl-color-accent); outline-offset: -2px; }
+  .pg-tabs [role="tab"].active { color: var(--sl-color-white); border-bottom-color: var(--sl-color-white); }
+  .pg-tabs [role="tab"]:focus-visible { outline: 2px solid var(--sl-color-white); outline-offset: -2px; }
   .pg-count {
     display: inline-block;
     min-width: 1.4em;
@@ -315,7 +318,7 @@ const base = import.meta.env.BASE_URL;
     text-align: center;
     text-transform: none;
   }
-  .pg-count.is-error { background: var(--sl-color-red, #dc2626); color: #fff; }
+  .pg-count.is-error { background: var(--decl-error); color: var(--sl-color-black); }
   .pg-count[hidden] { display: none; }
   .pg-pane {
     flex: 1;
@@ -331,9 +334,13 @@ const base = import.meta.env.BASE_URL;
   .pg-diags { white-space: normal; }
   #pg-diags ul { list-style: none; padding: 0; margin: 0; }
   #pg-diags li { padding: 0.35rem 0.5rem; border-left: 3px solid var(--sl-color-gray-4); margin-bottom: 0.35rem; font-family: var(--__sl-font-mono, ui-monospace, monospace); font-size: 0.8rem; }
-  #pg-diags li.sev-error { border-left-color: var(--sl-color-red, #dc2626); }
-  #pg-diags li.sev-warn { border-left-color: var(--sl-color-orange, #f59e0b); }
-  #pg-diags li.sev-info { border-left-color: var(--sl-color-blue, #2563eb); }
+  #pg-diags li.sev-error { border-left-color: var(--decl-error); }
+  #pg-diags li.sev-warn { border-left-color: var(--decl-warning); }
+  #pg-diags li.sev-info { border-left-color: var(--decl-info); }
+  #pg-diags li b { text-transform: uppercase; font-size: 0.7rem; letter-spacing: 0.06em; }
+  #pg-diags li.sev-error b { color: var(--decl-error); }
+  #pg-diags li.sev-warn b { color: var(--decl-warning); }
+  #pg-diags li.sev-info b { color: var(--decl-info); }
   #pg-diags .path { color: var(--sl-color-gray-3); }
   .pg-empty { color: var(--sl-color-gray-3); margin: 0; }
 </style>

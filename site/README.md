@@ -21,6 +21,44 @@ Actions, once).
   wasm files, which `scripts/playground.mjs` copies into
   `public/playground/`.
 
+## The identity
+
+The site is the language's visual identity, and the identity is one
+rule and one drawing. The **mark** is the subsumption sign ⊑, the
+relation every judgement Decl makes is an instance of (`v ⊑ T`): a
+24-unit bracket of 4-unit stroke over a bar, one colour, drawn at the
+weight of the wordmark beside it, `decl` in IBM Plex Mono 600. The
+**palette** is Graphite: no accent hue. Reading text is graphite, a
+soft near-black; anything you can act on (a link, a button, the
+current page, the lockup) is ink, the darkest value on the page, and
+links are underlined besides; the current page sits on a grey field
+with a two-pixel ink bar; selection and search hits take a tint of the
+one colour the site already has, the blue that types are set in. The
+only chroma on a reading page is the code: six syntax roles (keywords
+in bold ink, types blue, strings warm, numbers and quantities green,
+comments quiet and italic, punctuation grey) and the four severities.
+The **faces**: Literata for prose and headings, IBM Plex Sans for the
+interface, IBM Plex Mono for code and the wordmark, with coding
+ligatures off so `..`, `||`, and `!=` look like what you type;
+self-hosted from Fontsource. Square corners, hairlines, no shadows.
+
+Where it lives:
+
+- `brand/palette.mjs` — both themes, the syntax roles, the severities,
+  and the mark's path, as data; `brand/syntax.mjs` builds the two
+  code-block themes from it.
+- `scripts/brand.mjs` (run by `prepare:content`) — writes
+  `src/styles/tokens.css` (the custom properties of both themes),
+  `public/og.png` (the social card, text set as outlines from the
+  same fonts), and `public/favicon.png`; all three gitignored.
+- `src/styles/custom.css` — everything that is not a colour: the
+  faces, the scale, the ink rule, the sidebar, the surfaces.
+- `src/assets/sign-light.svg`, `sign-dark.svg` — the mark, Starlight's
+  logo beside the title; `public/favicon.svg` — the mark on its tile,
+  ink for dark tabs and paper for light ones through a media query.
+- `src/components/decl-mode.ts` — the playground editor reads the same
+  six roles as `--decl-syn-*`.
+
 ```bash
 npm install                       # once, at the repository root (npm workspaces)
 cd site

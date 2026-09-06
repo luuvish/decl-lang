@@ -15,6 +15,10 @@ hero:
     - text: Install
       link: /decl-lang/start/install/
       variant: minimal
+  image:
+    light: ../../assets/sign-light.svg
+    dark: ../../assets/sign-dark.svg
+    alt: 'The subsumption sign, value ⊑ type'
 ---
 
 import { Card, CardGrid, Code, Tabs, TabItem, LinkCard } from '@astrojs/starlight/components';
@@ -79,7 +83,7 @@ decl validate services.decl --input deployed=prod.json
 
 <CardGrid>
   <LinkCard title="Decl by example" href="/decl-lang/guide/01_overview_by_example/" description="One scenario end to end — describe, generate, validate — with the JSON and diagnostics it produces." />
-  <LinkCard title="Specification" href="/decl-lang/specification/01_introduction/" description="The normative v0.2 specification: types, expressions, constraints, modules, semantics, grammar, errors, and the standard library." />
+  <LinkCard title="Specification" href="/decl-lang/specification/01_introduction/" description="The normative specification: types, expressions, constraints, modules, semantics, grammar, errors, and the standard library." />
   <LinkCard title="Examples" href="/decl-lang/examples/" description="A hardware interconnect, an API config schema, and a fixture sweep — written with no domain keywords." />
   <LinkCard title="Design" href="/decl-lang/design/00_vision/" description="Why the language is shaped this way: vision, requirements, and the decision charter." />
 </CardGrid>

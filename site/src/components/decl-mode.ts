@@ -62,20 +62,20 @@ export const declLanguage = StreamLanguage.define<State>({
   languageData: { commentTokens: { line: '//', block: { open: '/*', close: '*/' } } },
 });
 
-/** colors from the Starlight palette so the editor follows the site theme */
+/** the six syntax roles of the identity (brand/palette.mjs, as --decl-syn-* in tokens.css), so the editor colours a token exactly as a ```decl block does */
 export const declHighlight = syntaxHighlighting(HighlightStyle.define([
-  { tag: t.comment, color: 'var(--sl-color-gray-3)', fontStyle: 'italic' },
-  { tag: t.keyword, color: 'var(--sl-color-accent-high)', fontWeight: '600' },
-  { tag: t.atom, color: 'var(--sl-color-orange-high, #f59e0b)' },
-  { tag: t.number, color: 'var(--sl-color-orange-high, #f59e0b)' },
-  { tag: t.unit, color: 'var(--sl-color-orange-high, #f59e0b)' },
-  { tag: t.string, color: 'var(--sl-color-green-high, #16a34a)' },
-  { tag: t.special(t.string), color: 'var(--sl-color-green-high, #16a34a)' },
-  { tag: t.regexp, color: 'var(--sl-color-red-high, #dc2626)' },
-  { tag: t.typeName, color: 'var(--sl-color-purple-high, #7c3aed)' },
-  { tag: t.namespace, color: 'var(--sl-color-purple-high, #7c3aed)' },
+  { tag: t.comment, color: 'var(--decl-syn-c)', fontStyle: 'italic' },
+  { tag: t.keyword, color: 'var(--decl-syn-k)', fontWeight: '600' },
+  { tag: t.atom, color: 'var(--decl-syn-n)' },
+  { tag: t.number, color: 'var(--decl-syn-n)' },
+  { tag: t.unit, color: 'var(--decl-syn-n)' },
+  { tag: t.string, color: 'var(--decl-syn-s)' },
+  { tag: t.special(t.string), color: 'var(--decl-syn-s)' },
+  { tag: t.regexp, color: 'var(--decl-syn-s)' },
+  { tag: t.typeName, color: 'var(--decl-syn-t)' },
+  { tag: t.namespace, color: 'var(--decl-syn-t)' },
   { tag: t.propertyName, color: 'var(--sl-color-text)' },
-  { tag: t.special(t.variableName), color: 'var(--sl-color-blue-high, #2563eb)', fontStyle: 'italic' },
-  { tag: t.function(t.variableName), color: 'var(--sl-color-blue-high, #2563eb)' },
-  { tag: t.operator, color: 'var(--sl-color-gray-2)' },
+  { tag: t.special(t.variableName), color: 'var(--decl-syn-t)', fontStyle: 'italic' },
+  { tag: t.function(t.variableName), color: 'var(--sl-color-text)' },
+  { tag: t.operator, color: 'var(--decl-syn-o)' },
 ]));

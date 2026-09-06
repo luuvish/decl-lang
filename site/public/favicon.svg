@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 40 40">
+  <style>
+    .tile { fill: #0F1012; } .sign { fill: #F5F5F2; }
+    @media (prefers-color-scheme: light) { .tile { fill: #F6F5F1; } .sign { fill: #0F1012; } }
+  </style>
+  <rect class="tile" width="40" height="40" rx="7"/>
+  <path class="sign" transform="translate(4 4) scale(0.8)" d="M8 7h24v4H12v10h20v4H8zM8 29h24v4H8z"/>
+</svg>

@@ -3,23 +3,61 @@
 // here), a landing page, and the browser playground.
 import { defineConfig } from 'astro/config';
 import starlight from '@astrojs/starlight';
+import { ExpressiveCodeTheme } from '@astrojs/starlight/expressive-code';
 import { readFileSync } from 'node:fs';
+import { codeTheme } from './brand/syntax.mjs';
 
 const decl = JSON.parse(readFileSync(new URL('./grammars/decl.tmLanguage.json', import.meta.url), 'utf8'));
 const base = process.env.SITE_BASE ?? '/decl-lang';
+const site = process.env.SITE_URL ?? 'https://luuvish.github.io';
+const description = 'A declarative language for describing, generating, and validating structured data.';
+const card = `${site}${base.replace(/\/$/, '')}/og.png`;
 
 export default defineConfig({
-  site: process.env.SITE_URL ?? 'https://luuvish.github.io',
+  site,
   base,
   trailingSlash: 'always',
   integrations: [
     starlight({
       title: 'Decl',
-      description: 'A declarative language for describing, generating, and validating structured data.',
+      description,
+      // the identity (brand/palette.mjs, src/styles/custom.css, site/README.md):
+      // the sign ⊑ beside the wordmark, the tile as the favicon, the card on every page
+      logo: { light: './src/assets/sign-light.svg', dark: './src/assets/sign-dark.svg', alt: '' },
+      favicon: '/favicon.svg',
+      head: [
+        { tag: 'link', attrs: { rel: 'icon', href: `${base.replace(/\/$/, '')}/favicon.png`, type: 'image/png', sizes: '64x64' } },
+        { tag: 'meta', attrs: { property: 'og:image', content: card } },
+        { tag: 'meta', attrs: { property: 'og:image:width', content: '1200' } },
+        { tag: 'meta', attrs: { property: 'og:image:height', content: '630' } },
+        { tag: 'meta', attrs: { name: 'twitter:card', content: 'summary_large_image' } },
+        { tag: 'meta', attrs: { name: 'twitter:image', content: card } },
+      ],
       social: [{ icon: 'github', label: 'GitHub', href: 'https://github.com/luuvish/decl-lang' }],
-      customCss: ['./src/styles/custom.css'],
+      customCss: [
+        '@fontsource-variable/literata/wght.css',
+        '@fontsource-variable/literata/wght-italic.css',
+        '@fontsource/ibm-plex-sans/400.css',
+        '@fontsource/ibm-plex-sans/500.css',
+        '@fontsource/ibm-plex-sans/600.css',
+        '@fontsource/ibm-plex-mono/400.css',
+        '@fontsource/ibm-plex-mono/400-italic.css',
+        '@fontsource/ibm-plex-mono/500.css',
+        '@fontsource/ibm-plex-mono/600.css',
+        './src/styles/tokens.css',
+        './src/styles/custom.css',
+      ],
       expressiveCode: {
         shiki: { langs: [decl] },
+        themes: [new ExpressiveCodeTheme(codeTheme('dark')), new ExpressiveCodeTheme(codeTheme('light'))],
+        styleOverrides: {
+          borderRadius: '0.125rem',
+          borderColor: 'var(--sl-color-hairline)',
+          codeFontFamily: 'var(--__sl-font-mono)',
+          uiFontFamily: 'var(--decl-font-ui)',
+          codeBackground: 'var(--sl-color-gray-6)',
+          frames: { frameBoxShadowCssValue: 'none', editorActiveTabIndicatorTopColor: 'var(--sl-color-white)', editorActiveTabIndicatorBottomColor: 'transparent' },
+        },
       },
       sidebar: [
         {
