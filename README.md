@@ -113,7 +113,7 @@ parity harness are the conformance baseline.
 
 ## Documents
 
-- **Website** — <https://luuvish.github.io/decl-lang/>: the guide, the
+- **Website** — <https://decl-lang.org/>: the guide, the
   specification, the examples, and a browser playground (built from
   `docs/` by [site/](site/README.md))
 - [ROADMAP.md](ROADMAP.md) — development roadmap; owns the plan and progress

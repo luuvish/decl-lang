@@ -68,7 +68,7 @@ const text = (f, s, x, y, size, anchor = 'start') => {
   </g>
   <g fill="${p.muted}">
     <path d="${text(mono400, `v${version} · one spec, three implementations`, PAD, H - PAD, 24)}"/>
-    <path d="${text(mono400, 'luuvish.github.io/decl-lang', W - PAD, H - PAD, 24, 'end')}"/>
+    <path d="${text(mono400, 'decl-lang.org', W - PAD, H - PAD, 24, 'end')}"/>
   </g>
 </svg>`;
   if (/NaN/.test(svg)) throw new Error('brand: an outline came out with NaN; the card would be cut short');

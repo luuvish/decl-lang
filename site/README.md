@@ -92,7 +92,7 @@ MIT, and the build-time renderers sharp (Apache 2.0) and opentype.js
 ```bash
 npm install                       # once, at the repository root (npm workspaces)
 cd site
-npm run dev                       # sync + wasm copy + astro dev  (http://localhost:4321/decl-lang/)
-npm run build                     # sync + wasm copy + astro build -> dist/
-SITE_BASE=/ npm run build         # for a custom domain at the root
+npm run dev                       # sync + wasm copy + astro dev  (http://localhost:4321/)
+npm run build                     # sync + wasm copy + astro build -> dist/, for decl-lang.org (the root)
+SITE_BASE=/decl-lang SITE_URL=https://luuvish.github.io npm run build   # for a project page under a path
 ```

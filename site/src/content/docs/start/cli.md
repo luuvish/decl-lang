@@ -29,9 +29,9 @@ cfg.decl: error [E6001] TlsConfig.cert_present at deployed.tls: cert_path is req
 cfg.decl: warn [W6001] Service.scaled at deployed.workers: replicas 100 is outside the recommended range
 ```
 
-`file: severity [code] id at path: message`. Codes are stable and registered in the specification ([12. Errors](/decl-lang/specification/12_errors/)); `id` names the assertion or the typed `else` message that fired; `path` is the canonical place in the document. With `--json`, the same fields arrive as a JSON array (`check`, `validate`) or inside the `{ok, value, diagnostics}` report (`evaluate`).
+`file: severity [code] id at path: message`. Codes are stable and registered in the specification ([12. Errors](/specification/12_errors/)); `id` names the assertion or the typed `else` message that fired; `path` is the canonical place in the document. With `--json`, the same fields arrive as a JSON array (`check`, `validate`) or inside the `{ok, value, diagnostics}` report (`evaluate`).
 
-Failures never cascade: a member that fails to bind is *invalidated*, and everything that depends on it stays silent instead of reporting a second, misleading error ([06. Constraints](/decl-lang/specification/06_constraints/) §6.7).
+Failures never cascade: a member that fails to bind is *invalidated*, and everything that depends on it stays silent instead of reporting a second, misleading error ([06. Constraints](/specification/06_constraints/) §6.7).
 
 ## Editors
 

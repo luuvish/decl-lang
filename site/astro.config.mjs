@@ -8,8 +8,11 @@ import { readFileSync } from 'node:fs';
 import { codeTheme } from './brand/syntax.mjs';
 
 const decl = JSON.parse(readFileSync(new URL('./grammars/decl.tmLanguage.json', import.meta.url), 'utf8'));
-const base = process.env.SITE_BASE ?? '/decl-lang';
-const site = process.env.SITE_URL ?? 'https://luuvish.github.io';
+// the site lives at the root of its own domain (the repository's CNAME);
+// SITE_BASE / SITE_URL rebuild it for a project page (`/decl-lang` under
+// luuvish.github.io) or any other host
+const base = process.env.SITE_BASE ?? '/';
+const site = process.env.SITE_URL ?? 'https://decl-lang.org';
 const description = 'A declarative language for describing, generating, and validating structured data.';
 const card = `${site}${base.replace(/\/$/, '')}/og.png`;
 

@@ -12,7 +12,7 @@ const SITE = resolve(import.meta.dirname, '..');
 const ROOT = resolve(SITE, '..');
 const OUT = resolve(SITE, 'src/content/docs');
 const SAMPLES = resolve(SITE, 'src/samples/synced');
-const BASE = (process.env.SITE_BASE ?? '/decl-lang').replace(/\/$/, '');
+const BASE = (process.env.SITE_BASE ?? '/').replace(/\/$/, ''); // '' at the root of decl-lang.org
 const REPO = 'https://github.com/luuvish/decl-lang';
 const CLI = resolve(ROOT, 'decl-ts/src/cli.ts');
 // the specification's version is the language's: the major and minor of the reference implementation
