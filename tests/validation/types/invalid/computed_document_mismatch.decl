@@ -1,0 +1,9 @@
+// @expect-phase: binding
+// @expect-error: E4001
+// parses and checks; a computed document that does not fit the type it is
+// bound against fails where a document would — at the value's path
+type Json = null | bool | int | float | string | Json[] | { [string]: Json }
+type Port = { name: string, width: int }
+type Hub = { name: string, ports: { [string]: Port } }
+const raw: Json = { name: "raw", ports: { a: { name: "a", width: "wide" } } }
+export output hub: Hub = raw

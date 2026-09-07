@@ -1,0 +1,24 @@
+// a document the module computes — a map, or a Json value — binds against a
+// record type at a binding site: the checker cannot fix the entries, so the
+// site defers to binding-time validation (§3.18, D31 amended, v0.4.4) and
+// the value completes its defaults and derived members like a document
+type Json = null | bool | int | float | string | Json[] | { [string]: Json }
+type Port = { name: string, width?: int = 8, doubled = width * 2 }
+type Hub = { name: string, ports: { [string]: Port } }
+// a builder returns a map of maps: what it holds is known only when bound
+func build(names: string[]): { [string]: Json } = { name: "hub", ports: { n: { name: n } for n in names } }
+// a document rewritten entry by entry: every port gets a width
+func widen(doc: { [string]: Json }, w: int): { [string]: Json } =
+    { e.key: (if e.key == "ports" then { f.key: { ...f.value, width: w } for f in std.map.entries(ports_of(doc)) } else e.value) for e in std.map.entries(doc) }
+func ports_of(doc: { [string]: Json }): { [string]: Json } =
+    match doc["ports"] ?? {} { (m: { [string]: Json }) => m, (other: null | bool | int | float | string | Json[]) => {} }
+const raw: Json = { name: "raw", ports: { a: { name: "a", width: 4 } } }
+const doc: { [string]: Json } = { name: "doc", ports: { b: { name: "b" } } }
+export output built: Hub = build(["a", "b"])
+export output typed: Hub = raw
+export output widened: Hub = widen(doc, 16)
+// a nested position inside a literal is a binding site too
+export output nested: Hub = { name: "n", ports: ports_of(doc) }
+// and a member's default or derived expression
+type Host = { name: string, hub: Hub = build([name]) }
+export output host: Host = { name: "h" }

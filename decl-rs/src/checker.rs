@@ -197,6 +197,12 @@ pub struct CheckHooks {
     /// called with every name's resolution target, or none for an unresolved name (navigation)
     pub resolve_hook: Option<Rc<dyn Fn(&Rc<Expr>, Option<Target>)>>,
 }
+/// the context of a binding site: the value the expression gives is bound at evaluation (§3.18, v0.4.4)
+fn binding(cx: &Ctx) -> Ctx {
+    let mut c = cx.child();
+    c.binding = true;
+    c
+}
 
 /// The static checks of a module (§3, §4, §6, §9.7): its declarations, in the
 /// environment of a linked universe when one is given, with the hooks recording
@@ -823,10 +829,10 @@ pub fn check_module(
             MemberAst::Value {
                 ty, dflt: Some(d), ..
             } => {
-                check_expr(cx, d, try_resolve(env, Some(ty)).as_ref());
+                check_expr(&binding(cx), d, try_resolve(env, Some(ty)).as_ref());
             }
             MemberAst::Derived { ty, expr, .. } => {
-                check_expr(cx, expr, try_resolve(env, ty.as_ref()).as_ref());
+                check_expr(&binding(cx), expr, try_resolve(env, ty.as_ref()).as_ref());
             }
             MemberAst::Assert { cond, tail, .. } => {
                 if !is_bool_ty(&require_val(
@@ -947,12 +953,12 @@ pub fn check_module(
         for m in &members {
             if m.kind == MKind::Der {
                 if let Some(x) = &m.expr {
-                    check_expr(&cx_for(&m.menv), x, m.ty.as_ref());
+                    check_expr(&binding(&cx_for(&m.menv)), x, m.ty.as_ref());
                 }
             }
             if m.kind == MKind::Dflt {
                 if let Some(d) = &m.dflt {
-                    check_expr(&cx_for(&m.menv), d, m.ty.as_ref());
+                    check_expr(&binding(&cx_for(&m.menv)), d, m.ty.as_ref());
                 }
             }
             let Some(mt) = &m.ty else { continue };
@@ -1134,7 +1140,7 @@ pub fn check_module(
             }
             DeclBody::Output { name, ty, expr } => {
                 let exp = resolve_or_report(Some(ty), &format!("output {name}"));
-                check_expr(&cx0, expr, exp.as_ref());
+                check_expr(&binding(&cx0), expr, exp.as_ref());
             }
             DeclBody::Input {
                 name,
@@ -1142,7 +1148,7 @@ pub fn check_module(
                 fallback: Some(f),
             } => {
                 let exp = resolve_or_report(Some(ty), &format!("input {name}"));
-                check_expr(&cx0, f, exp.as_ref());
+                check_expr(&binding(&cx0), f, exp.as_ref());
             }
             DeclBody::Input {
                 name,

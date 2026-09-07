@@ -543,6 +543,21 @@ One judgment serves every checking site (D13):
   `S ⊑ T` is not statically decidable, the site **defers to
   binding-time validation** instead of erroring; only a base-kind
   mismatch is a static error.
+- **Object-kind deferral at binding sites** *(v0.4.4, D31 amended).*
+  Where the site's value is bound at evaluation — an `output`'s value,
+  an `input`'s fallback, a member's default or derived expression, and
+  every position inside a literal there — an expression whose static
+  type does not fix the entries of an object (a map type, or a union
+  with a map or array arm such as the interchange type `Json`) is not
+  rejected against a record, map, or array type it could take: the
+  site defers to binding-time validation, and the value binds as a
+  document does (input binding, below), its diagnostics at the value's
+  paths. A record's shape is known, so a record against a record stays
+  a static judgment; a scalar where an object is expected is a kind
+  mismatch; a `func` body, a `const`, and a call's arguments — positions
+  no binding follows — keep the static rule. This is what lets a module
+  complete a document it computed itself (a normalized, migrated, or
+  pre-typed tree) instead of handing it to a second program.
 - **Literal construction** — an object/array literal checked against `T`
   is checked member-wise (each provided member against its declared
   type; required members present; defaulted/derived members *omitted*

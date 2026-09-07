@@ -726,6 +726,22 @@ diagnostic width_mismatch(src: int, dst: int) {
   erroring — a template flowing into a pattern-typed member is legal
   and checked when the value exists. A base-**kind** mismatch stays a
   static error.
+- **Object-kind deferral at binding sites** *(amended 2026-09-07,
+  v0.4.4)*: where the site's value is bound at evaluation — an
+  `output`, an `input`'s fallback, a member's default or derived
+  expression, the positions inside a literal there — an expression
+  whose static type does not fix an object's entries (a map, or a
+  union with a map or array arm: `Json`) is validated when bound, not
+  rejected, against a record, map, or array type it could take. A
+  record's shape is known and stays a static judgment; a scalar where
+  an object is expected is still a kind mismatch; a `func` body, a
+  `const`, and call arguments — no binding follows them — keep the
+  static rule. Found reimplementing a real generator's preprocessor:
+  the module builds the typed document itself (ports take their
+  peers' types through the edges) and must then bind it; the runtimes
+  already bound a computed map like a document, the checker alone
+  refused, and the second half of the pipeline had to be a second
+  program.
 - Rationale: both alternative readings fail — strict rejection makes
   the spec's own examples ill-typed; silent acceptance makes `⊑`
   vacuous. Precision where arithmetic decides, deferral where only the

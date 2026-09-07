@@ -469,9 +469,9 @@ def check_module(
     def check_member_ast(cx: Ctx, m: dict[str, Any]) -> None:
         k = m["m"]
         if k == "value" and m.get("dflt"):
-            check_expr(cx, m["dflt"], try_resolve(env, m["type"]))
+            check_expr(cx.bound(), m["dflt"], try_resolve(env, m["type"]))
         elif k == "derived":
-            check_expr(cx, m["expr"], try_resolve(env, m.get("type")))
+            check_expr(cx.bound(), m["expr"], try_resolve(env, m.get("type")))
         elif k == "assert":
             if not is_bool_ty(
                 require_val(cx, m["cond"], infer(cx, m["cond"]), "as an assert condition")
@@ -547,9 +547,9 @@ def check_module(
         for m in rt["members"]:
             mt = m.get("type")
             if m["kind"] == "der" and m.get("expr"):
-                check_expr(cx_for(m.get("menv")), m["expr"], mt)
+                check_expr(cx_for(m.get("menv")).bound(), m["expr"], mt)
             if m["kind"] == "dflt" and m.get("dflt"):
-                check_expr(cx_for(m.get("menv")), m["dflt"], mt)
+                check_expr(cx_for(m.get("menv")).bound(), m["dflt"], mt)
             if mt and mt["t"] == "rec":
                 check_embedding(mt, m["name"], None)
                 check_record_exprs(mt, cx_for(m.get("menv")))
@@ -670,9 +670,11 @@ def check_module(
                 resolve_or_report(d["ret"], f"func {d['name']}") if d.get("ret") else None,
             )
         elif k == "output":
-            check_expr(cx0, d["expr"], resolve_or_report(d["type"], f"output {d['name']}"))
+            check_expr(cx0.bound(), d["expr"], resolve_or_report(d["type"], f"output {d['name']}"))
         elif k == "input" and d.get("fallback"):
-            check_expr(cx0, d["fallback"], resolve_or_report(d["type"], f"input {d['name']}"))
+            check_expr(
+                cx0.bound(), d["fallback"], resolve_or_report(d["type"], f"input {d['name']}")
+            )
         elif k == "input":
             resolve_or_report(d["type"], f"input {d['name']}")
         elif k == "diagnostic":

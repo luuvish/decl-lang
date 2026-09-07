@@ -40,6 +40,7 @@ BOOL: dict[str, Any] = {"rt": PRIM("bool"), "abs": False}
 
 class Ctx:
     __slots__ = (
+        "binding",
         "const_memo",
         "env",
         "locals",
@@ -80,9 +81,14 @@ class Ctx:
         # language server's tables)
         self.record = record
         self.resolve_hook = resolve_hook
+        # the expression's value is bound at evaluation — an output, an input's
+        # fallback, a member's default or derived expression, and every position
+        # inside a literal there: an object whose entries the static type does not
+        # fix is validated then, not rejected here (§3.18, D31 amended, v0.4.4)
+        self.binding = False
 
     def child(self, vars_: dict[str, Any] | None = None) -> Ctx:
-        return Ctx(
+        c = Ctx(
             self.env,
             self.report,
             dict(self.vars) if vars_ is None else vars_,
@@ -94,9 +100,11 @@ class Ctx:
             self.resolve_hook,
             set(self.locals),
         )
+        c.binding = self.binding
+        return c
 
     def with_env(self, env: Any) -> Ctx:
-        return Ctx(
+        c = Ctx(
             env,
             self.report,
             self.vars,
@@ -108,6 +116,14 @@ class Ctx:
             self.resolve_hook,
             self.locals,
         )
+        c.binding = self.binding
+        return c
+
+    def bound(self) -> Ctx:
+        """the context of a binding site: the value the expression gives is bound at evaluation"""
+        c = self.child()
+        c.binding = True
+        return c
 
 
 def make_ctx(env: Any, report: Callable[[str, str], None]) -> Ctx:
@@ -1396,9 +1412,34 @@ def check_expr(cx: Ctx, e: dict[str, Any], expected: dict[str, Any] | None) -> d
         ty["rt"]
         and not subsumes(cx.env, ty["rt"], expected)
         and not _deferrable(ty["rt"], expected)
+        and not (cx.binding and _deferrable_object(cx.env, ty["rt"], expected))
     ):
         cx.report("E4001", "expression type does not satisfy the expected type")
     return ty
+
+
+def _deferrable_object(env: Any, s: dict[str, Any], t: dict[str, Any]) -> bool:
+    """at a binding site, an object whose entries the static type does not fix —
+    a map, or a union with a map or array arm (the interchange type `Json`) —
+    against a record, map, or array type it could take is validated when the
+    value is bound, as a document is (§3.18, v0.4.4); a record's shape is
+    known, so a record stays a static judgment, and a scalar where an object
+    is expected is still a kind mismatch"""
+    if t["t"] == "pred":
+        return _deferrable_object(env, s, t["base"])
+    if t["t"] == "union":
+        return any(_deferrable_object(env, s, a) for a in t["arms"])
+    if s["t"] == "union":
+        return any(_deferrable_object(env, a, t) for a in s["arms"])
+
+    def fits(a: dict[str, Any], b: dict[str, Any]) -> bool:
+        return subsumes(env, a, b) or _deferrable(a, b) or _deferrable_object(env, a, b)
+
+    if s["t"] == "map":
+        return t["t"] == "rec" or (t["t"] == "map" and fits(s["val"], t["val"]))
+    if s["t"] == "array":
+        return t["t"] == "array" and fits(s["elem"], t["elem"])
+    return False
 
 
 def _deferrable(s: dict[str, Any], t: dict[str, Any]) -> bool:

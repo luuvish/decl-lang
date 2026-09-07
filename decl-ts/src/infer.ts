@@ -28,6 +28,11 @@ export interface ICtx {
   present: Set<string>; // narrowed definitely-present paths
   nonnull: Set<string>; // narrowed non-null paths
   constMemo: Map<string, Ty>;
+  /** the expression's value is bound at evaluation — an output, an input's
+   * fallback, a member's default or derived expression, and every position
+   * inside a literal there: an object whose entries the static type does not
+   * fix is validated then, not rejected here (§3.18, D31 amended, v0.4.4) */
+  binding?: boolean;
 }
 
 export function makeCtx(env: Env, report: (code: string, msg: string) => void): ICtx {
@@ -1296,9 +1301,31 @@ export function checkExpr(cx: ICtx, e: Expr, expected: RT | null): Ty {
       break;
   }
   const ty = requireVal(cx, e, infer(cx, e), 'as a value');
-  if (ty.rt && !subsumes(cx.env, ty.rt, expected) && !deferrable(ty.rt, expected))
+  if (
+    ty.rt &&
+    !subsumes(cx.env, ty.rt, expected) &&
+    !deferrable(ty.rt, expected) &&
+    !(cx.binding && deferrableObject(cx.env, ty.rt, expected))
+  )
     cx.report('E4001', `expression type does not satisfy the expected type`);
   return ty;
+}
+
+// at a binding site, an object whose entries the static type does not fix —
+// a map, or a union with a map or array arm (the interchange type `Json`) —
+// against a record, map, or array type it could take is validated when the
+// value is bound, as a document is (§3.18, v0.4.4); a record's shape is
+// known, so a record stays a static judgment, and a scalar where an object
+// is expected is still a kind mismatch
+function deferrableObject(env: Env, s: RT, t: RT): boolean {
+  if (t.t === 'pred') return deferrableObject(env, s, t.base);
+  if (t.t === 'union') return t.arms.some((a: RT) => deferrableObject(env, s, a));
+  if (s.t === 'union') return s.arms.some((a: RT) => deferrableObject(env, a, t));
+  const fits = (a: RT, b: RT) =>
+    subsumes(env, a, b) || deferrable(a, b) || deferrableObject(env, a, b);
+  if (s.t === 'map') return t.t === 'rec' || (t.t === 'map' && fits(s.val, t.val));
+  if (s.t === 'array') return t.t === 'array' && fits(s.elem, t.elem);
+  return false;
 }
 
 // a same-kind refinement target (pattern, range, literal set) whose

@@ -110,7 +110,10 @@ output demo: Service = {
   output is a claim that a value conforms to a type, and the claim must
   be visible. `expr` may be any expression of the module (not just a
   literal); it may reference constants, functions, and other outputs'
-  members by navigation — but not `input`s that are unbound.
+  members by navigation — but not `input`s that are unbound. A value
+  the module computed as a map or as `Json` — a document it built —
+  binds against `T` at evaluation (§3.18, object-kind deferral): the
+  claim is checked where the value exists, as an `input`'s is.
 - Evaluating an output runs the **full pipeline** on its value: check
   against `T` (§3.18), fill defaults, compute derived members, validate
   constraints — producing *(value, diagnostics)*. Tools treat exported

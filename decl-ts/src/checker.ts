@@ -420,8 +420,10 @@ export function checkModule(decls: Decl[], linked?: Env, hooks?: CheckHooks): Di
   };
 
   const checkMemberAst = (cx: ICtx, m: MemberAst) => {
-    if (m.m === 'value' && m.dflt) checkExpr(cx, m.dflt, tryResolve(env, m.type));
-    else if (m.m === 'derived') checkExpr(cx, m.expr, tryResolve(env, m.type));
+    if (m.m === 'value' && m.dflt)
+      checkExpr({ ...cx, binding: true }, m.dflt, tryResolve(env, m.type));
+    else if (m.m === 'derived')
+      checkExpr({ ...cx, binding: true }, m.expr, tryResolve(env, m.type));
     else if (m.m === 'assert') {
       if (!isBool(requireVal(cx, m.cond, infer(cx, m.cond), 'as an assert condition')))
         report('E4001', 'assert condition is not bool');
@@ -478,8 +480,10 @@ export function checkModule(decls: Decl[], linked?: Env, hooks?: CheckHooks): Di
         `${rt.name ?? 'record'}: dependency cycle visible in the type structure: ${cyc.join(' -> ')} (§9.3)`,
       );
     for (const m of rt.members) {
-      if (m.kind === 'der' && m.expr) checkExpr(cxFor(m.menv), m.expr, m.type ?? null);
-      if (m.kind === 'dflt' && m.dflt) checkExpr(cxFor(m.menv), m.dflt, m.type ?? null);
+      if (m.kind === 'der' && m.expr)
+        checkExpr({ ...cxFor(m.menv), binding: true }, m.expr, m.type ?? null);
+      if (m.kind === 'dflt' && m.dflt)
+        checkExpr({ ...cxFor(m.menv), binding: true }, m.dflt, m.type ?? null);
       if (m.type?.t === 'rec') {
         checkEmbedding(m.type, m.name, null);
         checkRecordExprs(m.type, cxFor(m.menv));
@@ -592,9 +596,9 @@ export function checkModule(decls: Decl[], linked?: Env, hooks?: CheckHooks): Di
       }
       checkExpr(cxF, d.body, d.ret ? resolveOrReport(d.ret, `func ${d.name}`) : null);
     } else if (d.d === 'output')
-      checkExpr(cx0, d.expr, resolveOrReport(d.type, `output ${d.name}`));
+      checkExpr({ ...cx0, binding: true }, d.expr, resolveOrReport(d.type, `output ${d.name}`));
     else if (d.d === 'input' && d.fallback)
-      checkExpr(cx0, d.fallback, resolveOrReport(d.type, `input ${d.name}`));
+      checkExpr({ ...cx0, binding: true }, d.fallback, resolveOrReport(d.type, `input ${d.name}`));
     else if (d.d === 'input') resolveOrReport(d.type, `input ${d.name}`);
     else if (d.d === 'diagnostic') {
       const cxD = { ...cx0, vars: new Map(cx0.vars), locals: new Set(cx0.locals) };

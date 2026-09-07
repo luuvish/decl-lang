@@ -1,0 +1,9 @@
+// @expect-phase: checking
+// @expect-error: E4001
+// parses; a func body is not a binding site — nothing binds its value — so a
+// computed map where the declared result is a record stays a static error
+type Json = null | bool | int | float | string | Json[] | { [string]: Json }
+type Hub = { name: string, ports: { [string]: { name: string } } }
+func build(names: string[]): { [string]: Json } = { name: "hub", ports: { n: { name: n } for n in names } }
+func mk(): Hub = build(["a"])
+export output hub: Hub = mk()
