@@ -1392,30 +1392,41 @@ class Engine:
                 raw = self.ev(raw.expr, raw.scope)  # a literal's entry: its value decides
             rec_arms = [a for a in rt["arms"] if a["t"] == "rec"]
             if isinstance(raw, (JObj, PreObj, RecInst, MapV)) and rec_arms:
+                # a discriminant is a literal or a union of literals, in every arm
+                # (§3.12); the arm matches when the value is in that arm's set
+                def _lit_set(arm: dict[str, Any], dn: str) -> list[Any] | None:
+                    m = next((x for x in arm["members"] if x["name"] == dn), None)
+                    t = m.get("type") if m else None
+                    if t is None:
+                        return None
+                    if t["t"] == "lit":
+                        return [t["v"]]
+                    if t["t"] == "union" and all(a["t"] == "lit" for a in t["arms"]):
+                        return [a["v"] for a in t["arms"]]
+                    return None
+
                 disc_names = [
                     m["name"]
                     for m in rec_arms[0]["members"]
-                    if m.get("type") is not None
-                    and m["type"]["t"] == "lit"
-                    and all(
-                        any(
-                            x["name"] == m["name"]
-                            and x.get("type") is not None
-                            and x["type"]["t"] == "lit"
-                            for x in a["members"]
-                        )
-                        for a in rec_arms
-                    )
+                    if all(_lit_set(a, m["name"]) is not None for a in rec_arms)
                 ]
+                # the arm is chosen by the discriminants the value supplies (§3.12);
+                # a discriminant the value omits (it has a default) does not
+                # disqualify an arm, and at least one supplied discriminant must
+                # place the value, or no arm matches
                 for arm in rec_arms:
                     ok = True
+                    placed = False
                     for dn in disc_names:
                         mv = self.raw_entry(raw, dn)
-                        lit = next(x for x in arm["members"] if x["name"] == dn)["type"]["v"]
-                        if mv is _UNDEF or not value_eq(self.raw_lit(mv), lit):
+                        if mv is _UNDEF:
+                            continue
+                        placed = True
+                        vs = _lit_set(arm, dn) or []
+                        if not any(value_eq(self.raw_lit(mv), v) for v in vs):
                             ok = False
                             break
-                    if ok:
+                    if ok and placed:
                         return self.bind(raw, arm, path, parent, sc)
                 fail("no union arm matches discriminant")
             for arm in rt["arms"]:

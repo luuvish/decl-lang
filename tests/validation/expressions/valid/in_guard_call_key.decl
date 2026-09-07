@@ -1,0 +1,13 @@
+// an `in` guard narrows a map access whose key or map is a function call, not
+// only a bare name: a Decl function is pure, so `f(x) in m` proves `m[f(x)]`
+// present, and a member read on it needs no further guard (§4.10)
+type Json = null | bool | int | float | string | Json[] | { [string]: Json }
+type Sub = { ports: { [string]: int } }
+func head(rel: string): string = std.string.split(rel, ".")[0]
+type T = {
+    nodes: { [string]: Sub }
+    rel: string
+    // call as the key, then a member access on the guarded map value
+    picked = if head(rel) in nodes then nodes[head(rel)].ports else {}
+}
+export output t: T = { nodes: { a: { ports: { p: 1 } }, spare: { ports: {} } }, rel: "a.b" }

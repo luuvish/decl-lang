@@ -617,11 +617,21 @@ pub fn path_key(e: &Expr) -> Option<String> {
         }
         Expr::Index { x, i } => {
             let b = path_key(x)?;
-            match &**i {
-                Expr::Lit(v) => Some(format!("{b}[{}]", js_str(v))),
-                Expr::Name(n) => Some(format!("{b}[{n}]")),
-                _ => None,
+            let k = path_key(i)?;
+            Some(format!("{b}[{k}]"))
+        }
+        // a literal key spelled as its value (a string key `m["a"]` keys as `a`,
+        // matching an `in` guard) — the conflation the index case always had
+        Expr::Lit(v) => Some(js_str(v)),
+        // a call is keyed by its callee and argument keys: a Decl function is
+        // pure, so `f(x) in m` narrows `m[f(x)]` (§4.10, the guard rule)
+        Expr::Call { fun, args } => {
+            let c = path_key(fun)?;
+            let mut parts = Vec::with_capacity(args.len());
+            for a in args {
+                parts.push(path_key(a)?);
             }
+            Some(format!("{c}({})", parts.join(",")))
         }
         _ => None,
     }
@@ -666,11 +676,13 @@ pub fn guards_of(e: &Expr, polarity: bool) -> Guards {
                         present: vec![format!("{b}.{s}"), format!("{b}[{s}]")],
                         nonnull: vec![],
                     },
-                    Expr::Name(n) => Guards {
-                        present: vec![format!("{b}[{n}]")],
-                        nonnull: vec![],
+                    _ => match path_key(l) {
+                        Some(k) => Guards {
+                            present: vec![format!("{b}[{k}]")],
+                            nonnull: vec![],
+                        },
+                        None => Guards::default(),
                     },
-                    _ => Guards::default(),
                 };
             }
             let null_side = if matches!(&**l, Expr::Lit(Value::Null)) {

@@ -1361,22 +1361,38 @@ export class Engine {
         const recArms = rt.arms.filter((a: RT) => a.t === 'rec');
         if ((raw && raw.__jobj) || (raw && raw.__pre === 'obj') || isRec(raw) || isMap(raw)) {
           if (recArms.length > 0) {
+            // a discriminant is a literal or a union of literals, in every arm
+            // (§3.12); the arm matches when the value is in that arm's set
+            const litSet = (t: any): any[] | null =>
+              t?.t === 'lit'
+                ? [t.v]
+                : t?.t === 'union' && t.arms.every((a: RT) => a.t === 'lit')
+                  ? t.arms.map((a: any) => a.v)
+                  : null;
+            const setOf = (arm: RT, dn: string): any[] | null => {
+              const m = arm.members.find((x: any) => x.name === dn);
+              return m ? litSet(m.type) : null;
+            };
             const discNames = recArms[0].members
-              .filter(
-                (m: any) =>
-                  m.type?.t === 'lit' &&
-                  recArms.every((a: RT) =>
-                    a.members.some((x: any) => x.name === m.name && x.type?.t === 'lit'),
-                  ),
-              )
-              .map((m: any) => m.name);
+              .map((m: any) => m.name)
+              .filter((dn: string) => recArms.every((a: RT) => setOf(a, dn) !== null));
+            // the arm is chosen by the discriminants the value supplies (§3.12);
+            // a discriminant the value omits (it has a default) does not
+            // disqualify an arm, and at least one supplied discriminant must
+            // place the value, or no arm matches
             for (const arm of recArms) {
-              const ok = discNames.every((dn: string) => {
+              let placed = false;
+              let ok = true;
+              for (const dn of discNames) {
                 const mv = this.rawEntry(raw, dn);
-                const lit = arm.members.find((x: any) => x.name === dn)!.type.v;
-                return mv !== undefined && valueEq(this.rawLit(mv), lit);
-              });
-              if (ok) return this.bind(raw, arm, path, parent, sc);
+                if (mv === undefined) continue;
+                placed = true;
+                if (!setOf(arm, dn)!.some((v) => valueEq(this.rawLit(mv), v))) {
+                  ok = false;
+                  break;
+                }
+              }
+              if (ok && placed) return this.bind(raw, arm, path, parent, sc);
             }
             return fail(`no union arm matches discriminant`);
           }

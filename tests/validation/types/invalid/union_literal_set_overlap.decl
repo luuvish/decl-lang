@@ -1,0 +1,9 @@
+// @expect-phase: checking
+// @expect-error: E4013
+// @expect-message: record union arms not discriminable in Bad
+// two arms whose discriminant literal sets overlap ("b" in both) are not
+// discriminable: an input with kind "b" would satisfy both (§3.12)
+type A = { kind: "a" | "b", x: int }
+type B = { kind: "b" | "c", y: int }
+type Bad = A | B
+export output bad: Bad = { kind: "a", x: 1 }

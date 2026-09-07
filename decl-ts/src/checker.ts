@@ -338,21 +338,51 @@ export function checkModule(decls: Decl[], linked?: Env, hooks?: CheckHooks): Di
       case 'union': {
         const recs = rt.arms.filter((a: RT) => a.t === 'rec');
         if (recs.length >= 2) {
-          const disc = recs[0].members.filter(
-            (m: any) =>
-              m.type?.t === 'lit' &&
-              recs.every((r: RT) =>
-                r.members.some((x: any) => x.name === m.name && x.type?.t === 'lit'),
-              ),
-          );
-          const tuples = new Set(
-            recs.map((r: RT) =>
-              JSON.stringify(
-                disc.map((d: any) => String(r.members.find((x: any) => x.name === d.name)!.type.v)),
-              ),
-            ),
-          );
-          if (disc.length === 0 || tuples.size !== recs.length)
+          // a member discriminates when every arm types it as a literal or a
+          // union of literals (§3.12); the arms are discriminable when their
+          // value combinations are pairwise disjoint — a value shared by two
+          // arms is a collision. Encode a value with its kind so "1" ≠ 1.
+          const enc = (v: any): string =>
+            v === null
+              ? 'null'
+              : typeof v === 'bigint'
+                ? `i${v}`
+                : typeof v === 'number'
+                  ? `f${v}`
+                  : typeof v === 'boolean'
+                    ? `b${v}`
+                    : `s${v}`;
+          const litSet = (t: any): string[] | null =>
+            t?.t === 'lit'
+              ? [enc(t.v)]
+              : t?.t === 'union' && t.arms.every((a: RT) => a.t === 'lit')
+                ? t.arms.map((a: any) => enc(a.v))
+                : null;
+          const memberSet = (r: RT, mn: string): string[] | null => {
+            const m = r.members.find((x: any) => x.name === mn);
+            return m ? litSet(m.type) : null;
+          };
+          const cands = recs[0].members
+            .map((m: any) => m.name)
+            .filter((mn: string) => recs.every((r: RT) => memberSet(r, mn) !== null));
+          // each arm's value combinations over the candidate members
+          const tuplesOf = (r: RT): string[] => {
+            let acc: string[] = [''];
+            for (const mn of cands) {
+              const vs = memberSet(r, mn)!;
+              acc = acc.flatMap((pre) => vs.map((v) => `${pre}|${v}`));
+            }
+            return acc;
+          };
+          const owner = new Map<string, number>();
+          let collision = false;
+          recs.forEach((r: RT, i: number) => {
+            for (const t of tuplesOf(r)) {
+              if (owner.has(t) && owner.get(t) !== i) collision = true;
+              owner.set(t, i);
+            }
+          });
+          if (cands.length === 0 || collision)
             report('E4013', `record union arms not discriminable in ${name}`);
         }
         const nonRecObj = rt.arms.filter((a: RT) => a.t === 'map' || a.t === 'quantity');

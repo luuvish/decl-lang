@@ -13,7 +13,6 @@ plus the expression pass of infer.py (inference, assignability, absence)."""
 
 from __future__ import annotations
 
-import json
 import re
 from typing import Any
 
@@ -358,34 +357,54 @@ def check_module(
         elif t == "union":
             recs = [a for a in rt["arms"] if a["t"] == "rec"]
             if len(recs) >= 2:
-                disc = [
-                    m
+                # a member discriminates when every arm types it as a literal or
+                # a union of literals (§3.12); the arms are discriminable when
+                # their value combinations are pairwise disjoint — a value shared
+                # by two arms is a collision.
+                def _enc(v: Any) -> str:
+                    if v is None:
+                        return "null"
+                    if isinstance(v, bool):
+                        return f"b{v}"
+                    if isinstance(v, int):
+                        return f"i{v}"
+                    if isinstance(v, float):
+                        return f"f{v}"
+                    return f"s{v}"
+
+                def _lit_set(r: dict[str, Any], mn: str) -> list[str] | None:
+                    m = next((x for x in r["members"] if x["name"] == mn), None)
+                    t = m.get("type") if m else None
+                    if t is None:
+                        return None
+                    if t["t"] == "lit":
+                        return [_enc(t["v"])]
+                    if t["t"] == "union" and all(a["t"] == "lit" for a in t["arms"]):
+                        return [_enc(a["v"]) for a in t["arms"]]
+                    return None
+
+                cands = [
+                    m["name"]
                     for m in recs[0]["members"]
-                    if m.get("type")
-                    and m["type"]["t"] == "lit"
-                    and all(
-                        any(
-                            x["name"] == m["name"] and x.get("type") and x["type"]["t"] == "lit"
-                            for x in r["members"]
-                        )
-                        for r in recs
-                    )
+                    if all(_lit_set(r, m["name"]) is not None for r in recs)
                 ]
-                tuples = set()
-                for r in recs:
-                    tuples.add(
-                        json.dumps(
-                            [
-                                js_str(
-                                    next(x for x in r["members"] if x["name"] == d["name"])["type"][
-                                        "v"
-                                    ]
-                                )
-                                for d in disc
-                            ]
-                        )
-                    )
-                if not disc or len(tuples) != len(recs):
+
+                def _tuples_of(r: dict[str, Any]) -> list[str]:
+                    acc = [""]
+                    for mn in cands:
+                        vs = _lit_set(r, mn)
+                        assert vs is not None
+                        acc = [f"{pre}|{v}" for pre in acc for v in vs]
+                    return acc
+
+                owner: dict[str, int] = {}
+                collision = False
+                for i, r in enumerate(recs):
+                    for t in _tuples_of(r):
+                        if owner.get(t, i) != i:
+                            collision = True
+                        owner[t] = i
+                if not cands or collision:
                     report("E4013", f"record union arms not discriminable in {name}")
             non_rec_obj = [a for a in rt["arms"] if a["t"] in ("map", "quantity")]
             if len(non_rec_obj) > 1:

@@ -437,13 +437,25 @@ def path_key(e: dict[str, Any]) -> str | None:
         return f"{b}.{e['name']}" if b else None
     if k == "index":
         b = path_key(e["x"])
-        if not b:
+        i = path_key(e["i"])
+        return f"{b}[{i}]" if b is not None and i is not None else None
+    if k == "lit":
+        # a literal key spelled as its value (a string key `m["a"]` keys as `a`,
+        # matching an `in` guard) — the conflation the index case always had
+        return e["v"] if is_str(e["v"]) else js_str(e["v"])
+    if k == "call":
+        # a call is keyed by its callee and argument keys: a Decl function is
+        # pure, so `f(x) in m` narrows `m[f(x)]` (§4.10, the guard rule)
+        c = path_key(e["fn"])
+        if c is None:
             return None
-        if e["i"]["e"] == "lit":
-            return f"{b}[{js_str(e['i']['v'])}]"
-        if e["i"]["e"] == "name":
-            return f"{b}[{e['i']['name']}]"
-        return None
+        parts: list[str] = []
+        for a in e["args"]:
+            ak = path_key(a)
+            if ak is None:
+                return None
+            parts.append(ak)
+        return f"{c}({','.join(parts)})"
     return None
 
 
@@ -467,9 +479,8 @@ def guards_of(e: dict[str, Any], polarity: bool) -> dict[str, Any]:
             l = e["l"]
             if l["e"] == "lit" and is_str(l["v"]):
                 return {"present": [f"{b}.{l['v']}", f"{b}[{l['v']}]"], "nonnull": []}
-            if l["e"] == "name":
-                return {"present": [f"{b}[{l['name']}]"], "nonnull": []}
-            return none
+            kl = path_key(l)
+            return {"present": [f"{b}[{kl}]"], "nonnull": []} if kl is not None else none
         null_side = (
             e["r"]
             if (e["l"]["e"] == "lit" and e["l"]["v"] is None)

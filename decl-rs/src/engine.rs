@@ -2403,49 +2403,57 @@ impl Engine {
                     Value::JObj(_) | Value::PreObj(_) | Value::Rec(_) | Value::Map(_)
                 ) && !rec_arms.is_empty()
                 {
-                    let is_lit =
-                        |m: &Member| matches!(m.ty.as_ref().map(|t| &t.k), Some(RTk::Lit(_)));
+                    // a discriminant is a literal or a union of literals, in every
+                    // arm (§3.12); the arm matches when the value is in its set
+                    fn lit_set(m: Option<&Member>) -> Option<Vec<Value>> {
+                        m.and_then(|x| x.ty.clone()).and_then(|t| match &t.k {
+                            RTk::Lit(v) => Some(vec![v.clone()]),
+                            RTk::Union(a) => {
+                                let a = a.borrow();
+                                if a.iter().all(|x| matches!(&x.k, RTk::Lit(_))) {
+                                    Some(
+                                        a.iter()
+                                            .filter_map(|x| match &x.k {
+                                                RTk::Lit(v) => Some(v.clone()),
+                                                _ => None,
+                                            })
+                                            .collect(),
+                                    )
+                                } else {
+                                    None
+                                }
+                            }
+                            _ => None,
+                        })
+                    }
+                    let set_of = |arm: &RT, dn: &str| -> Option<Vec<Value>> {
+                        lit_set(rec_members(arm).iter().find(|x| x.name == dn))
+                    };
                     let first = rec_members(rec_arms[0]);
                     let disc_names: Vec<String> = first
                         .iter()
-                        .filter(|m| {
-                            is_lit(m)
-                                && rec_arms.iter().all(|a| {
-                                    rec_members(a).iter().any(|x| x.name == m.name && is_lit(x))
-                                })
-                        })
                         .map(|m| m.name.clone())
+                        .filter(|dn| rec_arms.iter().all(|a| set_of(a, dn).is_some()))
                         .collect();
+                    // the arm is chosen by the discriminants the value supplies
+                    // (§3.12); a discriminant the value omits (it has a default)
+                    // does not disqualify an arm, and at least one supplied
+                    // discriminant must place the value, or no arm matches
                     for arm in &rec_arms {
-                        let members = rec_members(arm);
                         let mut ok = true;
+                        let mut placed = false;
                         for dn in &disc_names {
-                            let lit = members
-                                .iter()
-                                .find(|x| &x.name == dn)
-                                .and_then(|x| x.ty.clone())
-                                .and_then(|t| {
-                                    if let RTk::Lit(v) = &t.k {
-                                        Some(v.clone())
-                                    } else {
-                                        None
-                                    }
-                                })
-                                .unwrap_or(Value::Undef);
-                            match self.raw_entry(&raw, dn)? {
-                                Some(mv) => {
-                                    if !value_eq(&self.raw_lit(&mv)?, &lit) {
-                                        ok = false;
-                                        break;
-                                    }
-                                }
-                                None => {
+                            if let Some(mv) = self.raw_entry(&raw, dn)? {
+                                placed = true;
+                                let set = set_of(arm, dn).unwrap_or_default();
+                                let lv = self.raw_lit(&mv)?;
+                                if !set.iter().any(|v| value_eq(&lv, v)) {
                                     ok = false;
                                     break;
                                 }
                             }
                         }
-                        if ok {
+                        if ok && placed {
                             return self.bind(raw, arm, path, parent, sc);
                         }
                     }

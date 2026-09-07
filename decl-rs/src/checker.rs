@@ -663,40 +663,72 @@ pub fn check_module(
                 let arms = arms.borrow();
                 let recs: Vec<&RT> = arms.iter().filter(|a| is_rec(a)).collect();
                 if recs.len() >= 2 {
-                    let lit_of = |r: &RT, n: &str| -> Option<Value> {
+                    // a member discriminates when every arm types it as a literal
+                    // or a union of literals (§3.12); the arms are discriminable
+                    // when their value combinations are pairwise disjoint — a
+                    // value shared by two arms is a collision.
+                    fn enc(v: &Value) -> String {
+                        match v {
+                            Value::Null => "null".into(),
+                            Value::Int(i) => format!("i{i}"),
+                            Value::Float(f) => format!("f{f}"),
+                            Value::Bool(b) => format!("b{b}"),
+                            Value::Str(sv) => format!("s{sv}"),
+                            other => format!("o{other:?}"),
+                        }
+                    }
+                    let lit_set = |r: &RT, n: &str| -> Option<Vec<String>> {
                         rec_members(r)
                             .iter()
                             .find(|x| x.name == n)
-                            .and_then(|x| x.ty.as_ref())
-                            .and_then(|t| {
-                                if let RTk::Lit(v) = &t.k {
-                                    Some(v.clone())
-                                } else {
-                                    None
+                            .and_then(|x| x.ty.clone())
+                            .and_then(|t| match &t.k {
+                                RTk::Lit(v) => Some(vec![enc(v)]),
+                                RTk::Union(a) => {
+                                    let a = a.borrow();
+                                    if a.iter().all(|x| matches!(&x.k, RTk::Lit(_))) {
+                                        Some(
+                                            a.iter()
+                                                .map(|x| match &x.k {
+                                                    RTk::Lit(v) => enc(v),
+                                                    _ => unreachable!(),
+                                                })
+                                                .collect(),
+                                        )
+                                    } else {
+                                        None
+                                    }
                                 }
+                                _ => None,
                             })
                     };
-                    let disc: Vec<String> = rec_members(recs[0])
+                    let cands: Vec<String> = rec_members(recs[0])
                         .iter()
-                        .filter(|m| {
-                            matches!(m.ty.as_ref().map(|t| &t.k), Some(RTk::Lit(_)))
-                                && recs.iter().all(|r| lit_of(r, &m.name).is_some())
-                        })
                         .map(|m| m.name.clone())
+                        .filter(|n| recs.iter().all(|r| lit_set(r, n).is_some()))
                         .collect();
-                    let tuples: HashSet<String> = recs
-                        .iter()
-                        .map(|r| {
-                            format!(
-                                "[{}]",
-                                disc.iter()
-                                    .map(|d| json_str(&js_str(&lit_of(r, d).unwrap())))
-                                    .collect::<Vec<_>>()
-                                    .join(",")
-                            )
-                        })
-                        .collect();
-                    if disc.is_empty() || tuples.len() != recs.len() {
+                    let tuples_of = |r: &RT| -> Vec<String> {
+                        let mut acc = vec![String::new()];
+                        for n in &cands {
+                            let vs = lit_set(r, n).unwrap();
+                            acc = acc
+                                .iter()
+                                .flat_map(|pre| vs.iter().map(move |v| format!("{pre}|{v}")))
+                                .collect();
+                        }
+                        acc
+                    };
+                    let mut owner: HashMap<String, usize> = HashMap::new();
+                    let mut collision = false;
+                    for (i, r) in recs.iter().enumerate() {
+                        for t in tuples_of(r) {
+                            if owner.get(&t).is_some_and(|&j| j != i) {
+                                collision = true;
+                            }
+                            owner.insert(t, i);
+                        }
+                    }
+                    if cands.is_empty() || collision {
                         rep(
                             "E4013",
                             format!("record union arms not discriminable in {name}"),

@@ -149,10 +149,20 @@ function pathKey(e: Expr): string | null {
     }
     case 'index': {
       const b = pathKey(e.x);
-      if (!b) return null;
-      if (e.i.e === 'lit') return `${b}[${String(e.i.v)}]`;
-      if (e.i.e === 'name') return `${b}[${e.i.name}]`;
-      return null;
+      const i = pathKey(e.i);
+      return b !== null && i !== null ? `${b}[${i}]` : null;
+    }
+    case 'lit':
+      // a literal key spelled as the value (a string key `m["a"]` keys as `a`,
+      // matching an `in` guard) — the same conflation the index case always had
+      return typeof e.v === 'string' ? e.v : String(e.v);
+    case 'call': {
+      // a call is keyed by its callee and argument keys: a Decl function is
+      // pure, so `f(x) in m` narrows `m[f(x)]` (§4.10, the guard rule)
+      const c = pathKey(e.fn);
+      if (c === null) return null;
+      const args = e.args.map(pathKey);
+      return args.every((a) => a !== null) ? `${c}(${args.join(',')})` : null;
     }
   }
   return null;
@@ -173,8 +183,8 @@ export function guardsOf(e: Expr, polarity: boolean): Guards {
         if (!b) return none;
         if (e.l.e === 'lit' && typeof e.l.v === 'string')
           return { present: [`${b}.${e.l.v}`, `${b}[${e.l.v}]`], nonnull: [] };
-        if (e.l.e === 'name') return { present: [`${b}[${e.l.name}]`], nonnull: [] };
-        return none;
+        const k = pathKey(e.l);
+        return k !== null ? { present: [`${b}[${k}]`], nonnull: [] } : none;
       }
       const nullSide =
         e.l.e === 'lit' && e.l.v === null ? e.r : e.r.e === 'lit' && e.r.v === null ? e.l : null;

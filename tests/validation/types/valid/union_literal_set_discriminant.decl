@@ -1,0 +1,8 @@
+// a record union arm may carry a discriminant typed as a union of literals
+// (§3.12): the arms are discriminable when their value sets are pairwise
+// disjoint — {"a","b"} and {"c"} share nothing, so the union types
+type A = { kind: "a" | "b", x: int }
+type C = { kind: "c", y: int }
+type Shape = A | C
+export output one: Shape = { kind: "a", x: 1 }
+export output two: Shape = { kind: "c", y: 2 }
