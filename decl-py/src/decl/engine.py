@@ -109,6 +109,17 @@ def _refs_key(refs: list[Any]) -> str:
     return "\n".join(sorted(path_str(r) for r in refs))
 
 
+def _edges_key(edges: dict[str, Any]) -> str:
+    """a fingerprint of the queried edges, for detecting a round that repeats a
+    previous one (a non-settling cycle, §7.6)"""
+    parts = []
+    for k in sorted(edges):
+        e = edges[k]
+        inner = ";".join(f"{pk}:{_refs_key(e[pk]['refs'])}" for pk in sorted(e))
+        parts.append(f"{k}={inner}")
+    return "|".join(parts)
+
+
 def _edge_eq(a: dict[str, Any], b: dict[str, Any]) -> bool:
     if len(a) != len(b):
         return False
@@ -1199,6 +1210,10 @@ class Engine:
         result. A universe still changing after `ROUNDS` rounds is E5009."""
         prev: Engine | None = None
         edges: dict[str, Any] = {}
+        # the queried edges each round have been seen before (rounds are
+        # deterministic, so a repeat is a cycle that never settles — report at
+        # once, not after the full round budget; §7.6)
+        seen: set[str] = set()
         round_ = 0
         while True:
             round_ += 1
@@ -1208,7 +1223,9 @@ class Engine:
             bind(eng)
             eng.force_all_roots(False)
             r = eng.settle(edges)
-            if r["stable"] or round_ == Engine.ROUNDS:
+            ekey = _edges_key(r["edges"])
+            cycled = not r["stable"] and ekey in seen
+            if r["stable"] or cycled or round_ == Engine.ROUNDS:
                 if not r["stable"]:
                     snap_edges = eng.snap["edges"] if eng.snap is not None else {}
                     for key in r["changed"]:
@@ -1234,6 +1251,7 @@ class Engine:
                 for c in e.consts.values():
                     c["state"] = "unforced"
                     c.pop("value", None)
+            seen.add(ekey)
             prev = eng
             edges = r["edges"]
 

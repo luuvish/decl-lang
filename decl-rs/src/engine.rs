@@ -148,6 +148,23 @@ fn refs_key(refs: &[SegPath]) -> String {
     ks.sort();
     ks.join("\n")
 }
+// a fingerprint of the queried edges, for detecting a round that repeats a
+// previous one (a non-settling cycle, §7.6)
+fn edges_key(edges: &HashMap<String, Edge>) -> String {
+    let mut keys: Vec<&String> = edges.keys().collect();
+    keys.sort();
+    keys.iter()
+        .map(|k| {
+            let e = &edges[*k];
+            let inner: Vec<String> = e
+                .iter()
+                .map(|(pk, (_, refs))| format!("{pk}:{}", refs_key(refs)))
+                .collect();
+            format!("{k}={}", inner.join(";"))
+        })
+        .collect::<Vec<_>>()
+        .join("|")
+}
 fn edge_eq(a: &Edge, b: &Edge) -> bool {
     a.len() == b.len()
         && a.iter()
@@ -2098,6 +2115,10 @@ impl Engine {
     pub fn evaluate(env: &Rc<Env>, bind: &dyn Fn(&Rc<Engine>)) -> Rc<Engine> {
         let mut prev: Option<Rc<Engine>> = None;
         let mut edges: HashMap<String, Edge> = HashMap::new();
+        // the queried edges each round have been seen before (rounds are
+        // deterministic, so a repeat is a cycle that never settles — report at
+        // once, not after the full round budget; §7.6)
+        let mut seen: HashSet<String> = HashSet::new();
         let mut round = 0;
         loop {
             round += 1;
@@ -2107,7 +2128,9 @@ impl Engine {
             bind(&eng);
             eng.force_roots(env);
             let r = eng.settle(env, edges);
-            if r.stable || round == Engine::ROUNDS {
+            let ekey = edges_key(&r.edges);
+            let cycled = !r.stable && seen.contains(&ekey);
+            if r.stable || cycled || round == Engine::ROUNDS {
                 if !r.stable {
                     let snap = eng.snap.borrow();
                     let snap_edges = &snap.as_ref().unwrap().edges;
@@ -2139,6 +2162,7 @@ impl Engine {
                     *c.value.borrow_mut() = Value::Undef;
                 }
             }
+            seen.insert(ekey);
             prev = Some(eng);
             edges = r.edges;
         }

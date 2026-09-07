@@ -83,6 +83,20 @@ function refsKey(refs: Seg[][]): string {
     .sort()
     .join('\n');
 }
+// a fingerprint of the queried edges, for detecting a round that repeats a
+// previous one (a non-settling cycle, §7.6)
+function edgesKey(edges: Map<string, Edge>): string {
+  return [...edges.keys()]
+    .sort()
+    .map((k) => {
+      const e = edges.get(k)!;
+      return `${k}=${[...e.keys()]
+        .sort()
+        .map((pk) => `${pk}:${refsKey(e.get(pk)!.refs)}`)
+        .join(';')}`;
+    })
+    .join('|');
+}
 function edgeEq(a: Edge, b: Edge): boolean {
   if (a.size !== b.size) return false;
   for (const [k, e] of a) {
@@ -1151,6 +1165,10 @@ export class Engine {
   static evaluate(env: Env, bind: (eng: Engine) => void, roots: () => Iterable<any>): Engine {
     let prev: Engine | null = null;
     let edges = new Map<string, Edge>();
+    // the queried edges each round have been seen before (rounds are
+    // deterministic, so a repeat is a cycle that never settles — report at
+    // once, not after the full round budget; §7.6)
+    const seen = new Map<string, number>();
     for (let round = 1; ; round++) {
       const eng = new Engine(env);
       eng.prev = prev;
@@ -1158,7 +1176,8 @@ export class Engine {
       bind(eng);
       for (const v of roots()) eng.forceAll(v, false);
       const r = eng.settle(roots, edges);
-      if (r.stable || round === Engine.ROUNDS) {
+      const cycled = !r.stable && seen.has(edgesKey(r.edges));
+      if (r.stable || cycled || round === Engine.ROUNDS) {
         if (!r.stable)
           for (const key of r.changed) {
             const [t, m] = key.split('|');
@@ -1174,6 +1193,7 @@ export class Engine {
         return eng;
       }
       // the round is the next one's snapshot; the universe starts over
+      seen.set(edgesKey(r.edges), round);
       eng.freeze();
       env.roots.clear();
       env.registry.splice(0);
