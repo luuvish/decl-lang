@@ -795,6 +795,10 @@ pub fn check_module(
         }
     };
     let rec_ctx = |cx: &Ctx, rt: &RT, ast: Option<&TypeAst>| -> Ctx {
+        // a lexically-nested record's $parent is evident — the enclosing record,
+        // the context we came from (D30); a named type declares its own context,
+        // so only an anonymous inline type takes this, and a declaration overrides
+        let enclosing = cx.vars.get("$this").cloned();
         let mut c = cx.child();
         for m in rec_members(rt) {
             c.vars.insert(
@@ -804,6 +808,9 @@ pub fn check_module(
                     abs: m.kind == MKind::Opt,
                 },
             );
+        }
+        if let Some(e) = enclosing {
+            c.vars.insert("$parent".into(), e);
         }
         c.vars.insert("$this".into(), tyv(Some(rt.clone())));
         c.vars

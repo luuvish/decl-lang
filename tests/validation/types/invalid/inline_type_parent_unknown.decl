@@ -1,0 +1,11 @@
+// @expect-phase: checking
+// @expect-error: E4003
+// @expect-message: member nope is not declared on Node
+// $parent inside an inline member type is the enclosing record (D30), so a
+// member the enclosing record does not declare is a static error, not a
+// dependency cycle discovered at evaluation
+type Node = {
+    name: string
+    params?: { foo?: string = $parent.nope } = {}
+}
+export output n: Node = { name: "x" }

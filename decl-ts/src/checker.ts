@@ -406,11 +406,17 @@ export function checkModule(decls: Decl[], linked?: Env, hooks?: CheckHooks): Di
     (t.rt.t === 'lit' && typeof t.rt.v === 'boolean');
 
   const recCtx = (cx: ICtx, rt: RT, ast?: TypeAst): ICtx => {
+    // a lexically-nested record's $parent is evident — the enclosing record,
+    // the context we came from (D30: nested type expressions need no context
+    // declaration); a named type declares its own context, so this applies
+    // only to an anonymous inline type, and an explicit declaration overrides
+    const enclosing = cx.vars.get('$this');
     const vars = new Map(cx.vars);
     for (const m of rt.members) {
       const mt: RT | null = m.conj ? { t: 'isectN', arms: m.conj } : (m.type ?? null);
       vars.set(m.name, { rt: mt, abs: m.kind === 'opt' });
     }
+    if (enclosing) vars.set('$parent', enclosing);
     vars.set('$this', { rt, abs: false });
     vars.set('$path', { rt: { t: 'prim', name: 'string' }, abs: false });
     if (ast && ast.k === 'record')

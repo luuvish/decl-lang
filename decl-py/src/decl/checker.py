@@ -452,10 +452,16 @@ def check_module(
         )
 
     def rec_ctx(cx: Ctx, rt: dict[str, Any], ast: dict[str, Any] | None) -> Ctx:
+        # a lexically-nested record's $parent is evident — the enclosing record,
+        # the context we came from (D30); a named type declares its own context,
+        # so only an anonymous inline type takes this, and a declaration overrides
+        enclosing = cx.vars.get("$this")
         vars_ = dict(cx.vars)
         for m in rt["members"]:
             mt = {"t": "isectN", "arms": m["conj"]} if m.get("conj") else m.get("type")
             vars_[m["name"]] = TY(mt, m["kind"] == "opt")
+        if enclosing is not None:
+            vars_["$parent"] = enclosing
         vars_["$this"] = TY(rt)
         vars_["$path"] = TY({"t": "prim", "name": "string"})
         if ast and ast["k"] == "record":

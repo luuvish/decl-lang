@@ -1,0 +1,22 @@
+// $parent inside an inline (lexically nested) member type is the enclosing
+// record — evident, no context declaration needed (D30); the enclosing type's
+// members are in scope, and an extension of a named type nested inline sees
+// its immediate enclosing record too (the arbiter idiom: a port whose width
+// reads its owner's sibling map)
+type IntPort = { mode?: string = "si", width?: int = 1 }
+type Arbiter = {
+    kind: "arb"
+    ports: {
+        ins: { [string]: IntPort }
+        mi: IntPort {
+            mode?: string = "mi"
+            width?: int = std.array.fold([p.width for p in std.map.values($parent.ins)], 1, (acc, w) => std.math.max(acc, w))
+        }
+    }
+    // a plain inline type reads a member of the enclosing record
+    summary?: { label?: string = $parent.kind } = {}
+}
+export output arb: Arbiter = {
+    kind: "arb"
+    ports: { ins: { si0: { width: 32 }, si1: { width: 64 } }, mi: {} }
+}
