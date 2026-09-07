@@ -1,0 +1,24 @@
+// @expect-phase: binding
+// @expect-error: E5007
+// @expect-message: dependency cycle: sel$ -> sel$
+// a port's member reads its own value through a reference ($parent, a place
+// the type-structure check E4113 cannot follow), and the member is first
+// demanded from inside the $referrers edge computation (the link's target
+// reads it). F23's deferral cannot tell a genuine cycle from a wait by
+// position; the engine records what each slot read, so the cycle surfaces as
+// E5007 with the dependency path it walked, not a round-timeout (§7.6, §9.3)
+type Port = {
+    $parent: ref<{ ports: { [string]: Port }, ... }>
+    $key: string
+    inbound$ = $referrers(Link, "target$")
+    n$ = std.array.count(inbound$)
+    sel$ = if n$ >= 0 then ($parent.ports[$key]?.sel$ ?? false) else false
+}
+type Link = {
+    $parent: ref<{ ports: { [string]: Port }, ... }>
+    name: string
+    target$: ref<Port> =
+        if ($parent.ports[name]?.sel$ ?? false) then $parent.ports[name] else $parent.ports["spare"]
+}
+type Hub = { ports: { [string]: Port } = { a: {}, spare: {} }, links: Link[] = [{ name: "a" }] }
+export output hub: Hub = {}

@@ -256,6 +256,19 @@ fn lit_display(v: &Value) -> String {
     }
 }
 
+/// the trailing member of a slot key (`r.ports["a"].sel$` -> `sel$`)
+fn member_of_key(key: &str) -> String {
+    if let Some(rest) = key.strip_suffix(']') {
+        if let Some(i) = rest.rfind("[\"") {
+            return rest[i + 2..].to_string();
+        }
+    }
+    match key.rfind('.') {
+        Some(i) => key[i + 1..].to_string(),
+        None => key.to_string(),
+    }
+}
+
 fn to_index(v: &Value) -> R<i64> {
     match v {
         Value::Int(i) => i.to_i64().ok_or(()).or_else(|_| err("index out of range")),
@@ -3085,6 +3098,15 @@ impl Engine {
         let _ = self.force_slot(inst, name);
     }
 
+    /// the cycle as the dependency graph records it: the slots forced between
+    /// the re-entered one and now, each shown by its member, closing the loop
+    fn cycle_path(&self, key: &str) -> String {
+        let c = self.computing.borrow();
+        let from = c.iter().position(|k| k == key).unwrap_or(0);
+        let mut chain: Vec<String> = c[from..].iter().map(|k| member_of_key(k)).collect();
+        chain.push(member_of_key(key));
+        chain.join(" -> ")
+    }
     /// Force a slot — its check, default, or derived expression — once, with
     /// dependency tracking (§9.3).
     pub fn force_slot(&self, inst: &Inst, name: &str) -> R<Value> {
@@ -3124,7 +3146,7 @@ impl Engine {
                 }
             }
             self.env.report(Diag::error(
-                format!("dependency cycle at {name}"),
+                format!("dependency cycle: {}", self.cycle_path(&key)),
                 path_str(&mp, None),
                 Some("E5007"),
             ));

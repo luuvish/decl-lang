@@ -1695,6 +1695,14 @@ export class Engine {
       if (!(e instanceof Taint) && !(e instanceof DeferSig)) throw e;
     }
   }
+  // the cycle as the dependency graph records it: the slots forced between
+  // the re-entered one and now, each shown by its member, closing the loop
+  cyclePath(key: string): string {
+    const from = this.computing.indexOf(key);
+    const chain = (from < 0 ? [key] : this.computing.slice(from)).map(memberOfKey);
+    chain.push(memberOfKey(key));
+    return chain.join(' -> ');
+  }
   forceSlot(inst: RecInst, name: string): any {
     const owner: Engine = (inst as any).eng;
     if (owner && owner !== this) return owner.muted(() => owner.forceSlot(inst, name)); // a frozen round's
@@ -1716,7 +1724,7 @@ export class Engine {
       if (base !== undefined && this.computing.indexOf(key) < base) throw new DeferSig();
       this.env.report({
         severity: 'error',
-        message: `dependency cycle at ${name}`,
+        message: `dependency cycle: ${this.cyclePath(key)}`,
         path: pathStr([...inst.path, name]),
         code: 'E5007',
       });
@@ -1972,6 +1980,11 @@ function exprName(e: any): string {
   if (e?.e === 'name') return e.name;
   if (e?.e === 'call') return exprName(e.fn);
   return '<predicate>';
+}
+// the trailing member of a slot key (`r.ports["a"].sel$` -> `sel$`)
+function memberOfKey(key: string): string {
+  const m = key.match(/\.([A-Za-z_$][\w$]*)$|\["([^"]*)"\]$/);
+  return m ? (m[1] ?? m[2]) : key;
 }
 function mentionsReferrersLocal(e: any): boolean {
   if (!e || typeof e !== 'object') return false;

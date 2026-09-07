@@ -56,6 +56,16 @@ from .semantics import (
 )
 
 
+def _member_of_key(key: str) -> str:
+    """the trailing member of a slot key (`r.ports["a"].sel$` -> `sel$`)"""
+    if key.endswith('"]'):
+        i = key.rfind('["')
+        if i >= 0:
+            return key[i + 2 : -2]
+    j = key.rfind(".")
+    return key[j + 1 :] if j >= 0 else key
+
+
 def _is_num(v: Any) -> bool:
     return is_int(v) or is_float(v)
 
@@ -1720,6 +1730,14 @@ class Engine:
         with contextlib.suppress(Taint, DeferSig):
             self.force_slot(inst, name)
 
+    def _cycle_path(self, key: str) -> str:
+        # the cycle as the dependency graph records it: the slots forced between
+        # the re-entered one and now, each shown by its member, closing the loop
+        frm = self.computing.index(key) if key in self.computing else 0
+        chain = [_member_of_key(k) for k in self.computing[frm:]]
+        chain.append(_member_of_key(key))
+        return " -> ".join(chain)
+
     def force_slot(self, inst: RecInst, name: str) -> Any:
         owner = inst.eng
         if owner is not None and owner is not self:  # a frozen round's
@@ -1749,7 +1767,7 @@ class Engine:
             self.env.report(
                 {
                     "severity": "error",
-                    "message": f"dependency cycle at {name}",
+                    "message": f"dependency cycle: {self._cycle_path(key)}",
                     "path": path_str([*inst.path, name]),
                     "code": "E5007",
                 }
