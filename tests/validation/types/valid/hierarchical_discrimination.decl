@@ -1,0 +1,24 @@
+// discrimination is hierarchical (§3.12): a member need not tell all arms
+// apart at once. Here `kind` separates the pointer events from the key one,
+// and within the pointer events `button` tells left from right. The members
+// are found by structure — none is a reserved tag — and unions are
+// associative, so the nested `Pointer | Key` is the same type as the flat
+// `LeftClick | RightClick | Key`.
+type LeftClick = { kind: "pointer", button: "left", x: int, is_left$ = true }
+type RightClick = { kind: "pointer", button: "right", x: int, is_right$ = true }
+type Pointer = LeftClick | RightClick
+type Key = { kind: "key", code: string }
+type Event = Pointer | Key
+type Flat = LeftClick | RightClick | Key
+type Log = { hier: { [string]: Event }, flat: { [string]: Flat } }
+export output log: Log = {
+    hier: {
+        a: { kind: "pointer", button: "left", x: 1 }
+        b: { kind: "pointer", button: "right", x: 2 }
+        c: { kind: "key", code: "esc" }
+    }
+    flat: {
+        d: { kind: "pointer", button: "right", x: 3 }
+        e: { kind: "key", code: "tab" }
+    }
+}

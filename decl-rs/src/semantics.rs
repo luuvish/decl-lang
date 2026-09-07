@@ -691,6 +691,15 @@ pub fn rec_members(t: &RT) -> Vec<Member> {
 pub fn is_rec(t: &RT) -> bool {
     matches!(t.k, RTk::Rec(_))
 }
+/// The leaf record types of a (possibly nested) union — unions are associative
+/// (§3.12), so `A | (B | C)` yields the same leaves as `A | B | C`.
+pub fn leaf_recs(t: &RT) -> Vec<RT> {
+    match &t.k {
+        RTk::Rec(_) => vec![t.clone()],
+        RTk::Union(arms) => arms.borrow().iter().flat_map(leaf_recs).collect(),
+        _ => vec![],
+    }
+}
 
 // ---------------- dimension vectors ----------------
 /// a dimension as base dimensions with exponents

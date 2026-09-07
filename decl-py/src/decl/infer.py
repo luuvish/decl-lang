@@ -228,6 +228,79 @@ def sibling_reads(
     # lit, unitlit, ctx, referrers, pattern: nothing
 
 
+# ---------------- union discrimination (§3.12) ----------------
+def _enc_lit(v: Any) -> str:
+    """a literal value encoded with its kind, so "1" (string) is not 1 (int)"""
+    if v is None:
+        return "null"
+    if isinstance(v, bool):
+        return f"b{v}"
+    if isinstance(v, int):
+        return f"i{v}"
+    if isinstance(v, float):
+        return f"f{v}"
+    return f"s{v}"
+
+
+def _member_lit_set(leaf: dict[str, Any], name: str) -> list[str] | None:
+    """the literal values a member type admits (a literal, or a union of
+    literals), or None when the member is not literal-typed"""
+    m = next((x for x in leaf["members"] if x["name"] == name), None)
+    t = m.get("type") if m else None
+    if t is None:
+        return None
+    if t["t"] == "lit":
+        return [_enc_lit(t["v"])]
+    if t["t"] == "union" and all(a["t"] == "lit" for a in t["arms"]):
+        return [_enc_lit(a["v"]) for a in t["arms"]]
+    return None
+
+
+def _lit_components(leaves: list[dict[str, Any]], name: str) -> list[list[dict[str, Any]]]:
+    """leaves grouped so that two sharing a value for `name` land together
+    (transitively): a value both admit cannot tell them apart"""
+    parent = list(range(len(leaves)))
+
+    def find(i: int) -> int:
+        while parent[i] != i:
+            parent[i] = parent[parent[i]]
+            i = parent[i]
+        return i
+
+    by_val: dict[str, int] = {}
+    for i, leaf in enumerate(leaves):
+        for v in _member_lit_set(leaf, name) or []:
+            if v in by_val:
+                parent[find(i)] = find(by_val[v])
+            else:
+                by_val[v] = i
+    groups: dict[int, list[dict[str, Any]]] = {}
+    for i, leaf in enumerate(leaves):
+        groups.setdefault(find(i), []).append(leaf)
+    return list(groups.values())
+
+
+def discriminable(leaves: list[dict[str, Any]], used: set[str]) -> bool:
+    """a set of leaf records is discriminable (§3.12) when some member — a
+    literal in every leaf — partitions them into more than one group with
+    disjoint values, and each group of more than one leaf is discriminable in
+    turn by a further member (hierarchical discrimination; members found by
+    structure, none reserved)"""
+    if len(leaves) <= 1:
+        return True
+    names = [
+        m["name"]
+        for m in leaves[0]["members"]
+        if m["name"] not in used
+        and all(_member_lit_set(leaf, m["name"]) is not None for leaf in leaves)
+    ]
+    for n in names:
+        comps = _lit_components(leaves, n)
+        if len(comps) >= 2 and all(discriminable(c, used | {n}) for c in comps):
+            return True
+    return False
+
+
 def member_cycle(
     rt: dict[str, Any],
     entries: list[dict[str, Any]] | None = None,

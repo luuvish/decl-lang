@@ -84,6 +84,15 @@ export type Diag = {
   by?: string;
 };
 
+// the leaf record types of a (possibly nested) union type — unions are
+// associative (§3.12), so `A | (B | C)` yields the same leaves as `A | B | C`
+export function leafRecs(t: RT): RT[] {
+  if (!t) return [];
+  if (t.t === 'rec') return [t];
+  if (t.t === 'union') return t.arms.flatMap(leafRecs);
+  return [];
+}
+
 /** §6.7: evaluation- and validation-time diagnostics sort by (path, id), path in canonical order; stable */
 export function sortDiags(diags: Diag[]): Diag[] {
   const segsOf = (p: string): Seg[] => {

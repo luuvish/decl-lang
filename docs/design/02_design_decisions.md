@@ -241,10 +241,22 @@ four kinds:
 - Discriminability of record arms is **required, not optional**: each
   record arm carries its own defaults, derived members, and constraints,
   so the arm that runs must be uniquely determined by the value — a
-  union with two non-discriminable record arms is an error at its
+  union whose record arms cannot be told apart is an error at its
   declaration (P2). Arms without member semantics (primitives, literals,
   ranges, patterns) may overlap freely; the types chapter fixes the
   layered determination procedure.
+- **Discrimination is hierarchical** *(amended 2026-09-08, v0.4.5)*: a
+  discriminant member typed as a literal or a union of literals need not
+  tell every arm apart at once — it partitions the arms into groups with
+  disjoint values, and each group of more than one arm is discriminated
+  in turn by a further member (a `kind` naming the family, then a second
+  member the variant within it). Unions are associative, so a union arm
+  flattens to its record arms first; the nested and the flat spellings
+  discriminate identically. The runtime routes a value to one leaf
+  record one member at a time. Found reimplementing a real generator
+  whose records are told apart by different members; the flat
+  single-member rule forced one record type per family, branching
+  internally on the variant.
 - `match` performs exhaustiveness checking over the discriminating field.
 
 ### D12. Intersection `A & B` is the conjunction of constraint layers

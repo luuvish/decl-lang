@@ -2397,14 +2397,16 @@ impl Engine {
                     other => other,
                 };
                 let arms = arms.borrow();
-                let rec_arms: Vec<&RT> = arms.iter().filter(|a| is_rec(a)).collect();
+                let leaves: Vec<RT> = arms.iter().flat_map(leaf_recs).collect();
                 if matches!(
                     raw,
                     Value::JObj(_) | Value::PreObj(_) | Value::Rec(_) | Value::Map(_)
-                ) && !rec_arms.is_empty()
+                ) && !leaves.is_empty()
                 {
-                    // a discriminant is a literal or a union of literals, in every
-                    // arm (§3.12); the arm matches when the value is in its set
+                    // record arms discriminate hierarchically (§3.12): the union
+                    // is flattened to its leaf records (a union arm contributes
+                    // its own leaves — unions are associative), and the value is
+                    // routed to a unique leaf, one discriminant member at a time
                     fn lit_set(m: Option<&Member>) -> Option<Vec<Value>> {
                         m.and_then(|x| x.ty.clone()).and_then(|t| match &t.k {
                             RTk::Lit(v) => Some(vec![v.clone()]),
@@ -2426,36 +2428,46 @@ impl Engine {
                             _ => None,
                         })
                     }
-                    let set_of = |arm: &RT, dn: &str| -> Option<Vec<Value>> {
-                        lit_set(rec_members(arm).iter().find(|x| x.name == dn))
+                    let set_of = |leaf: &RT, dn: &str| -> Option<Vec<Value>> {
+                        lit_set(rec_members(leaf).iter().find(|x| x.name == dn))
                     };
-                    let first = rec_members(rec_arms[0]);
-                    let disc_names: Vec<String> = first
-                        .iter()
-                        .map(|m| m.name.clone())
-                        .filter(|dn| rec_arms.iter().all(|a| set_of(a, dn).is_some()))
-                        .collect();
-                    // the arm is chosen by the discriminants the value supplies
-                    // (§3.12); a discriminant the value omits (it has a default)
-                    // does not disqualify an arm, and at least one supplied
-                    // discriminant must place the value, or no arm matches
-                    for arm in &rec_arms {
-                        let mut ok = true;
-                        let mut placed = false;
-                        for dn in &disc_names {
-                            if let Some(mv) = self.raw_entry(&raw, dn)? {
-                                placed = true;
-                                let set = set_of(arm, dn).unwrap_or_default();
+                    // route: a discriminant the value supplies narrows the
+                    // candidates; a leaf whose set holds the value stays, and a
+                    // member the value omits (it has a default) is skipped
+                    let mut cands: Vec<RT> = leaves.clone();
+                    while cands.len() > 1 {
+                        let names: Vec<String> = rec_members(&cands[0])
+                            .iter()
+                            .map(|m| m.name.clone())
+                            .filter(|n| cands.iter().all(|l| set_of(l, n).is_some()))
+                            .collect();
+                        let mut narrowed = false;
+                        for n in &names {
+                            if let Some(mv) = self.raw_entry(&raw, n)? {
                                 let lv = self.raw_lit(&mv)?;
-                                if !set.iter().any(|v| value_eq(&lv, v)) {
-                                    ok = false;
+                                let kept: Vec<RT> = cands
+                                    .iter()
+                                    .filter(|l| {
+                                        set_of(l, n)
+                                            .unwrap_or_default()
+                                            .iter()
+                                            .any(|v| value_eq(&lv, v))
+                                    })
+                                    .cloned()
+                                    .collect();
+                                if !kept.is_empty() && kept.len() < cands.len() {
+                                    cands = kept;
+                                    narrowed = true;
                                     break;
                                 }
                             }
                         }
-                        if ok && placed {
-                            return self.bind(raw, arm, path, parent, sc);
+                        if !narrowed {
+                            break;
                         }
+                    }
+                    if cands.len() == 1 {
+                        return self.bind(raw, &cands[0], path, parent, sc);
                     }
                     return Err(fail("no union arm matches discriminant".into(), None));
                 }

@@ -39,6 +39,18 @@ def is_str(v: Any) -> TypeGuard[str]:
     return type(v) is str
 
 
+def leaf_recs(t: dict[str, Any]) -> list[dict[str, Any]]:
+    """the leaf record types of a (possibly nested) union — unions are
+    associative (§3.12), so `A | (B | C)` yields the same leaves as `A | B | C`"""
+    if not t:
+        return []
+    if t["t"] == "rec":
+        return [t]
+    if t["t"] == "union":
+        return [leaf for a in t["arms"] for leaf in leaf_recs(a)]
+    return []
+
+
 class Quantity:
     __slots__ = ("dim", "value")
 

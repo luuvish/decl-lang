@@ -197,6 +197,105 @@ pub struct CheckHooks {
     /// called with every name's resolution target, or none for an unresolved name (navigation)
     pub resolve_hook: Option<Rc<dyn Fn(&Rc<Expr>, Option<Target>)>>,
 }
+// ---------------- union discrimination (§3.12) ----------------
+/// a literal value encoded with its kind, so "1" (string) is not 1 (int)
+fn enc_lit(v: &Value) -> String {
+    match v {
+        Value::Null => "null".into(),
+        Value::Int(i) => format!("i{i}"),
+        Value::Float(f) => format!("f{f}"),
+        Value::Bool(b) => format!("b{b}"),
+        Value::Str(sv) => format!("s{sv}"),
+        other => format!("o{other:?}"),
+    }
+}
+/// the literal values a leaf's member admits (a literal, or a union of
+/// literals), or None when the member is not literal-typed
+fn member_lit_set(leaf: &RT, name: &str) -> Option<Vec<String>> {
+    rec_members(leaf)
+        .iter()
+        .find(|x| x.name == name)
+        .and_then(|x| x.ty.clone())
+        .and_then(|t| match &t.k {
+            RTk::Lit(v) => Some(vec![enc_lit(v)]),
+            RTk::Union(a) => {
+                let a = a.borrow();
+                if a.iter().all(|x| matches!(&x.k, RTk::Lit(_))) {
+                    Some(
+                        a.iter()
+                            .filter_map(|x| match &x.k {
+                                RTk::Lit(v) => Some(enc_lit(v)),
+                                _ => None,
+                            })
+                            .collect(),
+                    )
+                } else {
+                    None
+                }
+            }
+            _ => None,
+        })
+}
+/// leaves grouped so that two sharing a value for `name` land together
+/// (transitively): a value both admit cannot tell them apart
+fn lit_components<'a>(leaves: &[&'a RT], name: &str) -> Vec<Vec<&'a RT>> {
+    let mut parent: Vec<usize> = (0..leaves.len()).collect();
+    fn find(parent: &mut [usize], i: usize) -> usize {
+        if parent[i] != i {
+            let r = find(parent, parent[i]);
+            parent[i] = r;
+        }
+        parent[i]
+    }
+    let mut by_val: HashMap<String, usize> = HashMap::new();
+    for (i, l) in leaves.iter().enumerate() {
+        for v in member_lit_set(l, name).unwrap_or_default() {
+            if let Some(&seen) = by_val.get(&v) {
+                let a = find(&mut parent, i);
+                let b = find(&mut parent, seen);
+                parent[a] = b;
+            } else {
+                by_val.insert(v, i);
+            }
+        }
+    }
+    let mut groups: HashMap<usize, Vec<&RT>> = HashMap::new();
+    for (i, l) in leaves.iter().enumerate() {
+        let r = find(&mut parent, i);
+        groups.entry(r).or_default().push(l);
+    }
+    groups.into_values().collect()
+}
+/// a set of leaf records is discriminable (§3.12) when some member — a literal
+/// in every leaf — partitions them into more than one group with disjoint
+/// values, and each group of more than one leaf is discriminable in turn by a
+/// further member (hierarchical discrimination; members found by structure)
+pub fn discriminable(leaves: &[RT], used: &HashSet<String>) -> bool {
+    if leaves.len() <= 1 {
+        return true;
+    }
+    let refs: Vec<&RT> = leaves.iter().collect();
+    let names: Vec<String> = rec_members(&leaves[0])
+        .iter()
+        .map(|m| m.name.clone())
+        .filter(|n| !used.contains(n) && leaves.iter().all(|l| member_lit_set(l, n).is_some()))
+        .collect();
+    for n in names {
+        let comps = lit_components(&refs, &n);
+        if comps.len() >= 2 {
+            let mut used2 = used.clone();
+            used2.insert(n.clone());
+            if comps.iter().all(|c| {
+                let owned: Vec<RT> = c.iter().map(|r| (*r).clone()).collect();
+                discriminable(&owned, &used2)
+            }) {
+                return true;
+            }
+        }
+    }
+    false
+}
+
 /// the context of a binding site: the value the expression gives is bound at evaluation (§3.18, v0.4.4)
 fn binding(cx: &Ctx) -> Ctx {
     let mut c = cx.child();
@@ -661,79 +760,12 @@ pub fn check_module(
             }
             RTk::Union(arms) => {
                 let arms = arms.borrow();
-                let recs: Vec<&RT> = arms.iter().filter(|a| is_rec(a)).collect();
-                if recs.len() >= 2 {
-                    // a member discriminates when every arm types it as a literal
-                    // or a union of literals (§3.12); the arms are discriminable
-                    // when their value combinations are pairwise disjoint — a
-                    // value shared by two arms is a collision.
-                    fn enc(v: &Value) -> String {
-                        match v {
-                            Value::Null => "null".into(),
-                            Value::Int(i) => format!("i{i}"),
-                            Value::Float(f) => format!("f{f}"),
-                            Value::Bool(b) => format!("b{b}"),
-                            Value::Str(sv) => format!("s{sv}"),
-                            other => format!("o{other:?}"),
-                        }
-                    }
-                    let lit_set = |r: &RT, n: &str| -> Option<Vec<String>> {
-                        rec_members(r)
-                            .iter()
-                            .find(|x| x.name == n)
-                            .and_then(|x| x.ty.clone())
-                            .and_then(|t| match &t.k {
-                                RTk::Lit(v) => Some(vec![enc(v)]),
-                                RTk::Union(a) => {
-                                    let a = a.borrow();
-                                    if a.iter().all(|x| matches!(&x.k, RTk::Lit(_))) {
-                                        Some(
-                                            a.iter()
-                                                .map(|x| match &x.k {
-                                                    RTk::Lit(v) => enc(v),
-                                                    _ => unreachable!(),
-                                                })
-                                                .collect(),
-                                        )
-                                    } else {
-                                        None
-                                    }
-                                }
-                                _ => None,
-                            })
-                    };
-                    let cands: Vec<String> = rec_members(recs[0])
-                        .iter()
-                        .map(|m| m.name.clone())
-                        .filter(|n| recs.iter().all(|r| lit_set(r, n).is_some()))
-                        .collect();
-                    let tuples_of = |r: &RT| -> Vec<String> {
-                        let mut acc = vec![String::new()];
-                        for n in &cands {
-                            let vs = lit_set(r, n).unwrap();
-                            acc = acc
-                                .iter()
-                                .flat_map(|pre| vs.iter().map(move |v| format!("{pre}|{v}")))
-                                .collect();
-                        }
-                        acc
-                    };
-                    let mut owner: HashMap<String, usize> = HashMap::new();
-                    let mut collision = false;
-                    for (i, r) in recs.iter().enumerate() {
-                        for t in tuples_of(r) {
-                            if owner.get(&t).is_some_and(|&j| j != i) {
-                                collision = true;
-                            }
-                            owner.insert(t, i);
-                        }
-                    }
-                    if cands.is_empty() || collision {
-                        rep(
-                            "E4013",
-                            format!("record union arms not discriminable in {name}"),
-                        );
-                    }
+                let leaves: Vec<RT> = arms.iter().flat_map(leaf_recs).collect();
+                if leaves.len() >= 2 && !discriminable(&leaves, &HashSet::new()) {
+                    rep(
+                        "E4013",
+                        format!("record union arms not discriminable in {name}"),
+                    );
                 }
                 let non_rec_obj = arms
                     .iter()

@@ -345,6 +345,69 @@ export function siblingReads(
       return; // lit, unitlit, ctx, referrers, pattern
   }
 }
+// ---------------- union discrimination (§3.12) ----------------
+// a literal value encoded with its kind, so "1" (string) is not 1 (int)
+function encLit(v: any): string {
+  return v === null
+    ? 'null'
+    : typeof v === 'bigint'
+      ? `i${v}`
+      : typeof v === 'number'
+        ? `f${v}`
+        : typeof v === 'boolean'
+          ? `b${v}`
+          : `s${v}`;
+}
+// the literal values a member type admits (a literal, or a union of literals),
+// or null when the member is not literal-typed — so not a discriminant
+function memberLitSet(leaf: RT, name: string): string[] | null {
+  const m = leaf.members.find((x: any) => x.name === name);
+  const t = m?.type;
+  return t?.t === 'lit'
+    ? [encLit(t.v)]
+    : t?.t === 'union' && t.arms.every((a: RT) => a.t === 'lit')
+      ? t.arms.map((a: any) => encLit(a.v))
+      : null;
+}
+// leaves grouped so that two sharing a value for `name` land together
+// (transitively): a value both admit cannot tell them apart
+function litComponents(leaves: RT[], name: string): RT[][] {
+  const parent = leaves.map((_, i) => i);
+  const find = (i: number): number => (parent[i] === i ? i : (parent[i] = find(parent[i])));
+  const byVal = new Map<string, number>();
+  leaves.forEach((l, i) => {
+    for (const v of memberLitSet(l, name)!) {
+      const seen = byVal.get(v);
+      if (seen !== undefined) parent[find(i)] = find(seen);
+      else byVal.set(v, i);
+    }
+  });
+  const groups = new Map<number, RT[]>();
+  leaves.forEach((l, i) => {
+    const r = find(i);
+    const g = groups.get(r);
+    if (g) g.push(l);
+    else groups.set(r, [l]);
+  });
+  return [...groups.values()];
+}
+// a set of leaf records is discriminable (§3.12) when some member — a literal
+// in every leaf — partitions them into more than one group with disjoint
+// values, and each group of more than one leaf is discriminable in turn by a
+// further member (hierarchical discrimination; members found by structure)
+export function discriminable(leaves: RT[], used: Set<string>): boolean {
+  if (leaves.length <= 1) return true;
+  const names = leaves[0].members
+    .map((m: any) => m.name as string)
+    .filter((n: string) => !used.has(n) && leaves.every((l) => memberLitSet(l, n) !== null));
+  for (const n of names) {
+    const comps = litComponents(leaves, n);
+    if (comps.length >= 2 && comps.every((c) => discriminable(c, new Set([...used, n]))))
+      return true;
+  }
+  return false;
+}
+
 /**
  * A dependency cycle among a record's members through bare sibling names
  * (§9.3, E4113): the members' default and derived expressions, with a

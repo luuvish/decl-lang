@@ -1,0 +1,11 @@
+// @expect-phase: checking
+// @expect-error: E4013
+// @expect-message: record union arms not discriminable in Bad
+// two arms share every discriminant value (kind "pointer", button "left"): no
+// member, at any level, tells them apart, so the union is not discriminable
+// (§3.12)
+type A = { kind: "pointer", button: "left", a: int }
+type B = { kind: "pointer", button: "left", b: int }
+type C = { kind: "key", code: string }
+type Bad = A | B | C
+export output bad: Bad = { kind: "key", code: "x" }

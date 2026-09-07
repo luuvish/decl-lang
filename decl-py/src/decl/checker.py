@@ -22,6 +22,7 @@ from .infer import (
     Ctx,
     apply_guards,
     check_expr,
+    discriminable,
     guards_of,
     infer,
     js_str,
@@ -31,7 +32,7 @@ from .infer import (
     require_val,
     try_resolve,
 )
-from .semantics import Env, is_bool, is_str
+from .semantics import Env, is_bool, is_str, leaf_recs
 from .subsume import structurally_empty, subsumes
 
 
@@ -355,57 +356,9 @@ def check_module(
                 report("E4015", f"map key type not string-shaped in {name}")
             check_resolved(rt["val"], name, seen)
         elif t == "union":
-            recs = [a for a in rt["arms"] if a["t"] == "rec"]
-            if len(recs) >= 2:
-                # a member discriminates when every arm types it as a literal or
-                # a union of literals (§3.12); the arms are discriminable when
-                # their value combinations are pairwise disjoint — a value shared
-                # by two arms is a collision.
-                def _enc(v: Any) -> str:
-                    if v is None:
-                        return "null"
-                    if isinstance(v, bool):
-                        return f"b{v}"
-                    if isinstance(v, int):
-                        return f"i{v}"
-                    if isinstance(v, float):
-                        return f"f{v}"
-                    return f"s{v}"
-
-                def _lit_set(r: dict[str, Any], mn: str) -> list[str] | None:
-                    m = next((x for x in r["members"] if x["name"] == mn), None)
-                    t = m.get("type") if m else None
-                    if t is None:
-                        return None
-                    if t["t"] == "lit":
-                        return [_enc(t["v"])]
-                    if t["t"] == "union" and all(a["t"] == "lit" for a in t["arms"]):
-                        return [_enc(a["v"]) for a in t["arms"]]
-                    return None
-
-                cands = [
-                    m["name"]
-                    for m in recs[0]["members"]
-                    if all(_lit_set(r, m["name"]) is not None for r in recs)
-                ]
-
-                def _tuples_of(r: dict[str, Any]) -> list[str]:
-                    acc = [""]
-                    for mn in cands:
-                        vs = _lit_set(r, mn)
-                        assert vs is not None
-                        acc = [f"{pre}|{v}" for pre in acc for v in vs]
-                    return acc
-
-                owner: dict[str, int] = {}
-                collision = False
-                for i, r in enumerate(recs):
-                    for t in _tuples_of(r):
-                        if owner.get(t, i) != i:
-                            collision = True
-                        owner[t] = i
-                if not cands or collision:
-                    report("E4013", f"record union arms not discriminable in {name}")
+            leaves = leaf_recs(rt)
+            if len(leaves) >= 2 and not discriminable(leaves, set()):
+                report("E4013", f"record union arms not discriminable in {name}")
             non_rec_obj = [a for a in rt["arms"] if a["t"] in ("map", "quantity")]
             if len(non_rec_obj) > 1:
                 report("E4014", f"more than one non-record object arm in {name}")

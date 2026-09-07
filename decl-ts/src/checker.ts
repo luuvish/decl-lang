@@ -10,7 +10,7 @@
 //   E4052 ?? mixed with &&/|| unparenthesized
 //   E4094 context variable without / with an invalid context declaration
 import type { Annotation, Decl, Expr, MemberAst, TypeAst } from './ast.ts';
-import { Env } from './semantics.ts';
+import { Env, leafRecs } from './semantics.ts';
 import type { Diag, RT } from './semantics.ts';
 import { subsumes, structurallyEmpty } from './subsume.ts';
 import {
@@ -22,6 +22,7 @@ import {
   guardsOf,
   tryResolve,
   memberCycle,
+  discriminable,
 } from './infer.ts';
 import type { Ty, Target, ICtx } from './infer.ts';
 import { Engine } from './engine.ts';
@@ -336,55 +337,16 @@ export function checkModule(decls: Decl[], linked?: Env, hooks?: CheckHooks): Di
         break;
       }
       case 'union': {
-        const recs = rt.arms.filter((a: RT) => a.t === 'rec');
-        if (recs.length >= 2) {
-          // a member discriminates when every arm types it as a literal or a
-          // union of literals (§3.12); the arms are discriminable when their
-          // value combinations are pairwise disjoint — a value shared by two
-          // arms is a collision. Encode a value with its kind so "1" ≠ 1.
-          const enc = (v: any): string =>
-            v === null
-              ? 'null'
-              : typeof v === 'bigint'
-                ? `i${v}`
-                : typeof v === 'number'
-                  ? `f${v}`
-                  : typeof v === 'boolean'
-                    ? `b${v}`
-                    : `s${v}`;
-          const litSet = (t: any): string[] | null =>
-            t?.t === 'lit'
-              ? [enc(t.v)]
-              : t?.t === 'union' && t.arms.every((a: RT) => a.t === 'lit')
-                ? t.arms.map((a: any) => enc(a.v))
-                : null;
-          const memberSet = (r: RT, mn: string): string[] | null => {
-            const m = r.members.find((x: any) => x.name === mn);
-            return m ? litSet(m.type) : null;
-          };
-          const cands = recs[0].members
-            .map((m: any) => m.name)
-            .filter((mn: string) => recs.every((r: RT) => memberSet(r, mn) !== null));
-          // each arm's value combinations over the candidate members
-          const tuplesOf = (r: RT): string[] => {
-            let acc: string[] = [''];
-            for (const mn of cands) {
-              const vs = memberSet(r, mn)!;
-              acc = acc.flatMap((pre) => vs.map((v) => `${pre}|${v}`));
-            }
-            return acc;
-          };
-          const owner = new Map<string, number>();
-          let collision = false;
-          recs.forEach((r: RT, i: number) => {
-            for (const t of tuplesOf(r)) {
-              if (owner.has(t) && owner.get(t) !== i) collision = true;
-              owner.set(t, i);
-            }
-          });
-          if (cands.length === 0 || collision)
-            report('E4013', `record union arms not discriminable in ${name}`);
-        }
+        // discrimination is hierarchical (§3.12): the record arms are flattened
+        // to leaf records (a union arm contributes its own leaves — unions are
+        // associative), then a discriminant member partitions the leaves into
+        // groups with disjoint values, and each group of more than one leaf is
+        // discriminated in turn by another member (a `kind` names the family,
+        // a second member the variant within it); the members are found by
+        // structure, none reserved.
+        const leaves = leafRecs(rt);
+        if (leaves.length >= 2 && !discriminable(leaves, new Set()))
+          report('E4013', `record union arms not discriminable in ${name}`);
         const nonRecObj = rt.arms.filter((a: RT) => a.t === 'map' || a.t === 'quantity');
         if (nonRecObj.length > 1) report('E4014', `more than one non-record object arm in ${name}`);
         rt.arms.forEach((a: RT) => checkResolved(a, name, seen));

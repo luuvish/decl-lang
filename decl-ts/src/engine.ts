@@ -25,6 +25,7 @@ import {
   mapKey,
   segText,
   dotSpellable,
+  leafRecs,
 } from './semantics.ts';
 import type { RecInst, RT, Seg, Slot, Value } from './semantics.ts';
 import type { Expr } from './ast.ts';
@@ -1356,44 +1357,47 @@ export class Engine {
         return m;
       }
       case 'union': {
-        // record arms discriminate on shared literal members; others by kind
+        // record arms discriminate hierarchically (§3.12): the union is
+        // flattened to its leaf records (a union arm contributes its own
+        // leaves — unions are associative), and the value is routed to a
+        // unique leaf, one discriminant member at a time
         if (raw && raw.__expr) raw = this.rawLit(raw); // a literal's entry: its value decides
-        const recArms = rt.arms.filter((a: RT) => a.t === 'rec');
+        const leaves = rt.arms.flatMap(leafRecs);
         if ((raw && raw.__jobj) || (raw && raw.__pre === 'obj') || isRec(raw) || isMap(raw)) {
-          if (recArms.length > 0) {
-            // a discriminant is a literal or a union of literals, in every arm
-            // (§3.12); the arm matches when the value is in that arm's set
-            const litSet = (t: any): any[] | null =>
-              t?.t === 'lit'
+          if (leaves.length > 0) {
+            // the literal values a leaf's member admits, or null when it is not
+            // a literal (so cannot discriminate)
+            const setOf = (leaf: RT, dn: string): any[] | null => {
+              const m = leaf.members.find((x: any) => x.name === dn);
+              const t = m?.type;
+              return t?.t === 'lit'
                 ? [t.v]
                 : t?.t === 'union' && t.arms.every((a: RT) => a.t === 'lit')
                   ? t.arms.map((a: any) => a.v)
                   : null;
-            const setOf = (arm: RT, dn: string): any[] | null => {
-              const m = arm.members.find((x: any) => x.name === dn);
-              return m ? litSet(m.type) : null;
             };
-            const discNames = recArms[0].members
-              .map((m: any) => m.name)
-              .filter((dn: string) => recArms.every((a: RT) => setOf(a, dn) !== null));
-            // the arm is chosen by the discriminants the value supplies (§3.12);
-            // a discriminant the value omits (it has a default) does not
-            // disqualify an arm, and at least one supplied discriminant must
-            // place the value, or no arm matches
-            for (const arm of recArms) {
-              let placed = false;
-              let ok = true;
-              for (const dn of discNames) {
-                const mv = this.rawEntry(raw, dn);
+            // route the value to one leaf: a discriminant the value supplies
+            // narrows the candidates; a leaf whose set holds the value stays,
+            // and a member the value omits (it has a default) is skipped
+            const route = (cands: RT[]): RT | null => {
+              if (cands.length <= 1) return cands[0] ?? null;
+              const names = cands[0].members
+                .map((m: any) => m.name as string)
+                .filter((n: string) => cands.every((l) => setOf(l, n) !== null));
+              for (const n of names) {
+                const mv = this.rawEntry(raw, n);
                 if (mv === undefined) continue;
-                placed = true;
-                if (!setOf(arm, dn)!.some((v) => valueEq(this.rawLit(mv), v))) {
-                  ok = false;
-                  break;
+                const lv = this.rawLit(mv);
+                const kept = cands.filter((l) => setOf(l, n)!.some((v) => valueEq(lv, v)));
+                if (kept.length >= 1 && kept.length < cands.length) {
+                  const r = route(kept);
+                  if (r) return r;
                 }
               }
-              if (ok && placed) return this.bind(raw, arm, path, parent, sc);
-            }
+              return null;
+            };
+            const leaf = route(leaves);
+            if (leaf) return this.bind(raw, leaf, path, parent, sc);
             return fail(`no union arm matches discriminant`);
           }
         }

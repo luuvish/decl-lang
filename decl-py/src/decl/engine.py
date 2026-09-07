@@ -45,6 +45,7 @@ from .semantics import (
     js_num_str,
     json_str,
     key_of_vec,
+    leaf_recs,
     mentions_referrers,
     parse_path,
     path_str,
@@ -1390,44 +1391,52 @@ class Engine:
         if t == "union":
             if isinstance(raw, PreVal):
                 raw = self.ev(raw.expr, raw.scope)  # a literal's entry: its value decides
-            rec_arms = [a for a in rt["arms"] if a["t"] == "rec"]
-            if isinstance(raw, (JObj, PreObj, RecInst, MapV)) and rec_arms:
-                # a discriminant is a literal or a union of literals, in every arm
-                # (§3.12); the arm matches when the value is in that arm's set
-                def _lit_set(arm: dict[str, Any], dn: str) -> list[Any] | None:
-                    m = next((x for x in arm["members"] if x["name"] == dn), None)
-                    t = m.get("type") if m else None
-                    if t is None:
+            leaves = leaf_recs(rt)
+            if isinstance(raw, (JObj, PreObj, RecInst, MapV)) and leaves:
+                # record arms discriminate hierarchically (§3.12): the union is
+                # flattened to its leaf records (a union arm contributes its own
+                # leaves — unions are associative), and the value is routed to a
+                # unique leaf, one discriminant member at a time
+                def _set_of(leaf: dict[str, Any], dn: str) -> list[Any] | None:
+                    m = next((x for x in leaf["members"] if x["name"] == dn), None)
+                    ty = m.get("type") if m else None
+                    if ty is None:
                         return None
-                    if t["t"] == "lit":
-                        return [t["v"]]
-                    if t["t"] == "union" and all(a["t"] == "lit" for a in t["arms"]):
-                        return [a["v"] for a in t["arms"]]
+                    if ty["t"] == "lit":
+                        return [ty["v"]]
+                    if ty["t"] == "union" and all(a["t"] == "lit" for a in ty["arms"]):
+                        return [a["v"] for a in ty["arms"]]
                     return None
 
-                disc_names = [
-                    m["name"]
-                    for m in rec_arms[0]["members"]
-                    if all(_lit_set(a, m["name"]) is not None for a in rec_arms)
-                ]
-                # the arm is chosen by the discriminants the value supplies (§3.12);
-                # a discriminant the value omits (it has a default) does not
-                # disqualify an arm, and at least one supplied discriminant must
-                # place the value, or no arm matches
-                for arm in rec_arms:
-                    ok = True
-                    placed = False
-                    for dn in disc_names:
-                        mv = self.raw_entry(raw, dn)
+                # route: a discriminant the value supplies narrows the candidates;
+                # a leaf whose set holds the value stays, and a member the value
+                # omits (it has a default) is skipped
+                cands = list(leaves)
+                while len(cands) > 1:
+                    names = [
+                        m["name"]
+                        for m in cands[0]["members"]
+                        if all(_set_of(leaf, m["name"]) is not None for leaf in cands)
+                    ]
+                    narrowed = False
+                    for n in names:
+                        mv = self.raw_entry(raw, n)
                         if mv is _UNDEF:
                             continue
-                        placed = True
-                        vs = _lit_set(arm, dn) or []
-                        if not any(value_eq(self.raw_lit(mv), v) for v in vs):
-                            ok = False
+                        lv = self.raw_lit(mv)
+                        kept = [
+                            leaf
+                            for leaf in cands
+                            if any(value_eq(lv, v) for v in (_set_of(leaf, n) or []))
+                        ]
+                        if kept and len(kept) < len(cands):
+                            cands = kept
+                            narrowed = True
                             break
-                    if ok and placed:
-                        return self.bind(raw, arm, path, parent, sc)
+                    if not narrowed:
+                        break
+                if len(cands) == 1:
+                    return self.bind(raw, cands[0], path, parent, sc)
                 fail("no union arm matches discriminant")
             for arm in rt["arms"]:
                 if self.kind_matches(raw, arm):

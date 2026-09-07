@@ -289,15 +289,25 @@ type Shape  = Circle | Rect
      patterns, arrays — may overlap freely: a value satisfies the
      union iff it satisfies some arm, and which one is unobservable
      (nothing runs per-arm).
-  3. **Record arms must be pairwise discriminable**: some set of
-     member names carries, in each record arm, literal types whose
-     value combinations are pairwise disjoint (`kind: "circle"` vs
-     `kind: "rect"`). This is not only `match`'s requirement but
-     validation's: each record arm has its own defaults, derived
-     members, constraints, and closedness, so the arm that runs
-     **must be uniquely determined** or the same input could evaluate
-     two ways (P2). A union type with two non-discriminable record
-     arms is an error at its declaration.
+  3. **Record arms must be discriminable**, hierarchically *(D11,
+     amended v0.4.5)*: a member typed as a literal — or a union of
+     literals — in **every** arm partitions the arms into groups by its
+     value (a value picks one group; the groups' value sets are
+     disjoint), and each group of more than one arm is discriminable in
+     turn by a **further** member. A single member telling every arm
+     apart is the one-level case (`kind: "circle"` vs `kind: "rect"`);
+     where no single member suffices, one member may separate the
+     families (`kind: "pointer"` vs `kind: "key"`) and a second the
+     variant within one (`button: "left"` vs `button: "right"`). Unions
+     are associative, so a union arm is first flattened to its own
+     record arms — the nested `Pointer | Key` and the flat
+     `LeftClick | RightClick | Key` discriminate identically. The
+     members are found by structure; none is reserved. This is not only `match`'s
+     requirement but validation's: each record arm has its own
+     defaults, derived members, constraints, and closedness, so the arm
+     that runs **must be uniquely determined** or the same input could
+     evaluate two ways (P2). A union whose record arms cannot be told
+     apart this way is an error at its declaration.
   4. Among object-kind arms, at most **one** may be a non-record form
      (a map, a `quantity<D>`, or an open catch-all): it matches
      exactly when no record arm's discriminant does. Two non-record
