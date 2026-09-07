@@ -230,7 +230,7 @@
     ],
     "exit": 0,
     "stdout": "",
-    "stderr": "141 ok, 0 failed\n"
+    "stderr": "142 ok, 0 failed\n"
   },
   {
     "name": "validate --expect-errors: the codes match",

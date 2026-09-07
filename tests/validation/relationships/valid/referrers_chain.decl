@@ -1,0 +1,84 @@
+// a member waiting on a $referrers answer, demanded from inside the edge
+// computation that answers it, is attempted once per demand: the chain
+// of members that reaches it from the link's target is walked once per
+// level, not twice — sixty levels would otherwise take 2^60 attempts
+type Port = {
+    $key: string
+    inbound$ = $referrers(Link, "target")
+    degree: int = std.array.count(inbound$)
+    // sixty derived members, each reading the next, down to the degree
+    d59 = degree
+    d58 = d59
+    d57 = d58
+    d56 = d57
+    d55 = d56
+    d54 = d55
+    d53 = d54
+    d52 = d53
+    d51 = d52
+    d50 = d51
+    d49 = d50
+    d48 = d49
+    d47 = d48
+    d46 = d47
+    d45 = d46
+    d44 = d45
+    d43 = d44
+    d42 = d43
+    d41 = d42
+    d40 = d41
+    d39 = d40
+    d38 = d39
+    d37 = d38
+    d36 = d37
+    d35 = d36
+    d34 = d35
+    d33 = d34
+    d32 = d33
+    d31 = d32
+    d30 = d31
+    d29 = d30
+    d28 = d29
+    d27 = d28
+    d26 = d27
+    d25 = d26
+    d24 = d25
+    d23 = d24
+    d22 = d23
+    d21 = d22
+    d20 = d21
+    d19 = d20
+    d18 = d19
+    d17 = d18
+    d16 = d17
+    d15 = d16
+    d14 = d15
+    d13 = d14
+    d12 = d13
+    d11 = d12
+    d10 = d11
+    d9 = d10
+    d8 = d9
+    d7 = d8
+    d6 = d7
+    d5 = d6
+    d4 = d5
+    d3 = d4
+    d2 = d3
+    d1 = d2
+    d0 = $this.d1
+    // a port keeps taking links while it has fewer than a hundred
+    open = d0 < 100
+}
+type Link = {
+    $parent: ref<{ ports: { [string]: Port }, ... }>
+    name: string
+    // the link lands on its named port while that port is open, else on the spare
+    target: ref<Port> =
+        if ($parent.ports[name]?.open ?? false) then $parent.ports[name] else $parent.ports["spare"]
+}
+type Hub = {
+    ports: { [string]: Port } = { a: {}, spare: {} }
+    links: Link[] = [{ name: "a" }]
+}
+export output hub: Hub = {}

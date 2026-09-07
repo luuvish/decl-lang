@@ -460,8 +460,8 @@ export class Engine {
         }
         const slot = s.slots.get(n);
         if (!slot || slot.hidden) return;
-        if (this.forceState(s, n) === 'absent') return;
-        entries.push([n, this.forceSlot(s, n)]);
+        const v = this.forceSlot(s, n);
+        if (slot.state !== 'absent') entries.push([n, v]);
       };
       for (const n of s.entryOrder) take(n);
       for (const m of s.rt.members) take(m.name);
@@ -797,11 +797,7 @@ export class Engine {
   }
   access(x: any, name: string): any {
     if (isRec(x)) {
-      if (x.slots.has(name)) {
-        const st = this.forceState(x, name);
-        if (st === 'absent') return ABSENT;
-        return this.forceSlot(x, name);
-      }
+      if (x.slots.has(name)) return this.forceSlot(x, name); // ABSENT when the member is absent
       if (x.extras.has(name)) throw new EvalErr(`opaque field ${name} accessed`);
       // a member the record's type does not declare: the checker admitted the
       // read against a bound that declares it optional, so it is absent (§4.10)
@@ -826,10 +822,7 @@ export class Engine {
   slotLookup(inst: RecInst, name: string): any {
     // nearest-enclosing-instance-first: walk the ownership chain
     for (let cur: RecInst | null = inst; cur; cur = cur.parent) {
-      if (cur.slots.has(name)) {
-        const st = this.forceState(cur, name);
-        return st === 'absent' ? ABSENT : this.forceSlot(cur, name);
-      }
+      if (cur.slots.has(name)) return this.forceSlot(cur, name); // ABSENT when the member is absent
     }
     return undefined;
   }
@@ -994,8 +987,8 @@ export class Engine {
       if (r.extras.has(n)) return r.extras.get(n);
       const s = r.slots.get(n);
       if (!s || s.kind === 'der') return undefined;
-      if (this.forceState(r, n) === 'absent') return undefined;
-      return this.forceSlot(r, n);
+      const v = this.forceSlot(r, n);
+      return s.state === 'absent' ? undefined : v;
     };
     const names: string[] = [];
     for (const n of base.entryOrder) if (!names.includes(n)) names.push(n);

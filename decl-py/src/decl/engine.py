@@ -471,9 +471,9 @@ class Engine:
                 slot = s.slots.get(n)
                 if slot is None or slot.hidden:
                     continue
-                if self.force_state(s, n) == "absent":
-                    continue
-                entries.append((n, self.force_slot(s, n)))
+                v = self.force_slot(s, n)
+                if slot.state != "absent":
+                    entries.append((n, v))
             return entries
         raise EvalErr("spread of a non-object value")
 
@@ -840,10 +840,7 @@ class Engine:
     def access(self, x: Any, name: Any) -> Any:
         if isinstance(x, RecInst):
             if name in x.slots:
-                st = self.force_state(x, name)
-                if st == "absent":
-                    return ABSENT
-                return self.force_slot(x, name)
+                return self.force_slot(x, name)  # ABSENT when the member is absent
             if name in x.extras:
                 raise EvalErr(f"opaque field {name} accessed")
             # a member the record's type does not declare: the checker admitted the
@@ -868,8 +865,7 @@ class Engine:
         cur = inst
         while cur is not None:
             if name in cur.slots:
-                st = self.force_state(cur, name)
-                return ABSENT if st == "absent" else self.force_slot(cur, name)
+                return self.force_slot(cur, name)  # ABSENT when the member is absent
             cur = cur.parent
         return _UNDEF
 
@@ -1023,9 +1019,8 @@ class Engine:
             s = r.slots.get(n)
             if s is None or s.kind == "der":
                 return _UNDEF
-            if self.force_state(r, n) == "absent":
-                return _UNDEF
-            return self.force_slot(r, n)
+            v = self.force_slot(r, n)
+            return _UNDEF if s.state == "absent" else v
 
         names: list[Any] = []
         for n in base.entry_order:

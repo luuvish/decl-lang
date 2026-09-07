@@ -1341,10 +1341,7 @@ impl Engine {
                     (b.has_slot(name), b.extra(name).is_some())
                 };
                 if has {
-                    if self.force_state(r, name) == SlotState::Absent {
-                        return Ok(Value::Absent);
-                    }
-                    return self.force_slot(r, name);
+                    return self.force_slot(r, name); // Absent when the member is absent
                 }
                 if is_extra {
                     return err(format!("opaque field {name} accessed"));
@@ -1377,10 +1374,7 @@ impl Engine {
         let mut cur = Some(inst.clone());
         while let Some(c) = cur {
             if c.borrow().has_slot(name) {
-                if self.force_state(&c, name) == SlotState::Absent {
-                    return Ok(Some(Value::Absent));
-                }
-                return Ok(Some(self.force_slot(&c, name)?));
+                return Ok(Some(self.force_slot(&c, name)?)); // Absent when the member is absent
             }
             cur = c.borrow().parent.clone();
         }
@@ -1703,10 +1697,11 @@ impl Engine {
                     _ => {}
                 }
             }
-            if self.force_state(r, n) == SlotState::Absent {
+            let v = self.force_slot(r, n)?;
+            if r.borrow().slot(n).map(|s| s.state) == Some(SlotState::Absent) {
                 return Ok(None);
             }
-            Ok(Some(self.force_slot(r, n)?))
+            Ok(Some(v))
         };
         let mut names: Vec<String> = vec![];
         let mut push = |n: &str| {
@@ -1855,10 +1850,13 @@ impl Engine {
                         entries.push((n, x));
                         continue;
                     }
-                    if !has || hidden || self.force_state(&r, &n) == SlotState::Absent {
+                    if !has || hidden {
                         continue;
                     }
                     let v = self.force_slot(&r, &n)?;
+                    if r.borrow().slot(&n).map(|s| s.state) == Some(SlotState::Absent) {
+                        continue;
+                    }
                     entries.push((n, v));
                 }
                 Ok(entries)
