@@ -1124,9 +1124,12 @@ function inferMatch(cx: ICtx, e: Expr & { e: 'match' }, expected: RT | null): Ty
   const s = requireVal(cx, e.subject, infer(cx, e.subject), 'as a match subject');
   let variants: RT[] | null = null;
   if (s.rt) {
-    const srt = stripNull(s.rt);
+    // a match subject is a value position: a reference denotes its target's
+    // value (§4.7, §7.4's mirror rule), which is what the runtime inspects
+    const val = s.rt.t === 'ref' ? s.rt.target : s.rt;
+    const srt = stripNull(val);
     if (srt.t === 'union')
-      variants = hasNull(s.rt) ? [...srt.arms, { t: 'lit', v: null }] : srt.arms;
+      variants = hasNull(val) ? [...srt.arms, { t: 'lit', v: null }] : srt.arms;
     else cx.report('E4103', '`match` subject is not a discriminable union');
   }
   const covered = new Set<number>();

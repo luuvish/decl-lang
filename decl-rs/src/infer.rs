@@ -1946,10 +1946,16 @@ fn infer_match(cx: &Ctx, e: &Rc<Expr>, expected: Option<&RT>) -> Ty {
     let s = require_val(cx, subject, infer(cx, subject), "as a match subject");
     let mut variants: Option<Vec<RT>> = None;
     if let Some(srt0) = &s.rt {
-        let srt = strip_null(srt0);
+        // a match subject is a value position: a reference denotes its target's
+        // value (§4.7, §7.4's mirror rule), which is what the runtime inspects
+        let val: &RT = match &srt0.k {
+            RTk::Ref(t) => t,
+            _ => srt0,
+        };
+        let srt = strip_null(val);
         if let RTk::Union(vs) = &srt.k {
             let mut v = vs.borrow().clone();
-            if has_null(Some(srt0)) {
+            if has_null(Some(val)) {
                 v.push(ty(RTk::Lit(Value::Null)));
             }
             variants = Some(v);

@@ -843,6 +843,12 @@ diagnostic width_mismatch(src: int, dst: int) {
   lexically an integer — numbers bind by lexical form, so integral
   floats would otherwise re-bind as ints and break the round trip
   below.
+- A `match` subject is a value position *(amended 2026-09-08, v0.4.6)*:
+  a `ref<U>` subject denotes its target's value and discriminates as the
+  union `U` — the mirror rule (§7.4) applied to `match`. The runtimes
+  already dereferenced the subject; only the checker rejected it. Found
+  reimplementing a real generator, where a reference to a discriminable
+  union had to be matched.
 - Quantities serialize per D15; references serialize as canonical path
   strings (D26) — **document-relative** (`"$.a[0]"`) for targets under
   the same evaluation root, absolute for cross-root targets, so an

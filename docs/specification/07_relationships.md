@@ -208,8 +208,10 @@ output net: Network = {
 
   The expected type decides, in both directions; without an expected
   value type, a reference stays a reference. Dereference happens only
-  where a declaration asks for the value — never silently. A dangling
-  reference reported under §7.5 taints its dereference (§6.6).
+  where a declaration asks for the value — never silently. A `match`
+  subject is such a value position *(v0.4.6)*: a `ref<U>` subject
+  denotes its target's value `U`, so it discriminates as `U` (§4.7). A
+  dangling reference reported under §7.5 taints its dereference (§6.6).
 - In every other position the reference behaves as a reference value:
   equality compares **canonical target paths** (§4.5), and
   serialization emits the path.

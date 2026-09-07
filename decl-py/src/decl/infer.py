@@ -1262,9 +1262,12 @@ def _infer_match(cx: Ctx, e: dict[str, Any], expected: dict[str, Any] | None) ->
     s = require_val(cx, e["subject"], infer(cx, e["subject"]), "as a match subject")
     variants: list[Any] | None = None
     if s["rt"]:
-        srt = strip_null(s["rt"])
+        # a match subject is a value position: a reference denotes its target's
+        # value (§4.7, §7.4's mirror rule), which is what the runtime inspects
+        val = s["rt"]["target"] if s["rt"]["t"] == "ref" else s["rt"]
+        srt = strip_null(val)
         if srt["t"] == "union":
-            variants = srt["arms"] + [{"t": "lit", "v": None}] if has_null(s["rt"]) else srt["arms"]
+            variants = srt["arms"] + [{"t": "lit", "v": None}] if has_null(val) else srt["arms"]
         else:
             cx.report("E4103", "`match` subject is not a discriminable union")
     covered: set[Any] = set()

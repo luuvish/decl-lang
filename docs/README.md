@@ -1,6 +1,6 @@
 # Decl Documentation
 
-**Status: v0.4.5 (2026-09-08)** — v0.1 frozen 2026-08-31, revised through
+**Status: v0.4.6 (2026-09-08)** — v0.1 frozen 2026-08-31, revised through
 the v0.2 cycle (D31–D33, D29 amended, clarifications), v0.3 (member
 kinds read off `?` and `= e` with no `const` in record bodies, D4
 amended; hidden members `x$ = e`, D34), v0.4: rendering is
@@ -9,7 +9,8 @@ documents in YAML), then v0.4.1: a record flows into a map (D36) and
 v0.4.2: `$referrers` answers in rounds (D26 amended), v0.4.3: `std.array`
 grows `sort` / `sort_by` / `unique` / `reverse`, v0.4.4: a computed
 document binds at its site (D31 amended), v0.4.5: discrimination is
-hierarchical (D11 amended) — see
+hierarchical (D11 amended), v0.4.6: a `match` subject is a value
+position (D26 amended) — see
 [REVISIONS.md](REVISIONS.md). The normative specification below is the
 single source of truth for every implementation phase.
 

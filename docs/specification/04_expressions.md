@@ -193,6 +193,11 @@ const area = match shape {
   as "when the value is a `Type`, call it `name`". The arm applies when
   the value's discriminant selects a variant with `variant ⊑ Type`;
   `name` is bound with that arm's type inside `expr`.
+- The subject is a **value position** *(v0.4.6)*: a subject of type
+  `ref<U>` denotes its target's value `U` (§7.4's mirror rule), so a
+  reference to a discriminable union discriminates as that union, and
+  the arm binds the target's value. Without this a reference could only
+  be matched by first copying it out.
 - Arms must be **pairwise disjoint** (no variant selected by two typed
   arms) and **exhaustive** (every variant selected by some arm) — both
   checked statically; violating either is a compile error. Order of

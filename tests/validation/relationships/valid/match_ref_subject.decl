@@ -1,0 +1,17 @@
+// a `match` subject that is a reference is a value position: the reference
+// denotes its target's value (§4.7, §7.4's mirror rule), so a `ref<U>` over a
+// discriminable union U discriminates as U itself. The arm binds the target's
+// value; member access on it reads through as usual.
+type Circle = { kind: "circle", r: int }
+type Rect = { kind: "rect", w: int, h: int }
+type Shape = Circle | Rect
+type Scene = {
+    shapes: { [string]: Shape }
+    chosen: string
+    picked: ref<Shape> = shapes[chosen]
+    area = match picked { (c: Circle) => c.r * c.r, (r: Rect) => r.w * r.h }
+}
+export output scene: Scene = {
+    shapes: { a: { kind: "circle", r: 3 }, b: { kind: "rect", w: 2, h: 5 } }
+    chosen: "b"
+}
