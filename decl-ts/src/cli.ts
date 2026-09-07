@@ -142,18 +142,20 @@ function inputBinds(
 // --json: collect diagnostics as objects and emit one JSON array on
 // stdout at exit (the §12 machine-readable report), instead of lines
 const jsonMode = !!flags.get('json');
-const collected: Record<string, string>[] = [];
+const collected: Record<string, unknown>[] = [];
 let evalOut: string | null = null; // evaluate's canonical JSON, captured in --json mode
 // one diagnostic, in the report's field order (§12.2): file, code, id,
 // severity, message, path — absent fields omitted, so every implementation
 // emits the same bytes
-const diagJson = (file: string, d: Diag): Record<string, string> => {
-  const o: Record<string, string> = { file };
+const diagJson = (file: string, d: Diag): Record<string, unknown> => {
+  const o: Record<string, unknown> = { file };
   if (d.code) o.code = d.code;
   if (d.id) o.id = d.id;
   o.severity = d.severity;
   o.message = d.message;
   o.path = d.path;
+  // §12.2: a source span, 1-based, for compile-time diagnostics
+  if (d.loc) o.location = { file, line: d.loc.sl + 1, col: d.loc.sc + 1 };
   return o;
 };
 const printDiag = (file: string, d: Diag) => {
@@ -161,8 +163,9 @@ const printDiag = (file: string, d: Diag) => {
     collected.push(diagJson(file, d));
     return;
   }
+  const at = d.loc ? `${file}:${d.loc.sl + 1}:${d.loc.sc + 1}` : file;
   console.error(
-    `${file}: ${d.severity}${d.code ? ` [${d.code}]` : ''}${d.id ? ` ${d.id}` : ''}${d.path ? ` at ${d.path}` : ''}: ${d.message}`,
+    `${at}: ${d.severity}${d.code ? ` [${d.code}]` : ''}${d.id ? ` ${d.id}` : ''}${d.path ? ` at ${d.path}` : ''}: ${d.message}`,
   );
 };
 // the file a diagnostic is reported against: the entry module by the path

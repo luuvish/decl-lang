@@ -109,6 +109,14 @@ fn diag_json(d: &Diagnostic) -> String {
     fields.push(format!("\"severity\":{}", json_str(&d.severity)));
     fields.push(format!("\"message\":{}", json_str(&d.message)));
     fields.push(format!("\"path\":{}", json_str(&d.path)));
+    if let Some((f, line, col)) = &d.location {
+        fields.push(format!(
+            "\"location\":{{\"file\":{},\"line\":{},\"col\":{}}}",
+            json_str(f),
+            line,
+            col
+        ));
+    }
     format!("{{{}}}", fields.join(","))
 }
 

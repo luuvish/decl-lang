@@ -34,6 +34,8 @@ pub struct Diagnostic {
     pub message: String,
     /// the canonical path of the value the finding concerns (§7.2); empty for a module-level finding
     pub path: String,
+    /// source span, 1-based (file, line, col); present for compile-time diagnostics (§12.2)
+    pub location: Option<(String, usize, usize)>,
 }
 
 /// An operation failed; `diagnostics` carries the report (empty for a usage
@@ -79,6 +81,10 @@ fn tagged(file: &str, d: &Diag) -> Diagnostic {
         severity: d.severity.clone(),
         message: d.message.clone(),
         path: d.path.clone(),
+        location: d
+            .loc
+            .as_ref()
+            .map(|l| (file.to_string(), l.sl + 1, l.sc + 1)),
     }
 }
 fn fail<T>(fallback: &str, diagnostics: Vec<Diagnostic>) -> Result<T, DeclError> {
@@ -114,6 +120,7 @@ fn bind_inputs(
             code: Some("E6004".into()),
             id: None,
             severity: "error".into(),
+            location: None,
             message,
             path: name.clone(),
         };
@@ -327,6 +334,7 @@ pub fn render(path: &str, opts: &RenderOptions) -> Result<IndexMap<String, Rende
                 severity: "error".into(),
                 message: "template cannot be read".into(),
                 path: n.to_string(),
+                location: None,
             }],
         }
     };
@@ -357,6 +365,7 @@ pub fn render(path: &str, opts: &RenderOptions) -> Result<IndexMap<String, Rende
                             severity: "error".into(),
                             message: m,
                             path: n.clone(),
+                            location: None,
                         }],
                     )
                 }

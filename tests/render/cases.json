@@ -29,7 +29,7 @@
     ],
     "exit": 1,
     "stdout": "",
-    "stderr": "<dir>/m.decl: error [E4002]: required member b missing in the construction\n"
+    "stderr": "<dir>/m.decl:2:1: error [E4002]: required member b missing in the construction\n"
   },
   {
     "name": "value tag: a function has no text form (E7002)",
@@ -645,7 +645,7 @@
     ],
     "exit": 0,
     "stdout": "{\"a\":1}\n",
-    "stderr": "<dir>/m.decl: warn [W0001]: unknown annotation @render\n"
+    "stderr": "<dir>/m.decl:1:1: warn [W0001]: unknown annotation @render\n"
   },
   {
     "name": "fan-out: an array with each: path through a template, into a directory",

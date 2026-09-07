@@ -29,8 +29,11 @@ def load_modules(
     diagnostic (packages, §8.6)."""
     diags: list[Any] = []
 
-    def report(code: str, message: str) -> None:
-        diags.append({"severity": "error", "code": code, "message": message, "path": ""})
+    def report(code: str, message: str, loc: Any = None) -> None:
+        d: dict[str, Any] = {"severity": "error", "code": code, "message": message, "path": ""}
+        if loc is not None:
+            d["loc"] = loc
+        diags.append(d)
 
     modules: dict[str, Any] = {}
     order: list[Any] = []
@@ -67,7 +70,12 @@ def load_modules(
                 return None
         parsed = parse_source(src)
         if parsed["errors"]:
-            report("E2001", f"{abs_}: {len(parsed['errors'])} parse error(s)")
+            e = parsed["errors"][0]
+            report(
+                "E2001",
+                f"{abs_}: {len(parsed['errors'])} parse error(s)",
+                {"sl": e["row"], "sc": e["col"], "el": e["row"], "ec": e["col"] + 1},
+            )
             return None
         decls = parsed["decls"]
         env = Env()

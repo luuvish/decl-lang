@@ -46,8 +46,12 @@ fn print_diag(file: &str, d: &Diag, json: bool, collected: &mut Vec<String>) {
         collected.push(d.to_json(Some(file)));
         return;
     }
+    let at = match &d.loc {
+        Some(l) => format!("{file}:{}:{}", l.sl + 1, l.sc + 1),
+        None => file.to_string(),
+    };
     eprintln!(
-        "{file}: {}{}{}{}: {}",
+        "{at}: {}{}{}{}: {}",
         d.severity,
         d.code
             .as_ref()

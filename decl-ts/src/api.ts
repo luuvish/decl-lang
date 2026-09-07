@@ -29,6 +29,8 @@ export type Diagnostic = {
   severity: string;
   message: string;
   path: string;
+  /** source span, 1-based; present for compile-time diagnostics (§12.2) */
+  location?: { file: string; line: number; col: number };
 };
 export type JsonValue =
   null | boolean | number | string | JsonValue[] | { [key: string]: JsonValue };
@@ -61,6 +63,7 @@ const tagged = (file: string, d: Diag): Diagnostic => {
   o.severity = d.severity;
   o.message = d.message;
   o.path = d.path;
+  if (d.loc) o.location = { file, line: d.loc.sl + 1, col: d.loc.sc + 1 };
   return o;
 };
 const fail = (fallback: string, diagnostics: Diagnostic[]): never => {

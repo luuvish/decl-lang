@@ -5,7 +5,7 @@ import { host, dirname, resolvePath as absPath } from './host.ts';
 import { parseSource } from './parse.ts';
 import { Env, sortDiags } from './semantics.ts';
 import type { Diag } from './semantics.ts';
-import type { Decl } from './ast.ts';
+import type { Decl, Loc } from './ast.ts';
 import { Engine } from './engine.ts';
 
 export type ExportEntry = { env: Env; name: string };
@@ -28,8 +28,8 @@ export function loadModules(
   sourceOverride?: Map<string, string>,
 ): LoadResult {
   const diags: Diag[] = [];
-  const report = (code: string, message: string) =>
-    diags.push({ severity: 'error', code, message, path: '' });
+  const report = (code: string, message: string, loc?: Loc) =>
+    diags.push({ severity: 'error', code, message, path: '', ...(loc ? { loc } : {}) });
   const modules = new Map<string, Module>();
   const order: Module[] = [];
   const visiting: string[] = [];
@@ -66,7 +66,13 @@ export function loadModules(
     }
     const { decls, errors } = parseSource(src);
     if (errors.length) {
-      report('E2001', `${abs}: ${errors.length} parse error(s)`);
+      const e = errors[0];
+      report('E2001', `${abs}: ${errors.length} parse error(s)`, {
+        sl: e.row,
+        sc: e.col,
+        el: e.row,
+        ec: e.col + 1,
+      });
       return null;
     }
     const env = new Env();

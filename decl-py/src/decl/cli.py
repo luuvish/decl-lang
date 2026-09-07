@@ -42,6 +42,9 @@ def _diag_json(file: str, d: dict[str, Any]) -> dict[str, Any]:
     o["severity"] = d["severity"]
     o["message"] = d["message"]
     o["path"] = d.get("path", "")
+    loc = d.get("loc")
+    if loc:  # §12.2: a source span, 1-based, for compile-time diagnostics
+        o["location"] = {"file": file, "line": loc["sl"] + 1, "col": loc["sc"] + 1}
     return o
 
 
@@ -56,7 +59,9 @@ def _print_diag(file: str, d: dict[str, Any], collected: Any, json_mode: bool) -
     code = f" [{d['code']}]" if d.get("code") else ""
     id_ = f" {d['id']}" if d.get("id") else ""
     at = f" at {d['path']}" if d.get("path") else ""
-    print(f"{file}: {d['severity']}{code}{id_}{at}: {d['message']}", file=sys.stderr)
+    loc = d.get("loc")
+    where = f"{file}:{loc['sl'] + 1}:{loc['sc'] + 1}" if loc else file
+    print(f"{where}: {d['severity']}{code}{id_}{at}: {d['message']}", file=sys.stderr)
 
 
 def open_universe(file: str) -> dict[str, Any]:

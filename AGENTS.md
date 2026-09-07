@@ -86,7 +86,7 @@ Rules:
   (`validate --input`, `evaluate --input`), `fmt` output over every
   parseable module, package resolution and lock reports, and one scripted
   `decl-lsp` session. Diagnostic reports therefore have one field order
-  (§12.2: `file, code, id, severity, message, path`) and one file-tag
+  (§12.2: `file, code, id, severity, message, path, location`; `location` is `{file, line, col}`, 1-based, on compile-time diagnostics) and one file-tag
   rule (the entry module by the path given, other modules by absolute
   path) in all three. CI runs the same gate (`.github/workflows/verify.yml`).
 - A parity difference is a defect in whichever side diverges from the

@@ -208,7 +208,12 @@
         "code": "E2001",
         "severity": "error",
         "message": "<root>/tests/validation/lexical/invalid/semicolon.decl: 2 parse error(s)",
-        "path": ""
+        "path": "",
+        "location": {
+          "file": "tests/validation/lexical/invalid/semicolon.decl",
+          "line": 3,
+          "col": 12
+        }
       }
     ]
   },

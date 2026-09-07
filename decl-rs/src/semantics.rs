@@ -509,6 +509,15 @@ impl Diag {
         parts.push(format!("\"severity\":{}", json_str(&self.severity)));
         parts.push(format!("\"message\":{}", json_str(&self.message)));
         parts.push(format!("\"path\":{}", json_str(&self.path)));
+        // §12.2: a source span, 1-based, for compile-time diagnostics
+        if let (Some(f), Some(l)) = (file, &self.loc) {
+            parts.push(format!(
+                "\"location\":{{\"file\":{},\"line\":{},\"col\":{}}}",
+                json_str(f),
+                l.sl + 1,
+                l.sc + 1
+            ));
+        }
         format!("{{{}}}", parts.join(","))
     }
 }

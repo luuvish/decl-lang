@@ -406,7 +406,7 @@
     ],
     "exit": 0,
     "stdout": "",
-    "stderr": "<dir>/ann.decl: warn [W0001]: unknown annotation @todo\n"
+    "stderr": "<dir>/ann.decl:1:1: warn [W0001]: unknown annotation @todo\n"
   },
   {
     "name": "check --json: the warning's severity is warn",
@@ -419,7 +419,7 @@
       "<dir>/ann.decl"
     ],
     "exit": 0,
-    "stdout": "[{\"file\":\"<dir>/ann.decl\",\"code\":\"W0001\",\"severity\":\"warn\",\"message\":\"unknown annotation @todo\",\"path\":\"\"}]\n",
+    "stdout": "[{\"file\":\"<dir>/ann.decl\",\"code\":\"W0001\",\"severity\":\"warn\",\"message\":\"unknown annotation @todo\",\"path\":\"\",\"location\":{\"file\":\"<dir>/ann.decl\",\"line\":1,\"col\":1}}]\n",
     "stderr": ""
   },
   {
@@ -433,6 +433,6 @@
     ],
     "exit": 0,
     "stdout": "{\"o\":1}\n",
-    "stderr": "<dir>/ann.decl: warn [W0001]: unknown annotation @todo\n"
+    "stderr": "<dir>/ann.decl:2:1: warn [W0001]: unknown annotation @todo\n"
   }
 ]

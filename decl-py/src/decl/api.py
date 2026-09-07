@@ -69,6 +69,9 @@ def _tagged(file: str, d: dict[str, Any]) -> Diagnostic:
     o["severity"] = d["severity"]
     o["message"] = d["message"]
     o["path"] = d.get("path", "")
+    loc = d.get("loc")
+    if loc:
+        o["location"] = {"file": file, "line": loc["sl"] + 1, "col": loc["sc"] + 1}
     return cast(Diagnostic, o)
 
 

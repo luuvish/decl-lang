@@ -31,7 +31,8 @@ array of answers:
 The answer of `evaluate` is the roots by name, **in declaration order**,
 each the document; of `check` and `validate` the diagnostics in the
 report's field order (§12.2: `file, code, id, severity, message,
-path`, absent fields omitted); of `format_source` the text. A failure
+path, location`, absent fields omitted; `location` is `{file, line,
+col}`, 1-based, present on compile-time diagnostics); of `format_source` the text. A failure
 is the error's message and its diagnostics. Documents compare by value:
 `expected.json` is canonical JSON, and a driver whose language reads
 `6.0` as `6` is not wrong. A message that names a module by its

@@ -47,6 +47,11 @@ impl Loader {
         self.diags
             .push(Diag::error(message, String::new(), Some(code)));
     }
+    fn report_at(&mut self, code: &str, message: String, loc: Loc) {
+        let mut d = Diag::error(message, String::new(), Some(code));
+        d.loc = Some(loc);
+        self.diags.push(d);
+    }
     fn resolve_spec(&mut self, spec: &str, from_dir: &Path) -> Option<PathBuf> {
         if spec.starts_with("./") || spec.starts_with("../") {
             return Some(normalize(&from_dir.join(spec)));
@@ -95,9 +100,16 @@ impl Loader {
         };
         let parsed = parse_source(&src);
         if !parsed.errors.is_empty() {
-            self.report(
+            let e = &parsed.errors[0];
+            self.report_at(
                 "E2001",
                 format!("{}: {} parse error(s)", abs.display(), parsed.errors.len()),
+                Loc {
+                    sl: e.0,
+                    sc: e.1,
+                    el: e.0,
+                    ec: e.1 + 1,
+                },
             );
             return None;
         }
