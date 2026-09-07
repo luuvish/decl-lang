@@ -1694,18 +1694,31 @@ export class Engine {
   materialize(v: any, path: Seg[], parent: RecInst | null, sc: Scope): any {
     // untyped structural value (rare: derived without annotation producing structure)
     if (v && v.__pre === 'arr') {
-      const arr: any = { __arr: true, items: [], path };
-      let i = 0;
-      for (const it of v.items) {
-        const x = it.v.__expr ? this.ev(it.v.__expr, it.v.scope) : it.v;
-        // a spread item splices its array's elements (§4.2)
-        const xs = it.spread ? this.matArr(this.deref(x)) : [x];
-        for (const y of xs) {
-          arr.items.push(this.materialize(y, [...path, i], parent, sc));
-          i++;
+      // collect the flat items iteratively: a leading (or any) spread of an
+      // unmaterialized array is walked with an explicit stack, not host
+      // recursion, so a fold-with-spread chain of any depth flattens without
+      // exhausting the stack (§4.2, §9.4)
+      const raw: any[] = [];
+      const stack: { items: any[]; i: number }[] = [{ items: v.items, i: 0 }];
+      while (stack.length) {
+        const top = stack[stack.length - 1];
+        if (top.i >= top.items.length) {
+          stack.pop();
+          continue;
         }
+        const it = top.items[top.i++];
+        const x = it.v.__expr ? this.ev(it.v.__expr, it.v.scope) : it.v;
+        if (it.spread) {
+          const d = this.deref(x);
+          if (d && d.__pre === 'arr') stack.push({ items: d.items, i: 0 });
+          else for (const y of this.matArr(d)) raw.push(y); // a materialized array: its items (bounded)
+        } else raw.push(x);
       }
-      return arr;
+      return {
+        __arr: true,
+        items: raw.map((y, i) => this.materialize(y, [...path, i], parent, sc)),
+        path,
+      };
     }
     if (v && v.__pre === 'obj') {
       const m: any = { __map: true, entries: new Map(), path };

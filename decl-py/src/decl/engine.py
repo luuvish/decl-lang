@@ -1739,14 +1739,31 @@ class Engine:
 
     def materialize(self, v: Any, path: list[Any], parent: RecInst | None, sc: Scope | None) -> Any:
         if isinstance(v, PreArr):
-            arr = ArrV([], path)
-            i = 0
-            for spread, it in v.items:
+            # collect the flat items iteratively: a spread of an unmaterialized
+            # array is walked with an explicit stack, not host recursion, so a
+            # fold-with-spread chain of any depth flattens without exhausting
+            # the stack (§4.2, §9.4)
+            raw: list[Any] = []
+            stack: list[list[Any]] = [[v.items, 0]]
+            while stack:
+                fitems, idx = stack[-1]
+                if idx >= len(fitems):
+                    stack.pop()
+                    continue
+                spread, it = fitems[idx]
+                stack[-1][1] += 1
                 x = self.ev(it.expr, it.scope) if isinstance(it, PreVal) else it
-                # a spread item splices its array's elements (§4.2)
-                for y in self.mat_arr(x) if spread else [x]:
-                    arr.items.append(self.materialize(y, [*path, i], parent, sc))
-                    i += 1
+                if spread:
+                    d = self.deref(x)
+                    if isinstance(d, PreArr):
+                        stack.append([d.items, 0])
+                    else:
+                        raw.extend(self.mat_arr(d))
+                else:
+                    raw.append(x)
+            arr = ArrV([], path)
+            for i, y in enumerate(raw):
+                arr.items.append(self.materialize(y, [*path, i], parent, sc))
             return arr
         if isinstance(v, PreObj):
             m = MapV({}, path)

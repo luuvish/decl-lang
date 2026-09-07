@@ -3006,25 +3006,54 @@ impl Engine {
     pub fn materialize(&self, v: Value, path: &[Seg]) -> R<Value> {
         match v {
             Value::PreArr(items) => {
+                // collect the flat items iteratively: a spread of an
+                // unmaterialized array is walked with an explicit stack, not
+                // host recursion, so a fold-with-spread chain of any depth
+                // flattens without exhausting the stack (§4.2, §9.4)
+                let mut raw: Vec<Value> = vec![];
+                let mut stack: Vec<(Rc<Vec<(bool, Value)>>, usize)> = vec![(items, 0)];
+                while !stack.is_empty() {
+                    let last = stack.len() - 1;
+                    let entry = {
+                        let (fitems, idx) = &mut stack[last];
+                        if *idx >= fitems.len() {
+                            None
+                        } else {
+                            let e = fitems[*idx].clone();
+                            *idx += 1;
+                            Some(e)
+                        }
+                    };
+                    let Some((spread, it)) = entry else {
+                        stack.pop();
+                        continue;
+                    };
+                    let x = match &it {
+                        Value::PreVal(pv) => self.ev(&pv.expr, &pv.scope)?,
+                        other => other.clone(),
+                    };
+                    if spread {
+                        let d = self.deref(x)?;
+                        if let Value::PreArr(inner) = d {
+                            stack.push((inner, 0));
+                        } else {
+                            for y in self.mat_arr(&d)? {
+                                raw.push(y);
+                            }
+                        }
+                    } else {
+                        raw.push(x);
+                    }
+                }
                 let arr = Rc::new(RefCell::new(ArrV {
                     items: vec![],
                     path: path.to_vec(),
                 }));
-                let mut i = 0;
-                for (spread, it) in items.iter() {
-                    let x = match it {
-                        Value::PreVal(pv) => self.ev(&pv.expr, &pv.scope)?,
-                        other => other.clone(),
-                    };
-                    // a spread item splices its array's elements (§4.2)
-                    let xs = if *spread { self.mat_arr(&x)? } else { vec![x] };
-                    for y in xs {
-                        let mut p = path.to_vec();
-                        p.push(Seg::Idx(i));
-                        let m = self.materialize(y, &p)?;
-                        arr.borrow_mut().items.push(m);
-                        i += 1;
-                    }
+                for (i, y) in raw.into_iter().enumerate() {
+                    let mut p = path.to_vec();
+                    p.push(Seg::Idx(i));
+                    let m = self.materialize(y, &p)?;
+                    arr.borrow_mut().items.push(m);
                 }
                 Ok(Value::Arr(arr))
             }
