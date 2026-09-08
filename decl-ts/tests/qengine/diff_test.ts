@@ -152,6 +152,32 @@ const programs: { name: string; src: string }[] = [
     name: 'match with a catch-all',
     src: 'type Proto = "http" | "grpc" | "tcp"\ntype R = { p: Proto, port = match p { (x: "http") => 80, (rest) => 0 } }\nexport output r: R = { p: "tcp" }',
   },
+  // quantities and dimensional arithmetic (§3.16, §4.6)
+  { name: 'a unit literal', src: 'type D = quantity<Length>\nexport output d: D = 1.5km' },
+  {
+    name: 'quantity addition across units',
+    src: 'type D = quantity<Length>\nexport output total: D = 1.5km + 2000m',
+  },
+  {
+    name: 'quantity scaled by a scalar',
+    src: 'type D = quantity<Length>\nexport output scaled: D = 1.5km * 2',
+  },
+  {
+    name: 'quantity division yields a derived dimension',
+    src: 'dimension Speed = Length / Time\nunit mps: Speed\ntype V = quantity<Speed>\nexport output v: V = 3km / 2s',
+  },
+  {
+    name: 'quantity ratio is dimensionless',
+    src: 'export output ratio: float = 1.5km / 1km',
+  },
+  {
+    name: 'quantity comparison',
+    src: 'export output b: bool = 1500m < 2km',
+  },
+  {
+    name: 'derived quantity member',
+    src: 'type Budget = { limit: quantity<Time>, doubled = limit + limit }\nexport output b: Budget = { limit: 250ms }',
+  },
 ];
 
 let pass = 0;

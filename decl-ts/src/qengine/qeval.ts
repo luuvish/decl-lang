@@ -4,12 +4,14 @@
 //   scalars/const, records (slots as queries, cross-slot & nested & member
 //   access), references ($this/$parent/$root/$key, deref/navigation),
 //   arrays & array comprehensions, ranges, indexing, maps & map comprehensions,
-//   `in`/`matches`, patterns, string templates, and `match` over literal unions.
+//   `in`/`matches`, patterns, string templates, `match` over literal unions,
+//   quantities and dimensional arithmetic.
 // Value semantics — equality, serialization, type binding, iteration, type
-// membership — are reused from the current value layer, as the design intends;
-// only the evaluation strategy is new. Quantities/units, std calls, `ref<T>`
-// navigation members, context declarations, unions of records in collection
-// positions, `$referrers`, and the rest come in later stages.
+// membership, unit resolution, quantity arithmetic — are reused from the current
+// value layer, as the design intends; only the evaluation strategy is new. Std
+// calls, lambdas/pipes, `ref<T>` navigation members, context declarations,
+// unions of records in collection positions, `$referrers`, and the rest come in
+// later stages.
 import { Db } from './db.ts';
 import { Engine } from '../engine.ts';
 import {
@@ -47,6 +49,10 @@ interface OpCx {
   memberOf(v: Value, rt: RT): boolean;
   /** a value's string form for template interpolation (§4.8) */
   toStr(v: Value): string;
+  /** resolve a unit symbol to its dimension key and base factor (§3.16) */
+  unitInfo(sym: string): { key: string; toBase: number };
+  /** quantity-aware arithmetic and comparison (§4.6) */
+  qArith(op: string, l: Value, r: Value): Value;
 }
 /** local bindings in scope (comprehension loop variables) */
 type Locals = Map<string, Value>;
@@ -82,7 +88,6 @@ function applyBin(op: string, l: Value, r: Value): Value {
   if (op === '==') return valueEq(l, r);
   if (op === '!=') return !valueEq(l, r);
   if (l === ABSENT || r === ABSENT) throw new EvalErr('absent consumed');
-  if (isQ(l) || isQ(r)) throw new Unsupported('quantity arithmetic'); // later stage
   const bothI = typeof l === 'bigint' && typeof r === 'bigint';
   const bothF = typeof l === 'number' && typeof r === 'number';
   const bothS = typeof l === 'string' && typeof r === 'string';
@@ -168,6 +173,9 @@ const VALUE_OPS = new Set([
   '>>',
 ]);
 
+/** the operators quantity operands take through qArith (§4.6) */
+const QOPS = new Set(['+', '-', '*', '/', '<', '<=', '>', '>=']);
+
 /** read member `name` of a record value through the query graph (§4.10, §7.5) */
 function access(cx: OpCx, x: Value, name: string): Value {
   if (isRec(x)) {
@@ -198,6 +206,14 @@ function compile(e: Expr, c: CCtx): Op {
     case 'lit': {
       const v = e.v;
       return () => v;
+    }
+    case 'unitlit': {
+      const num = e.num;
+      const unit = e.unit;
+      return (cx) => {
+        const u = cx.unitInfo(unit);
+        return { __q: true, dim: u.key, value: num * u.toBase };
+      };
     }
     case 'paren':
       return compile(e.x, c);
@@ -250,7 +266,13 @@ function compile(e: Expr, c: CCtx): Op {
           throw new EvalErr('in: bad container');
         };
       if (!VALUE_OPS.has(op)) throw new Unsupported(`operator ${op}`);
-      return (cx, l) => applyBin(op, lc(cx, l), rc(cx, l));
+      return (cx, l) => {
+        const lv = lc(cx, l);
+        const rv = rc(cx, l);
+        // quantity operands take dimension-aware arithmetic/comparison (§4.6)
+        if ((isQ(lv) || isQ(rv)) && QOPS.has(op)) return cx.qArith(op, lv, rv);
+        return applyBin(op, lv, rv);
+      };
     }
     case 'name': {
       if (c.locals.has(e.name)) {
@@ -492,6 +514,14 @@ class QEval {
       deref: (r) => this.deref(r),
       memberOf: (v, rt) => this.helper.memberOf(v, rt, matchScope),
       toStr: (v) => this.helper.toStr(v),
+      unitInfo: (sym) => {
+        try {
+          return this.env.unitInfo(sym);
+        } catch (err) {
+          throw new EvalErr((err as Error).message);
+        }
+      },
+      qArith: (op, l, r) => this.helper.qArith(op, l, r),
     };
     const constCtx: CCtx = {
       names: (n) => (env.consts.has(n) ? `const:${n}` : undefined),
