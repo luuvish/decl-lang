@@ -1357,7 +1357,18 @@ class QEval {
     const id = pathStr(inst.path);
     for (const m of inst.rt.members) {
       const s = inst.slots.get(m.name);
-      if (!s || s.state !== 'unforced') continue; // absent/invalid slots have no compute
+      if (!s) continue;
+      // an already-forced slot (forced by a sibling or another root reading it)
+      // is still deep-materialized, so a value-layer record it holds — a func or
+      // `with` result whose derived members are not yet forced — is completed;
+      // materializing from the roots reaches every reachable instance this way
+      // (as the reference's forceAll recurses into slot values), without touching
+      // a dead instance the registry may still hold (§9.2)
+      if (s.state === 'ok') {
+        this.materializeValue(s.value, seen);
+        continue;
+      }
+      if (s.state !== 'unforced') continue; // absent/invalid slots have no compute
       try {
         const v = this.db.query(`slot:${id}.${m.name}`) as Value;
         s.value = v;
@@ -1464,12 +1475,15 @@ class QEval {
         } else throw err; // Unsupported (or a real bug) bubbles to the caller
       }
     }
-    // force the whole universe, not only what the outputs reach: $referrers
-    // needs every candidate instance built (e.g. a graph's edges), as the
-    // reference's phase-1 forceAll does. The registry grows as records are
-    // built, so iterate to its (moving) end; `seen` avoids re-forcing.
+    // force every root — the bound inputs and the outputs — as the reference's
+    // phase-1 forceAll does (over env.roots, not the registry); materializing a
+    // root builds and forces the records it reaches, so every candidate instance
+    // of the universe exists, while a dead instance (an input bound more than
+    // once keeps only the last as a root) is left untouched — as the tree walker
+    // leaves it. A candidate's own $referrers member is forced later by
+    // liveEdges. `seen` avoids re-forcing.
     const seen = new Set<RecInst>();
-    for (let i = 0; i < this.env.registry.length; i++) this.materialize(this.env.registry[i], seen);
+    for (const v of this.env.roots.values()) this.materializeValue(v, seen);
     // A value-layer record (a call/with/union/comprehension result) may carry a
     // member that reads $referrers; the reference's binder marks such members
     // deferred and its forceAll leaves them for phase 2. With the universe now
