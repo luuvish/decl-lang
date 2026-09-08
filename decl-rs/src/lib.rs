@@ -16,6 +16,7 @@ pub mod module;
 pub mod package;
 pub mod parse;
 pub mod pipeline;
+pub mod qengine;
 pub mod render;
 pub mod repl;
 pub mod semantics;
