@@ -116,6 +116,12 @@ interface RootSpec {
   type: TypeAst;
   menv: Env;
 }
+/** a bound input document (§5.5): its raw value and the module that declares it */
+interface BoundSpec {
+  name: string;
+  raw: unknown;
+  menv: Env;
+}
 /** a compiled expression: a closure over the query context and local bindings */
 type Op = (cx: OpCx, locals: Locals) => Value;
 /** the lexical context a compile happens in */
@@ -1397,7 +1403,33 @@ class QEval {
     else if (isMap(v)) for (const x of v.entries.values()) this.materializeValue(x, seen);
   }
 
-  run(roots: RootSpec[] = this.env.outputs.map((o) => ({ ...o, menv: this.env }))): QReport {
+  run(
+    roots: RootSpec[] = this.env.outputs.map((o) => ({ ...o, menv: this.env })),
+    binds: BoundSpec[] = [],
+  ): QReport {
+    // a bound input document is a root of the universe (§9.2), bound from its
+    // raw value through the value layer and available before the outputs that
+    // read it (§5.5); it is not itself serialized as an output
+    for (const b of binds) {
+      const decl = b.menv.inputs.get(b.name);
+      if (!decl) continue;
+      const sc: BindScope = { inst: null, locals: new Map(), rootName: b.name, menv: b.menv };
+      try {
+        this.env.roots.set(
+          b.name,
+          this.helper.bind(b.raw, b.menv.resolve(decl.type), [b.name], null, sc),
+        );
+      } catch (err) {
+        if (err instanceof EvalErr)
+          this.diagnostics.push({
+            severity: 'error',
+            message: err.message,
+            path: b.name,
+            code: (err as { code?: string }).code,
+          });
+        else if (!(err instanceof Taint)) throw err;
+      }
+    }
     // bind every root first, then force the universe (as the source pipeline
     // does), so a reference from one root into another resolves (§9.3). Across
     // modules every module's outputs are roots, each in its own module scope.
@@ -1552,13 +1584,22 @@ export function qevaluate(env: Env): QReport {
  * value layer (its roots populated and forced) so a caller — the pipeline
  * swap-in — can serialize through it exactly as runUniverse does.
  */
-export function qevaluateUniverse(mods: { env: Env }[], entry: { env: Env }): RoundsResult {
+export function qevaluateUniverse(
+  mods: { env: Env }[],
+  entry: { env: Env },
+  binds: { module?: { env: Env }; input: string; raw: unknown }[] = [],
+): RoundsResult {
   const roots: RootSpec[] = mods.flatMap((m) =>
     m.env.outputs.map((o) => ({ name: o.name, expr: o.expr, type: o.type, menv: m.env })),
   );
+  const bound: BoundSpec[] = binds.map((b) => ({
+    name: b.input,
+    raw: b.raw,
+    menv: (b.module ?? entry).env,
+  }));
   return evalRounds(entry.env, (prev) => {
     const ev = new QEval(entry.env, prev, mods);
-    const report = ev.run(roots);
+    const report = ev.run(roots, bound);
     return { report, live: ev.liveEdges(), eng: ev.engine() };
   });
 }

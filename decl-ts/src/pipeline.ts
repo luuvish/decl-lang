@@ -13,9 +13,12 @@ import { qevaluate, Unsupported } from './qengine/qeval.ts';
 /** the incremental query engine may be selected in place of the tree walker
  *  (qengine/DESIGN.md); it is a drop-in, byte-identical evaluator, off unless
  *  DECL_QENGINE is set — while it is validated across the whole corpus */
-const useQEngine = (): boolean =>
-  !!(globalThis as { process?: { env: Record<string, string | undefined> } }).process?.env
-    .DECL_QENGINE;
+const qEnv = (k: string): boolean =>
+  !!(globalThis as { process?: { env: Record<string, string | undefined> } }).process?.env[k];
+const useQEngine = (): boolean => qEnv('DECL_QENGINE');
+/** strict mode: an unhandled form is an error, not a silent fall back to the
+ *  tree walker — used to prove the query engine covers a corpus end to end */
+export const strictQEngine = (): boolean => qEnv('DECL_QENGINE_STRICT');
 
 export type Pipeline = { env: Env; eng: Engine; diags: Diag[] };
 
@@ -93,7 +96,7 @@ export function evaluateSource(source: string): Report {
         inputs,
       };
     } catch (e) {
-      if (!(e instanceof Unsupported)) throw e; // fall back only on an unhandled form
+      if (!(e instanceof Unsupported) || strictQEngine()) throw e; // else fall back
     }
   }
   const { env, eng, diags } = runPipeline(decls);

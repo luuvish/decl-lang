@@ -8,6 +8,7 @@ import type { Diag } from './semantics.ts';
 import type { Decl, Loc } from './ast.ts';
 import { Engine } from './engine.ts';
 import { qevaluateUniverse, Unsupported } from './qengine/qeval.ts';
+import { strictQEngine } from './pipeline.ts';
 
 /** the incremental query engine may evaluate the universe in place of the tree
  *  walker (qengine/DESIGN.md), off unless DECL_QENGINE is set */
@@ -217,16 +218,16 @@ export function runUniverse(
   entry: Module,
   binds: { module?: Module; input: string; raw: any }[] = [],
 ): { eng: Engine; diags: Diag[] } {
-  // the query engine evaluates a universe with no bound documents (supplied
-  // inputs are a later stage); it populates entry.env.roots and forces them,
-  // so the returned engine serializes exactly as the tree walker's does
-  if (useQEngine() && binds.length === 0) {
+  // the query engine populates entry.env.roots and forces them, so the returned
+  // engine serializes exactly as the tree walker's does; bound input documents
+  // are bound through the value layer before the outputs that read them
+  if (useQEngine()) {
     try {
-      const { report, eng } = qevaluateUniverse(mods, entry);
+      const { report, eng } = qevaluateUniverse(mods, entry, binds);
       entry.env.diagnostics.splice(0, entry.env.diagnostics.length, ...report.diagnostics);
       return { eng, diags: entry.env.diagnostics };
     } catch (e) {
-      if (!(e instanceof Unsupported)) throw e; // fall back only on an unhandled form
+      if (!(e instanceof Unsupported) || strictQEngine()) throw e; // else fall back
     }
   }
   const bind = (eng: Engine) => {
