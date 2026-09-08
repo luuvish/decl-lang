@@ -1,9 +1,24 @@
 # Query engine (a from-scratch incremental, memoized evaluator)
 
-Status: **WIP, parallel to the current engine.** Built and validated
-differentially against `engine.ts` on every corpus; it replaces the current
-evaluator only once byte-identical everywhere, and then is ported to Rust and
-Python. Until then it ships nothing and changes no observable behavior.
+Status: **complete in the TypeScript reference, swapped in behind a flag;
+Rust and Python ports pending.** Built and validated differentially against
+`engine.ts` across the whole corpus — the reference layer (`qeval.ts`) is
+byte-identical to the tree walker on every fixture (validation valid and
+invalid, golden, examples, modules), matching serialized outputs, `ok`, and
+diagnostics (field and sort order, §6.7/§12.2). It is wired into the pipeline
+(`pipeline.ts` `evaluateSource`, `module.ts` `runUniverse`) selected by the
+`DECL_QENGINE` environment variable — off by default, so nothing changes for
+parity until all three implementations move together. With `DECL_QENGINE=1`
+(and `DECL_QENGINE_STRICT=1`, which turns the tree-walker fall-back into an
+error) the entire TypeScript test suite passes with the query engine handling
+every form and no fall-back.
+
+Remaining before it becomes the default and the tree walker retires: port
+`qeval.ts`/`db.ts` to Rust (`decl-rs`) and Python (`decl-py`) so all three
+implementations are the query engine (parity, and the Rust performance win),
+then flip the default. Gates: `decl-ts/tests/qengine/` (`db_test`,
+`diff_test`, `corpus_test` — outputs+ok+diagnostics over the whole
+single-module corpus, `modules_test`).
 
 ## Why
 
