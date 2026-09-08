@@ -6,14 +6,17 @@
 //   2b — records: an object literal bound to a record type becomes a RecInst
 //        whose members are slot QUERIES; a member that names a sibling reads it
 //        through the query graph (`slot b = a + 1` queries slot a), so the graph
-//        does the cross-slot dependency work. Required and derived scalar
-//        members are covered; other member kinds, nesting, and refs come later.
+//        does the cross-slot dependency work.
+//   2b+ — nested records (a record-typed member binds recursively) and member
+//        access (`inner.a` queries the nested record's slot). Required and
+//        derived members are covered; optional/default members, maps, refs and
+//        `$this`/`$parent` navigation come later.
 // Value semantics — equality, serialization, and type binding — are reused from
 // the current value layer, as the design intends; only the evaluation strategy
 // is new.
 import { Db } from './db.ts';
 import { Engine } from '../engine.ts';
-import { ABSENT, EvalErr, pathStr, valueEq } from '../semantics.ts';
+import { ABSENT, EvalErr, isRec, isRef, pathStr, valueEq } from '../semantics.ts';
 import type { Env, RecInst, Value, Diag, Seg, RT } from '../semantics.ts';
 import type { Expr } from '../ast.ts';
 
@@ -112,6 +115,18 @@ function applyBin(op: string, l: Value, r: Value): Value {
   throw new EvalErr(`bad operands for ${op}`);
 }
 
+/** read member `name` of a record value through the query graph (§4.10, §7.5) */
+function access(cx: { query(key: string): unknown }, x: Value, name: string): Value {
+  if (isRec(x)) {
+    if (x.slots.has(name)) return cx.query(`slot:${pathStr(x.path)}.${name}`) as Value;
+    if (x.extras.has(name)) throw new EvalErr(`opaque field ${name} accessed`);
+    return ABSENT; // a member admitted only through an optional bound is absent
+  }
+  if (x === null) throw new EvalErr('member access on null');
+  if (x === ABSENT) return ABSENT;
+  throw new Unsupported('member access on a non-record value');
+}
+
 // ---- compile: an expression AST becomes a closure over the query context ----
 
 function compile(e: Expr, names: Names): Op {
@@ -151,6 +166,17 @@ function compile(e: Expr, names: Names): Op {
       if (key === undefined) throw new Unsupported(`name ${e.name}`);
       return (cx) => cx.query(key) as Value;
     }
+    case 'member': {
+      const nm = e.name;
+      const safe = e.safe;
+      const xc = compile(e.x, names);
+      return (cx) => {
+        const x = xc(cx);
+        if (safe && (x === null || x === ABSENT)) return ABSENT;
+        if (isRef(x)) throw new Unsupported('member access through a reference');
+        return access(cx, x, nm);
+      };
+    }
     default:
       throw new Unsupported(e.e);
   }
@@ -162,19 +188,13 @@ export interface QReport {
   diagnostics: Diag[];
 }
 
-interface SlotJob {
-  op: Op;
-  type: RT | undefined; // resolved member type
-  path: Seg[];
-  inst: RecInst;
-}
-
 class QEval {
   private readonly env: Env;
   private readonly helper: Engine; // value layer only: type binding + serialization
   private readonly db: Db;
   private readonly constOps = new Map<string, Op>();
-  private readonly slotJobs = new Map<string, SlotJob>();
+  // each slot's compute: it reads siblings/consts through the query context
+  private readonly slotJobs = new Map<string, Op>();
   private readonly diagnostics: Diag[] = [];
 
   constructor(env: Env) {
@@ -185,35 +205,25 @@ class QEval {
     this.db = new Db({
       eq: valueEq,
       resolve: (key) => {
-        if (key.startsWith('const:')) {
-          const op = this.constOps.get(key.slice(6));
-          return op ? (cx) => op(cx) : undefined;
-        }
-        if (key.startsWith('slot:')) {
-          const job = this.slotJobs.get(key);
-          return job ? () => this.runSlot(job) : undefined;
-        }
+        if (key.startsWith('const:')) return this.constOps.get(key.slice(6));
+        if (key.startsWith('slot:')) return this.slotJobs.get(key);
         return undefined;
       },
     });
   }
 
-  private runSlot(job: SlotJob): Value {
-    let v = job.op({ query: (k) => this.db.query(k) });
-    if (job.type) {
-      const sc = {
-        inst: job.inst,
-        locals: new Map<string, unknown>(),
-        rootName: job.path[0] as string,
-        menv: this.env,
-      };
-      v = this.helper.bind(v, job.type, job.path, job.inst, sc);
-    }
-    return v;
-  }
-
-  /** bind an object literal to a record type: a RecInst whose members are slot queries */
-  private bindRecord(entries: { key: string; val: Expr }[], rt: RT, path: Seg[]): RecInst {
+  /**
+   * Bind an object literal to a record type: a RecInst whose members are slot
+   * queries. A member typed as a record binds recursively (nested RecInst,
+   * parented here); a scalar member compiles and type-binds its value. Slots are
+   * registered but not yet forced — `materialize` fills them for serialization.
+   */
+  private bindRecord(
+    entries: { key: string; val: Expr }[],
+    rt: RT,
+    path: Seg[],
+    parent: RecInst | null,
+  ): RecInst {
     const supplied = new Map(entries.map((e) => [e.key, e.val]));
     const instId = pathStr(path);
     const inst: RecInst = {
@@ -221,7 +231,7 @@ class QEval {
       typeName: rt.name,
       rt,
       path,
-      parent: null,
+      parent,
       slots: new Map(),
       entryOrder: entries.map((e) => e.key),
       extras: new Map(),
@@ -237,23 +247,33 @@ class QEval {
         : this.env.consts.has(n)
           ? `const:${n}`
           : undefined;
+    const sc = {
+      inst,
+      locals: new Map<string, unknown>(),
+      rootName: path[0] as string,
+      menv: this.env,
+    };
 
     for (const m of rt.members) {
       if (m.kind === 'opt' || m.kind === 'dflt') throw new Unsupported(`member kind ${m.kind}`);
-      if (m.type && m.type.t === 'rec') throw new Unsupported('nested record member');
-      let op: Op;
-      if (m.kind === 'der') op = compile(m.expr, names);
-      else {
-        const val = supplied.get(m.name);
-        if (val === undefined) throw new Unsupported(`missing member ${m.name}`);
-        op = compile(val, names);
+      const memberPath = [...path, m.name];
+      const valExpr: Expr | undefined = m.kind === 'der' ? m.expr : supplied.get(m.name);
+      if (valExpr === undefined) throw new Unsupported(`missing member ${m.name}`);
+      let produce: Op;
+      if (m.type && m.type.t === 'rec') {
+        if (valExpr.e !== 'obj') throw new Unsupported('record member not an object literal');
+        const objEntries = valExpr.entries;
+        const memberRt = m.type;
+        produce = () => this.bindRecord(objEntries, memberRt, memberPath, inst);
+      } else {
+        const op = compile(valExpr, names);
+        const memberRt = m.type;
+        produce = (cx) => {
+          const v = op(cx);
+          return memberRt ? this.helper.bind(v, memberRt, memberPath, inst, sc) : v;
+        };
       }
-      this.slotJobs.set(`slot:${instId}.${m.name}`, {
-        op,
-        type: m.type,
-        path: [...path, m.name],
-        inst,
-      });
+      this.slotJobs.set(`slot:${instId}.${m.name}`, produce);
       inst.slots.set(m.name, {
         kind: m.kind,
         hidden: m.hidden || undefined,
@@ -261,26 +281,34 @@ class QEval {
         deferred: false,
       });
     }
+    return inst;
+  }
 
-    // materialize each slot into the RecInst so serialization can read it
-    for (const m of rt.members) {
-      const s = inst.slots.get(m.name)!;
+  /** force every slot into the RecInst tree so serialization can read it */
+  private materialize(inst: RecInst, seen: Set<RecInst>): void {
+    if (seen.has(inst)) return;
+    seen.add(inst);
+    const id = pathStr(inst.path);
+    for (const m of inst.rt.members) {
+      const s = inst.slots.get(m.name);
+      if (!s) continue;
       try {
-        s.value = this.db.query(`slot:${instId}.${m.name}`) as Value;
+        const v = this.db.query(`slot:${id}.${m.name}`) as Value;
+        s.value = v;
         s.state = 'ok';
+        if (isRec(v)) this.materialize(v, seen);
       } catch (err) {
         if (err instanceof EvalErr) {
           s.state = 'invalid';
           this.diagnostics.push({
             severity: 'error',
             message: err.message,
-            path: pathStr([...path, m.name]),
+            path: pathStr([...inst.path, m.name]),
             code: (err as { code?: string }).code,
           });
         } else throw err;
       }
     }
-    return inst;
   }
 
   run(): QReport {
@@ -291,7 +319,8 @@ class QEval {
         const rt = this.env.resolve(o.type);
         let v: Value;
         if (rt.t === 'rec' && o.expr.e === 'obj') {
-          v = this.bindRecord(o.expr.entries, rt, [o.name]);
+          v = this.bindRecord(o.expr.entries, rt, [o.name], null);
+          this.materialize(v, new Set());
         } else {
           const constNames: Names = (n) => (this.env.consts.has(n) ? `const:${n}` : undefined);
           const raw = compile(o.expr, constNames)({ query: (k) => this.db.query(k) });

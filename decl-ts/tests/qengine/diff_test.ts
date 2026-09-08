@@ -44,6 +44,19 @@ const programs: { name: string; src: string }[] = [
     name: 'record derived chain of three',
     src: 'type C = { a: int, b = a + 1, c = b + 1, d = c + a }\nexport output c: C = { a: 10 }',
   },
+  // nested records + member access — a derived slot reads across the boundary
+  {
+    name: 'nested record with member access',
+    src: 'type Inner = { a: int, b: int }\ntype Outer = { inner: Inner, total = inner.a + inner.b }\nexport output o: Outer = { inner: { a: 3, b: 4 } }',
+  },
+  {
+    name: 'two levels of nesting',
+    src: 'type L2 = { v: int }\ntype L1 = { deep: L2, twice = deep.v * 2 }\ntype Top = { mid: L1, plus = mid.deep.v + mid.twice }\nexport output t: Top = { mid: { deep: { v: 5 } } }',
+  },
+  {
+    name: 'nested record read by a sibling derived',
+    src: 'type P = { x: int, y: int }\ntype Q = { p: P, sx = p.x, sum = p.x + p.y }\nexport output q: Q = { p: { x: 8, y: 9 } }',
+  },
 ];
 
 let pass = 0;
