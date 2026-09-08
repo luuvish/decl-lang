@@ -379,6 +379,40 @@ fn compile_ctx(nm: &str, c: &CCtx) -> Result<Op, Unsupported> {
     }
 }
 
+/// compile a call's callee (§4.9): a member chain over `std` builds a std path
+/// (`std.math.min`) rather than a data access; a namespace export resolves
+/// through the value layer; anything else compiles normally (a name may resolve
+/// to a module function's closure)
+fn compile_callee(e: &Rc<Expr>, c: &CCtx) -> Result<Op, Unsupported> {
+    if let Expr::Member { x, name, .. } = &**e {
+        let nm = name.clone();
+        let xop = compile_callee(x, c)?;
+        return Ok(Rc::new(move |q, l| {
+            let x = xop(q, l)?;
+            match x {
+                Value::Std(p) => {
+                    let mut p2 = (*p).clone();
+                    p2.push(nm.clone());
+                    Ok(Value::Std(Rc::new(p2)))
+                }
+                Value::NsRef(ns) => {
+                    let sc = Scope::new("", Some(q.env.clone()));
+                    q.helper.mat_val(q.helper.ns_value(&ns, &nm, &sc)?)
+                }
+                other => {
+                    let d = if matches!(other, Value::Ref(_)) {
+                        q.helper.deref(other)?
+                    } else {
+                        other
+                    };
+                    q.helper.access(&d, &nm)
+                }
+            }
+        }));
+    }
+    compile(e, c)
+}
+
 /// compile an expression to a query compute (a closure over the query engine)
 fn compile(e: &Rc<Expr>, c: &CCtx) -> Result<Op, Unsupported> {
     match &**e {
@@ -419,6 +453,24 @@ fn compile(e: &Rc<Expr>, c: &CCtx) -> Result<Op, Unsupported> {
             }))
         }
         Expr::Bin { op, l, r } => {
+            if op == "|>" {
+                // first-argument insertion (§4.9): `l |> f(a)` is `f(l, a)`
+                let call = match &**r {
+                    Expr::Call { fun, args } => {
+                        let mut a = vec![l.clone()];
+                        a.extend(args.iter().cloned());
+                        Expr::Call {
+                            fun: fun.clone(),
+                            args: a,
+                        }
+                    }
+                    _ => Expr::Call {
+                        fun: r.clone(),
+                        args: vec![l.clone()],
+                    },
+                };
+                return compile(&Rc::new(call), c);
+            }
             let op = op.clone();
             let lc = compile(l, c)?;
             let rc = compile(r, c)?;
@@ -505,20 +557,47 @@ fn compile(e: &Rc<Expr>, c: &CCtx) -> Result<Op, Unsupported> {
                 let key = format!("const:{nm}");
                 return Ok(Rc::new(move |q, _l| q.query(&key)));
             }
-            Err(Unsupported(format!("name {nm}")))
+            // otherwise a module value (a function's closure, an import, a
+            // namespace, another module's const), `std`, another evaluation
+            // root, or an input — all resolved through the value layer, in the
+            // tree walker's order; a form that resolves to none stays Unsupported
+            let menv = c.menv.clone();
+            let root_name = c.root_name.clone();
+            Ok(Rc::new(move |q, _l| {
+                if let Some(v) = q.helper.module_value(&menv, &nm, &root_name)? {
+                    return Ok(v);
+                }
+                if nm == "std" {
+                    return Ok(Value::Std(Rc::new(vec![])));
+                }
+                if let Some(v) = q.helper.root(&nm) {
+                    return Ok(v);
+                }
+                if let Some(v) = q.helper.demand_input(&menv, &nm)? {
+                    return Ok(v);
+                }
+                Err(unsup(&format!("name {nm}")))
+            }))
         }
         Expr::Member { x, name, safe } => {
             let nm = name.clone();
             let safe = *safe;
             let xc = compile(x, c)?;
             Ok(Rc::new(move |q, l| {
-                let mut xv = xc(q, l)?;
+                let xv = xc(q, l)?;
+                if let Value::NsRef(ns) = &xv {
+                    // a namespace export (§8): resolved and materialized
+                    let sc = Scope::new("", Some(q.env.clone()));
+                    return q.helper.mat_val(q.helper.ns_value(ns, &nm, &sc)?);
+                }
                 if safe && matches!(xv, Value::Null | Value::Absent) {
                     return Ok(Value::Absent);
                 }
-                if matches!(xv, Value::Ref(_)) {
-                    xv = q.helper.deref(xv)?;
-                }
+                let xv = if matches!(xv, Value::Ref(_)) {
+                    q.helper.deref(xv)?
+                } else {
+                    xv
+                };
                 q.helper.access(&xv, &nm)
             }))
         }
@@ -720,6 +799,62 @@ fn compile(e: &Rc<Expr>, c: &CCtx) -> Result<Op, Unsupported> {
                     return (a.body)(q, &l2);
                 }
                 err("match: no arm matched")
+            }))
+        }
+        Expr::Call { fun, args } => {
+            let fn_op = compile_callee(fun, c)?;
+            let arg_ops = args
+                .iter()
+                .map(|a| compile(a, c))
+                .collect::<Result<Vec<Op>, Unsupported>>()?;
+            Ok(Rc::new(move |q, l| {
+                let f = fn_op(q, l)?;
+                let mut argv = Vec::with_capacity(arg_ops.len());
+                for op in &arg_ops {
+                    argv.push(op(q, l)?);
+                }
+                let sc = Scope::new("", Some(q.env.clone()));
+                q.helper.call(&f, argv, &sc)
+            }))
+        }
+        Expr::Lambda { params, body } => {
+            // a closure over the current locals; its body runs through the value
+            // layer, which is pure over the closure's parameters and captures
+            let params = params.clone();
+            let body = body.clone();
+            let menv = c.menv.clone();
+            let root_name = c.root_name.clone();
+            let self_inst = c.self_inst.clone();
+            Ok(Rc::new(move |_q, l| {
+                let scope = Scope {
+                    inst: self_inst.clone(),
+                    locals: crate::semantics::Locals::from_map(l),
+                    root_name: root_name.clone(),
+                    menv: Some(menv.clone()),
+                };
+                Ok(Value::Clo(Rc::new(crate::semantics::Closure {
+                    params: params.clone(),
+                    body: body.clone(),
+                    scope,
+                })))
+            }))
+        }
+        Expr::With { .. } => {
+            // `base with { patch }` (§4.2): the value layer reads the query-graph
+            // base through the compute bridge and folds the patch in; the fresh
+            // unbound result is materialized
+            let with_expr = e.clone();
+            let menv = c.menv.clone();
+            let root_name = c.root_name.clone();
+            let self_inst = c.self_inst.clone();
+            Ok(Rc::new(move |q, l| {
+                let scope = Scope {
+                    inst: self_inst.clone(),
+                    locals: crate::semantics::Locals::from_map(l),
+                    root_name: root_name.clone(),
+                    menv: Some(menv.clone()),
+                };
+                q.helper.mat_val(q.helper.ev(&with_expr, &scope)?)
             }))
         }
         Expr::Ctx(nm) => compile_ctx(nm, c),

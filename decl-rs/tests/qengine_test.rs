@@ -250,3 +250,33 @@ fn diff_collections_and_control() {
         }
     }
 }
+
+#[test]
+fn diff_calls_pipes_and_with() {
+    let programs = [
+        // module function, call, first-argument pipeline
+        "func double(n: int): int = n * 2\nexport output x: int = double(21)",
+        "func add(a: int, b: int): int = a + b\nexport output x: int = add(add(1, 2), 3)",
+        "export output x: int = 21 |> double\nfunc double(n: int): int = n * 2",
+        // stdlib calls (a std path callee, not a data access)
+        "export output x: int = std.math.min(3, 7)",
+        "export output x: int = std.array.sum([1, 2, 3, 4])",
+        "export output x: int[] = std.array.sort([3, 1, 2])",
+        "export output x: string = std.string.join([\"a\", \"b\", \"c\"], \"-\")",
+        // lambdas: as std arguments, in a pipeline, and immediately applied
+        "export output x: int = std.array.fold([1, 2, 3, 4], 0, (acc, n) => acc + n)",
+        "export output x: int = [1, 2, 3, 4] |> std.array.filter((n) => n % 2 == 0) |> std.array.count",
+        "export output x: int = ((n) => n * 3)(14)",
+        // `with` over a record-valued base
+        "type P = { x: int, y: int }\nconst base: P = { x: 1, y: 2 }\nexport output p: P = base with { y: 9 }",
+        // an input read through its fallback
+        "input n: int = 7\nexport output x: int = n + 1",
+    ];
+    for src in programs {
+        match same(src) {
+            Some(true) => {}
+            Some(false) => panic!("query engine diverged on:\n{src}"),
+            None => panic!("query engine unexpectedly fell back on:\n{src}"),
+        }
+    }
+}
