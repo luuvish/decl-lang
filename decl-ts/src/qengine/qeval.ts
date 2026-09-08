@@ -1,20 +1,13 @@
-// The decl layer of the query engine (qengine/DESIGN.md), stages 2a–2b+:
-// compile expressions to query computes and evaluate a module's outputs through
-// the incremental core (db.ts).
-//   2a  — scalar/const: literals, unary/binary operators, `if`, `name` -> const.
-//   2b  — records: an object literal bound to a record type becomes a RecInst
-//         whose members are slot QUERIES; a member that names a sibling reads it
-//         through the query graph (`b = a + 1` queries slot a).
-//   2b+ — nested records (a record-typed member binds recursively) and member
-//         access (`inner.a` queries the nested slot).
-//   refs — `$this`/`$parent`/`$root`/`$key` are references (§7.3); a reference
-//         resolves by walking the query graph from the root (`deref`,
-//         `resolveSegs`), and member access through one dereferences first
-//         (§7.4, §7.5).
-// Value semantics — equality, serialization, and type binding — are reused from
-// the current value layer, as the design intends; only the evaluation strategy
-// is new. Optional/default members, maps, arrays, comprehensions, unions,
-// patterns, `ref<T>` navigation members, and `$referrers` come in later stages.
+// The decl layer of the query engine (qengine/DESIGN.md). Compile expressions to
+// query computes and evaluate a module's outputs through the incremental core
+// (db.ts). Covered so far:
+//   scalars/const, records (slots as queries, cross-slot & nested & member
+//   access), references ($this/$parent/$root/$key, deref/navigation),
+//   arrays & array comprehensions, ranges, indexing.
+// Value semantics — equality, serialization, type binding, iteration — are
+// reused from the current value layer, as the design intends; only the
+// evaluation strategy is new. Maps, unions, patterns, `ref<T>` navigation
+// members, context declarations, `$referrers`, and the rest come in later stages.
 import { Db } from './db.ts';
 import { Engine } from '../engine.ts';
 import {
@@ -22,6 +15,7 @@ import {
   EvalErr,
   isArr,
   isMap,
+  isRange,
   isRec,
   isRef,
   pathStr,
@@ -45,15 +39,19 @@ interface OpCx {
   /** resolve a reference to the value it denotes (§7.4) */
   deref(ref: Value): Value;
 }
-/** a compiled expression: a closure over the query context */
-type Op = (cx: OpCx) => Value;
+/** local bindings in scope (comprehension loop variables) */
+type Locals = Map<string, Value>;
+const NO_LOCALS: Locals = new Map();
+/** a compiled expression: a closure over the query context and local bindings */
+type Op = (cx: OpCx, locals: Locals) => Value;
 /** resolve a name to the query key it reads, or undefined if it is not in scope */
 type Names = (name: string) => string | undefined;
-/** the lexical context a compile happens in: names in scope, the enclosing instance, the root */
+/** the lexical context a compile happens in */
 interface CCtx {
   names: Names;
   self: RecInst | null;
   rootName: string;
+  locals: Set<string>; // comprehension loop variables in scope
 }
 
 // ---- value-level operators (§4.4–4.5), mirroring the reference exactly ----
@@ -151,6 +149,17 @@ function access(cx: OpCx, x: Value, name: string): Value {
   throw new Unsupported('member access on a non-record value');
 }
 
+/** the elements of an iterable (an array or a range) */
+function iterate(v: Value): Value[] {
+  if (isArr(v)) return v.items;
+  if (isRange(v)) {
+    const out: Value[] = [];
+    for (let i = v.lo; i < v.hi + (v.excl ? 0n : 1n); i++) out.push(i);
+    return out;
+  }
+  throw new EvalErr('not iterable');
+}
+
 // ---- compile: an expression AST becomes a closure over the query context ----
 
 function compile(e: Expr, c: CCtx): Op {
@@ -164,28 +173,36 @@ function compile(e: Expr, c: CCtx): Op {
     case 'un': {
       const op = e.op;
       const xc = compile(e.x, c);
-      return (cx) => applyUn(op, xc(cx));
+      return (cx, l) => applyUn(op, xc(cx, l));
     }
     case 'if': {
       const cc = compile(e.c, c);
       const t = compile(e.t, c);
       const f = compile(e.f, c);
-      return (cx) => (truthy(cc(cx)) ? t(cx) : f(cx));
+      return (cx, l) => (truthy(cc(cx, l)) ? t(cx, l) : f(cx, l));
     }
     case 'bin': {
       const op = e.op;
       const lc = compile(e.l, c);
       const rc = compile(e.r, c);
-      if (op === '&&') return (cx) => (truthy(lc(cx)) ? truthy(rc(cx)) : false);
-      if (op === '||') return (cx) => (truthy(lc(cx)) ? true : truthy(rc(cx)));
+      if (op === '&&') return (cx, l) => (truthy(lc(cx, l)) ? truthy(rc(cx, l)) : false);
+      if (op === '||') return (cx, l) => (truthy(lc(cx, l)) ? true : truthy(rc(cx, l)));
       if (op === '??')
-        return (cx) => {
-          const l = lc(cx);
-          return l === ABSENT || l === null ? rc(cx) : l;
+        return (cx, l) => {
+          const v = lc(cx, l);
+          return v === ABSENT || v === null ? rc(cx, l) : v;
         };
-      return (cx) => applyBin(op, lc(cx), rc(cx));
+      if (op === '..' || op === '..<') {
+        const excl = op === '..<';
+        return (cx, l) => ({ __range: true, lo: lc(cx, l), hi: rc(cx, l), excl });
+      }
+      return (cx, l) => applyBin(op, lc(cx, l), rc(cx, l));
     }
     case 'name': {
+      if (c.locals.has(e.name)) {
+        const n = e.name;
+        return (_cx, l) => l.get(n);
+      }
       const key = c.names(e.name);
       if (key === undefined) throw new Unsupported(`name ${e.name}`);
       return (cx) => cx.query(key) as Value;
@@ -194,11 +211,71 @@ function compile(e: Expr, c: CCtx): Op {
       const nm = e.name;
       const safe = e.safe;
       const xc = compile(e.x, c);
-      return (cx) => {
-        let x = xc(cx);
+      return (cx, l) => {
+        let x = xc(cx, l);
         if (safe && (x === null || x === ABSENT)) return ABSENT;
         if (isRef(x)) x = cx.deref(x);
         return access(cx, x, nm);
+      };
+    }
+    case 'index': {
+      const xc = compile(e.x, c);
+      const ic = compile(e.i, c);
+      return (cx, l) => {
+        let x = xc(cx, l);
+        if (isRef(x)) x = cx.deref(x);
+        const i = ic(cx, l);
+        if (isArr(x)) {
+          const n = Number(i);
+          if (n < 0 || n >= x.items.length) throw new EvalErr(`index ${n} out of bounds`, 'E5005');
+          return x.items[n];
+        }
+        if (isMap(x)) return x.entries.has(i) ? x.entries.get(i) : ABSENT;
+        if (isRec(x)) return access(cx, x, i as string);
+        throw new EvalErr('index on non-collection');
+      };
+    }
+    case 'arr': {
+      const parts = e.items.map((it) => ({ spread: it.spread, op: compile(it.expr, c) }));
+      return (cx, l) => {
+        const items: Value[] = [];
+        for (const p of parts) {
+          const v = p.op(cx, l);
+          if (p.spread) for (const x of iterate(isRef(v) ? cx.deref(v) : v)) items.push(x);
+          else items.push(v);
+        }
+        return { __arr: true, items, path: [] };
+      };
+    }
+    case 'comp': {
+      const allVars = e.clauses.map((cl) => cl.v);
+      const headOp = compile(e.head, { ...c, locals: new Set([...c.locals, ...allVars]) });
+      const clauses = e.clauses.map((cl, i) => {
+        const prior = new Set([...c.locals, ...allVars.slice(0, i)]);
+        const withThis = new Set([...prior, cl.v]);
+        return {
+          v: cl.v,
+          iterOp: compile(cl.iter, { ...c, locals: prior }),
+          filterOps: cl.filters.map((f) => compile(f, { ...c, locals: withThis })),
+        };
+      });
+      return (cx, l) => {
+        const items: Value[] = [];
+        const rec = (i: number, loc: Locals): void => {
+          if (i === clauses.length) {
+            items.push(headOp(cx, loc));
+            return;
+          }
+          const cl = clauses[i];
+          const it = cl.iterOp(cx, loc);
+          for (const el of iterate(isRef(it) ? cx.deref(it) : it)) {
+            const loc2 = new Map(loc);
+            loc2.set(cl.v, el);
+            if (cl.filterOps.every((f) => truthy(f(cx, loc2)))) rec(i + 1, loc2);
+          }
+        };
+        rec(0, l);
+        return { __arr: true, items, path: [] };
       };
     }
     case 'ctx': {
@@ -253,14 +330,14 @@ class QEval {
     this.db = new Db({
       eq: valueEq,
       resolve: (key) => {
-        // run each compute with our own context (query + deref); the Db still
-        // records dependencies, since our `query` calls back into it
         const op = key.startsWith('const:')
           ? this.constOps.get(key.slice(6))
           : key.startsWith('slot:')
             ? this.slotJobs.get(key)
             : undefined;
-        return op ? () => op(this.cx) : undefined;
+        // run each compute with our own context (query + deref); the Db still
+        // records dependencies, since our `query` calls back into it
+        return op ? () => op(this.cx, NO_LOCALS) : undefined;
       },
     });
     this.cx = { query: (k) => this.db.query(k), deref: (r) => this.deref(r) };
@@ -268,15 +345,16 @@ class QEval {
       names: (n) => (env.consts.has(n) ? `const:${n}` : undefined),
       self: null,
       rootName: '',
+      locals: new Set(),
     };
     for (const [name, con] of env.consts) this.constOps.set(name, compile(con.expr, constCtx));
   }
 
   /** the value a reference denotes: walk its path from the root (§7.4, §7.5) */
   private deref(ref: Value): Value {
-    const target = this.resolveSegs((ref as { segs: Seg[] }).segs);
-    if (target === undefined)
-      throw new EvalErr(`dangling reference ${pathStr((ref as { segs: Seg[] }).segs)}`, 'E6002');
+    const segs = (ref as { segs: Seg[] }).segs;
+    const target = this.resolveSegs(segs);
+    if (target === undefined) throw new EvalErr(`dangling reference ${pathStr(segs)}`, 'E6002');
     return target;
   }
 
@@ -299,9 +377,9 @@ class QEval {
 
   /**
    * Bind an object literal to a record type: a RecInst whose members are slot
-   * queries. A member typed as a record binds recursively (nested RecInst,
-   * parented here); a scalar member compiles and type-binds its value. Slots are
-   * registered but not yet forced — `materialize` fills them for serialization.
+   * queries. A record-typed member binds recursively; a scalar/array member
+   * compiles and type-binds its value. Slots are registered but not yet forced —
+   * `materialize` fills them for serialization.
    */
   private bindRecord(
     entries: { key: string; val: Expr }[],
@@ -335,6 +413,7 @@ class QEval {
             : undefined,
       self: inst,
       rootName: path[0] as string,
+      locals: new Set(),
     };
     const sc = {
       inst,
@@ -358,8 +437,8 @@ class QEval {
       } else {
         const op = compile(valExpr, cctx);
         const memberRt = m.type;
-        produce = (cx) => {
-          const v = op(cx);
+        produce = (cx, l) => {
+          const v = op(cx, l);
           return memberRt ? this.helper.bind(v, memberRt, memberPath, inst, sc) : v;
         };
       }
@@ -386,7 +465,7 @@ class QEval {
         const v = this.db.query(`slot:${id}.${m.name}`) as Value;
         s.value = v;
         s.state = 'ok';
-        if (isRec(v)) this.materialize(v, seen);
+        this.materializeValue(v, seen);
       } catch (err) {
         if (err instanceof EvalErr) {
           s.state = 'invalid';
@@ -399,6 +478,12 @@ class QEval {
         } else throw err;
       }
     }
+  }
+
+  private materializeValue(v: Value, seen: Set<RecInst>): void {
+    if (isRec(v)) this.materialize(v, seen);
+    else if (isArr(v)) for (const x of v.items) this.materializeValue(x, seen);
+    else if (isMap(v)) for (const x of v.entries.values()) this.materializeValue(x, seen);
   }
 
   run(): QReport {
@@ -417,8 +502,9 @@ class QEval {
             names: (n) => (this.env.consts.has(n) ? `const:${n}` : undefined),
             self: null,
             rootName: o.name,
+            locals: new Set(),
           };
-          const raw = compile(o.expr, cctx)(this.cx);
+          const raw = compile(o.expr, cctx)(this.cx, NO_LOCALS);
           const sc = {
             inst: null,
             locals: new Map<string, unknown>(),

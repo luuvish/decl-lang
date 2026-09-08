@@ -66,6 +66,44 @@ const programs: { name: string; src: string }[] = [
     name: '$this dereferenced by member access',
     src: 'type Node = { name: string, me = $this, echo = me.name }\nexport output n: Node = { name: "a" }',
   },
+  // arrays, comprehensions, ranges, indexing (§4)
+  { name: 'array literal of ints', src: 'export output xs: int[] = [1, 2, 3]' },
+  { name: 'array literal of strings', src: 'export output xs: string[] = ["a", "b", "c"]' },
+  { name: 'array elements are expressions', src: 'const k = 5\nexport output xs: int[] = [k, k * 2, k + 1]' },
+  { name: 'array spread', src: 'const a = [1, 2]\nexport output xs: int[] = [0, ...a, 3]' },
+  { name: 'comprehension maps', src: 'export output xs: int[] = [x * 2 for x in [1, 2, 3]]' },
+  { name: 'comprehension over a range', src: 'export output xs: int[] = [x for x in 1..5]' },
+  { name: 'comprehension over an exclusive range', src: 'export output xs: int[] = [x for x in 0..<4]' },
+  { name: 'comprehension with a filter', src: 'export output xs: int[] = [x for x in 1..10 if x % 2 == 0]' },
+  {
+    name: 'nested comprehension clauses',
+    src: 'export output xs: int[] = [x * 10 + y for x in 1..3 for y in 1..2]',
+  },
+  {
+    name: 'comprehension reads a const',
+    src: 'const step = 3\nexport output xs: int[] = [x * step for x in 1..4]',
+  },
+  { name: 'index into an array literal', src: 'export output x: int = [10, 20, 30][1]' },
+  {
+    name: 'index a const array',
+    src: 'const xs = [7, 8, 9]\nexport output x: int = xs[2]',
+  },
+  {
+    name: 'index out of bounds errors',
+    src: 'export output x: int = [1, 2][5]',
+  },
+  {
+    name: 'array member of a record',
+    src: 'type R = { ns: int[] }\nexport output r: R = { ns: [4, 5, 6] }',
+  },
+  {
+    name: 'derived array member from a scalar',
+    src: 'type R = { n: int, seq = [i for i in 1..n] }\nexport output r: R = { n: 4 }',
+  },
+  {
+    name: 'derived scalar indexes a member array',
+    src: 'type R = { ns: int[], first = ns[0], last = ns[2] }\nexport output r: R = { ns: [11, 22, 33] }',
+  },
 ];
 
 let pass = 0;
