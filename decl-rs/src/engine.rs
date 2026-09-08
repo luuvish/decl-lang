@@ -235,7 +235,7 @@ pub enum RootSrc<'a> {
     Doc(Value),
 }
 
-fn num_cmp(a: &Value, b: &Value) -> Option<Ordering> {
+pub(crate) fn num_cmp(a: &Value, b: &Value) -> Option<Ordering> {
     match (a, b) {
         (Value::Int(x), Value::Int(y)) => Some(x.cmp(y)),
         (Value::Float(x), Value::Float(y)) => x.partial_cmp(y),
@@ -864,7 +864,12 @@ impl Engine {
         self.ev(e, sc)
     }
 
-    fn module_value(&self, menv: &Rc<Env>, name: &str, root_name: &str) -> R<Option<Value>> {
+    pub(crate) fn module_value(
+        &self,
+        menv: &Rc<Env>,
+        name: &str,
+        root_name: &str,
+    ) -> R<Option<Value>> {
         if menv.consts.borrow().contains_key(name) {
             return Ok(Some(self.force_const_in(menv, name, root_name)?));
         }
@@ -894,7 +899,7 @@ impl Engine {
         Ok(None)
     }
 
-    fn ns_value(&self, ns: &NsRefV, name: &str, sc: &Scope) -> R<Value> {
+    pub(crate) fn ns_value(&self, ns: &NsRefV, name: &str, sc: &Scope) -> R<Value> {
         let ex = ns.exports.borrow().get(name).cloned();
         let Some(ex) = ex else {
             return err(format!("namespace has no export {name}"));
@@ -1003,7 +1008,7 @@ impl Engine {
         }
     }
 
-    fn q_arith(&self, op: &str, l: &Value, r: &Value) -> R<Value> {
+    pub(crate) fn q_arith(&self, op: &str, l: &Value, r: &Value) -> R<Value> {
         let dim_or_1 = |d: &str| {
             if d.is_empty() {
                 "1".to_string()
@@ -1264,7 +1269,7 @@ impl Engine {
         }
     }
 
-    fn to_str(&self, v: &Value) -> R<String> {
+    pub(crate) fn to_str(&self, v: &Value) -> R<String> {
         match v {
             Value::Str(s) => Ok(s.to_string()),
             Value::Bool(b) => Ok(if *b { "true".into() } else { "false".into() }),
@@ -1872,7 +1877,7 @@ impl Engine {
         }
         Ok(out)
     }
-    fn spread_entries(&self, s: Value) -> R<Vec<(String, Value)>> {
+    pub(crate) fn spread_entries(&self, s: Value) -> R<Vec<(String, Value)>> {
         match s {
             Value::PreObj(es) => self.entries_of(&es),
             Value::JObj(es) => Ok((*es).clone()),
@@ -2067,7 +2072,7 @@ impl Engine {
         Ok(edge)
     }
     /// the snapshot's instances: the previous round's universe, else what is materialized now
-    fn take_snapshot(&self, edges: HashMap<String, Edge>) {
+    pub(crate) fn take_snapshot(&self, edges: HashMap<String, Edge>) {
         self.ref_index.borrow_mut().clear();
         let prev = self.prev.borrow().clone();
         let insts = match &prev {

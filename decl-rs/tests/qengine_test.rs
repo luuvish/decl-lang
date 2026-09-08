@@ -1,8 +1,11 @@
 //! The query engine's incremental core (src/qengine/db.rs): memoization,
 //! dependency tracking, and the two early cutoffs. Recompute counts prove the
 //! cutoffs. The Rust counterpart of decl-ts/tests/qengine/db_test.ts.
+use decl_lang::parse::parse_source;
+use decl_lang::pipeline::{evaluate_source, Phase};
 use decl_lang::qengine::db::{Db, DbErr};
-use decl_lang::semantics::{Num, Value};
+use decl_lang::qengine::qeval::qevaluate;
+use decl_lang::semantics::{Env, Num, Value};
 use std::cell::Cell;
 use std::rc::Rc;
 
@@ -121,4 +124,56 @@ fn a_query_that_reads_itself_is_a_cycle() {
         Err(DbErr::Cycle(_)) => {}
         other => panic!("expected a cycle, got {:?}", other.is_ok()),
     }
+}
+
+// ---- differential: the query engine vs the tree walker (grows per stage) ----
+
+/// run a program through both engines; None = skip (parse/checker-decided, or a
+/// form the query engine does not compile yet); Some(true) = byte-identical
+fn same(src: &str) -> Option<bool> {
+    let reference = evaluate_source(src);
+    if !matches!(reference.phase, Phase::Evaluate) {
+        return None; // the parser or checker decided it, not the evaluator
+    }
+    let parsed = parse_source(src);
+    if !parsed.errors.is_empty() {
+        return None;
+    }
+    let env = Env::new();
+    env.load(&parsed.decls);
+    let got = qevaluate(env).ok()?; // Unsupported form -> skip
+    Some(reference.outputs == got.outputs && reference.ok == got.ok)
+}
+
+#[test]
+fn diff_scalars_and_consts() {
+    let programs = [
+        "export output x: int = 1 + 2 * 3 - 4",
+        "export output x: int = (1 + 2) * (3 - 5)",
+        "export output x: float = 7.0 / 2.0",
+        "export output x: int = 7 / 2",
+        "export output x: int = 17 % 5",
+        "export output x: int = -(~3)",
+        "export output x: int = (5 & 3) | (1 << 3)",
+        "export output x: bool = 3 < 5",
+        "export output x: int = if 3 < 5 then 10 else 20",
+        "export output x: bool = true && (false || (1 == 1))",
+        "export output x: string = \"a\" + \"b\" + \"c\"",
+        "const a = 2\nconst b = a * 5\nexport output x: int = b + a",
+        "const base = 10\nconst step = base / 2\nexport output x: int = base + step * 3",
+        "export output x: int = 10 / 0",
+        "export output x: int = 10 % 0",
+    ];
+    let mut matched = 0;
+    for src in programs {
+        match same(src) {
+            Some(true) => matched += 1,
+            Some(false) => panic!("query engine diverged on:\n{src}"),
+            None => {}
+        }
+    }
+    assert!(
+        matched >= 13,
+        "expected most scalar programs to match, got {matched}"
+    );
 }
