@@ -10,7 +10,8 @@
 //   `in`/`matches`, patterns, string templates, `match`, unions of records,
 //   quantities and dimensional arithmetic, std/module-function calls, lambdas,
 //   the pipe, object spread, `with`, inputs (fallback on demand), open records,
-//   assertions/when-blocks, and `$referrers` evaluated in rounds (§7.6).
+//   assertions/when-blocks, `$referrers` evaluated in rounds (§7.6), and
+//   multi-module universes (§8: imports, namespaces, cross-module roots).
 // This covers the whole valid corpus byte-for-byte against the current engine.
 // Value semantics — equality, serialization, type binding, iteration, type
 // membership, unit resolution, quantity arithmetic, function application,
@@ -83,12 +84,19 @@ interface OpCx {
   spreadEntries(v: Value): [string, Value][];
   /** read a member of a non-record value (a bare map, an unbound literal, …) */
   accessRaw(x: Value, name: string): Value;
+  /** materialize a value: deref a reference, flatten a lazy prevalue once (§9.4) */
+  matVal(v: Value): Value;
   /** evaluate an expression through the value layer in a given scope, then
    * materialize it — for forms the query graph delegates (e.g. `with`) */
   evValue(expr: Expr, scope: BindScope): Value;
   /** the references pointing at `self` through a type's member (§7.6), answered
    * from the previous round's frozen universe */
   referrers(typeName: string, member: string, self: RecInst): Value;
+  /** a module-scoped name (a const/func/import/namespace) resolved by the value
+   * layer — used for imported names and non-entry modules (§8) */
+  moduleValue(menv: Env, name: string): Value;
+  /** read an export of a namespace value (§8.5) */
+  nsValue(ns: Value, name: string): Value;
 }
 /** local bindings in scope (comprehension loop variables) */
 type Locals = Map<string, Value>;
@@ -100,18 +108,23 @@ type BindScope = {
   rootName: string;
   menv: Env;
 };
+/** an evaluation root: a module output (or bound input), with its module scope */
+interface RootSpec {
+  name: string;
+  expr: Expr;
+  type: TypeAst;
+  menv: Env;
+}
 /** a compiled expression: a closure over the query context and local bindings */
 type Op = (cx: OpCx, locals: Locals) => Value;
-/** resolve a name to the query key it reads, or undefined if it is not in scope */
-type Names = (name: string) => string | undefined;
 /** the lexical context a compile happens in */
 interface CCtx {
-  names: Names;
   self: RecInst | null;
   rootName: string;
   locals: Set<string>; // comprehension loop variables in scope
   resolveType: (t: TypeAst) => RT; // resolve a match arm's type annotation
   menv: Env; // the module environment (funcs, consts, unit table)
+  entryEnv: Env; // the universe's entry module (its consts are query-native)
 }
 
 // ---- value-level operators (§4.4–4.5), mirroring the reference exactly ----
@@ -306,8 +319,9 @@ function compileCallee(e: Expr, c: CCtx): Op {
     const nm = e.name;
     const xOp = compileCallee(e.x, c);
     return (cx, l) => {
-      const x = xOp(cx, l) as { __std?: true; path?: string[] };
+      const x = xOp(cx, l) as { __std?: true; __nsref?: true; path?: string[] };
       if (x && x.__std) return { __std: true, path: [...(x.path ?? []), nm] };
+      if (x && x.__nsref) return cx.nsValue(x, nm); // a namespace export (a func/value)
       return access(cx, isRef(x) ? cx.deref(x) : x, nm);
     };
   }
@@ -440,8 +454,7 @@ function compile(e: Expr, c: CCtx): Op {
       if (op === 'in')
         return (cx, l) => {
           const x = lc(cx, l);
-          let container = rc(cx, l);
-          if (isRef(container)) container = cx.deref(container);
+          const container = cx.matVal(rc(cx, l));
           if (isRange(container))
             return x >= container.lo && (container.excl ? x < container.hi : x <= container.hi);
           if (isArr(container)) return container.items.some((y: Value) => valueEq(x, y));
@@ -470,8 +483,13 @@ function compile(e: Expr, c: CCtx): Op {
           return (cx) => cx.forceMember(owner, nm);
         }
       }
-      const key = c.names(nm);
-      if (key !== undefined) return (cx) => cx.query(key) as Value;
+      // a const in the current module scope: the entry module's is query-native
+      // (memoized here); another module's is resolved by the value layer (§8)
+      if (c.menv.consts.has(nm)) {
+        if (c.menv === c.entryEnv) return (cx) => cx.query(`const:${nm}`) as Value;
+        const menv = c.menv;
+        return (cx) => cx.moduleValue(menv, nm);
+      }
       if (nm === 'std') return () => ({ __std: true, path: [] });
       const fn = c.menv.funcs.get(nm);
       if (fn) {
@@ -487,6 +505,11 @@ function compile(e: Expr, c: CCtx): Op {
           body,
           scope: { inst: null, locals: new Map(), rootName, menv },
         });
+      }
+      // an imported name or a namespace: resolved through the value layer (§8)
+      if (c.menv.imports.has(nm) || c.menv.namespaces.has(nm)) {
+        const menv = c.menv;
+        return (cx) => cx.moduleValue(menv, nm);
       }
       if (c.menv.inputs.has(nm)) return (cx) => cx.inputRoot(nm);
       // otherwise a reference to another evaluation root, resolved at force time
@@ -504,6 +527,7 @@ function compile(e: Expr, c: CCtx): Op {
       const xc = compile(e.x, c);
       return (cx, l) => {
         let x = xc(cx, l);
+        if (x && (x as { __nsref?: true }).__nsref) return cx.nsValue(x, nm); // a namespace export
         if (safe && (x === null || x === ABSENT)) return ABSENT;
         if (isRef(x)) x = cx.deref(x);
         return access(cx, x, nm);
@@ -513,8 +537,7 @@ function compile(e: Expr, c: CCtx): Op {
       const xc = compile(e.x, c);
       const ic = compile(e.i, c);
       return (cx, l) => {
-        let x = xc(cx, l);
-        if (isRef(x)) x = cx.deref(x);
+        const x = cx.matVal(xc(cx, l)); // deref + flatten a lazy prevalue (§4.3)
         const i = ic(cx, l);
         if (isArr(x)) {
           const n = Number(i);
@@ -565,7 +588,7 @@ function compile(e: Expr, c: CCtx): Op {
         const items: Value[] = [];
         for (const p of parts) {
           const v = p.op(cx, l);
-          if (p.spread) for (const x of iterate(isRef(v) ? cx.deref(v) : v)) items.push(x);
+          if (p.spread) for (const x of iterate(cx.matVal(v))) items.push(x);
           else items.push(v);
         }
         return { __arr: true, items, path: [] };
@@ -592,7 +615,7 @@ function compile(e: Expr, c: CCtx): Op {
           }
           const cl = clauses[i];
           const it = cl.iterOp(cx, loc);
-          for (const el of iterate(isRef(it) ? cx.deref(it) : it)) {
+          for (const el of iterate(cx.matVal(it))) {
             const loc2 = new Map(loc);
             loc2.set(cl.v, el);
             if (cl.filterOps.every((f) => truthy(f(cx, loc2)))) rec(i + 1, loc2);
@@ -654,7 +677,7 @@ function compile(e: Expr, c: CCtx): Op {
           }
           const cl = clauses[i];
           const it = cl.iterOp(cx, loc);
-          for (const el of iterate(isRef(it) ? cx.deref(it) : it)) {
+          for (const el of iterate(cx.matVal(it))) {
             const loc2 = new Map(loc);
             loc2.set(cl.v, el);
             if (cl.filterOps.every((f) => truthy(f(cx, loc2)))) rec(i + 1, loc2);
@@ -770,10 +793,17 @@ class QEval {
   private readonly queriedEdges = new Set<string>(); // `$referrers` keys asked this round
   private readonly refIndexCache = new Map<string, Map<string, Seg[][]>>();
 
-  constructor(env: Env, prev: Frozen | null = null) {
+  constructor(env: Env, prev: Frozen | null = null, mods: { env: Env }[] = []) {
     this.env = env;
     this.prev = prev;
     this.helper = new Engine(env);
+    // §4.13 elaboration hooks (a const in a type position, a unit factor) for
+    // every module, pointing at this round's value layer — as runUniverse does
+    for (const m of mods) {
+      m.env.constEval = (n: string) => this.helper.forceConstIn(m.env, n, '');
+      m.env.exprEval = (e: Expr) =>
+        this.helper.ev(e, { inst: null, locals: new Map(), rootName: '', menv: m.env });
+    }
     this.db = new Db({
       eq: valueEq,
       resolve: (key) => {
@@ -801,10 +831,12 @@ class QEval {
         }
       },
       qArith: (op, l, r) => this.helper.qArith(op, l, r),
-      // the value layer may return a lazy prevalue (e.g. a fold accumulating an
-      // array by spread); materialize it once at the boundary so the query
-      // engine's own operators see a concrete value (§9.4)
-      call: (fn, args) => this.helper.matVal(this.helper.call(fn, args, matchScope)),
+      // the value layer may return a lazy prevalue (an unbound record literal, a
+      // spread-fold accumulator); it is materialized at the point a query-engine
+      // operator consumes it (index/iterate/in) or, in a type position, by the
+      // binder — not here, so a record literal keeps its sibling scope (§9.4)
+      call: (fn, args) => this.helper.call(fn, args, matchScope),
+      matVal: (v) => this.helper.matVal(v),
       forceMember: (rec, name) => this.forceMember(rec, name),
       rootValue: (name) => this.env.roots.get(name),
       inputRoot: (name) => this.demandInputRoot(name),
@@ -812,9 +844,11 @@ class QEval {
       accessRaw: (x, name) => this.helper.access(x, name),
       evValue: (expr, scope) => this.helper.matVal(this.helper.ev(expr, scope)),
       referrers: (typeName, member, self) => this.referrers(typeName, member, self),
+      moduleValue: (menv, name) => this.helper.matVal(this.helper.moduleValue(menv, name, '')),
+      nsValue: (ns, name) => this.helper.matVal(this.helper.nsValue(ns, name, matchScope)),
     };
     this.constCtx = {
-      names: (n) => (env.consts.has(n) ? `const:${n}` : undefined),
+      entryEnv: env,
       self: null,
       rootName: '',
       locals: new Set(),
@@ -878,7 +912,7 @@ class QEval {
     if (!decl.fallback) throw new EvalErr(`input ${name} is not bound`, 'E5006');
     const rt = this.env.resolve(decl.type);
     const cctx: CCtx = {
-      names: (n) => (this.env.consts.has(n) ? `const:${n}` : undefined),
+      entryEnv: this.env,
       self: null,
       rootName: name,
       locals: new Set(),
@@ -1006,7 +1040,7 @@ class QEval {
     this.env.registry.push(inst);
 
     const cctx: CCtx = {
-      names: (n) => (this.env.consts.has(n) ? `const:${n}` : undefined),
+      entryEnv: this.env,
       self: inst,
       rootName: path[0] as string,
       locals: new Set(),
@@ -1331,22 +1365,24 @@ class QEval {
     else if (isMap(v)) for (const x of v.entries.values()) this.materializeValue(x, seen);
   }
 
-  run(): QReport {
+  run(roots: RootSpec[] = this.env.outputs.map((o) => ({ ...o, menv: this.env }))): QReport {
     // bind every root first, then force the universe (as the source pipeline
-    // does), so a reference from one root into another resolves (§9.3)
+    // does), so a reference from one root into another resolves (§9.3). Across
+    // modules every module's outputs are roots, each in its own module scope.
     const built: { name: string; v: Value }[] = [];
-    for (const o of this.env.outputs) {
+    for (const o of roots) {
       try {
-        const rt = this.env.resolve(o.type);
+        const menv = o.menv;
+        const rt = menv.resolve(o.type);
         const cctx: CCtx = {
-          names: (n) => (this.env.consts.has(n) ? `const:${n}` : undefined),
+          entryEnv: this.env,
           self: null,
           rootName: o.name,
           locals: new Set(),
-          resolveType: (t) => this.env.resolve(t),
-          menv: this.env,
+          resolveType: (t) => menv.resolve(t),
+          menv,
         };
-        const sc: BindScope = { inst: null, locals: new Map(), rootName: o.name, menv: this.env };
+        const sc: BindScope = { inst: null, locals: new Map(), rootName: o.name, menv };
         const v = this.bindValue(o.expr, rt, [o.name], null, cctx, sc)(this.cx, NO_LOCALS);
         this.env.roots.set(o.name, v);
         built.push({ name: o.name, v });
@@ -1414,18 +1450,23 @@ class QEval {
   }
 }
 
-export function qevaluate(env: Env): QReport {
-  // Evaluate the universe in rounds (§7.6): each round answers `$referrers` from
-  // the previous round's frozen universe, until the queried edges settle. A
-  // module that never asks `$referrers` queries no edges, so it settles in one
-  // round — the loop is transparent for it.
+/**
+ * Evaluate a universe in rounds (§7.6): each round runs a fresh QEval that
+ * answers `$referrers` from the previous round's frozen universe, until the
+ * queried edges settle (E5009 if they never do). A universe that never asks
+ * `$referrers` queries no edges and settles in one round — the loop is
+ * transparent for it. `mkEval` builds a round's QEval and result over the entry
+ * env, which is reset between rounds.
+ */
+function evalRounds(
+  entryEnv: Env,
+  mkEval: (prev: Frozen | null) => { report: QReport; live: Map<string, Edge> },
+): QReport {
   let prev: Frozen | null = null;
   let prevEdges = new Map<string, Edge>();
   const seen = new Map<string, number>();
   for (let round = 1; ; round++) {
-    const ev: QEval = new QEval(env, prev);
-    const report: QReport = ev.run();
-    const live: Map<string, Edge> = ev.liveEdges();
+    const { report, live } = mkEval(prev);
     const changed = [...live.keys()]
       .filter((k) => !edgeEq(live.get(k)!, prevEdges.get(k) ?? new Map()))
       .sort();
@@ -1448,10 +1489,36 @@ export function qevaluate(env: Env): QReport {
     }
     seen.set(edgesKey(live), round);
     // this round becomes the next round's frozen universe; start over
-    prev = { registry: env.registry.slice(), edges: live };
+    prev = { registry: entryEnv.registry.slice(), edges: live };
     prevEdges = live;
-    env.roots.clear();
-    env.registry.splice(0);
-    env.diagnostics.length = 0;
+    entryEnv.roots.clear();
+    entryEnv.registry.splice(0);
+    entryEnv.diagnostics.length = 0;
   }
+}
+
+/** evaluate a single module's outputs (its own env is the whole universe) */
+export function qevaluate(env: Env): QReport {
+  return evalRounds(env, (prev) => {
+    const ev = new QEval(env, prev);
+    const report = ev.run();
+    return { report, live: ev.liveEdges() };
+  });
+}
+
+/**
+ * Evaluate a whole multi-module universe (§8.8): every module's outputs are
+ * roots, each bound and evaluated in its own module scope, into the entry
+ * module's universe. Imported names and non-entry-module consts/functions are
+ * resolved through the value layer.
+ */
+export function qevaluateUniverse(mods: { env: Env }[], entry: { env: Env }): QReport {
+  const roots: RootSpec[] = mods.flatMap((m) =>
+    m.env.outputs.map((o) => ({ name: o.name, expr: o.expr, type: o.type, menv: m.env })),
+  );
+  return evalRounds(entry.env, (prev) => {
+    const ev = new QEval(entry.env, prev, mods);
+    const report = ev.run(roots);
+    return { report, live: ev.liveEdges() };
+  });
 }
