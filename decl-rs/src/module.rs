@@ -415,6 +415,38 @@ pub fn run_universe(
     entry: &Rc<Module>,
     binds: Vec<Bind>,
 ) -> (Rc<Engine>, Vec<Diag>) {
+    // the query engine, when selected, evaluates the universe in place of the
+    // tree walker (qengine/DESIGN.md); an unhandled form falls back, unless
+    // strict mode makes it a hard error
+    if crate::pipeline::use_qengine() {
+        let m_envs: Vec<Rc<Env>> = mods.iter().map(|m| m.env.clone()).collect();
+        let bspecs: Vec<crate::qengine::qeval::BoundSpec> = binds
+            .iter()
+            .map(|b| crate::qengine::qeval::BoundSpec {
+                name: b.input.clone(),
+                raw: b.raw.clone(),
+                menv: b
+                    .module
+                    .clone()
+                    .unwrap_or_else(|| entry.clone())
+                    .env
+                    .clone(),
+            })
+            .collect();
+        match crate::qengine::qeval::qevaluate_universe(&m_envs, &entry.env, &bspecs) {
+            Ok((report, eng)) => return (eng, report.diagnostics),
+            Err(u) => {
+                if crate::pipeline::strict_qengine() {
+                    panic!("DECL_QENGINE_STRICT: unhandled form: {}", u.0);
+                }
+                // else fall back to the tree walker; a fresh evaluation, so the
+                // partial round's roots/registry/diagnostics are cleared first
+                entry.env.roots_clear();
+                entry.env.registry_clear();
+                entry.env.diag_set(vec![]);
+            }
+        }
+    }
     let eng = Engine::evaluate(
         &entry.env,
         &|eng| {

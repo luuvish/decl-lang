@@ -1119,6 +1119,7 @@ impl QEval {
         rt: &RT,
         path: Vec<Seg>,
         parent: Option<Inst>,
+        menv: &Rc<Env>,
     ) -> R<Value> {
         let inst_id = path_str(&path, None);
         let root_name = seg_text(&path[0]);
@@ -1133,14 +1134,14 @@ impl QEval {
             slots: Vec::new(),
             entry_order,
             extras: Vec::new(),
-            menv: Some(self.env.clone()),
+            menv: Some(menv.clone()),
         }));
         self.env.registry_push(inst.clone());
         let cctx = CCtx {
             self_inst: Some(inst.clone()),
             root_name: root_name.clone(),
             locals: FxHashSet::default(),
-            menv: self.env.clone(),
+            menv: menv.clone(),
             entry_env: self.env.clone(),
         };
         let members = rec_members(rt);
@@ -1464,8 +1465,9 @@ impl QEval {
         if let (RTk::Rec(_), Expr::Obj(entries)) = (&ty.k, &**val) {
             let entries = entries.clone();
             let ty = ty.clone();
+            let menv = cctx.menv.clone();
             return Ok(Rc::new(move |q, _l| {
-                q.bind_record(&entries, &ty, path.clone(), parent.clone())
+                q.bind_record(&entries, &ty, path.clone(), parent.clone(), &menv)
             }));
         }
         // a literal array of record-bearing elements: build each at its own path
@@ -1587,13 +1589,9 @@ impl QEval {
     /// root (a scalar, or a record from a call/comprehension/reference) binds
     /// through the value layer, which handles its own deferral across rounds. An
     /// unhandled form trips `unsupported`, so the caller falls back.
-    fn bind_roots(
-        self: &Rc<Self>,
-        roots: &[(String, TypeAst, Rc<Expr>)],
-        unsupported: &Cell<bool>,
-    ) {
-        for (name, tyast, expr) in roots {
-            let rt = match self.env.resolve(tyast, None) {
+    fn bind_roots(self: &Rc<Self>, roots: &[RootSpec], unsupported: &Cell<bool>) {
+        for (name, tyast, expr, menv) in roots {
+            let rt = match menv.resolve(tyast, None) {
                 Ok(rt) => rt,
                 Err(_) => continue, // a type that does not resolve: the checker's domain
             };
@@ -1603,7 +1601,7 @@ impl QEval {
                     self_inst: None,
                     root_name: name.clone(),
                     locals: FxHashSet::default(),
-                    menv: self.env.clone(),
+                    menv: menv.clone(),
                     entry_env: self.env.clone(),
                 };
                 let path = vec![Seg::Name(name.as_str().into())];
@@ -1629,12 +1627,15 @@ impl QEval {
             } else {
                 // the value layer binds a scalar or non-literal root, deferring
                 // a `$referrers`-dependent one to a later round (§7.6, §9.4)
-                let sc = Scope::new(name, Some(self.env.clone()));
+                let sc = Scope::new(name, Some(menv.clone()));
                 self.helper.bind_root(name, RootSrc::Expr(expr), &rt, &sc);
             }
         }
     }
 }
+
+/// one evaluation root: its name, declared type, expression, and module scope
+type RootSpec = (String, TypeAst, Rc<Expr>, Rc<Env>);
 
 /// the trailing member name of a slot key (`slot:hub.ports["a"].sel$` -> `sel$`)
 fn member_of_slot_key(key: &str) -> &str {
@@ -1653,19 +1654,89 @@ fn member_of_slot_key(key: &str) -> &str {
 /// The query-graph records a round builds outlive it (their slots bridge back to
 /// their QEval), so every round's QEval is kept alive until the driver returns.
 pub fn qevaluate(env: Rc<Env>) -> Result<QReport, Unsupported> {
-    let roots: Vec<(String, TypeAst, Rc<Expr>)> = env.outputs.borrow().clone();
+    let roots: Vec<RootSpec> = env
+        .outputs
+        .borrow()
+        .iter()
+        .map(|(n, t, e)| (n.clone(), t.clone(), e.clone(), env.clone()))
+        .collect();
+    let (report, _eng) = eval_rounds(&env, &roots, &[], &[])?;
+    Ok(report)
+}
+
+/// A bound input document for the universe: its name, raw value, and the
+/// module scope that declares it.
+pub struct BoundSpec {
+    /// the input's name
+    pub name: String,
+    /// the document, as the JSON reader gives it
+    pub raw: Value,
+    /// the scope that declares the input
+    pub menv: Rc<Env>,
+}
+
+/// Evaluate a whole multi-module universe (§8.8): every module's outputs are
+/// roots, each bound in its own module scope into the entry module's universe;
+/// bound input documents are roots too. Returns the report and the settled
+/// round's value layer (its roots populated and forced) so the caller can
+/// serialize through it exactly as `run_universe` does.
+pub fn qevaluate_universe(
+    mods: &[Rc<Env>],
+    entry: &Rc<Env>,
+    binds: &[BoundSpec],
+) -> Result<(QReport, Rc<Engine>), Unsupported> {
+    let roots: Vec<RootSpec> = mods
+        .iter()
+        .flat_map(|m| {
+            m.outputs
+                .borrow()
+                .iter()
+                .map(|(n, t, e)| (n.clone(), t.clone(), e.clone(), m.clone()))
+                .collect::<Vec<_>>()
+        })
+        .collect();
+    eval_rounds(entry, &roots, binds, mods)
+}
+
+/// The rounds driver shared by the single-module and universe entries: bind the
+/// bound inputs and roots through a fresh QEval each round, forcing through the
+/// value layer's rounds machinery until `$referrers` settles. `hook_mods` are
+/// the module scopes whose elaboration hooks (a const in a type position, a
+/// unit factor) point at each round's value layer — every module for a
+/// universe, none for a single module (as `run_universe` and `run_pipeline` do).
+fn eval_rounds(
+    entry: &Rc<Env>,
+    roots: &[RootSpec],
+    binds: &[BoundSpec],
+    hook_mods: &[Rc<Env>],
+) -> Result<(QReport, Rc<Engine>), Unsupported> {
     let holder: RefCell<Vec<Rc<QEval>>> = RefCell::new(Vec::new());
     let unsupported = Cell::new(false);
     let bind = |eng: &Rc<Engine>| {
-        let ev = QEval::with_engine(env.clone(), eng.clone());
+        let ev = QEval::with_engine(entry.clone(), eng.clone());
         holder.borrow_mut().push(ev.clone());
-        ev.bind_roots(&roots, &unsupported);
+        for m in hook_mods {
+            eng.install_hooks(m, true);
+        }
+        // a bound input document is a root of the universe, available before the
+        // outputs that read it (§9.2); it binds through the value layer
+        for b in binds {
+            let decl = b.menv.inputs.borrow().get(&b.name).cloned();
+            let Some((ty_ast, _)) = decl else { continue };
+            let sc = Scope::new(&b.name, Some(b.menv.clone()));
+            match b.menv.resolve(&ty_ast, None) {
+                Ok(rt) => eng.bind_root(&b.name, RootSrc::Doc(b.raw.clone()), &rt, &sc),
+                Err(e) => entry.report(Diag::error(e, b.name.clone(), None)),
+            }
+        }
+        ev.bind_roots(roots, &unsupported);
     };
-    let eng = Engine::evaluate(&env, &bind, false);
+    let eng = Engine::evaluate(entry, &bind, false);
     eng.validate_all("");
-    let diags = sort_diags(env.diagnostics_vec()); // §6.7
-                                                   // a form the query engine does not handle (at bind or at force time) is
-                                                   // signalled by the flag or the sentinel diagnostic: the caller falls back
+    let diags = sort_diags(entry.diagnostics_vec()); // §6.7
+    entry.diag_set(diags.clone());
+    // a form the query engine does not handle (at bind or at force time) is
+    // signalled by the flag or the sentinel diagnostic: the caller falls back
     if unsupported.get() || diags.iter().any(|d| d.code.as_deref() == Some(QUNSUP)) {
         return Err(Unsupported("form".into()));
     }
@@ -1673,17 +1744,21 @@ pub fn qevaluate(env: Rc<Env>) -> Result<QReport, Unsupported> {
     let outputs = if ok {
         roots
             .iter()
-            .filter_map(|(n, _, _)| {
-                env.root(n)
+            .filter_map(|(n, _, _, _)| {
+                entry
+                    .root(n)
                     .map(|v| (n.clone(), eng.serialize(&v, n, false)))
             })
             .collect()
     } else {
         vec![]
     };
-    Ok(QReport {
-        ok,
-        outputs,
-        diagnostics: diags,
-    })
+    Ok((
+        QReport {
+            ok,
+            outputs,
+            diagnostics: diags,
+        },
+        eng,
+    ))
 }
