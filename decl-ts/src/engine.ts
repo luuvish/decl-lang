@@ -131,18 +131,25 @@ export class Engine {
   // records what it read: slots, roots, and `$referrers` queries by type
   // (`referrers:Type`); diagnostics carry the step that produced them
   reads = new Map<string, Set<string>>();
+  // dependency tracking is recorded only for a session (incremental recompute,
+  // §6); a one-shot evaluate/validate never reads it, so it is off by default —
+  // avoiding a per-slot Set allocation that dominates GC at scale (F21)
+  track = false;
   computing: string[] = [];
   slotsByKey = new Map<string, { inst: RecInst; name: string }>();
   static slotKey(inst: RecInst, name: string): string {
-    return `${pathStr(inst.path)}.${name}`;
+    // inst.path is immutable, so pathStr is computed once per instance (F21)
+    const ps = inst._ps ?? (inst._ps = pathStr(inst.path));
+    return `${ps}.${name}`;
   }
   record(read: string) {
+    if (!this.track) return;
     const top = this.computing[this.computing.length - 1];
-    if (top) this.reads.get(top)!.add(read);
+    if (top) this.reads.get(top)?.add(read);
   }
   step<T>(key: string, f: () => T): T {
     this.computing.push(key);
-    this.reads.set(key, new Set());
+    if (this.track) this.reads.set(key, new Set());
     try {
       return f();
     } finally {
@@ -1024,13 +1031,20 @@ export class Engine {
     }
     return { __pre: 'obj', entries };
   }
+  // an unmaterialized literal read as a value is materialized once and cached
+  // on the pre-value (as matArr/matMap do): a large computed structure read by
+  // many consumers would otherwise be re-materialized on every read (F21)
   matVal(v: any): any {
     const d = this.deref(v);
-    return d && (d.__pre || d.__jobj) ? this.materialize(d, [], null, null as any) : d;
+    if (d && d.__pre)
+      return d.flatValue ?? (d.flatValue = this.materialize(d, [], null, null as any));
+    if (d && d.__jobj) return this.materialize(d, [], null, null as any);
+    return d;
   }
   matRec(v: any): RecInst {
     let d = this.deref(v);
-    if (d && (d.__pre || d.__jobj)) d = this.materialize(d, [], null, null as any);
+    if (d && d.__pre) d = d.flatValue ?? (d.flatValue = this.materialize(d, [], null, null as any));
+    else if (d && d.__jobj) d = this.materialize(d, [], null, null as any);
     if (isRec(d)) return d;
     throw new EvalErr('std.object.merge: expected records', 'E5008');
   }
@@ -1162,7 +1176,12 @@ export class Engine {
    * round, until the queried edges are stable — the settled engine is the
    * result. A universe still changing after `ROUNDS` rounds is E5009.
    */
-  static evaluate(env: Env, bind: (eng: Engine) => void, roots: () => Iterable<any>): Engine {
+  static evaluate(
+    env: Env,
+    bind: (eng: Engine) => void,
+    roots: () => Iterable<any>,
+    track = false,
+  ): Engine {
     let prev: Engine | null = null;
     let edges = new Map<string, Edge>();
     // the queried edges each round have been seen before (rounds are
@@ -1171,6 +1190,7 @@ export class Engine {
     const seen = new Map<string, number>();
     for (let round = 1; ; round++) {
       const eng = new Engine(env);
+      eng.track = track;
       eng.prev = prev;
       const mark = env.diagnostics.length;
       bind(eng);
@@ -2039,12 +2059,20 @@ function memberOfKey(key: string): string {
   const m = key.match(/\.([A-Za-z_$][\w$]*)$|\["([^"]*)"\]$/);
   return m ? (m[1] ?? m[2]) : key;
 }
+// whether an expression mentions `$referrers` — a property of the AST node,
+// memoized so a member's expression is walked once, not once per instance (F21)
+const referrersMemo = new WeakMap<object, boolean>();
 function mentionsReferrersLocal(e: any): boolean {
   if (!e || typeof e !== 'object') return false;
-  if (e.e === 'referrers') return true;
-  return Object.values(e).some((v) =>
-    Array.isArray(v) ? v.some(mentionsReferrersLocal) : mentionsReferrersLocal(v),
-  );
+  const hit = referrersMemo.get(e);
+  if (hit !== undefined) return hit;
+  const r =
+    e.e === 'referrers' ||
+    Object.values(e).some((v) =>
+      Array.isArray(v) ? v.some(mentionsReferrersLocal) : mentionsReferrersLocal(v),
+    );
+  referrersMemo.set(e, r);
+  return r;
 }
 function structuralOf(v: any): RT {
   // shape-of-computed type for restating unannotated derived members

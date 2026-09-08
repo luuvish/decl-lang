@@ -415,34 +415,38 @@ pub fn run_universe(
     entry: &Rc<Module>,
     binds: Vec<Bind>,
 ) -> (Rc<Engine>, Vec<Diag>) {
-    let eng = Engine::evaluate(&entry.env, &|eng| {
-        for m in mods {
-            eng.install_hooks(&m.env, true);
-        }
-        // bound documents first: an output may read an input (§5.5), and a
-        // bound input is a root of the universe (§9.2); unbound inputs with a
-        // fallback bind on first demand (§9.4)
-        for b in &binds {
-            let m = b.module.clone().unwrap_or_else(|| entry.clone());
-            let decl = m.env.inputs.borrow().get(&b.input).cloned();
-            let Some((ty_ast, _)) = decl else { continue };
-            let sc = Scope::new(&b.input, Some(m.env.clone()));
-            match m.env.resolve(&ty_ast, None) {
-                Ok(rt) => eng.bind_root(&b.input, RootSrc::Doc(b.raw.clone()), &rt, &sc),
-                Err(e) => entry.env.report(Diag::error(e, b.input.clone(), None)),
+    let eng = Engine::evaluate(
+        &entry.env,
+        &|eng| {
+            for m in mods {
+                eng.install_hooks(&m.env, true);
             }
-        }
-        for m in mods {
-            let outs = m.env.outputs.borrow().clone();
-            for (name, ty_ast, expr) in outs {
-                let sc = Scope::new(&name, Some(m.env.clone()));
+            // bound documents first: an output may read an input (§5.5), and a
+            // bound input is a root of the universe (§9.2); unbound inputs with a
+            // fallback bind on first demand (§9.4)
+            for b in &binds {
+                let m = b.module.clone().unwrap_or_else(|| entry.clone());
+                let decl = m.env.inputs.borrow().get(&b.input).cloned();
+                let Some((ty_ast, _)) = decl else { continue };
+                let sc = Scope::new(&b.input, Some(m.env.clone()));
                 match m.env.resolve(&ty_ast, None) {
-                    Ok(rt) => eng.bind_root(&name, RootSrc::Expr(&expr), &rt, &sc),
-                    Err(e) => entry.env.report(Diag::error(e, name.clone(), None)),
+                    Ok(rt) => eng.bind_root(&b.input, RootSrc::Doc(b.raw.clone()), &rt, &sc),
+                    Err(e) => entry.env.report(Diag::error(e, b.input.clone(), None)),
                 }
             }
-        }
-    });
+            for m in mods {
+                let outs = m.env.outputs.borrow().clone();
+                for (name, ty_ast, expr) in outs {
+                    let sc = Scope::new(&name, Some(m.env.clone()));
+                    match m.env.resolve(&ty_ast, None) {
+                        Ok(rt) => eng.bind_root(&name, RootSrc::Expr(&expr), &rt, &sc),
+                        Err(e) => entry.env.report(Diag::error(e, name.clone(), None)),
+                    }
+                }
+            }
+        },
+        false,
+    );
     eng.validate_all("");
     // §6.7: evaluation- and validation-time diagnostics in (path, id) order
     let diags = sort_diags(entry.env.diagnostics_vec());

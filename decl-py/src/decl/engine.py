@@ -162,6 +162,10 @@ class Engine:
         # records what it read: slots, roots, and `$referrers` queries by type
         # (`referrers:Type`); diagnostics carry the step that produced them
         self.reads: dict[str, Any] = {}
+        # dependency tracking is recorded only for a session; a one-shot
+        # evaluate/validate never reads it, so it is off by default — avoiding a
+        # per-slot set allocation that dominates at scale (F21)
+        self.track = False
         self.computing: list[Any] = []
         self.slots_by_key: dict[str, Any] = {}
         # ---- `$referrers` is answered in rounds (§7.6) ----
@@ -193,15 +197,21 @@ class Engine:
 
     @staticmethod
     def slot_key(inst: RecInst, name: str) -> str:
-        return f"{path_str(inst.path)}.{name}"
+        # inst.path is immutable, so path_str is computed once per instance (F21)
+        ps = inst._ps
+        if ps is None:
+            ps = path_str(inst.path)
+            inst._ps = ps
+        return f"{ps}.{name}"
 
     def record(self, read: str) -> None:
-        if self.computing:
+        if self.track and self.computing:
             self.reads[self.computing[-1]].add(read)
 
     def step(self, key: str, f: Any) -> Any:
         self.computing.append(key)
-        self.reads[key] = set()
+        if self.track:
+            self.reads[key] = set()
         try:
             return f()
         finally:
@@ -1078,7 +1088,9 @@ class Engine:
 
     def mat_rec(self, v: Any) -> RecInst:
         d = self.deref(v)
-        if isinstance(d, (PreObj, PreArr, JObj)):
+        if isinstance(d, (PreObj, PreArr)):
+            d = self.mat_pre(d)  # materialize once, cached (F21)
+        elif isinstance(d, JObj):
             d = self.materialize(d, [], None, None)
         if isinstance(d, RecInst):
             return d
@@ -1203,7 +1215,7 @@ class Engine:
             self.env.muted -= 1
 
     @staticmethod
-    def evaluate(env: Env, bind: Callable[[Engine], None]) -> Engine:
+    def evaluate(env: Env, bind: Callable[[Engine], None], track: bool = False) -> Engine:
         """Evaluate a universe (§7.6, §9.3): `bind` binds every root on a fresh
         engine; the rounds repeat, each answering `$referrers` from the previous
         round, until the queried edges are stable — the settled engine is the
@@ -1218,6 +1230,7 @@ class Engine:
         while True:
             round_ += 1
             eng = Engine(env)
+            eng.track = track
             eng.prev = prev
             mark = len(env.diagnostics)
             bind(eng)

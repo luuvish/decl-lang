@@ -1448,7 +1448,7 @@ impl Session {
             return finish(out);
         }
         let t3 = Instant::now();
-        let eng = Engine::evaluate(&entry.env, &bind);
+        let eng = Engine::evaluate(&entry.env, &bind, true);
         out.session_roots = session_roots;
         out.eng = Some(eng.clone());
         out.timing.bind = t3.duration_since(t2).as_secs_f64() * 1000.0; // between two instants: never negative

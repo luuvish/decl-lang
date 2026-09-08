@@ -830,6 +830,7 @@ class Session:
         out.session_roots = session_roots
         if mode == "lazy":
             eng = Engine(entry.env)
+            eng.track = True
             bind(eng)
             out.eng = eng
             out.timing["bind"] = _now() - t2
@@ -837,7 +838,7 @@ class Session:
             out.diags = entry.env.diagnostics
             return finish()
         t3 = _now()
-        eng = Engine.evaluate(entry.env, bind)
+        eng = Engine.evaluate(entry.env, bind, True)
         out.eng = eng
         out.timing["bind"] = t3 - t2
         eng.validate_all("")

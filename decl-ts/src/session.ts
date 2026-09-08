@@ -781,6 +781,7 @@ export class Session {
     out.sessionRoots = sessionRoots;
     if (mode === 'lazy') {
       const eng = new Engine(entry.env);
+      eng.track = true;
       bind(eng);
       out.eng = eng;
       out.timing.bind = now() - t2;
@@ -789,7 +790,7 @@ export class Session {
       return finish();
     }
     const t3 = now();
-    const eng = Engine.evaluate(entry.env, bind, () => entry.env.roots.values());
+    const eng = Engine.evaluate(entry.env, bind, () => entry.env.roots.values(), true);
     out.eng = eng;
     out.timing.bind = t3 - t2;
     eng.validateAll('');

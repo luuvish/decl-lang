@@ -33,6 +33,10 @@ pub struct Engine {
     // (`referrers:Type`); diagnostics carry the step that produced them
     /// the dependency graph: the slot keys each computation read (the session's incremental step)
     pub reads: RefCell<HashMap<String, HashSet<String>>>,
+    /// dependency tracking is recorded only for a session; a one-shot
+    /// evaluate/validate never reads it, so it is off by default — avoiding a
+    /// per-slot allocation that dominates at scale (F21)
+    pub track: Cell<bool>,
     /// the slots being forced, innermost last: a key already here is a cycle (E5007)
     pub computing: RefCell<Vec<String>>,
     /// every slot by its key, for the dependency graph
@@ -374,6 +378,7 @@ impl Engine {
             phase: Cell::new(1),
             failed_inputs: RefCell::new(HashSet::new()),
             reads: RefCell::new(HashMap::new()),
+            track: Cell::new(false),
             computing: RefCell::new(vec![]),
             slots_by_key: RefCell::new(HashMap::new()),
             deferred_roots: RefCell::new(vec![]),
@@ -409,10 +414,24 @@ impl Engine {
     }
     /// The key of a slot in the dependency graph: the instance's path and the member's name.
     pub fn slot_key(inst: &Inst, name: &str) -> String {
-        format!("{}.{}", path_str(&inst.borrow().path, None), name)
+        // inst.path is immutable, so path_str is computed once per instance (F21)
+        let b = inst.borrow();
+        let cached = b.ps.borrow().clone();
+        let ps = match cached {
+            Some(p) => p,
+            None => {
+                let p = path_str(&b.path, None);
+                *b.ps.borrow_mut() = Some(p.clone());
+                p
+            }
+        };
+        format!("{ps}.{name}")
     }
     /// Record that the computation in progress read a slot (dependency tracking).
     pub fn record(&self, read: String) {
+        if !self.track.get() {
+            return;
+        }
         let top = self.computing.borrow().last().cloned();
         if let Some(top) = top {
             self.reads.borrow_mut().entry(top).or_default().insert(read);
@@ -421,9 +440,11 @@ impl Engine {
     /// Run a computation as a step of the dependency graph, its reads recorded under `key`.
     pub fn step<T>(&self, key: &str, f: impl FnOnce() -> T) -> T {
         self.computing.borrow_mut().push(key.to_string());
-        self.reads
-            .borrow_mut()
-            .insert(key.to_string(), HashSet::new());
+        if self.track.get() {
+            self.reads
+                .borrow_mut()
+                .insert(key.to_string(), HashSet::new());
+        }
         let r = f();
         self.computing.borrow_mut().pop();
         r
@@ -1896,7 +1917,9 @@ impl Engine {
     }
     fn mat_rec(&self, v: &Value) -> R<Inst> {
         let mut d = self.deref(v.clone())?;
-        if matches!(d, Value::PreObj(_) | Value::PreArr(_) | Value::JObj(_)) {
+        if matches!(d, Value::PreObj(_) | Value::PreArr(_)) {
+            d = self.mat_pre(d)?; // materialize once, cached (F21)
+        } else if matches!(d, Value::JObj(_)) {
             d = self.materialize(d, &[])?;
         }
         match d {
@@ -2112,7 +2135,7 @@ impl Engine {
     /// engine; the rounds repeat, each answering `$referrers` from the previous
     /// round, until the queried edges are stable — the settled engine is the
     /// result. A universe still changing after `ROUNDS` rounds is E5009.
-    pub fn evaluate(env: &Rc<Env>, bind: &dyn Fn(&Rc<Engine>)) -> Rc<Engine> {
+    pub fn evaluate(env: &Rc<Env>, bind: &dyn Fn(&Rc<Engine>), track: bool) -> Rc<Engine> {
         let mut prev: Option<Rc<Engine>> = None;
         let mut edges: HashMap<String, Edge> = HashMap::new();
         // the queried edges each round have been seen before (rounds are
@@ -2123,6 +2146,7 @@ impl Engine {
         loop {
             round += 1;
             let eng = Engine::new(env.clone());
+            eng.track.set(track);
             *eng.prev.borrow_mut() = prev.clone();
             let mark = env.diag_len();
             bind(&eng);
@@ -2744,6 +2768,7 @@ impl Engine {
         };
         let members = rec.members.borrow().clone();
         let inst: Inst = Rc::new(RefCell::new(RecInst {
+            ps: RefCell::new(None),
             type_name: rt.name.borrow().clone(),
             rt: rt.clone(),
             path: path.to_vec(),

@@ -12,9 +12,19 @@ export const ABSENT = Symbol('absent');
 export type Seg = string | number | { key: string };
 export const mapKey = (k: string): Seg => ({ key: k });
 export const segText = (s: Seg): string | number => (typeof s === 'object' ? s.key : s);
-// dot-spellable (§3.11, §4.3): identifier-shaped and not a literal keyword
-export const dotSpellable = (name: string): boolean =>
-  /^[_A-Za-z][_A-Za-z0-9]*$/.test(name) && !['true', 'false', 'null'].includes(name);
+// dot-spellable (§3.11, §4.3): identifier-shaped and not a literal keyword —
+// memoized by name (segment names repeat across a large document, F21)
+const IDENT_RE = /^[_A-Za-z][_A-Za-z0-9]*$/;
+const KEYWORD_LITS = new Set(['true', 'false', 'null']);
+const dotCache = new Map<string, boolean>();
+export const dotSpellable = (name: string): boolean => {
+  let r = dotCache.get(name);
+  if (r === undefined) {
+    r = IDENT_RE.test(name) && !KEYWORD_LITS.has(name);
+    dotCache.set(name, r);
+  }
+  return r;
+};
 export type Value = any; // bigint | number | string | boolean | null | QuantityV | RefV | RecInst | ArrV | MapV | RangeV | ClosureV
 
 export const isQ = (v: any) => v && v.__q === true;
@@ -38,6 +48,7 @@ export type Slot = {
 };
 export type RecInst = {
   __rec: true;
+  _ps?: string; // cached pathStr(path) for the slot key (F21); path is immutable
   typeName?: string;
   rt: any; // resolved record type
   path: Seg[];

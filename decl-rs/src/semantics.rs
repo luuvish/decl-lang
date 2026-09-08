@@ -336,6 +336,8 @@ pub struct RecInst {
     pub rt: RT,
     /// its canonical path
     pub path: SegPath,
+    /// cached path_str(path) for the slot key (F21); path is immutable
+    pub ps: RefCell<Option<String>>,
     /// the enclosing instance
     pub parent: Option<Rc<RefCell<RecInst>>>,
     // declaration order matters (forcing order drives diagnostic order)

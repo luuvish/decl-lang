@@ -174,13 +174,22 @@ def seg_text(s: Any) -> Any:
     return s.k if isinstance(s, Key) else s
 
 
+_dot_cache: dict[Any, bool] = {}
+
+
 def dot_spellable(name: Any) -> bool:
-    """§3.11, §4.3: identifier-shaped and not a literal keyword."""
-    return (
+    """§3.11, §4.3: identifier-shaped and not a literal keyword — memoized by
+    name (segment names repeat across a large document, F21)."""
+    hit = _dot_cache.get(name)
+    if hit is not None:
+        return hit
+    r = (
         isinstance(name, str)
         and _ID_RE.match(name) is not None
         and name not in ("true", "false", "null")
     )
+    _dot_cache[name] = r
+    return r
 
 
 class ArrV:
@@ -215,6 +224,7 @@ class Slot:
 
 class RecInst:
     __slots__ = (
+        "_ps",
         "eng",
         "entry_order",
         "extras",
@@ -228,6 +238,7 @@ class RecInst:
 
     def __init__(self, type_name: Any, rt: Any, path: Any, parent: Any) -> None:
         self.type_name, self.rt, self.path, self.parent = type_name, rt, path, parent
+        self._ps: str | None = None  # cached path_str(path) for the slot key (F21)
         self.slots: dict[str, Any] = {}
         self.entry_order: list[Any] = []
         self.extras: dict[str, Any] = {}
@@ -1458,13 +1469,20 @@ def value_eq(a: Any, b: Any) -> bool:
 
 
 def mentions_referrers(e: Any) -> bool:
+    # a property of the AST node, memoized on the (shared) node so a member's
+    # expression is walked once, not once per instance (F21)
     if isinstance(e, list):
         return any(mentions_referrers(x) for x in e)
     if not isinstance(e, dict):
         return False
-    if e.get("e") == "referrers":
-        return True
-    return any(mentions_referrers(v) for v in e.values() if isinstance(v, (dict, list)))
+    hit = e.get("__mref")
+    if hit is not None:
+        return hit
+    r = e.get("e") == "referrers" or any(
+        mentions_referrers(v) for v in e.values() if isinstance(v, (dict, list))
+    )
+    e["__mref"] = r
+    return r
 
 
 # ---------------- lexical JSON (int/float by lexeme) ----------------
