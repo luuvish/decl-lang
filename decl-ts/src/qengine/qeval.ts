@@ -72,6 +72,8 @@ interface OpCx {
   rootValue(name: string): Value | undefined;
   /** the value of an input root, binding its fallback on first demand (§5.6) */
   inputRoot(name: string): Value;
+  /** the entries an object-valued expression contributes to a spread (§4.2) */
+  spreadEntries(v: Value): [string, Value][];
 }
 /** local bindings in scope (comprehension loop variables) */
 type Locals = Map<string, Value>;
@@ -389,10 +391,15 @@ function compile(e: Expr, c: CCtx): Op {
     case 'name': {
       const nm = e.name;
       if (c.locals.has(nm)) return (_cx, l) => l.get(nm);
-      // a member of the enclosing record shadows module names; read it through
-      // access so an absent optional yields ABSENT rather than a missing query
-      const self = c.self;
-      if (self && self.slots.has(nm)) return (cx) => access(cx, self, nm);
+      // a member of the enclosing record — or an ancestor, nearest first (§8
+      // scoping, as slotLookup) — shadows module names; read through forceMember
+      // so an absent optional yields ABSENT rather than a missing query
+      for (let cur = c.self; cur; cur = cur.parent) {
+        if (cur.slots.has(nm)) {
+          const owner = cur;
+          return (cx) => cx.forceMember(owner, nm);
+        }
+      }
       const key = c.names(nm);
       if (key !== undefined) return (cx) => cx.query(key) as Value;
       if (nm === 'std') return () => ({ __std: true, path: [] });
@@ -518,14 +525,26 @@ function compile(e: Expr, c: CCtx): Op {
     case 'obj': {
       // an object literal reaches compile only in a map-typed position (a
       // record-typed one is dispatched to bindRecord); build a map value,
-      // which the type binder validates against `map<K, V>`
-      const parts = e.entries.map((en) => {
-        if (en.val.e === 'spread') throw new Unsupported('spread in a map literal');
-        return { key: en.key, op: compile(en.val, c) };
-      });
+      // which the type binder validates against `map<K, V>`. A spread entry
+      // (§4.2) copies the entries of an object-valued expression in place.
+      const parts = e.entries.map((en) =>
+        en.val.e === 'spread'
+          ? { spread: true as const, op: compile(en.val.expr, c) }
+          : { spread: false as const, key: en.key, op: compile(en.val, c) },
+      );
       return (cx, l) => {
         const entries = new Map<string, Value>();
-        for (const p of parts) entries.set(p.key, p.op(cx, l));
+        const put = (k: string, v: Value): void => {
+          if (entries.has(k)) throw new EvalErr(`duplicate key ${k}`, 'E5004');
+          entries.set(k, v);
+        };
+        for (const p of parts) {
+          if (p.spread) {
+            let s = p.op(cx, l);
+            if (isRef(s)) s = cx.deref(s);
+            for (const [k, v] of cx.spreadEntries(s)) put(k, v);
+          } else put(p.key, p.op(cx, l));
+        }
         return { __map: true, entries, path: [] };
       };
     }
@@ -696,6 +715,7 @@ class QEval {
       forceMember: (rec, name) => this.forceMember(rec, name),
       rootValue: (name) => this.env.roots.get(name),
       inputRoot: (name) => this.demandInputRoot(name),
+      spreadEntries: (v) => this.helper.spreadEntries(v),
     };
     this.constCtx = {
       names: (n) => (env.consts.has(n) ? `const:${n}` : undefined),

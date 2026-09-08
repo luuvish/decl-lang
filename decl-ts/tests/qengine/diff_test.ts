@@ -289,6 +289,10 @@ const programs: { name: string; src: string }[] = [
     name: 'output reads an input fallback',
     src: 'type Cfg = { host: string, port?: int = 80 }\ninput base: Cfg = { host: "example" }\nexport output url: string = `${base.host}:${base.port}`',
   },
+  {
+    name: 'object spread merges maps',
+    src: 'const d = { a: 1, b: 2 }\nexport output m: map<string, int> = { ...d, c: 3 }',
+  },
 ];
 
 let pass = 0;
