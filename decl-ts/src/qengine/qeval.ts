@@ -3,28 +3,32 @@
 // (db.ts). Covered so far:
 //   scalars/const, records (slots as queries, cross-slot & nested & member
 //   access), references ($this/$parent/$root/$key, deref/navigation),
-//   arrays & array comprehensions, ranges, indexing, maps & map comprehensions.
-// Value semantics — equality, serialization, type binding, iteration — are
-// reused from the current value layer, as the design intends; only the
-// evaluation strategy is new. Unions, patterns, `match`, templates, quantities,
-// std calls, `ref<T>` navigation members, context declarations, `$referrers`,
-// and the rest come in later stages.
+//   arrays & array comprehensions, ranges, indexing, maps & map comprehensions,
+//   `in`/`matches`, patterns, string templates, and `match` over literal unions.
+// Value semantics — equality, serialization, type binding, iteration, type
+// membership — are reused from the current value layer, as the design intends;
+// only the evaluation strategy is new. Quantities/units, std calls, `ref<T>`
+// navigation members, context declarations, unions of records in collection
+// positions, `$referrers`, and the rest come in later stages.
 import { Db } from './db.ts';
 import { Engine } from '../engine.ts';
 import {
   ABSENT,
   EvalErr,
+  compilePattern,
   isArr,
   isMap,
+  isQ,
   isRange,
   isRec,
   isRef,
+  patternError,
   pathStr,
   segText,
   valueEq,
 } from '../semantics.ts';
 import type { Env, RecInst, Value, Diag, Seg, RT } from '../semantics.ts';
-import type { Expr } from '../ast.ts';
+import type { Expr, TypeAst } from '../ast.ts';
 
 /** an expression or member form this stage does not compile yet */
 export class Unsupported extends Error {
@@ -39,6 +43,10 @@ interface OpCx {
   query(key: string): unknown;
   /** resolve a reference to the value it denotes (§7.4) */
   deref(ref: Value): Value;
+  /** does a value inhabit a type? (§4.11 match arm selection) */
+  memberOf(v: Value, rt: RT): boolean;
+  /** a value's string form for template interpolation (§4.8) */
+  toStr(v: Value): string;
 }
 /** local bindings in scope (comprehension loop variables) */
 type Locals = Map<string, Value>;
@@ -53,6 +61,7 @@ interface CCtx {
   self: RecInst | null;
   rootName: string;
   locals: Set<string>; // comprehension loop variables in scope
+  resolveType: (t: TypeAst) => RT; // resolve a match arm's type annotation
 }
 
 // ---- value-level operators (§4.4–4.5), mirroring the reference exactly ----
@@ -73,6 +82,7 @@ function applyBin(op: string, l: Value, r: Value): Value {
   if (op === '==') return valueEq(l, r);
   if (op === '!=') return !valueEq(l, r);
   if (l === ABSENT || r === ABSENT) throw new EvalErr('absent consumed');
+  if (isQ(l) || isQ(r)) throw new Unsupported('quantity arithmetic'); // later stage
   const bothI = typeof l === 'bigint' && typeof r === 'bigint';
   const bothF = typeof l === 'number' && typeof r === 'number';
   const bothS = typeof l === 'string' && typeof r === 'string';
@@ -138,6 +148,26 @@ function applyBin(op: string, l: Value, r: Value): Value {
   throw new EvalErr(`bad operands for ${op}`);
 }
 
+/** the binary operators applyBin evaluates directly (others compile specially) */
+const VALUE_OPS = new Set([
+  '==',
+  '!=',
+  '+',
+  '-',
+  '*',
+  '/',
+  '%',
+  '<',
+  '<=',
+  '>',
+  '>=',
+  '&',
+  '|',
+  '^',
+  '<<',
+  '>>',
+]);
+
 /** read member `name` of a record value through the query graph (§4.10, §7.5) */
 function access(cx: OpCx, x: Value, name: string): Value {
   if (isRec(x)) {
@@ -197,6 +227,29 @@ function compile(e: Expr, c: CCtx): Op {
         const excl = op === '..<';
         return (cx, l) => ({ __range: true, lo: lc(cx, l), hi: rc(cx, l), excl });
       }
+      if (op === 'matches')
+        return (cx, l) => {
+          const s = lc(cx, l);
+          const p = rc(cx, l) as { __pat?: true; re: string };
+          if (typeof s !== 'string' || !p || !p.__pat)
+            throw new EvalErr('matches needs a string and a pattern');
+          const bad = patternError(p.re);
+          if (bad) throw new EvalErr(`malformed pattern /${p.re}/: ${bad}`, 'E4119');
+          return compilePattern(p.re).test(s);
+        };
+      if (op === 'in')
+        return (cx, l) => {
+          const x = lc(cx, l);
+          let container = rc(cx, l);
+          if (isRef(container)) container = cx.deref(container);
+          if (isRange(container))
+            return x >= container.lo && (container.excl ? x < container.hi : x <= container.hi);
+          if (isArr(container)) return container.items.some((y: Value) => valueEq(x, y));
+          if (isMap(container)) return container.entries.has(x);
+          if (isRec(container)) throw new Unsupported('`in` over a record'); // needs slot forcing
+          throw new EvalErr('in: bad container');
+        };
+      if (!VALUE_OPS.has(op)) throw new Unsupported(`operator ${op}`);
       return (cx, l) => applyBin(op, lc(cx, l), rc(cx, l));
     }
     case 'name': {
@@ -329,6 +382,48 @@ function compile(e: Expr, c: CCtx): Op {
         return { __map: true, entries, path: [] };
       };
     }
+    case 'template': {
+      const parts = e.parts.map((p) => (typeof p === 'string' ? p : compile(p, c)));
+      return (cx, l) => {
+        let s = '';
+        for (const p of parts) s += typeof p === 'string' ? p : cx.toStr(p(cx, l));
+        return s;
+      };
+    }
+    case 'pattern': {
+      const re = e.re;
+      return () => ({ __pat: true, re });
+    }
+    case 'match': {
+      const subjOp = compile(e.subject, c);
+      const arms = e.arms.map((a) => ({
+        v: a.v,
+        rt: a.type ? c.resolveType(a.type) : null,
+        body: compile(a.body, { ...c, locals: new Set([...c.locals, a.v]) }),
+      }));
+      return (cx, l) => {
+        let subj = subjOp(cx, l);
+        if (isRef(subj)) subj = cx.deref(subj);
+        let catchAll: (typeof arms)[number] | null = null;
+        for (const arm of arms) {
+          if (!arm.rt) {
+            catchAll = arm;
+            continue;
+          }
+          if (cx.memberOf(subj, arm.rt)) {
+            const l2 = new Map(l);
+            l2.set(arm.v, subj);
+            return arm.body(cx, l2);
+          }
+        }
+        if (catchAll) {
+          const l2 = new Map(l);
+          l2.set(catchAll.v, subj);
+          return catchAll.body(cx, l2);
+        }
+        throw new EvalErr('match: no arm matched');
+      };
+    }
     case 'ctx': {
       const nm = e.name;
       const self = c.self;
@@ -391,12 +486,19 @@ class QEval {
         return op ? () => op(this.cx, NO_LOCALS) : undefined;
       },
     });
-    this.cx = { query: (k) => this.db.query(k), deref: (r) => this.deref(r) };
+    const matchScope = { inst: null, locals: new Map<string, unknown>(), rootName: '', menv: env };
+    this.cx = {
+      query: (k) => this.db.query(k),
+      deref: (r) => this.deref(r),
+      memberOf: (v, rt) => this.helper.memberOf(v, rt, matchScope),
+      toStr: (v) => this.helper.toStr(v),
+    };
     const constCtx: CCtx = {
       names: (n) => (env.consts.has(n) ? `const:${n}` : undefined),
       self: null,
       rootName: '',
       locals: new Set(),
+      resolveType: (t) => env.resolve(t),
     };
     for (const [name, con] of env.consts) this.constOps.set(name, compile(con.expr, constCtx));
   }
@@ -465,6 +567,7 @@ class QEval {
       self: inst,
       rootName: path[0] as string,
       locals: new Set(),
+      resolveType: (t) => this.env.resolve(t),
     };
     const sc = {
       inst,
@@ -554,6 +657,7 @@ class QEval {
             self: null,
             rootName: o.name,
             locals: new Set(),
+            resolveType: (t) => this.env.resolve(t),
           };
           const raw = compile(o.expr, cctx)(this.cx, NO_LOCALS);
           const sc = {

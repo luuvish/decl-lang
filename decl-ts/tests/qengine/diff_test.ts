@@ -126,6 +126,32 @@ const programs: { name: string; src: string }[] = [
     name: 'derived reads a map member by key',
     src: 'type R = { m: map<string, int>, got = (m["a"] ?? 0) + (m["b"] ?? 0) }\nexport output r: R = { m: { a: 5, b: 6 } }',
   },
+  // `in`, string templates, patterns, and `match` (§4.5, §4.7, §4.11)
+  { name: 'in over a range', src: 'export output b: bool = 3 in 1..5' },
+  { name: 'not in an exclusive range', src: 'export output b: bool = 5 in 0..<5' },
+  { name: 'in over an array literal', src: 'export output b: bool = 2 in [1, 3, 5]' },
+  {
+    name: 'in over a map key',
+    src: 'type R = { m: map<string, int>, has = "a" in m }\nexport output r: R = { m: { a: 1 } }',
+  },
+  { name: 'string matches a pattern', src: 'export output b: bool = "abc123" matches /[a-z]+[0-9]+/' },
+  { name: 'string does not match a pattern', src: 'export output b: bool = "ABC" matches /[a-z]+/' },
+  {
+    name: 'string template interpolation',
+    src: 'const n = 5\nexport output s: string = `n is ${n}`',
+  },
+  {
+    name: 'template with several parts',
+    src: 'type P = { x: int, y: int, label = `(${x}, ${y})` }\nexport output p: P = { x: 3, y: 4 }',
+  },
+  {
+    name: 'match over a literal union',
+    src: 'type Proto = "http" | "grpc" | "tcp"\ntype R = { p: Proto, port = match p { (x: "http") => 80, (x: "grpc") => 50051, (x: "tcp") => 4000 } }\nexport output r: R = { p: "grpc" }',
+  },
+  {
+    name: 'match with a catch-all',
+    src: 'type Proto = "http" | "grpc" | "tcp"\ntype R = { p: Proto, port = match p { (x: "http") => 80, (rest) => 0 } }\nexport output r: R = { p: "tcp" }',
+  },
 ];
 
 let pass = 0;
