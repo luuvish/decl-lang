@@ -1977,7 +1977,7 @@ impl Engine {
     }
 
     // ---------- referrers ----------
-    fn referrers(&self, type_name: &str, member: &str, sc: &Scope) -> R<Value> {
+    pub(crate) fn referrers(&self, type_name: &str, member: &str, sc: &Scope) -> R<Value> {
         if self.phase.get() < 2 {
             return Err(Fail::Defer);
         }

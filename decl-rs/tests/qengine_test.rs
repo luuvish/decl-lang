@@ -252,6 +252,35 @@ fn diff_collections_and_control() {
 }
 
 #[test]
+fn diff_referrers_rounds() {
+    // $referrers is answered in rounds over a frozen previous universe (§7.6):
+    // the port's `inbound$` and the link's `target` co-depend, settling after a
+    // round; the query engine must drive the rounds exactly as the tree walker
+    let src = "type Port = {
+    $key: string
+    inbound$ = $referrers(Link, \"target\")
+    open = std.array.count(inbound$) < 100
+    degree: int = std.array.count(inbound$)
+}
+type Link = {
+    $parent: ref<{ ports: { [string]: Port }, ... }>
+    name: string
+    target: ref<Port> =
+        if ($parent.ports[name]?.open ?? false) then $parent.ports[name] else $parent.ports[\"spare\"]
+}
+type Hub = {
+    ports: { [string]: Port } = { a: {}, spare: {} }
+    links: Link[] = [{ name: \"a\" }]
+}
+export output hub: Hub = {}";
+    match same(src) {
+        Some(true) => {}
+        Some(false) => panic!("query engine diverged on the $referrers rounds program"),
+        None => panic!("query engine unexpectedly fell back on the $referrers rounds program"),
+    }
+}
+
+#[test]
 fn diff_calls_pipes_and_with() {
     let programs = [
         // module function, call, first-argument pipeline

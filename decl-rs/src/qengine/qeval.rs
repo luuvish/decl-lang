@@ -5,7 +5,7 @@
 //! from the value layer (`Engine`); only the evaluation strategy is new. Built
 //! up stage by stage; a form not yet compiled raises [`Unsupported`].
 use crate::ast::{Expr, ForClause, MatchArm, TPart, TypeAst};
-use crate::engine::{num_cmp, to_index, Engine, Inst};
+use crate::engine::{num_cmp, to_index, Engine, Inst, RootSrc};
 use crate::qengine::db::{Db, DbErr};
 use crate::semantics::{
     compile_pattern, err, err_code, path_str, pattern_error, rec_members, seg_text, sort_diags,
@@ -13,7 +13,7 @@ use crate::semantics::{
     Slot, SlotState, Value, R, RT,
 };
 use rustc_hash::{FxHashMap, FxHashSet};
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::rc::{Rc, Weak};
 
 /// an expression or member form this stage of the port does not compile yet
@@ -1000,6 +1000,17 @@ fn compile(e: &Rc<Expr>, c: &CCtx) -> Result<Op, Unsupported> {
             }))
         }
         Expr::Ctx(nm) => compile_ctx(nm, c),
+        Expr::Referrers { ty, member } => {
+            // §7.6: the references that point at this instance, answered from the
+            // round's frozen universe by the value layer (Defer before phase 2)
+            let ty = ty.clone();
+            let member = member.clone();
+            let self_inst = c.self_inst.clone();
+            Ok(Rc::new(move |q, _l| {
+                let sc = Scope::new("", Some(q.env.clone())).with_inst(self_inst.clone());
+                q.helper.referrers(&ty, &member, &sc)
+            }))
+        }
         other => Err(Unsupported(expr_kind(other).to_string())),
     }
 }
@@ -1031,7 +1042,11 @@ fn expr_kind(e: &Expr) -> &'static str {
     }
 }
 
-/// the decl-layer evaluator over one universe (a module, or a whole universe)
+/// the decl-layer evaluator over one round of a universe. Its records are built
+/// into the shared `env` and forced through `helper` — the same value layer and
+/// rounds machinery the tree walker uses; only slot computes differ (a bridge
+/// into the query graph). One QEval per round; a round's frozen records outlive
+/// it, so the caller keeps every round's QEval alive while any is a `prev`.
 pub struct QEval {
     env: Rc<Env>,
     helper: Rc<Engine>,
@@ -1039,13 +1054,12 @@ pub struct QEval {
     weak: Weak<QEval>, // for bridge thunks and forceMember (query-graph records)
     const_ops: RefCell<FxHashMap<String, Op>>,
     slot_jobs: RefCell<FxHashMap<String, Op>>, // a record slot's compiled compute
-    diagnostics: RefCell<Vec<Diag>>,
 }
 
 impl QEval {
-    fn new(env: Rc<Env>) -> Rc<QEval> {
+    /// a QEval over one round's fresh value-layer engine
+    fn with_engine(env: Rc<Env>, helper: Rc<Engine>) -> Rc<QEval> {
         Rc::new_cyclic(|weak: &Weak<QEval>| {
-            let helper = Engine::new(env.clone());
             let w = weak.clone();
             let db = Db::new(Box::new(move |key: &str| {
                 let q = w.upgrade().expect("qeval alive");
@@ -1064,7 +1078,6 @@ impl QEval {
                 weak: weak.clone(),
                 const_ops: RefCell::new(FxHashMap::default()),
                 slot_jobs: RefCell::new(FxHashMap::default()),
-                diagnostics: RefCell::new(Vec::new()),
             }
         })
     }
@@ -1077,11 +1090,12 @@ impl QEval {
         }))
     }
 
-    /// report an evaluation-time diagnostic this run owns (a build-time member
-    /// error); `by` groups it under its root for `$referrers` rounds but is not
+    /// report a build-time member error to the shared env, so a rounds driver
+    /// truncates it between rounds exactly as the tree walker's diagnostics.
+    /// `by` groups it under its root for `$referrers` rounds but is not
     /// serialized (§12.2)
     fn diag(&self, message: String, path: Vec<Seg>, code: &str, root_name: &str) {
-        self.diagnostics.borrow_mut().push(Diag {
+        self.env.report(Diag {
             severity: "error".into(),
             id: None,
             message,
@@ -1567,93 +1581,57 @@ impl QEval {
         }
     }
 
-    fn run(self: &Rc<Self>, roots: &[(String, TypeAst, Rc<Expr>)]) -> QReport {
-        // bind every root, then force the whole universe, then validate (§9.3)
-        let mut built: Vec<(String, Value)> = Vec::new();
-        let mut deferred = false;
+    /// Bind every output root for one round into the shared env. A record-bearing
+    /// root written as a literal (`{ … }` or `[ … ]`) builds through the query
+    /// graph — its slots defer to later rounds as `$referrers` needs; any other
+    /// root (a scalar, or a record from a call/comprehension/reference) binds
+    /// through the value layer, which handles its own deferral across rounds. An
+    /// unhandled form trips `unsupported`, so the caller falls back.
+    fn bind_roots(
+        self: &Rc<Self>,
+        roots: &[(String, TypeAst, Rc<Expr>)],
+        unsupported: &Cell<bool>,
+    ) {
         for (name, tyast, expr) in roots {
             let rt = match self.env.resolve(tyast, None) {
                 Ok(rt) => rt,
                 Err(_) => continue, // a type that does not resolve: the checker's domain
             };
-            let c = CCtx {
-                self_inst: None,
-                root_name: name.clone(),
-                locals: FxHashSet::default(),
-                menv: self.env.clone(),
-                entry_env: self.env.clone(),
-            };
-            let path = vec![Seg::Name(name.as_str().into())];
-            let op = match self.bind_value(expr, &rt, path, None, &c) {
-                Ok(op) => op,
-                Err(u) => {
-                    self.diagnostics.borrow_mut().push(Diag::error(
-                        format!("qeval unsupported: {}", u.0),
-                        name.clone(),
-                        Some(QUNSUP),
-                    ));
-                    return self.report();
+            let literal = matches!(&**expr, Expr::Obj(_) | Expr::Arr(_));
+            if has_rec(&rt, &mut Vec::new()) && literal {
+                let c = CCtx {
+                    self_inst: None,
+                    root_name: name.clone(),
+                    locals: FxHashSet::default(),
+                    menv: self.env.clone(),
+                    entry_env: self.env.clone(),
+                };
+                let path = vec![Seg::Name(name.as_str().into())];
+                match self.bind_value(expr, &rt, path, None, &c) {
+                    Ok(op) => match op(self, &Locals::default()) {
+                        Ok(v) => self.env.set_root(name, v),
+                        Err(Fail::Eval(e)) if e.code.as_deref() == Some(QUNSUP) => {
+                            unsupported.set(true)
+                        }
+                        Err(Fail::Eval(e)) => self.env.report(Diag {
+                            severity: "error".into(),
+                            id: None,
+                            message: e.msg,
+                            path: name.clone(),
+                            code: e.code,
+                            loc: None,
+                            by: None,
+                        }),
+                        Err(_) => {} // Taint: the value layer already reported it
+                    },
+                    Err(_) => unsupported.set(true),
                 }
-            };
-            match op(self, &Locals::default()) {
-                Ok(v) => {
-                    self.env.set_root(name, v.clone());
-                    built.push((name.clone(), v));
-                }
-                Err(Fail::Defer) => deferred = true, // a $referrers-bearing root
-                Err(Fail::Eval(e)) => self.diagnostics.borrow_mut().push(Diag {
-                    severity: "error".into(),
-                    id: None,
-                    message: e.msg,
-                    path: name.clone(),
-                    code: e.code,
-                    loc: None,
-                    by: None,
-                }),
-                Err(_) => {} // Taint: the value layer already reported it
+            } else {
+                // the value layer binds a scalar or non-literal root, deferring
+                // a `$referrers`-dependent one to a later round (§7.6, §9.4)
+                let sc = Scope::new(name, Some(self.env.clone()));
+                self.helper.bind_root(name, RootSrc::Expr(expr), &rt, &sc);
             }
-        }
-        // force every slot of the whole universe (query-graph slots via the
-        // bridge; value-layer records natively), then validate assertions (§6)
-        for (_, v) in &built {
-            self.helper.force_all(v);
-        }
-        // a slot or root that reached `$referrers` before the universe was
-        // complete defers to a later round (§7.6); the rounds driver is a later
-        // stage of the port, so a universe that defers falls back to the tree
-        // walker rather than answer `$referrers` from an incomplete universe
-        if deferred || !self.helper.deferred_slots.borrow().is_empty() {
-            self.diagnostics.borrow_mut().push(Diag::error(
-                "qeval unsupported: $referrers rounds".to_string(),
-                roots.first().map(|(n, _, _)| n.clone()).unwrap_or_default(),
-                Some(QUNSUP),
-            ));
-            return self.report();
-        }
-        self.helper.validate_all("");
-        let mut outputs: Vec<(String, String)> = Vec::new();
-        for (name, v) in &built {
-            outputs.push((name.clone(), self.helper.serialize(v, name, false)));
-        }
-        let report = self.report();
-        QReport {
-            ok: report.ok,
-            outputs: if report.ok { outputs } else { Vec::new() },
-            diagnostics: report.diagnostics,
-        }
-    }
-
-    /// combine this run's own diagnostics with the value layer's, sort them
-    /// (§6.7), and decide `ok`
-    fn report(&self) -> QReport {
-        let mut diags = self.diagnostics.borrow().clone();
-        diags.extend(self.env.diagnostics_vec());
-        let diags = sort_diags(diags);
-        let ok = !diags.iter().any(|d| d.severity == "error");
-        QReport {
-            ok,
-            outputs: Vec::new(),
-            diagnostics: diags,
         }
     }
 }
@@ -1667,18 +1645,45 @@ fn member_of_slot_key(key: &str) -> &str {
     }
 }
 
-/// evaluate a single module's outputs
+/// Evaluate a single module's outputs (its own env is the whole universe). The
+/// universe is evaluated in rounds by the value layer's driver (`Engine::
+/// evaluate`, §7.6): each round runs a fresh QEval that binds the roots into the
+/// shared env and forces them, answering `$referrers` from the previous round's
+/// frozen universe, until the queried edges settle (E5009 if they never do).
+/// The query-graph records a round builds outlive it (their slots bridge back to
+/// their QEval), so every round's QEval is kept alive until the driver returns.
 pub fn qevaluate(env: Rc<Env>) -> Result<QReport, Unsupported> {
     let roots: Vec<(String, TypeAst, Rc<Expr>)> = env.outputs.borrow().clone();
-    let ev = QEval::new(env);
-    let report = ev.run(&roots);
-    // a compile-time unsupported form is signalled by the sentinel diagnostic
-    if report
-        .diagnostics
-        .iter()
-        .any(|d| d.code.as_deref() == Some("__QUNSUP__"))
-    {
+    let holder: RefCell<Vec<Rc<QEval>>> = RefCell::new(Vec::new());
+    let unsupported = Cell::new(false);
+    let bind = |eng: &Rc<Engine>| {
+        let ev = QEval::with_engine(env.clone(), eng.clone());
+        holder.borrow_mut().push(ev.clone());
+        ev.bind_roots(&roots, &unsupported);
+    };
+    let eng = Engine::evaluate(&env, &bind, false);
+    eng.validate_all("");
+    let diags = sort_diags(env.diagnostics_vec()); // §6.7
+                                                   // a form the query engine does not handle (at bind or at force time) is
+                                                   // signalled by the flag or the sentinel diagnostic: the caller falls back
+    if unsupported.get() || diags.iter().any(|d| d.code.as_deref() == Some(QUNSUP)) {
         return Err(Unsupported("form".into()));
     }
-    Ok(report)
+    let ok = !diags.iter().any(|d| d.severity == "error");
+    let outputs = if ok {
+        roots
+            .iter()
+            .filter_map(|(n, _, _)| {
+                env.root(n)
+                    .map(|v| (n.clone(), eng.serialize(&v, n, false)))
+            })
+            .collect()
+    } else {
+        vec![]
+    };
+    Ok(QReport {
+        ok,
+        outputs,
+        diagnostics: diags,
+    })
 }
