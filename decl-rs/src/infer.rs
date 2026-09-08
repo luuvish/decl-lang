@@ -1548,8 +1548,8 @@ fn infer_bin(cx: &Ctx, e: &Rc<Expr>) -> Ty {
                 let lo = cands.iter().min().unwrap().clone();
                 let hi = cands.iter().max().unwrap().clone();
                 return tyv(Some(ty(RTk::Range {
-                    lo: Value::Int(lo),
-                    hi: Value::Int(hi),
+                    lo: Value::Int(Num::from(lo)),
+                    hi: Value::Int(Num::from(hi)),
                     excl: false,
                     base: "int".into(),
                 })));
@@ -1566,13 +1566,20 @@ fn infer_bin(cx: &Ctx, e: &Rc<Expr>) -> Ty {
 
 fn as_ival(rt: &RT) -> Option<(BigInt, BigInt)> {
     match &rt.k {
-        RTk::Lit(Value::Int(i)) => Some((i.clone(), i.clone())),
+        RTk::Lit(Value::Int(i)) => Some((i.to_big(), i.to_big())),
         RTk::Range {
             lo: Value::Int(lo),
             hi: Value::Int(hi),
             excl,
             base,
-        } if base == "int" => Some((lo.clone(), if *excl { hi - 1 } else { hi.clone() })),
+        } if base == "int" => Some((
+            lo.to_big(),
+            if *excl {
+                (hi - 1).to_big()
+            } else {
+                hi.to_big()
+            },
+        )),
         RTk::Union(arms) => {
             let ivs: Vec<Option<(BigInt, BigInt)>> = arms.borrow().iter().map(as_ival).collect();
             if !ivs.is_empty() && ivs.iter().all(|v| v.is_some()) {

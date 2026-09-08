@@ -2,7 +2,6 @@
 //! arm selection over bound records and generic value-argument checks.
 use crate::ast::Expr;
 use crate::semantics::*;
-use num_traits::ToPrimitive;
 use std::collections::HashMap;
 use std::rc::Rc;
 

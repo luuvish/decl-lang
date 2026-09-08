@@ -60,8 +60,7 @@ pub fn check_codes(entry: &Path) -> Vec<String> {
 #[allow(dead_code)]
 pub mod api_corpus;
 pub use api_corpus::{get, json_eq, json_of};
-pub use decl_lang::semantics::{read_json, Value};
-use num_bigint::BigInt;
+pub use decl_lang::semantics::{read_json, Num, Value};
 use std::collections::HashMap;
 use std::rc::Rc;
 
@@ -69,7 +68,7 @@ pub fn jstr(s: &str) -> Value {
     Value::Str(s.into())
 }
 pub fn jint(n: i64) -> Value {
-    Value::Int(BigInt::from(n))
+    Value::Int(Num::from(n))
 }
 pub fn jobj(pairs: Vec<(&str, Value)>) -> Value {
     Value::JObj(Rc::new(
@@ -165,7 +164,7 @@ impl Client {
             let m = self.recv();
             // a response carries no method; a server's own request (window/workDoneProgress/create) does
             if get(&m, "method").is_none()
-                && matches!(get(&m, "id"), Some(Value::Int(i)) if *i == BigInt::from(my))
+                && matches!(get(&m, "id"), Some(Value::Int(i)) if *i == Num::from(my))
             {
                 let answer = match get(&m, "result") {
                     Some(r) => r.clone(),

@@ -9,7 +9,7 @@
 //! and the line, so that the three implementations refuse the same texts
 //! with the same words. A port of the reference's yaml.ts.
 use crate::engine::fmt_f;
-use crate::semantics::{json_str, Value};
+use crate::semantics::{json_str, Num, Value};
 use num_bigint::BigInt;
 use regex::Regex;
 use std::collections::{HashMap, HashSet};
@@ -108,7 +108,7 @@ fn plain_value(p: Plain) -> Value {
     match p {
         Plain::Null => Value::Null,
         Plain::Bool(b) => Value::Bool(b),
-        Plain::Int(i) => Value::Int(i),
+        Plain::Int(i) => Value::Int(Num::from(i)),
         Plain::Float(f) => Value::Float(f),
         Plain::Str(s) => Value::Str(s.into()),
         Plain::NonFinite => Value::Null,

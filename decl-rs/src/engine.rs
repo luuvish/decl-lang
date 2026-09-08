@@ -5,8 +5,7 @@
 use crate::ast::*;
 use crate::semantics::*;
 use crate::subsume::subsumes;
-use num_bigint::BigInt;
-use num_traits::{FromPrimitive, Signed, ToPrimitive, Zero};
+use num_traits::Signed;
 use rustc_hash::{FxHashMap, FxHashSet};
 use std::cell::{Cell, RefCell};
 use std::cmp::Ordering::{self, Equal, Greater, Less};
@@ -247,12 +246,12 @@ fn num_cmp(a: &Value, b: &Value) -> Option<Ordering> {
     }
 }
 
-fn exact_float(i: &BigInt) -> Option<f64> {
+fn exact_float(i: &Num) -> Option<f64> {
     let f = i.to_f64()?;
     if !f.is_finite() {
         return None;
     }
-    if BigInt::from_f64(f).as_ref() == Some(i) {
+    if Num::from_f64(f).as_ref() == Some(i) {
         Some(f)
     } else {
         None
@@ -572,7 +571,7 @@ impl Engine {
                             );
                         }
                         Ok(match b.path.last() {
-                            Some(Seg::Idx(k)) => Value::Int(BigInt::from(*k)),
+                            Some(Seg::Idx(k)) => Value::Int(Num::from(*k)),
                             Some(Seg::Name(k)) | Some(Seg::Key(k)) => Value::Str(k.clone()),
                             None => Value::Absent,
                         })
@@ -666,7 +665,7 @@ impl Engine {
                         _ => err("bad operand for unary -"),
                     },
                     "~" => match x {
-                        Value::Int(i) => Ok(Value::Int(-i - 1)),
+                        Value::Int(i) => Ok(Value::Int(&(-i) - 1)),
                         _ => err("bad operand for ~"),
                     },
                     _ => err("un"),
@@ -1248,9 +1247,9 @@ impl Engine {
                         | (">=", Some(Greater | Equal))
                 )))
             }
-            ("&", Value::Int(a), Value::Int(b)) => Ok(Value::Int(a.clone() & b.clone())),
-            ("|", Value::Int(a), Value::Int(b)) => Ok(Value::Int(a.clone() | b.clone())),
-            ("^", Value::Int(a), Value::Int(b)) => Ok(Value::Int(a.clone() ^ b.clone())),
+            ("&", Value::Int(a), Value::Int(b)) => Ok(Value::Int(a & b)),
+            ("|", Value::Int(a), Value::Int(b)) => Ok(Value::Int(a | b)),
+            ("^", Value::Int(a), Value::Int(b)) => Ok(Value::Int(a ^ b)),
             ("<<" | ">>", Value::Int(a), Value::Int(b)) => {
                 if b.is_negative() {
                     return err_code("negative shift count", "E5003");
@@ -1259,11 +1258,7 @@ impl Engine {
                     .to_usize()
                     .ok_or(())
                     .or_else(|_| err("shift count too large"))?;
-                Ok(Value::Int(if op == "<<" {
-                    a.clone() << n
-                } else {
-                    a.clone() >> n
-                }))
+                Ok(Value::Int(if op == "<<" { a << n } else { a >> n }))
             }
             _ => err(format!("bad operands for {op}")),
         }
@@ -1470,11 +1465,17 @@ impl Engine {
             }
         };
         match name {
-            "array.count" => Ok(Value::Int(BigInt::from(
+            "array.count" => Ok(Value::Int(Num::from(
                 self.mat_arr_ref(arg(&a, 0, name)?)?.borrow().items.len(),
             ))),
             "array.all" => {
-                for x in self.mat_arr(arg(&a, 0, name)?)? {
+                // iterate by index, cloning one item at a time, so a predicate
+                // over a freshly built array does not copy the whole vector
+                // first (F21: the hot path in an O(n^2) model comprehension)
+                let items = self.mat_arr_ref(arg(&a, 0, name)?)?;
+                let n = items.borrow().items.len();
+                for i in 0..n {
+                    let x = items.borrow().items[i].clone();
                     if !self.truthy(&self.call(arg(&a, 1, name)?, vec![x], sc)?)? {
                         return Ok(Value::Bool(false));
                     }
@@ -1482,7 +1483,10 @@ impl Engine {
                 Ok(Value::Bool(true))
             }
             "array.any" => {
-                for x in self.mat_arr(arg(&a, 0, name)?)? {
+                let items = self.mat_arr_ref(arg(&a, 0, name)?)?;
+                let n = items.borrow().items.len();
+                for i in 0..n {
+                    let x = items.borrow().items[i].clone();
                     if self.truthy(&self.call(arg(&a, 1, name)?, vec![x], sc)?)? {
                         return Ok(Value::Bool(true));
                     }
@@ -1490,8 +1494,11 @@ impl Engine {
                 Ok(Value::Bool(false))
             }
             "array.filter" => {
+                let items = self.mat_arr_ref(arg(&a, 0, name)?)?;
+                let n = items.borrow().items.len();
                 let mut out = vec![];
-                for x in self.mat_arr(arg(&a, 0, name)?)? {
+                for i in 0..n {
+                    let x = items.borrow().items[i].clone();
                     if self.truthy(&self.call(arg(&a, 1, name)?, vec![x.clone()], sc)?)? {
                         out.push(x);
                     }
@@ -1512,12 +1519,12 @@ impl Engine {
             "array.sum" => {
                 let items = self.mat_arr(arg(&a, 0, name)?)?;
                 let Some(first) = items.first() else {
-                    return Ok(Value::Int(BigInt::zero()));
+                    return Ok(Value::Int(Num::zero()));
                 };
                 let mut acc = if matches!(first, Value::Float(_)) {
                     Value::Float(0.0)
                 } else {
-                    Value::Int(BigInt::zero())
+                    Value::Int(Num::zero())
                 };
                 for x in &items {
                     acc = add_num(&acc, x)?;
@@ -1525,8 +1532,11 @@ impl Engine {
                 Ok(acc)
             }
             "array.fold" => {
+                let items = self.mat_arr_ref(arg(&a, 0, name)?)?;
+                let n = items.borrow().items.len();
                 let mut acc = arg(&a, 1, name)?.clone();
-                for x in self.mat_arr(arg(&a, 0, name)?)? {
+                for i in 0..n {
+                    let x = items.borrow().items[i].clone();
                     acc = self.call(arg(&a, 2, name)?, vec![acc, x], sc)?;
                 }
                 Ok(acc)
@@ -1596,9 +1606,7 @@ impl Engine {
                     ]))
                 })
                 .collect())),
-            "string.length" => Ok(Value::Int(BigInt::from(
-                s(arg(&a, 0, name)?)?.chars().count(),
-            ))),
+            "string.length" => Ok(Value::Int(Num::from(s(arg(&a, 0, name)?)?.chars().count()))),
             "string.of" => Ok(Value::Str(self.to_str(arg(&a, 0, name)?)?.into())),
             "string.join" => {
                 let sep = s(arg(&a, 1, name)?)?;
@@ -1654,10 +1662,10 @@ impl Engine {
                 let Value::Int(i) = n else {
                     return Err(domain(format!("n >= 1 required, got {}", num_s(n))));
                 };
-                if i < &BigInt::from(1) {
+                if i < &Num::from(1) {
                     return Err(domain(format!("n >= 1 required, got {i}")));
                 }
-                Ok(Value::Int(BigInt::from((i - BigInt::from(1)).bits())))
+                Ok(Value::Int(Num::from((i - 1).bits())))
             }
             "math.floor" | "math.ceil" => match arg(&a, 0, name)? {
                 Value::Float(f) => {
@@ -1666,7 +1674,7 @@ impl Engine {
                     } else {
                         f.ceil()
                     };
-                    BigInt::from_f64(r)
+                    Num::from_f64(r)
                         .map(Value::Int)
                         .ok_or(())
                         .or_else(|_| err(format!("std.{name}: non-finite")))
@@ -1685,7 +1693,7 @@ impl Engine {
                     } else {
                         f + 1.0
                     };
-                    BigInt::from_f64(r)
+                    Num::from_f64(r)
                         .map(Value::Int)
                         .ok_or(())
                         .or_else(|_| err("std.math.round: non-finite"))
@@ -1695,7 +1703,7 @@ impl Engine {
             },
             "int.of" => match arg(&a, 0, name)? {
                 Value::Float(x) if x.fract() == 0.0 && x.is_finite() => {
-                    Ok(Value::Int(BigInt::from_f64(*x).unwrap()))
+                    Ok(Value::Int(Num::from_f64(*x).unwrap()))
                 }
                 other => Err(domain(format!(
                     "no fractional part allowed, got {}",

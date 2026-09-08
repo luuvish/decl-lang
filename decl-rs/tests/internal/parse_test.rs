@@ -2,11 +2,10 @@
 //! ranges, and the document reader.
 use decl_lang::ast::{DeclBody, Expr, MemberAst, TypeAst};
 use decl_lang::parse::parse_source;
-use decl_lang::semantics::{read_json, Value};
-use num_bigint::BigInt;
+use decl_lang::semantics::{read_json, Num, Value};
 
 fn int(v: &Expr, n: i64) -> bool {
-    matches!(v, Expr::Lit(Value::Int(i)) if *i == BigInt::from(n))
+    matches!(v, Expr::Lit(Value::Int(i)) if *i == Num::from(n))
 }
 
 #[test]
@@ -94,7 +93,7 @@ fn json_documents() {
     let Value::JArr(a) = &es[0].1 else {
         panic!("an array")
     };
-    assert!(matches!(&a[0], Value::Int(i) if *i == BigInt::from(1)));
+    assert!(matches!(&a[0], Value::Int(i) if *i == Num::from(1)));
     assert!(matches!(&a[1], Value::Float(f) if *f == 2.5));
     assert!(matches!(&a[2], Value::Str(s) if &**s == "s"));
     assert!(matches!(&a[3], Value::Bool(true)));

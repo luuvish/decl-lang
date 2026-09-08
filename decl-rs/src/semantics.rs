@@ -1,8 +1,8 @@
 //! Value model, environment, and type resolution — a port of the
 //! reference implementation's semantics.ts.
 use crate::ast::*;
-use num_bigint::BigInt;
-use num_traits::{ToPrimitive, Zero};
+use num_bigint::{BigInt, Sign};
+use num_traits::{FromPrimitive, Signed, ToPrimitive};
 use regex::Regex;
 use rustc_hash::FxHashMap;
 use std::cell::{Cell, RefCell};
@@ -10,6 +10,247 @@ use std::collections::{BTreeMap, HashMap, HashSet};
 use std::fmt;
 use std::rc::Rc;
 use std::sync::LazyLock;
+
+/// an integer value (§4.5): a machine word when it fits, arbitrary precision
+/// otherwise. The reference and Python hold every integer as a big integer;
+/// here the common small values avoid a heap allocation and a deep copy on
+/// clone, which dominate at scale (F21). Always normalized — a `Big` never
+/// holds a value that fits in `i64` — so equality and ordering are the
+/// machine-word comparison whenever both operands are small, and a `Small`
+/// never equals a `Big`.
+#[derive(Clone, Debug)]
+pub enum Num {
+    /// fits a machine word
+    Small(i64),
+    /// out of `i64` range
+    Big(Rc<BigInt>),
+}
+impl Num {
+    /// zero.
+    pub fn zero() -> Num {
+        Num::Small(0)
+    }
+    /// a big integer, demoted to `Small` when it fits a word.
+    pub fn from_big(b: BigInt) -> Num {
+        match b.to_i64() {
+            Some(n) => Num::Small(n),
+            None => Num::Big(Rc::new(b)),
+        }
+    }
+    /// its value as a big integer.
+    pub fn to_big(&self) -> BigInt {
+        match self {
+            Num::Small(n) => BigInt::from(*n),
+            Num::Big(b) => (**b).clone(),
+        }
+    }
+    /// its value as `f64` (§4.5), `None` only for a non-finite big integer.
+    pub fn to_f64(&self) -> Option<f64> {
+        match self {
+            Num::Small(n) => Some(*n as f64),
+            Num::Big(b) => b.to_f64(),
+        }
+    }
+    /// its value as `i64` when it fits.
+    pub fn to_i64(&self) -> Option<i64> {
+        match self {
+            Num::Small(n) => Some(*n),
+            Num::Big(b) => b.to_i64(),
+        }
+    }
+    /// its value as `usize` when it fits and is non-negative.
+    pub fn to_usize(&self) -> Option<usize> {
+        match self {
+            Num::Small(n) => usize::try_from(*n).ok(),
+            Num::Big(b) => b.to_usize(),
+        }
+    }
+    /// whether it is zero.
+    pub fn is_zero(&self) -> bool {
+        matches!(self, Num::Small(0))
+    }
+    /// whether it is negative.
+    pub fn is_negative(&self) -> bool {
+        match self {
+            Num::Small(n) => *n < 0,
+            Num::Big(b) => b.sign() == Sign::Minus,
+        }
+    }
+    /// its absolute value.
+    pub fn abs(&self) -> Num {
+        match self {
+            Num::Small(n) => n
+                .checked_abs()
+                .map(Num::Small)
+                .unwrap_or_else(|| Num::from_big(BigInt::from(*n).abs())),
+            Num::Big(b) => Num::from_big(b.abs()),
+        }
+    }
+    /// the number of bits in its absolute value (as `BigInt::bits`).
+    pub fn bits(&self) -> u64 {
+        match self {
+            Num::Small(n) => BigInt::from(*n).bits(),
+            Num::Big(b) => b.bits(),
+        }
+    }
+    /// a float rounded toward zero to an integer, `None` if non-finite.
+    pub fn from_f64(x: f64) -> Option<Num> {
+        BigInt::from_f64(x).map(Num::from_big)
+    }
+    /// parse a decimal (or signed) integer literal.
+    pub fn parse_str(s: &str) -> Option<Num> {
+        s.parse::<BigInt>().ok().map(Num::from_big)
+    }
+}
+impl From<i64> for Num {
+    fn from(n: i64) -> Num {
+        Num::Small(n)
+    }
+}
+impl From<i32> for Num {
+    fn from(n: i32) -> Num {
+        Num::Small(n as i64)
+    }
+}
+impl From<u32> for Num {
+    fn from(n: u32) -> Num {
+        Num::Small(n as i64)
+    }
+}
+impl From<usize> for Num {
+    fn from(n: usize) -> Num {
+        i64::try_from(n)
+            .map(Num::Small)
+            .unwrap_or_else(|_| Num::from_big(BigInt::from(n)))
+    }
+}
+impl From<u64> for Num {
+    fn from(n: u64) -> Num {
+        i64::try_from(n)
+            .map(Num::Small)
+            .unwrap_or_else(|_| Num::from_big(BigInt::from(n)))
+    }
+}
+impl From<BigInt> for Num {
+    fn from(b: BigInt) -> Num {
+        Num::from_big(b)
+    }
+}
+impl fmt::Display for Num {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Num::Small(n) => write!(f, "{n}"),
+            Num::Big(b) => write!(f, "{b}"),
+        }
+    }
+}
+impl PartialEq for Num {
+    fn eq(&self, o: &Num) -> bool {
+        match (self, o) {
+            (Num::Small(a), Num::Small(b)) => a == b,
+            (Num::Big(a), Num::Big(b)) => a == b,
+            _ => false, // normalized: a Small and a Big are never equal
+        }
+    }
+}
+impl Eq for Num {}
+impl Ord for Num {
+    fn cmp(&self, o: &Num) -> std::cmp::Ordering {
+        match (self, o) {
+            (Num::Small(a), Num::Small(b)) => a.cmp(b),
+            _ => self.to_big().cmp(&o.to_big()),
+        }
+    }
+}
+impl PartialOrd for Num {
+    fn partial_cmp(&self, o: &Num) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(o))
+    }
+}
+impl std::ops::Neg for &Num {
+    type Output = Num;
+    fn neg(self) -> Num {
+        match self {
+            Num::Small(n) => n
+                .checked_neg()
+                .map(Num::Small)
+                .unwrap_or_else(|| Num::from_big(-BigInt::from(*n))),
+            Num::Big(b) => Num::from_big(-&**b),
+        }
+    }
+}
+macro_rules! num_binop {
+    ($tr:ident, $m:ident, $checked:ident, $op:tt) => {
+        impl std::ops::$tr for &Num {
+            type Output = Num;
+            fn $m(self, rhs: &Num) -> Num {
+                if let (Num::Small(a), Num::Small(b)) = (self, rhs) {
+                    if let Some(r) = a.$checked(*b) {
+                        return Num::Small(r);
+                    }
+                }
+                Num::from_big(self.to_big() $op rhs.to_big())
+            }
+        }
+    };
+}
+num_binop!(Add, add, checked_add, +);
+num_binop!(Sub, sub, checked_sub, -);
+num_binop!(Mul, mul, checked_mul, *);
+num_binop!(Div, div, checked_div, /);
+num_binop!(Rem, rem, checked_rem, %);
+macro_rules! num_bitop {
+    ($tr:ident, $m:ident, $op:tt) => {
+        impl std::ops::$tr for &Num {
+            type Output = Num;
+            fn $m(self, rhs: &Num) -> Num {
+                if let (Num::Small(a), Num::Small(b)) = (self, rhs) {
+                    return Num::Small(a $op b);
+                }
+                Num::from_big(self.to_big() $op rhs.to_big())
+            }
+        }
+    };
+}
+num_bitop!(BitAnd, bitand, &);
+num_bitop!(BitOr, bitor, |);
+num_bitop!(BitXor, bitxor, ^);
+impl std::ops::Shl<usize> for &Num {
+    type Output = Num;
+    fn shl(self, n: usize) -> Num {
+        Num::from_big(self.to_big() << n)
+    }
+}
+impl std::ops::Shr<usize> for &Num {
+    type Output = Num;
+    fn shr(self, n: usize) -> Num {
+        Num::from_big(self.to_big() >> n)
+    }
+}
+impl std::ops::Neg for Num {
+    type Output = Num;
+    fn neg(self) -> Num {
+        -&self
+    }
+}
+// small-literal arithmetic on the counters and bounds a range walk uses
+impl std::ops::Add<i64> for &Num {
+    type Output = Num;
+    fn add(self, n: i64) -> Num {
+        self + &Num::Small(n)
+    }
+}
+impl std::ops::Sub<i64> for &Num {
+    type Output = Num;
+    fn sub(self, n: i64) -> Num {
+        self - &Num::Small(n)
+    }
+}
+impl std::ops::AddAssign<i64> for Num {
+    fn add_assign(&mut self, n: i64) {
+        *self = &*self + n;
+    }
+}
 
 // the pattern-interpolation grammar (§3.6): compiled once
 static PATTERN_HOLE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"\$\{([^}]*)\}").unwrap());
@@ -55,7 +296,7 @@ pub fn dot_spellable(name: &str) -> bool {
 /// and the engine's intermediate forms
 pub enum Value {
     /// an integer
-    Int(BigInt),
+    Int(Num),
     /// a float
     Float(f64),
     /// a string
@@ -1936,8 +2177,8 @@ impl Env {
                     let lo = c[1].parse::<BigInt>().map_err(|e| e.to_string())?;
                     let hi = c[3].parse::<BigInt>().map_err(|e| e.to_string())?;
                     let rt = ty(RTk::Range {
-                        lo: Value::Int(lo),
-                        hi: Value::Int(hi),
+                        lo: Value::Int(Num::from(lo)),
+                        hi: Value::Int(Num::from(hi)),
                         excl: &c[2] == "<",
                         base: "int".into(),
                     });
@@ -1946,7 +2187,9 @@ impl Env {
                 }
                 if int_lit.is_match(arm) {
                     let v = arm.parse::<BigInt>().map_err(|e| e.to_string())?;
-                    frags.push(self.pattern_fragment(&ty(RTk::Lit(Value::Int(v))), &text)?);
+                    frags.push(
+                        self.pattern_fragment(&ty(RTk::Lit(Value::Int(Num::from(v)))), &text)?,
+                    );
                     continue;
                 }
                 if !ident.is_match(arm) {
@@ -2016,7 +2259,7 @@ impl Env {
                     return bad();
                 }
                 let hi = if *excl { hi - 1 } else { hi.clone() };
-                if &hi - lo >= BigInt::from(65536) {
+                if &hi - lo >= Num::from(65536) {
                     return Err(format!(
                         "pattern interpolation of {name}: range too large (limit 65536 values)"
                     ));
@@ -3022,9 +3265,7 @@ pub fn read_json(src: &str) -> R<Value> {
                 if m.get(1).is_some() || m.get(2).is_some() {
                     Ok(Value::Float(whole.parse::<f64>().unwrap_or(0.0)))
                 } else {
-                    Ok(Value::Int(
-                        whole.parse::<BigInt>().unwrap_or_else(|_| BigInt::zero()),
-                    ))
+                    Ok(Value::Int(Num::parse_str(whole).unwrap_or_else(Num::zero)))
                 }
             }
         }

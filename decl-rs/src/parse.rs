@@ -484,7 +484,7 @@ impl<'a> Lower<'a> {
                         Value::Int(h) => TypeAst::Array {
                             elem,
                             lo: Some(lo),
-                            hi: Some(Value::Int(if excl { h - 1 } else { h })),
+                            hi: Some(Value::Int(if excl { &h - 1 } else { h })),
                             excl: false,
                             loc: None,
                         },
@@ -677,7 +677,9 @@ impl<'a> Lower<'a> {
                 let v = self.const_num(self.first(n)?)?;
                 Ok(if neg { neg_value(v) } else { v })
             }
-            "int" => Ok(Value::Int(parse_int(&self.text(n))?)),
+            "int" => Ok(Value::Int(crate::semantics::Num::from(parse_int(
+                &self.text(n),
+            )?))),
             "float" => Ok(Value::Float(
                 self.text(n)
                     .replace('_', "")
@@ -813,7 +815,9 @@ impl<'a> Lower<'a> {
             "multiplicative_expression",
         ];
         Ok(match n.kind() {
-            "int" => Expr::Lit(Value::Int(parse_int(&self.text(n))?)),
+            "int" => Expr::Lit(Value::Int(crate::semantics::Num::from(parse_int(
+                &self.text(n),
+            )?))),
             "float" => Expr::Lit(Value::Float(
                 self.text(n)
                     .replace('_', "")
@@ -1038,7 +1042,7 @@ impl<'a> Lower<'a> {
 
 fn num_or_name(v: &Value) -> Value {
     match v {
-        Value::Float(f) => Value::Int(BigInt::from(*f as i64)),
+        Value::Float(f) => Value::Int(crate::semantics::Num::from(*f as i64)),
         other => other.clone(),
     }
 }

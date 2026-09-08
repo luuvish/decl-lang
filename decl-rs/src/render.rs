@@ -7,10 +7,8 @@
 //! through here, so that the three implementations print the same bytes.
 //! A port of the reference's render.ts.
 use crate::ast::{Decl, Expr};
-use crate::semantics::{Locals, NatFn, Value, R};
+use crate::semantics::{Locals, NatFn, Num, Value, R};
 use crate::yaml::{to_json, to_yaml};
-use num_bigint::BigInt;
-use num_traits::ToPrimitive;
 use regex::Regex;
 use std::sync::LazyLock;
 
@@ -106,7 +104,7 @@ pub fn declared_form(decl: &Decl) -> Result<Form, String> {
                 _ => return Err("@render: format must be \"json\" or \"yaml\"".into()),
             },
             "indent" => match lit {
-                Some(Value::Int(i)) if i >= BigInt::from(0) && i <= BigInt::from(16) => {
+                Some(Value::Int(i)) if i >= Num::from(0) && i <= Num::from(16) => {
                     form.indent = Some(i.to_usize().unwrap())
                 }
                 _ => return Err("@render: indent must be an integer in 0..16".into()),
@@ -802,7 +800,7 @@ fn render_namespace(eng: Rc<Engine>, root_name: &str) -> Value {
     let indent_arg = |a: &[Value], i: usize| -> R<i64> {
         match a.get(i) {
             None => Ok(-1),
-            Some(Value::Int(n)) if *n >= BigInt::from(0) && *n <= BigInt::from(16) => {
+            Some(Value::Int(n)) if *n >= Num::from(0) && *n <= Num::from(16) => {
                 Ok(n.to_i64().unwrap())
             }
             _ => Err(eval_err("render: indent must be an integer in 0..16")),
@@ -831,7 +829,7 @@ fn render_namespace(eng: Rc<Engine>, root_name: &str) -> Value {
     };
     let indent: NatFn = Rc::new(|a: &[Value]| -> R<Value> {
         match (a.first(), a.get(1)) {
-            (Some(Value::Str(s)), Some(Value::Int(n))) if *n >= BigInt::from(0) => Ok(Value::Str(
+            (Some(Value::Str(s)), Some(Value::Int(n))) if *n >= Num::from(0) => Ok(Value::Str(
                 s.replace('\n', &format!("\n{}", " ".repeat(n.to_usize().unwrap())))
                     .into(),
             )),
@@ -1119,11 +1117,11 @@ fn render_nodes(
                     l2.insert(
                         "loop".into(),
                         Value::PreObj(Rc::new(vec![
-                            ("index".into(), Value::Int(BigInt::from(i + 1))),
-                            ("index0".into(), Value::Int(BigInt::from(i))),
+                            ("index".into(), Value::Int(Num::from(i + 1))),
+                            ("index0".into(), Value::Int(Num::from(i))),
                             ("first".into(), Value::Bool(i == 0)),
                             ("last".into(), Value::Bool(i == len - 1)),
-                            ("length".into(), Value::Int(BigInt::from(len))),
+                            ("length".into(), Value::Int(Num::from(len))),
                         ])),
                     );
                     out.push_str(&render_nodes(tpl, body, l2, cx, parsed, stack)?);
@@ -1315,7 +1313,7 @@ pub fn emit_root(e: &Emission) -> RR<Emitted> {
             .items
             .iter()
             .enumerate()
-            .map(|(i, v)| (v.clone(), Value::Int(BigInt::from(i)), Seg::Idx(i)))
+            .map(|(i, v)| (v.clone(), Value::Int(Num::from(i)), Seg::Idx(i)))
             .collect(),
         Value::Map(m) => m
             .borrow()
