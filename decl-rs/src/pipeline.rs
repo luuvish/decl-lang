@@ -6,9 +6,26 @@ use crate::ast::{Decl, DeclBody};
 use crate::checker::check_module;
 use crate::engine::{Engine, RootSrc};
 use crate::parse::parse_source;
-
+use crate::qengine::qeval::qevaluate;
 use crate::semantics::{sort_diags, Diag, Env, Scope};
 use std::rc::Rc;
+
+/// The incremental query engine may stand in for the tree walker
+/// (qengine/DESIGN.md): a drop-in, byte-identical evaluator, off unless
+/// `DECL_QENGINE` is set to a non-empty value — while it is validated across
+/// the whole corpus. A non-empty env value is truthy, as the reference reads it.
+fn q_env(k: &str) -> bool {
+    std::env::var(k).map(|v| !v.is_empty()).unwrap_or(false)
+}
+/// whether to evaluate through the query engine
+pub fn use_qengine() -> bool {
+    q_env("DECL_QENGINE")
+}
+/// strict mode: an unhandled form is a hard error, not a silent fall back to
+/// the tree walker — used to prove the query engine covers a corpus end to end
+pub fn strict_qengine() -> bool {
+    q_env("DECL_QENGINE_STRICT")
+}
 
 /// one module evaluated: its environment, its engine, its diagnostics
 pub struct Pipeline {
@@ -109,6 +126,31 @@ pub fn evaluate_source(source: &str) -> Report {
             outputs: vec![],
             inputs,
         };
+    }
+    // the query engine, when selected, evaluates in place of the tree walker;
+    // an unhandled form falls back (unless strict mode makes it a hard error)
+    if use_qengine() {
+        let env = Env::new();
+        env.load(&parsed.decls);
+        match qevaluate(env) {
+            Ok(qr) => {
+                return Report {
+                    phase: Phase::Evaluate,
+                    ok: qr.ok,
+                    parse_errors: vec![],
+                    checks,
+                    diagnostics: qr.diagnostics,
+                    outputs: qr.outputs,
+                    inputs,
+                };
+            }
+            Err(u) => {
+                if strict_qengine() {
+                    panic!("DECL_QENGINE_STRICT: unhandled form: {}", u.0);
+                }
+                // else fall back to the tree walker
+            }
+        }
     }
     let Pipeline { env, eng, diags } = run_pipeline(&parsed.decls);
     let ok = !diags.iter().any(|d| d.severity == "error");
