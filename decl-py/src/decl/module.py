@@ -211,6 +211,27 @@ def _link_universe(mods: list[Any], entry: Module, report: Any) -> None:
 
 
 def run_universe(mods: list[Any], entry: Module, binds: list[Any] | None = None) -> dict[str, Any]:
+    # the query engine, when selected, evaluates the universe in place of the
+    # tree walker (qengine/DESIGN.md); an unhandled form falls back to the tree
+    # walker (a hard error under strict mode), clearing the partial round first
+    from .pipeline import strict_qengine, use_qengine
+    from .qengine.qeval import BoundSpec, Unsupported, qevaluate_universe
+
+    if use_qengine():
+        m_envs = [m.env for m in mods]
+        bspecs = [
+            BoundSpec(b["input"], b["raw"], (b.get("module") or entry).env) for b in (binds or [])
+        ]
+        try:
+            report, eng = qevaluate_universe(m_envs, entry.env, bspecs)
+            return {"eng": eng, "diags": report.diagnostics}
+        except Unsupported as u:
+            if strict_qengine():
+                raise RuntimeError(f"DECL_QENGINE_STRICT: unhandled form: {u.what}") from None
+            entry.env.roots.clear()
+            entry.env.registry.clear()
+            entry.env.diagnostics.clear()
+
     def bind(eng: Engine) -> None:
         for m in mods:
             menv = m.env

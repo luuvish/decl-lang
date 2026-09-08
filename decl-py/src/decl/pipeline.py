@@ -5,12 +5,28 @@ report that front-ends and embedders consume."""
 
 from __future__ import annotations
 
+import os
 from typing import Any
 
 from .checker import check_module
 from .engine import Engine
 from .parse import parse_source
+from .qengine.qeval import Unsupported, qevaluate
 from .semantics import Env, Scope, sort_diags
+
+
+def use_qengine() -> bool:
+    """The incremental query engine may stand in for the tree walker
+    (qengine/DESIGN.md): a drop-in, byte-identical evaluator, off unless
+    DECL_QENGINE is set to a non-empty value — while it is validated across the
+    whole corpus. A non-empty env value is truthy, as the reference reads it."""
+    return bool(os.environ.get("DECL_QENGINE"))
+
+
+def strict_qengine() -> bool:
+    """strict mode: an unhandled form is a hard error, not a silent fall back to
+    the tree walker — used to prove the query engine covers a corpus end to end"""
+    return bool(os.environ.get("DECL_QENGINE_STRICT"))
 
 
 def run_pipeline(decls: list[Any]) -> dict[str, Any]:
@@ -56,6 +72,26 @@ def evaluate_source(source: str) -> dict[str, Any]:
             "outputs": [],
             "inputs": inputs,
         }
+    # the query engine, when selected, evaluates in place of the tree walker;
+    # an unhandled form falls back (a hard error under strict mode)
+    if use_qengine():
+        env2 = Env()
+        env2.load(decls)
+        try:
+            qr = qevaluate(env2)
+            return {
+                "phase": "evaluate",
+                "ok": qr.ok,
+                "parse_errors": [],
+                "checks": checks,
+                "diagnostics": qr.diagnostics,
+                "outputs": qr.outputs,
+                "inputs": inputs,
+            }
+        except Unsupported as u:
+            if strict_qengine():
+                raise RuntimeError(f"DECL_QENGINE_STRICT: unhandled form: {u.what}") from None
+            # else fall back to the tree walker
     r = run_pipeline(decls)
     env, eng, diags = r["env"], r["eng"], r["diags"]
     ok = not any(d["severity"] == "error" for d in diags)

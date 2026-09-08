@@ -69,6 +69,8 @@ ignore = ["E741", "D107"]
 # the tests and the ports' internal modules are held to the reference's shape, not to docstrings
 "tests/**/*.py" = ["D1"]
 "src/decl/{checker,cli,conformance,engine,fmt,infer,lsp,module,package,parse,pipeline,repl,semantics,session,subsume}.py" = ["D1"]
+# the query engine mirrors the reference's qeval/db shape, like the evaluator modules above
+"src/decl/qengine/*.py" = ["D1"]
 "src/decl/_tree_sitter/*.py" = ["D1"]
 
 [tool.ruff.lint.isort]
