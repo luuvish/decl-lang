@@ -39,7 +39,7 @@ for (const rel of entries) {
   // query engine: a fresh load (runUniverse mutated the first universe's envs)
   const fresh = loadModules(entryPath);
   if (!fresh.entry) continue;
-  const got = qevaluateUniverse(fresh.modules, fresh.entry);
+  const got = qevaluateUniverse(fresh.modules, fresh.entry).report;
   const gotOut = got.outputs.map((o) => `${o.name}=${o.json}`);
 
   const same =

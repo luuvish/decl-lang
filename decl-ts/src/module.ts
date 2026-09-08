@@ -7,6 +7,13 @@ import { Env, sortDiags } from './semantics.ts';
 import type { Diag } from './semantics.ts';
 import type { Decl, Loc } from './ast.ts';
 import { Engine } from './engine.ts';
+import { qevaluateUniverse, Unsupported } from './qengine/qeval.ts';
+
+/** the incremental query engine may evaluate the universe in place of the tree
+ *  walker (qengine/DESIGN.md), off unless DECL_QENGINE is set */
+const useQEngine = (): boolean =>
+  !!(globalThis as { process?: { env: Record<string, string | undefined> } }).process?.env
+    .DECL_QENGINE;
 
 export type ExportEntry = { env: Env; name: string };
 export type Module = {
@@ -210,6 +217,18 @@ export function runUniverse(
   entry: Module,
   binds: { module?: Module; input: string; raw: any }[] = [],
 ): { eng: Engine; diags: Diag[] } {
+  // the query engine evaluates a universe with no bound documents (supplied
+  // inputs are a later stage); it populates entry.env.roots and forces them,
+  // so the returned engine serializes exactly as the tree walker's does
+  if (useQEngine() && binds.length === 0) {
+    try {
+      const { report, eng } = qevaluateUniverse(mods, entry);
+      entry.env.diagnostics.splice(0, entry.env.diagnostics.length, ...report.diagnostics);
+      return { eng, diags: entry.env.diagnostics };
+    } catch (e) {
+      if (!(e instanceof Unsupported)) throw e; // fall back only on an unhandled form
+    }
+  }
   const bind = (eng: Engine) => {
     for (const m of mods) {
       m.env.constEval = (n: string) => eng.forceConstIn(m.env, n, '');

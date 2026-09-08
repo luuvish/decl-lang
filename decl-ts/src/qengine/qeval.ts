@@ -990,6 +990,12 @@ class QEval {
     return edge;
   }
 
+  /** the value layer this round used — its roots are populated and forced, so a
+   * caller can serialize through it exactly as runUniverse's engine does */
+  engine(): Engine {
+    return this.helper;
+  }
+
   /** this round's edges for every queried key, over the current registry */
   liveEdges(): Map<string, Edge> {
     const out = new Map<string, Edge>();
@@ -1486,15 +1492,19 @@ class QEval {
  * transparent for it. `mkEval` builds a round's QEval and result over the entry
  * env, which is reset between rounds.
  */
+export interface RoundsResult {
+  report: QReport;
+  eng: Engine; // the final round's value layer, for serialization by a caller
+}
 function evalRounds(
   entryEnv: Env,
-  mkEval: (prev: Frozen | null) => { report: QReport; live: Map<string, Edge> },
-): QReport {
+  mkEval: (prev: Frozen | null) => { report: QReport; live: Map<string, Edge>; eng: Engine },
+): RoundsResult {
   let prev: Frozen | null = null;
   let prevEdges = new Map<string, Edge>();
   const seen = new Map<string, number>();
   for (let round = 1; ; round++) {
-    const { report, live } = mkEval(prev);
+    const { report, live, eng } = mkEval(prev);
     const changed = [...live.keys()]
       .filter((k) => !edgeEq(live.get(k)!, prevEdges.get(k) ?? new Map()))
       .sort();
@@ -1502,7 +1512,7 @@ function evalRounds(
     // a repeated edge set never settles: report at once, not after the budget
     const cycled = !stable && seen.has(edgesKey(live));
     if (stable || cycled || round === ROUNDS) {
-      if (stable) return report;
+      if (stable) return { report, eng };
       const e5009 = changed.map((key) => {
         const [t, m] = key.split('|');
         return {
@@ -1512,7 +1522,8 @@ function evalRounds(
           code: 'E5009',
         };
       });
-      return { ok: false, outputs: [], diagnostics: sortDiags([...report.diagnostics, ...e5009]) };
+      const diagnostics = sortDiags([...report.diagnostics, ...e5009]);
+      return { report: { ok: false, outputs: [], diagnostics }, eng };
     }
     seen.set(edgesKey(live), round);
     // this round becomes the next round's frozen universe; start over
@@ -1529,23 +1540,25 @@ export function qevaluate(env: Env): QReport {
   return evalRounds(env, (prev) => {
     const ev = new QEval(env, prev);
     const report = ev.run();
-    return { report, live: ev.liveEdges() };
-  });
+    return { report, live: ev.liveEdges(), eng: ev.engine() };
+  }).report;
 }
 
 /**
  * Evaluate a whole multi-module universe (§8.8): every module's outputs are
  * roots, each bound and evaluated in its own module scope, into the entry
  * module's universe. Imported names and non-entry-module consts/functions are
- * resolved through the value layer.
+ * resolved through the value layer. Returns the report and the final round's
+ * value layer (its roots populated and forced) so a caller — the pipeline
+ * swap-in — can serialize through it exactly as runUniverse does.
  */
-export function qevaluateUniverse(mods: { env: Env }[], entry: { env: Env }): QReport {
+export function qevaluateUniverse(mods: { env: Env }[], entry: { env: Env }): RoundsResult {
   const roots: RootSpec[] = mods.flatMap((m) =>
     m.env.outputs.map((o) => ({ name: o.name, expr: o.expr, type: o.type, menv: m.env })),
   );
   return evalRounds(entry.env, (prev) => {
     const ev = new QEval(entry.env, prev, mods);
     const report = ev.run(roots);
-    return { report, live: ev.liveEdges() };
+    return { report, live: ev.liveEdges(), eng: ev.engine() };
   });
 }

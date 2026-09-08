@@ -8,6 +8,14 @@ import { Env, sortDiags } from './semantics.ts';
 import type { Diag } from './semantics.ts';
 import { Engine } from './engine.ts';
 import type { Decl } from './ast.ts';
+import { qevaluate, Unsupported } from './qengine/qeval.ts';
+
+/** the incremental query engine may be selected in place of the tree walker
+ *  (qengine/DESIGN.md); it is a drop-in, byte-identical evaluator, off unless
+ *  DECL_QENGINE is set — while it is validated across the whole corpus */
+const useQEngine = (): boolean =>
+  !!(globalThis as { process?: { env: Record<string, string | undefined> } }).process?.env
+    .DECL_QENGINE;
 
 export type Pipeline = { env: Env; eng: Engine; diags: Diag[] };
 
@@ -69,6 +77,24 @@ export function evaluateSource(source: string): Report {
       outputs: [],
       inputs,
     };
+  }
+  if (useQEngine()) {
+    try {
+      const env = new Env();
+      env.load(decls);
+      const qr = qevaluate(env);
+      return {
+        phase: 'evaluate',
+        ok: qr.ok,
+        parseErrors: [],
+        checks,
+        diagnostics: qr.diagnostics,
+        outputs: qr.outputs,
+        inputs,
+      };
+    } catch (e) {
+      if (!(e instanceof Unsupported)) throw e; // fall back only on an unhandled form
+    }
   }
   const { env, eng, diags } = runPipeline(decls);
   const ok = !diags.some((d) => d.severity === 'error');
