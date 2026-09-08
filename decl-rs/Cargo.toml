@@ -40,11 +40,17 @@ tree-sitter-language = "0.1"
 num-bigint = "0.5"
 num-traits = "0.2"
 num-integer = "0.1"
+# a fast, deterministic hasher for the engine's hot lookup maps (identity- and
+# path-keyed caches, scope locals): the default SipHash dominates at scale (F21)
+rustc-hash = "2"
 regex = "1"
 sha2 = "0.11"
 # the API returns roots by name in declaration order, as the reference does
 indexmap = "2"
 rustyline = "18"
+# a fast allocator for the CLI/LSP binaries only (the library sets none): the
+# engine is allocation-heavy, and the platform allocator dominates at scale (F21)
+mimalloc = "0.1"
 
 [build-dependencies]
 cc = "1"

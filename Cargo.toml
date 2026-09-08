@@ -18,3 +18,10 @@ result_large_err = "allow"
 # a judgment's environment parameter (§3.17, §3.19) is part of its signature
 # even where the judgment does not consult it, as in the reference
 only_used_in_recursion = "allow"
+
+# release binaries are the perf target (F21): fat LTO + a single codegen unit
+# let the optimizer inline across the engine/semantics boundary; this trades
+# compile time for runtime and does not affect behavior
+[profile.release]
+lto = "fat"
+codegen-units = 1

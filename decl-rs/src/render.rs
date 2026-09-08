@@ -7,7 +7,7 @@
 //! through here, so that the three implementations print the same bytes.
 //! A port of the reference's render.ts.
 use crate::ast::{Decl, Expr};
-use crate::semantics::{NatFn, Value, R};
+use crate::semantics::{Locals, NatFn, Value, R};
 use crate::yaml::{to_json, to_yaml};
 use num_bigint::BigInt;
 use num_traits::ToPrimitive;
@@ -101,8 +101,8 @@ pub fn declared_form(decl: &Decl) -> Result<Form, String> {
         let lit = literal(val);
         match key.as_str() {
             "format" => match lit {
-                Some(Value::Str(s)) if s == "json" => form.yaml = false,
-                Some(Value::Str(s)) if s == "yaml" => form.yaml = true,
+                Some(Value::Str(s)) if &*s == "json" => form.yaml = false,
+                Some(Value::Str(s)) if &*s == "yaml" => form.yaml = true,
                 _ => return Err("@render: format must be \"json\" or \"yaml\"".into()),
             },
             "indent" => match lit {
@@ -113,9 +113,9 @@ pub fn declared_form(decl: &Decl) -> Result<Form, String> {
             },
             "template" | "file" | "each" => match lit {
                 Some(Value::Str(s)) if !s.is_empty() => match key.as_str() {
-                    "template" => form.template = Some(s),
-                    "file" => form.file = Some(s),
-                    _ => form.each = Some(s),
+                    "template" => form.template = Some(s.to_string()),
+                    "file" => form.file = Some(s.to_string()),
+                    _ => form.each = Some(s.to_string()),
                 },
                 _ => return Err(format!("@render: {key} must be a non-empty string")),
             },
@@ -148,7 +148,7 @@ fn delimiters(e: &Expr) -> Result<Delimiters, String> {
         let mut pair: Vec<String> = vec![];
         for (_, it) in items.iter() {
             match literal(it) {
-                Some(Value::Str(s)) if !s.is_empty() => pair.push(s),
+                Some(Value::Str(s)) if !s.is_empty() => pair.push(s.to_string()),
                 _ => {
                     return Err(format!(
                         "delimiters: {key} must be a pair of non-empty strings"
@@ -191,6 +191,7 @@ use crate::parse::{json_unquote, parse_expr_text};
 use crate::semantics::{
     path_str, read_json, rec_members, Diag, Env, EvalErr, Fail, MKind, Scope, Seg, SlotState,
 };
+use rustc_hash::FxHashMap;
 use std::collections::{HashMap, HashSet};
 use std::rc::Rc;
 
@@ -759,7 +760,7 @@ pub struct Context<'a> {
 pub fn text_form(eng: &Engine, v: &Value, root_name: &str) -> Result<String, (String, String)> {
     let no = |what: &str| Err(("E7002".to_string(), format!("value has no text form{what}")));
     match v {
-        Value::Str(s) => Ok(s.clone()),
+        Value::Str(s) => Ok(s.to_string()),
         Value::Int(i) => Ok(i.to_string()),
         Value::Float(f) => Ok(fmt_f(*f)),
         Value::Bool(b) => Ok(b.to_string()),
@@ -814,7 +815,7 @@ fn render_namespace(eng: Rc<Engine>, root_name: &str) -> Value {
                 return Err(eval_err("render.json expects a value"));
             }
             let n = indent_arg(a, 1)?.max(0) as usize;
-            Ok(Value::Str(to_json(&raw(&a[0])?, n)))
+            Ok(Value::Str(to_json(&raw(&a[0])?, n).into()))
         })
     };
     let yaml: NatFn = {
@@ -825,13 +826,13 @@ fn render_namespace(eng: Rc<Engine>, root_name: &str) -> Value {
             }
             let n = indent_arg(a, 1)?;
             let n = if n < 0 { 2 } else { n as usize };
-            Ok(Value::Str(to_yaml(&raw(&a[0])?, n)))
+            Ok(Value::Str(to_yaml(&raw(&a[0])?, n).into()))
         })
     };
     let indent: NatFn = Rc::new(|a: &[Value]| -> R<Value> {
         match (a.first(), a.get(1)) {
             (Some(Value::Str(s)), Some(Value::Int(n))) if *n >= BigInt::from(0) => Ok(Value::Str(
-                s.replace('\n', &format!("\n{}", " ".repeat(n.to_usize().unwrap()))),
+                s.replace('\n', &format!("\n{}", " ".repeat(n.to_usize().unwrap()))).into(),
             )),
             _ => Err(eval_err("render.indent expects a string and a count")),
         }
@@ -910,9 +911,9 @@ fn code_of(e: &EvalErr) -> String {
 
 /// render a parsed template over a context (§5); a RenderError carries the diagnostic
 pub fn render_template(tpl: &Template, cx: &Context) -> RR<String> {
-    let mut locals: HashMap<String, Value> = HashMap::new();
+    let mut locals: FxHashMap<String, Value> = FxHashMap::default();
     locals.insert(cx.root_name.clone(), cx.root.clone());
-    let members = |v: &Value, locals: &mut HashMap<String, Value>| -> RR<()> {
+    let members = |v: &Value, locals: &mut FxHashMap<String, Value>| -> RR<()> {
         if let Value::Rec(inst) = v {
             for (n, x) in record_entries(&cx.eng, inst).map_err(|f| fail_of(f, "", None))? {
                 locals.insert(n, x);
@@ -949,19 +950,19 @@ fn fail_of(f: Fail, at: &str, file: Option<&str>) -> RenderError {
 fn render_nodes(
     tpl: &Template,
     nodes: &[Node],
-    mut locals: HashMap<String, Value>,
+    mut locals: FxHashMap<String, Value>,
     cx: &Context,
     parsed: &mut HashMap<String, Rc<Template>>,
     stack: &mut Vec<String>,
 ) -> RR<String> {
     let eng = &cx.eng;
-    let scope = |locals: &HashMap<String, Value>| Scope {
+    let scope = |locals: &FxHashMap<String, Value>| Scope {
         inst: None,
-        locals: Rc::new(locals.clone()),
+        locals: Locals::from_map(locals),
         root_name: cx.root_name.clone(),
         menv: Some(cx.menv.clone()),
     };
-    let eval_at = |e: &Rc<Expr>, locals: &HashMap<String, Value>, p: Pos| -> RR<Value> {
+    let eval_at = |e: &Rc<Expr>, locals: &FxHashMap<String, Value>, p: Pos| -> RR<Value> {
         let sc = scope(locals);
         let r = (|| -> R<Value> {
             let v = eng.ev(e, &sc)?;
@@ -971,7 +972,7 @@ fn render_nodes(
         })();
         r.map_err(|f| fail_of(f, &p.at(), Some(&tpl.path)))
     };
-    let declare = |name: &str, locals: &HashMap<String, Value>, p: Pos| -> RR<()> {
+    let declare = |name: &str, locals: &FxHashMap<String, Value>, p: Pos| -> RR<()> {
         if locals.contains_key(name)
             || cx.menv.consts.borrow().contains_key(name)
             || cx.menv.funcs.borrow().contains_key(name)
@@ -1057,13 +1058,13 @@ fn render_nodes(
                         Value::Rec(inst) => record_entries(eng, inst)
                             .map_err(|f| fail_of(f, &at.at(), Some(&tpl.path)))?
                             .into_iter()
-                            .map(|(k, v)| (Value::Str(k), v))
+                            .map(|(k, v)| (Value::Str(k.into()), v))
                             .collect(),
                         Value::Map(m) => m
                             .borrow()
                             .entries
                             .iter()
-                            .map(|(k, v)| (Value::Str(k.clone()), v.clone()))
+                            .map(|(k, v)| (Value::Str(k.clone().into()), v.clone()))
                             .collect(),
                         _ => {
                             return Err(RenderError::new(
@@ -1270,11 +1271,11 @@ fn fan_out_path(
             "fan-out path leaves the destination directory: {p}"
         )));
     }
-    if seen.contains(&p) {
+    if seen.contains(&*p) {
         return Err(e7005(format!("fan-out path repeats: {p}")));
     }
-    seen.insert(p.clone());
-    Ok(p)
+    seen.insert(p.to_string());
+    Ok(p.to_string())
 }
 
 /// emit one root (§3.1): its structured text or its template's text, as one text or one file per element
@@ -1319,7 +1320,7 @@ pub fn emit_root(e: &Emission) -> RR<Emitted> {
             .borrow()
             .entries
             .iter()
-            .map(|(k, v)| (v.clone(), Value::Str(k.clone()), Seg::Key(k.clone())))
+            .map(|(k, v)| (v.clone(), Value::Str(k.clone().into()), Seg::Key(Rc::from(k.clone()))))
             .collect(),
         _ => {
             return Err(RenderError::new(
@@ -1333,7 +1334,7 @@ pub fn emit_root(e: &Emission) -> RR<Emitted> {
     let mut seen: HashSet<String> = HashSet::new();
     let mut paths = vec![];
     for (v, k, seg) in &elems {
-        let at = path_str(&[Seg::Name(e.root_name.clone()), seg.clone()], None);
+        let at = path_str(&[Seg::Name(Rc::from(e.root_name.clone())), seg.clone()], None);
         paths.push(fan_out_path(each, v, k, &at, &mut seen)?);
     }
     let mut files = vec![];

@@ -9,6 +9,7 @@ use num_bigint::BigInt;
 use num_traits::{FromPrimitive, Signed, ToPrimitive, Zero};
 use std::cell::{Cell, RefCell};
 use std::cmp::Ordering::{self, Equal, Greater, Less};
+use rustc_hash::{FxHashMap, FxHashSet};
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::rc::{Rc, Weak};
 
@@ -55,7 +56,7 @@ pub struct Engine {
     /// this round's instances once frozen
     frozen_registry: RefCell<Option<Vec<Inst>>>,
     /// the frozen instances by address: what `force_slot` delegates to this round
-    frozen_set: RefCell<HashSet<usize>>,
+    frozen_set: RefCell<FxHashSet<usize>>,
     /// the last round: a reference into the snapshot resolves live
     settled: Cell<bool>,
     /// the snapshot a round answers from
@@ -71,11 +72,11 @@ pub struct Engine {
     /// the environments whose constants this engine forced
     const_envs: RefCell<Vec<Rc<Env>>>,
     /// the answers' references into the previous round, by identity
-    snap_refs: RefCell<HashMap<usize, (Rc<SegPath>, Rc<Engine>)>>,
+    snap_refs: RefCell<FxHashMap<usize, (Rc<SegPath>, Rc<Engine>)>>,
     /// an unmaterialized literal read as a value is materialized once (by identity; the literal is
     /// kept alive): its elements are pure, and a chain of spreads (a fold accumulating an array)
     /// would otherwise re-evaluate every level at every read
-    mat_cache: RefCell<HashMap<usize, (Value, Value)>>,
+    mat_cache: RefCell<FxHashMap<usize, (Value, Value)>>,
 }
 
 /// the values `std.array.sort` orders: one primitive kind per call (§13.2)
@@ -258,7 +259,7 @@ fn num_s(v: &Value) -> String {
     match v {
         Value::Float(f) => js_num_str(*f),
         Value::Int(i) => i.to_string(),
-        Value::Str(s) => s.clone(),
+        Value::Str(s) => s.to_string(),
         other => format!("{other:?}"),
     }
 }
@@ -385,15 +386,15 @@ impl Engine {
             prev: RefCell::new(None),
             frozen_roots: RefCell::new(None),
             frozen_registry: RefCell::new(None),
-            frozen_set: RefCell::new(HashSet::new()),
+            frozen_set: RefCell::new(FxHashSet::default()),
             settled: Cell::new(false),
             snap: RefCell::new(None),
             queried: RefCell::new(BTreeSet::new()),
             computing_edges: RefCell::new(HashSet::new()),
             edge_bases: RefCell::new(vec![]),
             const_envs: RefCell::new(vec![]),
-            snap_refs: RefCell::new(HashMap::new()),
-            mat_cache: RefCell::new(HashMap::new()),
+            snap_refs: RefCell::new(FxHashMap::default()),
+            mat_cache: RefCell::new(FxHashMap::default()),
         });
         let w = Rc::downgrade(&eng);
         *env.tagger.borrow_mut() = Some(Rc::new(move || {
@@ -416,16 +417,12 @@ impl Engine {
     pub fn slot_key(inst: &Inst, name: &str) -> String {
         // inst.path is immutable, so path_str is computed once per instance (F21)
         let b = inst.borrow();
-        let cached = b.ps.borrow().clone();
-        let ps = match cached {
-            Some(p) => p,
-            None => {
-                let p = path_str(&b.path, None);
-                *b.ps.borrow_mut() = Some(p.clone());
-                p
-            }
-        };
-        format!("{ps}.{name}")
+        if b.ps.borrow().is_none() {
+            let p = path_str(&b.path, None);
+            *b.ps.borrow_mut() = Some(p);
+        }
+        let ps = b.ps.borrow();
+        format!("{}.{name}", ps.as_ref().unwrap())
     }
     /// Record that the computation in progress read a slot (dependency tracking).
     pub fn record(&self, read: String) {
@@ -495,10 +492,10 @@ impl Engine {
             Expr::Paren(x) => self.ev(x, sc),
             Expr::MapComp { key, val, clauses } => {
                 let mut entries = vec![];
-                self.map_comp(key, val, clauses, 0, (*sc.locals).clone(), sc, &mut entries)?;
+                self.map_comp(key, val, clauses, 0, sc.locals.clone(), sc, &mut entries)?;
                 Ok(Value::PreObj(Rc::new(entries)))
             }
-            Expr::Template(parts) => Ok(Value::Str(self.render(parts, sc)?)),
+            Expr::Template(parts) => Ok(Value::Str(self.render(parts, sc)?.into())),
             Expr::Name(name) => {
                 if let Some(v) = sc.locals.get(name) {
                     return Ok(v.clone());
@@ -531,18 +528,18 @@ impl Engine {
                 let inst = sc.inst.as_ref();
                 match n.as_str() {
                     "$this" => match inst {
-                        Some(i) => Ok(Value::Ref(Rc::new(i.borrow().path.clone()))),
+                        Some(i) => Ok(Value::Ref(i.borrow().path.clone())),
                         None => err_code("$this outside a record instance", "E4090"),
                     },
                     "$parent" => match inst.and_then(|i| i.borrow().parent.clone()) {
-                        Some(p) => Ok(Value::Ref(Rc::new(p.borrow().path.clone()))),
+                        Some(p) => Ok(Value::Ref(p.borrow().path.clone())),
                         None => err_code("$parent: the evaluation root has no owner", "E4090"),
                     },
                     "$root" => {
                         if sc.root_name.is_empty() || self.root(&sc.root_name).is_none() {
                             return err_code("$root outside an evaluation root", "E4090");
                         }
-                        Ok(Value::Ref(Rc::new(vec![Seg::Name(sc.root_name.clone())])))
+                        Ok(Value::Ref(Rc::new(vec![Seg::Name(Rc::from(sc.root_name.clone()))])))
                     }
                     "$key" => {
                         // the key or index under which $this sits in its parent's
@@ -574,7 +571,7 @@ impl Engine {
                         })
                     }
                     "$path" => match inst {
-                        Some(i) => Ok(Value::Str(path_str(&i.borrow().path, None))),
+                        Some(i) => Ok(Value::Str(path_str(&i.borrow().path, None).into())),
                         None => err_code("$path outside a record instance", "E4090"),
                     },
                     _ => err(format!("unsupported context var {n}")),
@@ -612,7 +609,7 @@ impl Engine {
             ))),
             Expr::Comp { head, clauses } => {
                 let mut items = vec![];
-                self.comp(head, clauses, 0, (*sc.locals).clone(), sc, &mut items)?;
+                self.comp(head, clauses, 0, sc.locals.clone(), sc, &mut items)?;
                 Ok(Value::PreArr(Rc::new(items)))
             }
             Expr::If { c, t, f } => {
@@ -625,8 +622,7 @@ impl Engine {
             Expr::Match { subject, arms } => {
                 let subj = self.deref(self.ev(subject, sc)?)?;
                 let run = |arm: &MatchArm| {
-                    let mut l2 = (*sc.locals).clone();
-                    l2.insert(arm.v.clone(), subj.clone());
+                    let l2 = sc.locals.with(Rc::from(arm.v.as_str()), subj.clone());
                     self.ev(&arm.body, &sc.with_locals(l2))
                 };
                 let mut catch_all = None;
@@ -752,7 +748,7 @@ impl Engine {
         head: &Rc<Expr>,
         clauses: &[ForClause],
         ci: usize,
-        locals: HashMap<String, Value>,
+        locals: Locals,
         sc: &Scope,
         out: &mut Vec<(bool, Value)>,
     ) -> R<()> {
@@ -769,8 +765,7 @@ impl Engine {
         let cl = &clauses[ci];
         let it = self.ev(&cl.iter, &sc.with_locals(locals.clone()))?;
         for el in self.iterate(&it)? {
-            let mut l2 = locals.clone();
-            l2.insert(cl.v.clone(), el);
+            let l2 = locals.with(Rc::from(cl.v.as_str()), el);
             let sc2 = sc.with_locals(l2.clone());
             let mut ok = true;
             for f in &cl.filters {
@@ -792,7 +787,7 @@ impl Engine {
         val: &Rc<Expr>,
         clauses: &[ForClause],
         ci: usize,
-        locals: HashMap<String, Value>,
+        locals: Locals,
         sc: &Scope,
         out: &mut Vec<(String, Value)>,
     ) -> R<()> {
@@ -801,6 +796,7 @@ impl Engine {
             let Value::Str(k) = self.ev(key, &sc2)? else {
                 return err("map key must be string");
             };
+            let k = k.to_string();
             if out.iter().any(|(kk, _)| *kk == k) {
                 return err_code(format!("duplicate key {k}"), "E5004");
             }
@@ -811,8 +807,7 @@ impl Engine {
         let cl = &clauses[ci];
         let it = self.ev(&cl.iter, &sc.with_locals(locals.clone()))?;
         for el in self.iterate(&it)? {
-            let mut l2 = locals.clone();
-            l2.insert(cl.v.clone(), el);
+            let l2 = locals.with(Rc::from(cl.v.as_str()), el);
             let sc2 = sc.with_locals(l2.clone());
             let mut ok = true;
             for f in &cl.filters {
@@ -934,7 +929,7 @@ impl Engine {
         let bound = self.step(&format!("root:{name}"), || -> R<Value> {
             let v = self.ev(&fallback, &sc)?;
             let rt = menv.resolve(&ty_ast, None).or_else(err)?;
-            self.bind(v, &rt, &[Seg::Name(name.to_string())], None, &sc)
+            self.bind(v, &rt, &[Seg::Name(Rc::from(name.to_string()))], None, &sc)
         });
         match bound {
             Ok(v) => {
@@ -963,7 +958,7 @@ impl Engine {
                 RootSrc::Expr(e) => self.ev(e, sc)?,
                 RootSrc::Doc(v) => v,
             };
-            self.bind(raw, rt, &[Seg::Name(name.to_string())], None, sc)
+            self.bind(raw, rt, &[Seg::Name(Rc::from(name.to_string()))], None, sc)
         });
         match bound {
             Ok(v) => self.env.set_root(name, v),
@@ -1207,7 +1202,7 @@ impl Engine {
         let both_f = matches!((&l, &r), (Value::Float(_), Value::Float(_)));
         let both_s = matches!((&l, &r), (Value::Str(_), Value::Str(_)));
         match (op, &l, &r) {
-            ("+", Value::Str(a), Value::Str(b)) => Ok(Value::Str(format!("{a}{b}"))),
+            ("+", Value::Str(a), Value::Str(b)) => Ok(Value::Str(format!("{a}{b}").into())),
             ("+", Value::Int(a), Value::Int(b)) => Ok(Value::Int(a + b)),
             ("+", Value::Float(a), Value::Float(b)) => Ok(Value::Float(a + b)),
             ("-", Value::Int(a), Value::Int(b)) => Ok(Value::Int(a - b)),
@@ -1269,7 +1264,7 @@ impl Engine {
 
     fn to_str(&self, v: &Value) -> R<String> {
         match v {
-            Value::Str(s) => Ok(s.clone()),
+            Value::Str(s) => Ok(s.to_string()),
             Value::Bool(b) => Ok(if *b { "true".into() } else { "false".into() }),
             Value::Int(i) => Ok(i.to_string()),
             Value::Float(f) => Ok(js_num_str(*f)),
@@ -1436,9 +1431,9 @@ impl Engine {
     pub fn call(&self, f: &Value, args: Vec<Value>, sc: &Scope) -> R<Value> {
         match f {
             Value::Clo(c) => {
-                let mut locals = (*c.scope.locals).clone();
+                let mut locals = c.scope.locals.clone();
                 for (p, a) in c.params.iter().zip(args) {
-                    locals.insert(p.clone(), a);
+                    locals = locals.with(Rc::from(p.as_str()), a);
                 }
                 self.ev(&c.body, &c.scope.with_locals(locals))
             }
@@ -1458,12 +1453,12 @@ impl Engine {
         let arr = |path: Vec<Value>| {
             Value::Arr(Rc::new(RefCell::new(ArrV {
                 items: path,
-                path: vec![],
+                path: Rc::new(vec![]),
             })))
         };
         let s = |v: &Value| -> R<String> {
             match v {
-                Value::Str(s) => Ok(s.clone()),
+                Value::Str(s) => Ok(s.to_string()),
                 _ => err(format!("std.{name}: expected string")),
             }
         };
@@ -1573,7 +1568,7 @@ impl Engine {
                 .borrow()
                 .entries
                 .iter()
-                .map(|(k, _)| Value::Str(k.clone()))
+                .map(|(k, _)| Value::Str(k.clone().into()))
                 .collect())),
             "map.values" => Ok(arr(self
                 .mat_map(arg(&a, 0, name)?)?
@@ -1589,7 +1584,7 @@ impl Engine {
                 .iter()
                 .map(|(k, v)| {
                     Value::PreObj(Rc::new(vec![
-                        ("key".into(), Value::Str(k.clone())),
+                        ("key".into(), Value::Str(k.clone().into())),
                         ("value".into(), v.clone()),
                     ]))
                 })
@@ -1597,7 +1592,7 @@ impl Engine {
             "string.length" => Ok(Value::Int(BigInt::from(
                 s(arg(&a, 0, name)?)?.chars().count(),
             ))),
-            "string.of" => Ok(Value::Str(self.to_str(arg(&a, 0, name)?)?)),
+            "string.of" => Ok(Value::Str(self.to_str(arg(&a, 0, name)?)?.into())),
             "string.join" => {
                 let sep = s(arg(&a, 1, name)?)?;
                 let parts: Vec<String> = self
@@ -1605,7 +1600,7 @@ impl Engine {
                     .iter()
                     .map(s)
                     .collect::<R<_>>()?;
-                Ok(Value::Str(parts.join(&sep)))
+                Ok(Value::Str(parts.join(&sep).into()))
             }
             "string.starts_with" => Ok(Value::Bool(
                 s(arg(&a, 0, name)?)?.starts_with(&s(arg(&a, 1, name)?)?),
@@ -1623,11 +1618,11 @@ impl Engine {
                 }
                 Ok(arr(s(arg(&a, 0, name)?)?
                     .split(&sep)
-                    .map(|p| Value::Str(p.to_string()))
+                    .map(|p| Value::Str(p.to_string().into()))
                     .collect()))
             }
             "ref.path" => match arg(&a, 0, name)? {
-                Value::Ref(p) => Ok(Value::Str(path_str(p, None))),
+                Value::Ref(p) => Ok(Value::Str(path_str(p, None).into())),
                 _ => err("ref.path on non-reference"),
             },
             "math.abs" => match arg(&a, 0, name)? {
@@ -1986,7 +1981,7 @@ impl Engine {
             .collect();
         Ok(Value::Arr(Rc::new(RefCell::new(ArrV {
             items,
-            path: vec![],
+            path: Rc::new(vec![]),
         }))))
     }
     /// the edge `T|m` of the snapshot: computed from its instances on first demand
@@ -2052,7 +2047,7 @@ impl Engine {
             };
             let mut refs = vec![];
             refs_in(&v, &mut refs);
-            let path = cand.borrow().path.clone();
+            let path = cand.borrow().path.to_vec();
             out.insert(path_str(&path, None), (path, refs));
         }
         out
@@ -2396,7 +2391,7 @@ impl Engine {
                 }
                 let arr = Rc::new(RefCell::new(ArrV {
                     items: vec![],
-                    path: path.to_vec(),
+                    path: Rc::new(path.to_vec()),
                 }));
                 for (i, it) in items.into_iter().enumerate() {
                     let mut p = path.to_vec();
@@ -2420,16 +2415,16 @@ impl Engine {
                 };
                 let m = Rc::new(RefCell::new(MapV {
                     entries: vec![],
-                    path: path.to_vec(),
+                    path: Rc::new(path.to_vec()),
                 }));
                 for (k, v) in es {
-                    match self.bind(Value::Str(k.clone()), key, path, parent, sc) {
+                    match self.bind(Value::Str(k.clone().into()), key, path, parent, sc) {
                         Ok(_) => {}
                         Err(Fail::Taint) => continue,
                         Err(e) => return Err(e),
                     }
                     let mut p = path.to_vec();
-                    p.push(Seg::Key(k.clone()));
+                    p.push(Seg::Key(Rc::from(k.clone())));
                     match self.bind(v, val, &p, parent, sc) {
                         Ok(bv) => m.borrow_mut().set(k, bv),
                         Err(Fail::Taint) => {}
@@ -2640,15 +2635,15 @@ impl Engine {
                 let x0 = self.ev_nav(x, sc)?;
                 if let Value::Segs(p) = &x0 {
                     let mut p = (**p).clone();
-                    p.push(Seg::Name(name.clone()));
+                    p.push(Seg::Name(Rc::from(name.clone())));
                     return Ok(Value::Segs(Rc::new(p)));
                 }
                 let x = self.deref(x0)?;
                 let v = self.access(&x, name)?;
                 if v.is_absent() {
                     if let Value::Rec(r) = &x {
-                        let mut p = r.borrow().path.clone();
-                        p.push(Seg::Name(name.clone()));
+                        let mut p = r.borrow().path.to_vec();
+                        p.push(Seg::Name(Rc::from(name.clone())));
                         return Ok(Value::Segs(Rc::new(p)));
                     }
                 }
@@ -2675,7 +2670,7 @@ impl Engine {
                         if n >= 0 && (n as usize) < b.items.len() {
                             Ok(b.items[n as usize].clone())
                         } else {
-                            let mut p = b.path.clone();
+                            let mut p = b.path.to_vec();
                             p.push(Seg::Idx(n.max(0) as usize));
                             Ok(Value::Segs(Rc::new(p)))
                         }
@@ -2688,7 +2683,7 @@ impl Engine {
                         match b.get(k) {
                             Some(v) => Ok(v.clone()),
                             None => {
-                                let mut p = b.path.clone();
+                                let mut p = b.path.to_vec();
                                 p.push(Seg::Key(k.clone()));
                                 Ok(Value::Segs(Rc::new(p)))
                             }
@@ -2700,7 +2695,7 @@ impl Engine {
                         };
                         let v = self.access(&x, k)?;
                         if v.is_absent() {
-                            let mut p = r.borrow().path.clone();
+                            let mut p = r.borrow().path.to_vec();
                             p.push(Seg::Name(k.clone()));
                             Ok(Value::Segs(Rc::new(p)))
                         } else {
@@ -2771,7 +2766,7 @@ impl Engine {
             ps: RefCell::new(None),
             type_name: rt.name.borrow().clone(),
             rt: rt.clone(),
-            path: path.to_vec(),
+            path: Rc::new(path.to_vec()),
             parent: parent.cloned(),
             slots: vec![],
             entry_order: entries.iter().map(|(k, _)| k.clone()).collect(),
@@ -2799,7 +2794,7 @@ impl Engine {
             // literal that supplies it is in error — there is nothing to restate
             if m.kind == MKind::Der && m.hidden && has.is_some() {
                 let mut p = path.to_vec();
-                p.push(Seg::Name(name.clone()));
+                p.push(Seg::Name(Rc::from(name.clone())));
                 self.env.report(Diag::error(
                     format!("hidden member {name} supplied"),
                     path_str(&p, None),
@@ -2881,7 +2876,7 @@ impl Engine {
                 },
                 (MKind::Req, None) => {
                     let mut p = path.to_vec();
-                    p.push(Seg::Name(name.clone()));
+                    p.push(Seg::Name(Rc::from(name.clone())));
                     self.env.report(Diag::error(
                         format!("required member {name} missing"),
                         path_str(&p, None),
@@ -2915,7 +2910,7 @@ impl Engine {
                     .map(|n| format!(" {n}"))
                     .unwrap_or_default();
                 let mut p = path.to_vec();
-                p.push(Seg::Name(k.clone()));
+                p.push(Seg::Name(Rc::from(k.clone())));
                 self.env.report(Diag::error(
                     format!("undeclared member {k} on closed record{nm}"),
                     path_str(&p, None),
@@ -2930,13 +2925,13 @@ impl Engine {
         let path = inst.borrow().path.clone();
         let scope_for = |root_name: &str, menv: &Option<Rc<Env>>| Scope {
             inst: Some(inst.clone()),
-            locals: Rc::new(HashMap::new()),
+            locals: Locals::new(),
             root_name: root_name.to_string(),
             menv: menv.clone(),
         };
         let member_path = |name: &str| {
-            let mut p = path.clone();
-            p.push(Seg::Name(name.to_string()));
+            let mut p = path.to_vec();
+            p.push(Seg::Name(Rc::from(name.to_string())));
             p
         };
         match c {
@@ -3072,7 +3067,7 @@ impl Engine {
                 }
                 let arr = Rc::new(RefCell::new(ArrV {
                     items: vec![],
-                    path: path.to_vec(),
+                    path: Rc::new(path.to_vec()),
                 }));
                 for (i, y) in raw.into_iter().enumerate() {
                     let mut p = path.to_vec();
@@ -3085,7 +3080,7 @@ impl Engine {
             Value::PreObj(entries) => {
                 let m = Rc::new(RefCell::new(MapV {
                     entries: vec![],
-                    path: path.to_vec(),
+                    path: Rc::new(path.to_vec()),
                 }));
                 for (k, pv) in self.entries_of(&entries)?.iter() {
                     let x = match pv {
@@ -3093,7 +3088,7 @@ impl Engine {
                         other => other.clone(),
                     };
                     let mut p = path.to_vec();
-                    p.push(Seg::Key(k.clone()));
+                    p.push(Seg::Key(Rc::from(k.clone())));
                     let mv = self.materialize(x, &p)?;
                     m.borrow_mut().set(k.clone(), mv);
                 }
@@ -3218,16 +3213,21 @@ impl Engine {
             };
             (s.state, s.compute.clone())
         };
-        let key = Engine::slot_key(inst, name);
-        self.record(key.clone());
+        // the slot key is a per-force string allocation; a one-shot evaluate
+        // never reads the dependency graph, so build it only when tracking or
+        // when the slot is actually forced (past the cached early returns) (F21)
+        if self.track.get() {
+            self.record(Engine::slot_key(inst, name));
+        }
         match state {
             SlotState::Ok => return Ok(inst.borrow().slot(name).unwrap().value.clone()),
             SlotState::Absent => return Ok(Value::Absent),
             SlotState::Invalid => return Err(Fail::Taint),
             _ => {}
         }
-        let mut mp = inst.borrow().path.clone();
-        mp.push(Seg::Name(name.to_string()));
+        let key = Engine::slot_key(inst, name);
+        let mut mp = inst.borrow().path.to_vec();
+        mp.push(Seg::Name(Rc::from(name)));
         if state == SlotState::Deferred {
             if self.phase.get() < 2 {
                 return Err(Fail::Defer); // known to wait for phase 2: not attempted again
@@ -3323,9 +3323,9 @@ impl Engine {
             v = match &c.ty {
                 Some(t) => {
                     let rt = env.resolve(t, None).or_else(err)?;
-                    self.bind(v, &rt, &[Seg::Name(name.to_string())], None, &sc)?
+                    self.bind(v, &rt, &[Seg::Name(Rc::from(name.to_string()))], None, &sc)?
                 }
-                None => self.materialize(v, &[Seg::Name(name.to_string())])?,
+                None => self.materialize(v, &[Seg::Name(Rc::from(name.to_string()))])?,
             };
         }
         *c.value.borrow_mut() = v.clone();
@@ -3434,7 +3434,7 @@ impl Engine {
         };
         let sc0 = Scope {
             inst: Some(inst.clone()),
-            locals: Rc::new(HashMap::new()),
+            locals: Locals::new(),
             root_name: root_name.to_string(),
             menv: menv0.clone(),
         };
@@ -3551,16 +3551,16 @@ impl Engine {
                         .iter()
                         .map(|x| self.ev(x, &sc).unwrap_or(Value::Absent))
                         .collect();
-                    let mut locals = HashMap::new();
+                    let mut locals = Locals::new();
                     for (i, p) in d.params.iter().enumerate() {
-                        locals.insert(
-                            p.name.clone(),
+                        locals = locals.with(
+                            Rc::from(p.name.as_str()),
                             argv.get(i).cloned().unwrap_or(Value::Absent),
                         );
                     }
                     let psc = Scope {
                         inst: None,
-                        locals: Rc::new(locals),
+                        locals,
                         root_name: root_name.to_string(),
                         menv: menv0.clone(),
                     };

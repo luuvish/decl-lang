@@ -117,7 +117,7 @@ fn sub(env: &Rc<Env>, a: &RT, b: &RT, assume: &mut HashMap<usize, Vec<usize>>) -
                     if m.hidden {
                         return true;
                     }
-                    if !sub(env, &ty(RTk::Lit(Value::Str(m.name.clone()))), key, assume) {
+                    if !sub(env, &ty(RTk::Lit(Value::Str(m.name.clone().into()))), key, assume) {
                         return false;
                     }
                     match crate::infer::member_ty(m) {

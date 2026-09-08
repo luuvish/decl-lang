@@ -77,6 +77,14 @@ Rules:
 - **Every behavior change lands in all three implementations in one
   change** (the TypeScript reference first; then Rust and Python, which
   are faithful ports — keep their structure and names aligned).
+- **The performance layer may diverge per language.** A language's value
+  and path representation, hot-path data structures, and choice of
+  allocator are free to differ where an idiomatic form is faster (Rust,
+  for instance, holds strings and path segments as `Rc<str>`, paths and
+  scope locals as shared/chained structures, and links a fast allocator
+  into its binaries; the reference keeps map-and-vector shapes). The rule
+  above still binds observable behavior: output stays byte-identical and
+  the parity gate is the proof; only the representation behind it diverges.
 - **`make verify` is the gate** and must pass before a commit: each
   implementation's own tests, then `tests/parity/differential.py`,
   which diffs the Rust and Python implementations against the reference

@@ -89,7 +89,7 @@ pub fn parse_manifest(path: &Path, report: &mut dyn FnMut(&str, String)) -> Opti
         let raw = kv[2].trim().to_string();
         let value: Option<String> = if raw.starts_with('"') {
             match read_json(&raw.replace('\\', "\\\\")) {
-                Ok(Value::Str(s)) => Some(s),
+                Ok(Value::Str(s)) => Some(s.to_string()),
                 Ok(_) => None,
                 Err(_) => {
                     report(

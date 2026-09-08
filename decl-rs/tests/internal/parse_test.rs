@@ -96,7 +96,7 @@ fn json_documents() {
     };
     assert!(matches!(&a[0], Value::Int(i) if *i == BigInt::from(1)));
     assert!(matches!(&a[1], Value::Float(f) if *f == 2.5));
-    assert!(matches!(&a[2], Value::Str(s) if s == "s"));
+    assert!(matches!(&a[2], Value::Str(s) if &**s == "s"));
     assert!(matches!(&a[3], Value::Bool(true)));
     assert!(matches!(&a[4], Value::Null));
     assert_eq!(es[1].0, "n");
@@ -134,7 +134,7 @@ fn annotations() {
         a.len() == 1
             && a[0].name == "doc"
             && a[0].args.len() == 1
-            && matches!(&*a[0].args[0], Expr::Lit(Value::Str(s)) if s == "x"),
+            && matches!(&*a[0].args[0], Expr::Lit(Value::Str(s)) if &**s == "x"),
         "{a:?}"
     );
 }

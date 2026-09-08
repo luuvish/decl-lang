@@ -71,7 +71,7 @@ fn get<'a>(v: &'a Value, key: &str) -> Option<&'a Value> {
 }
 fn as_str(v: Option<&Value>) -> Option<&str> {
     match v {
-        Some(Value::Str(s)) => Some(s.as_str()),
+        Some(Value::Str(s)) => Some(&**s),
         _ => None,
     }
 }
@@ -455,7 +455,7 @@ fn loc_of_path(decls: &[Decl], segs: &[Seg]) -> Option<Loc> {
         let next: Option<Rc<Expr>> = match (&*cur, s) {
             (Expr::Obj(entries), Seg::Name(k)) | (Expr::Obj(entries), Seg::Key(k)) => entries
                 .iter()
-                .find(|(kk, _)| kk == k)
+                .find(|(kk, _)| kk.as_str() == &**k)
                 .map(|(_, v)| v.clone()),
             (Expr::Arr(items), Seg::Idx(i)) => items.get(*i).map(|(_, v)| v.clone()),
             (Expr::With { base, .. }, _) => {
@@ -4063,7 +4063,7 @@ fn value_to_j(v: &Value) -> J {
         Value::Bool(b) => J::Bool(*b),
         Value::Int(i) => J::Num(i.to_string().parse().unwrap_or(0)),
         Value::Float(f) => J::Str(crate::semantics::js_num_str(*f)),
-        Value::Str(s) => J::s(s.clone()),
+        Value::Str(s) => J::s(s.to_string()),
         Value::JArr(items) => J::Arr(items.iter().map(value_to_j).collect()),
         Value::JObj(es) => J::Obj(es.iter().map(|(k, x)| (k.clone(), value_to_j(x))).collect()),
         other => J::s(format!("{other:?}")),
@@ -5301,7 +5301,7 @@ fn code_actions(st: &mut State, uri: &str, range: (Pos, Pos), diagnostics: &[Val
             .find(|d| matches!(get(d, "severity"), Some(Value::Int(i)) if i.to_string() == "1"))
             .unwrap_or(&diagnostics[0]);
         let code = match get(first, "code") {
-            Some(Value::Str(c)) => c.clone(),
+            Some(Value::Str(c)) => c.to_string(),
             Some(Value::Int(i)) => i.to_string(),
             Some(Value::Float(f)) => crate::semantics::js_num_str(*f),
             _ => String::new(),
@@ -5705,7 +5705,7 @@ fn code_actions(st: &mut State, uri: &str, range: (Pos, Pos), diagnostics: &[Val
                                     }
                                 }
                             }
-                            arms.push((lit.clone(), tt.clone()));
+                            arms.push((lit.to_string(), tt.clone()));
                             matched = true;
                         }
                     }
@@ -5731,7 +5731,7 @@ fn code_actions(st: &mut State, uri: &str, range: (Pos, Pos), diagnostics: &[Val
                     let uarms = uarms.borrow();
                     let arm_name = |lit: &str| -> Option<String> {
                         uarms.iter()
-                            .find(|r| matches!(r.k, RTk::Rec(_)) && rec_members(r).iter().any(|mm| &mm.name == mem && matches!(mm.ty.as_ref().map(|t| &t.k), Some(RTk::Lit(Value::Str(v))) if v == lit)))
+                            .find(|r| matches!(r.k, RTk::Rec(_)) && rec_members(r).iter().any(|mm| &mm.name == mem && matches!(mm.ty.as_ref().map(|t| &t.k), Some(RTk::Lit(Value::Str(v))) if &**v == lit)))
                             .and_then(|r| r.name.borrow().clone())
                     };
                     let names: Vec<Option<String>> =

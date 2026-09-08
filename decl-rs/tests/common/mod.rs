@@ -66,7 +66,7 @@ use std::collections::HashMap;
 use std::rc::Rc;
 
 pub fn jstr(s: &str) -> Value {
-    Value::Str(s.to_string())
+    Value::Str(s.into())
 }
 pub fn jint(n: i64) -> Value {
     Value::Int(BigInt::from(n))
@@ -81,7 +81,7 @@ pub fn jarr(items: Vec<Value>) -> Value {
 }
 pub fn text(v: &Value) -> &str {
     match v {
-        Value::Str(s) => s,
+        Value::Str(s) => s.as_ref(),
         _ => panic!("a string was expected: {}", json_of(v)),
     }
 }

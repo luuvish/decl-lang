@@ -5,6 +5,7 @@ use num_bigint::BigInt;
 use num_traits::{ToPrimitive, Zero};
 use regex::Regex;
 use std::cell::{Cell, RefCell};
+use rustc_hash::FxHashMap;
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::fmt;
 use std::rc::Rc;
@@ -25,18 +26,18 @@ static PATTERN_IDENT: LazyLock<Regex> =
 /// a segment of a canonical path (§7.2)
 pub enum Seg {
     /// a record member by name: dotted when the dot can spell it (§7.2)
-    Name(String),
+    Name(Rc<str>),
     /// an array index
     Idx(usize),
     /// a map key: always bracketed (§7.2)
-    Key(String),
+    Key(Rc<str>),
 }
 /// a canonical path
 pub type SegPath = Vec<Seg>;
 /// A segment's text as the path spells it.
 pub fn seg_text(s: &Seg) -> String {
     match s {
-        Seg::Name(n) | Seg::Key(n) => n.clone(),
+        Seg::Name(n) | Seg::Key(n) => n.to_string(),
         Seg::Idx(i) => i.to_string(),
     }
 }
@@ -58,7 +59,7 @@ pub enum Value {
     /// a float
     Float(f64),
     /// a string
-    Str(String),
+    Str(Rc<str>),
     /// a boolean
     Bool(bool),
     /// null
@@ -173,9 +174,9 @@ impl Value {
     pub fn place(&self) -> Option<SegPath> {
         match self {
             Value::Ref(p) => Some((**p).clone()),
-            Value::Rec(r) => Some(r.borrow().path.clone()),
-            Value::Arr(a) => Some(a.borrow().path.clone()),
-            Value::Map(m) => Some(m.borrow().path.clone()),
+            Value::Rec(r) => Some(r.borrow().path.to_vec()),
+            Value::Arr(a) => Some(a.borrow().path.to_vec()),
+            Value::Map(m) => Some(m.borrow().path.to_vec()),
             _ => None,
         }
     }
@@ -210,14 +211,14 @@ pub struct ArrV {
     /// the items
     pub items: Vec<Value>,
     /// its canonical path
-    pub path: SegPath,
+    pub path: Rc<SegPath>,
 }
 /// a map value
 pub struct MapV {
     /// the entries, in order
     pub entries: Vec<(String, Value)>,
     /// its canonical path
-    pub path: SegPath,
+    pub path: Rc<SegPath>,
 }
 impl MapV {
     /// The value at a key.
@@ -335,7 +336,7 @@ pub struct RecInst {
     /// the type
     pub rt: RT,
     /// its canonical path
-    pub path: SegPath,
+    pub path: Rc<SegPath>,
     /// cached path_str(path) for the slot key (F21); path is immutable
     pub ps: RefCell<Option<String>>,
     /// the enclosing instance
@@ -377,13 +378,61 @@ impl RecInst {
     }
 }
 
+/// the local variables of a scope: a persistent chain of (name, value)
+/// frames (F21 perf: extending a scope with one binding — the hot path in a
+/// comprehension iterated over thousands of items — allocates one small frame
+/// instead of cloning a whole map; the depth is a handful of loop/parameter
+/// names, so a linear lookup is cheap). This is a Rust-only representation; the
+/// reference keeps a map (see AGENTS.md, the performance layer).
+#[derive(Clone, Default)]
+pub struct Locals(Option<Rc<LocalFrame>>);
+/// one binding in a `Locals` chain
+pub struct LocalFrame {
+    name: Rc<str>,
+    value: Value,
+    next: Option<Rc<LocalFrame>>,
+}
+impl Locals {
+    /// The empty scope.
+    pub fn new() -> Locals {
+        Locals(None)
+    }
+    /// The scope with one more binding, shadowing any earlier one of the name.
+    pub fn with(&self, name: Rc<str>, value: Value) -> Locals {
+        Locals(Some(Rc::new(LocalFrame {
+            name,
+            value,
+            next: self.0.clone(),
+        })))
+    }
+    /// The value bound to a name, innermost first.
+    pub fn get(&self, name: &str) -> Option<&Value> {
+        let mut cur = &self.0;
+        while let Some(f) = cur {
+            if &*f.name == name {
+                return Some(&f.value);
+            }
+            cur = &f.next;
+        }
+        None
+    }
+    /// Build a scope from a map's entries (used off the hot path, e.g. rendering).
+    pub fn from_map(m: &FxHashMap<String, Value>) -> Locals {
+        let mut l = Locals::new();
+        for (k, v) in m {
+            l = l.with(Rc::from(k.as_str()), v.clone());
+        }
+        l
+    }
+}
+
 #[derive(Clone)]
 /// an evaluation scope: the enclosing instance, the local variables, the root, the module environment
 pub struct Scope {
     /// the enclosing instance
     pub inst: Option<Rc<RefCell<RecInst>>>,
     /// the local variables
-    pub locals: Rc<HashMap<String, Value>>,
+    pub locals: Locals,
     /// the root
     pub root_name: String,
     /// the module environment
@@ -394,16 +443,16 @@ impl Scope {
     pub fn new(root_name: &str, menv: Option<Rc<Env>>) -> Scope {
         Scope {
             inst: None,
-            locals: Rc::new(HashMap::new()),
+            locals: Locals::new(),
             root_name: root_name.to_string(),
             menv,
         }
     }
     /// The scope with local variables.
-    pub fn with_locals(&self, locals: HashMap<String, Value>) -> Scope {
+    pub fn with_locals(&self, locals: Locals) -> Scope {
         Scope {
             inst: self.inst.clone(),
-            locals: Rc::new(locals),
+            locals,
             root_name: self.root_name.clone(),
             menv: self.menv.clone(),
         }
@@ -884,7 +933,7 @@ pub fn sort_diags(diags: Vec<Diag>) -> Vec<Diag> {
         if p.is_empty() {
             return vec![];
         }
-        parse_path(p, "").unwrap_or_else(|_| vec![Seg::Name(p.to_string())])
+        parse_path(p, "").unwrap_or_else(|_| vec![Seg::Name(Rc::from(p.to_string()))])
     };
     let mut keyed: Vec<(usize, SegPath, Diag)> = diags
         .into_iter()
@@ -1326,7 +1375,7 @@ impl Env {
     /// A numeric constant's value where a type expects a number (a size, a bound).
     pub fn const_num(&self, v: &Value) -> Value {
         let name = match v {
-            Value::Str(s) => s.clone(),
+            Value::Str(s) => s.to_string(),
             other => return other.clone(),
         };
         let ce = self.const_eval.borrow().clone();
@@ -1880,7 +1929,7 @@ impl Env {
             for arm in &arms {
                 if str_lit.is_match(arm) {
                     let v = crate::parse::json_unquote(arm)?;
-                    frags.push(self.pattern_fragment(&ty(RTk::Lit(Value::Str(v))), &text)?);
+                    frags.push(self.pattern_fragment(&ty(RTk::Lit(Value::Str(v.into()))), &text)?);
                     continue;
                 }
                 if let Some(c) = int_range.captures(arm) {
@@ -2024,7 +2073,7 @@ impl Env {
                         preds: None,
                         ..
                     } if aa.is_empty() => {
-                        let v = self.const_num(&Value::Str(an.clone()));
+                        let v = self.const_num(&Value::Str(an.clone().into()));
                         if matches!(v, Value::Str(_)) {
                             return Err(format!(
                                 "non-constant value argument {an} for {} of {name}",
@@ -2279,7 +2328,7 @@ pub fn subst_type(
         }
         TypeAst::Range { lo, hi, excl, loc } => {
             let sub = |v: &Value| match v {
-                Value::Str(s) if values.contains_key(s) => values[s].clone(),
+                Value::Str(s) if values.contains_key(&**s) => values[&**s].clone(),
                 other => other.clone(),
             };
             TypeAst::Range {
@@ -2297,7 +2346,7 @@ pub fn subst_type(
             loc,
         } => {
             let sub = |v: &Value| match v {
-                Value::Str(s) if values.contains_key(s) => values[s].clone(),
+                Value::Str(s) if values.contains_key(&**s) => values[&**s].clone(),
                 other => other.clone(),
             };
             TypeAst::Array {
@@ -2683,24 +2732,46 @@ pub fn compile_pattern(src: &str) -> Result<Regex, String> {
 
 /// A canonical path's text, relative to `rel_root` (`$.…`) when given.
 pub fn path_str(segs: &[Seg], rel_root: Option<&str>) -> String {
+    use std::fmt::Write;
     let mut out = String::new();
     for (i, s) in segs.iter().enumerate() {
-        match s {
-            _ if i == 0 => {
-                let n = seg_text(s);
-                if rel_root == Some(n.as_str()) {
-                    out.push('$');
-                } else {
-                    out.push_str(&n);
+        // the root segment is bare; the rest are `.name`, `["key"]`, or `[n]`.
+        // written straight into `out` (name/key push their `Rc<str>`, brackets
+        // via `write!`) so no temporary String is allocated per segment (F21)
+        if i == 0 {
+            match s {
+                Seg::Name(n) | Seg::Key(n) => {
+                    if rel_root == Some(&**n) {
+                        out.push('$');
+                    } else {
+                        out.push_str(n);
+                    }
+                }
+                Seg::Idx(k) => {
+                    let t = k.to_string();
+                    if rel_root == Some(t.as_str()) {
+                        out.push('$');
+                    } else {
+                        out.push_str(&t);
+                    }
                 }
             }
-            Seg::Idx(k) => out.push_str(&format!("[{k}]")),
-            Seg::Key(n) => out.push_str(&format!("[{}]", json_str(n))),
+            continue;
+        }
+        match s {
+            Seg::Idx(k) => {
+                let _ = write!(out, "[{k}]");
+            }
+            Seg::Key(n) => {
+                let _ = write!(out, "[{}]", json_str(n));
+            }
             Seg::Name(n) if dot_spellable(n) => {
                 out.push('.');
                 out.push_str(n);
             }
-            Seg::Name(n) => out.push_str(&format!("[{}]", json_str(n))),
+            Seg::Name(n) => {
+                let _ = write!(out, "[{}]", json_str(n));
+            }
         }
     }
     out
@@ -2713,14 +2784,14 @@ pub fn parse_path(s: &str, root_name: &str) -> R<SegPath> {
     let id_re = Regex::new(r"^[_A-Za-z][_A-Za-z0-9]*").unwrap();
     let mut segs = vec![];
     let mut i = if s.starts_with('$') {
-        segs.push(Seg::Name(root_name.to_string()));
+        segs.push(Seg::Name(Rc::from(root_name.to_string())));
         1
     } else {
         let m = id_re
             .find(s)
             .ok_or(())
             .or_else(|_| err(format!("bad path {s}")))?;
-        segs.push(Seg::Name(m.as_str().to_string()));
+        segs.push(Seg::Name(Rc::from(m.as_str())));
         m.end()
     };
     while i < s.len() {
@@ -2730,7 +2801,7 @@ pub fn parse_path(s: &str, root_name: &str) -> R<SegPath> {
                 .find(r)
                 .ok_or(())
                 .or_else(|_| err(format!("bad path {s}")))?;
-            segs.push(Seg::Name(m.as_str().to_string()));
+            segs.push(Seg::Name(Rc::from(m.as_str())));
             i += 1 + m.end();
         } else if rest.starts_with('[') {
             let j = rest
@@ -2739,9 +2810,7 @@ pub fn parse_path(s: &str, root_name: &str) -> R<SegPath> {
                 .or_else(|_| err(format!("bad path {s}")))?;
             let inner = &rest[1..j];
             if inner.starts_with('"') {
-                segs.push(Seg::Key(
-                    crate::parse::json_unquote(inner).unwrap_or_default(),
-                ));
+                segs.push(Seg::Key(Rc::from(crate::parse::json_unquote(inner).unwrap_or_default())));
             } else {
                 segs.push(Seg::Idx(inner.parse().unwrap_or(0)));
             }
@@ -2756,20 +2825,19 @@ pub fn parse_path(s: &str, root_name: &str) -> R<SegPath> {
 /// Canonical path order (§7.2): segment-wise, indices numerically, names and
 /// keys lexicographically, a prefix first.
 pub fn cmp_path(a: &[Seg], b: &[Seg]) -> std::cmp::Ordering {
+    use std::cmp::Ordering;
     for (x, y) in a.iter().zip(b) {
-        match (x, y) {
-            (Seg::Idx(i), Seg::Idx(j)) => {
-                if i != j {
-                    return i.cmp(j);
-                }
-            }
-            _ => {
-                let xs = seg_text(x);
-                let ys = seg_text(y);
-                if xs != ys {
-                    return xs.cmp(&ys);
-                }
-            }
+        // by the segment's path text (§7.2), as `seg_text` spells it, but
+        // without allocating a String per comparison (F21): two name/key
+        // segments compare their `Rc<str>` directly, two indices compare
+        // numerically; only a rare index-vs-name pair falls back to the text
+        let ord = match (x, y) {
+            (Seg::Idx(i), Seg::Idx(j)) => i.cmp(j),
+            (Seg::Name(p) | Seg::Key(p), Seg::Name(q) | Seg::Key(q)) => (**p).cmp(&**q),
+            _ => seg_text(x).cmp(&seg_text(y)),
+        };
+        if ord != Ordering::Equal {
+            return ord;
         }
     }
     a.len().cmp(&b.len())
@@ -2927,7 +2995,7 @@ pub fn read_json(src: &str) -> R<Value> {
                     return Ok(Value::JArr(Rc::new(items)));
                 }
             }
-            b'"' => Ok(Value::Str(string(src, b, i)?)),
+            b'"' => Ok(Value::Str(string(src, b, i)?.into())),
             _ => {
                 let rest = &src[*i..];
                 if rest.starts_with("true") {

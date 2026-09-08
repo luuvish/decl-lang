@@ -18,7 +18,7 @@ use crate::parse::{parse_expr_text, parse_source};
 use crate::render::{absolute, declared_form, emit_root, resolve_in, Emission, Emitted, Form};
 use crate::semantics::{
     json_str, parse_path, path_str, read_json, rec_members, seg_text, sort_diags, Diag, Env, Fail,
-    MKind, RTk, Scope, Seg, SegPath, SlotState, Value, RT,
+    Locals, MKind, RTk, Scope, Seg, SegPath, SlotState, Value, RT,
 };
 use crate::yaml::{is_yaml_path, read_yaml};
 use regex::Regex;
@@ -420,7 +420,7 @@ pub fn doc_json(v: &Value) -> String {
 fn doc_step(v: &Value, seg: &Seg) -> Option<Value> {
     match (v, seg) {
         (Value::JObj(es), Seg::Name(k)) | (Value::JObj(es), Seg::Key(k)) => {
-            es.iter().find(|(kk, _)| kk == k).map(|(_, x)| x.clone())
+            es.iter().find(|(kk, _)| kk.as_str() == &**k).map(|(_, x)| x.clone())
         }
         (Value::JArr(items), Seg::Idx(i)) => items.get(*i).cloned(),
         _ => None,
@@ -1512,7 +1512,7 @@ impl Session {
             let idx = i;
             i += 1;
             let p = path_str(&inst.borrow().path, None);
-            let scratch_root = matches!(inst.borrow().path.first(), Some(Seg::Name(n)) if n == "_");
+            let scratch_root = matches!(inst.borrow().path.first(), Some(Seg::Name(n)) if &**n == "_");
             if idx < reg {
                 !under_demanded(&p)
             } else {
@@ -1977,7 +1977,7 @@ impl Session {
                     match &*expr {
                         Expr::Member { x, name, .. } => {
                             if let Some(mut base) = eng.eval_place(x, &sc)? {
-                                base.push(Seg::Name(name.clone()));
+                                base.push(Seg::Name(Rc::from(name.clone())));
                                 segs = Some(base);
                             }
                         }
@@ -1987,13 +1987,13 @@ impl Session {
                                 base.push(match iv {
                                     Value::Int(n) => Seg::Idx(n.to_string().parse().unwrap_or(0)),
                                     Value::Str(s) => Seg::Key(s),
-                                    other => Seg::Key(crate::infer::js_str(&other)),
+                                    other => Seg::Key(Rc::from(crate::infer::js_str(&other))),
                                 });
                                 segs = Some(base);
                             }
                         }
                         Expr::Name(n) if entry.env.root(n).is_some() => {
-                            segs = Some(vec![Seg::Name(n.clone())])
+                            segs = Some(vec![Seg::Name(Rc::from(n.clone()))])
                         }
                         _ => {}
                     }
@@ -2159,8 +2159,8 @@ impl Session {
                         s.kind,
                         s.state,
                         s.value.clone(),
-                        b.entry_order.contains(n),
-                        rec_members(&b.rt).into_iter().find(|m| &m.name == n),
+                        b.entry_order.iter().any(|x| x.as_str() == &**n),
+                        rec_members(&b.rt).into_iter().find(|m| m.name.as_str() == &**n),
                     )
                 })
             }
@@ -2293,14 +2293,14 @@ impl Session {
             let mut cur = Some(inst.clone());
             while let Some(c) = cur {
                 if c.borrow().has_slot(n) {
-                    let mut p = c.borrow().path.clone();
-                    p.push(Seg::Name(n.clone()));
+                    let mut p = c.borrow().path.to_vec();
+                    p.push(Seg::Name(Rc::from(n.clone())));
                     return Some(p);
                 }
                 cur = c.borrow().parent.clone();
             }
             return if entry.env.root(n).is_some() {
-                Some(vec![Seg::Name(n.clone())])
+                Some(vec![Seg::Name(Rc::from(n.clone()))])
             } else {
                 None
             };
@@ -2308,7 +2308,7 @@ impl Session {
         let root_name = inst.borrow().path.first().map(seg_text).unwrap_or_default();
         let sc = Scope {
             inst: Some(inst.clone()),
-            locals: Rc::new(HashMap::new()),
+            locals: Locals::new(),
             root_name,
             menv: Some(entry.env.clone()),
         };

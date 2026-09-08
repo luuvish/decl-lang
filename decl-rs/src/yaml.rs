@@ -110,7 +110,7 @@ fn plain_value(p: Plain) -> Value {
         Plain::Bool(b) => Value::Bool(b),
         Plain::Int(i) => Value::Int(i),
         Plain::Float(f) => Value::Float(f),
-        Plain::Str(s) => Value::Str(s),
+        Plain::Str(s) => Value::Str(s.into()),
         Plain::NonFinite => Value::Null,
     }
 }
@@ -422,7 +422,7 @@ impl Reader {
                     return self.mapping(ind);
                 }
                 self.end_line("a scalar")?;
-                Ok(Value::Str(text))
+                Ok(Value::Str(text.into()))
             }
             Some('-') if self.indicator_at(self.i) => {
                 if where_ == Where::Map {
@@ -876,17 +876,23 @@ impl Reader {
             }
         }
         if body.is_empty() {
-            return Ok(Value::Str(if chomp > 0 {
-                "\n".repeat(trailing)
-            } else {
-                String::new()
-            }));
+            return Ok(Value::Str(
+                (if chomp > 0 {
+                    "\n".repeat(trailing)
+                } else {
+                    String::new()
+                })
+                .into(),
+            ));
         }
-        Ok(Value::Str(match chomp {
-            -1 => text,
-            0 => text + "\n",
-            _ => text + &"\n".repeat(trailing + 1),
-        }))
+        Ok(Value::Str(
+            (match chomp {
+                -1 => text,
+                0 => text + "\n",
+                _ => text + &"\n".repeat(trailing + 1),
+            })
+            .into(),
+        ))
     }
 
     // ---- flow nodes ----
@@ -976,13 +982,13 @@ impl Reader {
                     let Value::Str(key) = self.flow_node()? else {
                         return self.fail_at("mapping key is not a string", key_at);
                     };
-                    if seen.contains(&key) {
+                    if seen.contains(&*key) {
                         return self.fail_at(
                             &format!("mapping repeats the key {}", json_str(&key)),
                             key_at,
                         );
                     }
-                    seen.insert(key.clone());
+                    seen.insert(key.to_string());
                     self.flow_ws();
                     let mut value = Value::Null;
                     if self.peek() == Some(':') {
@@ -993,7 +999,7 @@ impl Reader {
                         }
                         self.flow_ws();
                     }
-                    entries.push((key, value));
+                    entries.push((key.to_string(), value));
                     match self.peek() {
                         Some(',') => {
                             self.i += 1;
@@ -1004,7 +1010,7 @@ impl Reader {
                     }
                 }
             }
-            '"' | '\'' => Ok(Value::Str(self.quoted()?)),
+            '"' | '\'' => Ok(Value::Str(self.quoted()?.into())),
             ']' | '}' => self.fail(&format!("unexpected '{c}'")),
             _ => {
                 // a plain scalar in flow context: ends at an indicator, folded over lines

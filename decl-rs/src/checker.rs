@@ -356,7 +356,7 @@ pub fn check_module(
     let is_output = |n: &str| env.outputs.borrow().iter().any(|(o, _, _)| o == n);
     let check_endpoint = |v: Option<&Value>, where_: &str| {
         let Some(Value::Str(v)) = v else { return };
-        if tparams.borrow().contains(v) || v.contains('.') {
+        if tparams.borrow().contains(v.as_ref()) || v.contains('.') {
             return;
         }
         if is_input(v) || is_output(v) {
@@ -364,7 +364,7 @@ pub fn check_module(
                 "E4021",
                 format!("non-constant {where_}: {v} is an input/output, not a module const"),
             );
-        } else if !env.consts.borrow().contains_key(v) {
+        } else if !env.consts.borrow().contains_key(v.as_ref()) {
             rep("E3003", format!("unknown name {v} in a {where_}"));
         }
     };

@@ -529,7 +529,7 @@ impl<'a> Lower<'a> {
                 loc: None,
             },
             "string" => TypeAst::Lit {
-                v: Value::Str(self.json_string(n)?),
+                v: Value::Str(self.json_string(n)?.into()),
                 loc: None,
             },
             "pattern" => {
@@ -684,7 +684,7 @@ impl<'a> Lower<'a> {
                     .parse::<f64>()
                     .map_err(|e| e.to_string())?,
             )),
-            "qualified_name" | "identifier" => Ok(Value::Str(self.text(n))),
+            "qualified_name" | "identifier" => Ok(Value::Str(self.text(n).into())),
             k => Err(format!("const_num: {k}")),
         }
     }
@@ -834,7 +834,7 @@ impl<'a> Lower<'a> {
                     unit: caps[2].to_string(),
                 }
             }
-            "string" => Expr::Lit(Value::Str(self.json_string(n)?)),
+            "string" => Expr::Lit(Value::Str(self.json_string(n)?.into())),
             "template_string" => Expr::Template(self.template_parts(n)?),
             "identifier" | "hidden_name" => Expr::Name(self.text(n)),
             "context_variable" => Expr::Ctx(self.text(n)),

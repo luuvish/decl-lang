@@ -415,7 +415,7 @@ pub fn js_str(v: &Value) -> String {
         }
         Value::Int(i) => i.to_string(),
         Value::Float(f) => js_num_str(*f),
-        Value::Str(s) => s.clone(),
+        Value::Str(s) => s.to_string(),
         other => format!("{other:?}"),
     }
 }

@@ -1,4 +1,9 @@
 //! The `decl-lsp` binary — the language server over stdio (lsp.rs).
+
+// a fast allocator for the binary only (the library sets none) (F21)
+#[global_allocator]
+static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
+
 fn main() {
     // `decl-lsp --version`: the same string as `decl --version`
     if std::env::args().skip(1).any(|a| a == "--version") {
