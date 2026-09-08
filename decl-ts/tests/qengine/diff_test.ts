@@ -27,6 +27,23 @@ const programs: { name: string; src: string }[] = [
   { name: 'nested consts', src: 'const base = 10\nconst step = base / 2\nexport output x: int = base + step * 3' },
   { name: 'division by zero errors', src: 'export output x: int = 10 / 0' },
   { name: 'mod by zero errors', src: 'export output x: int = 10 % 0' },
+  // records: slots that read sibling slots — the query graph does the work
+  {
+    name: 'record with derived siblings',
+    src: 'type Point = { x: int, y: int, sum = x + y, scaled = sum * 2 }\nexport output p: Point = { x: 3, y: 4 }',
+  },
+  {
+    name: 'record derived reads a const',
+    src: 'const k = 100\ntype R = { base: int, total = base + k }\nexport output r: R = { base: 5 }',
+  },
+  {
+    name: 'record with mixed scalar members',
+    src: 'type T = { n: int, name: string, doubled = n * 2, tag = name }\nexport output t: T = { n: 21, name: "hi" }',
+  },
+  {
+    name: 'record derived chain of three',
+    src: 'type C = { a: int, b = a + 1, c = b + 1, d = c + a }\nexport output c: C = { a: 10 }',
+  },
 ];
 
 let pass = 0;
