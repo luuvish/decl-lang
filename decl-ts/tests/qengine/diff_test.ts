@@ -285,6 +285,10 @@ const programs: { name: string; src: string }[] = [
     name: 'ref-typed member and the mirror rule',
     src: 'type Node = { name: string, self_ref: ref<Node> = $this, echo = self_ref.name }\nexport output n: Node = { name: "a" }',
   },
+  {
+    name: 'output reads an input fallback',
+    src: 'type Cfg = { host: string, port?: int = 80 }\ninput base: Cfg = { host: "example" }\nexport output url: string = `${base.host}:${base.port}`',
+  },
 ];
 
 let pass = 0;

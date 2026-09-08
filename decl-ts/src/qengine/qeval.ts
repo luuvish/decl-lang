@@ -70,6 +70,8 @@ interface OpCx {
   forceMember(rec: Value, name: string): Value;
   /** the value of another evaluation root (another output), or undefined */
   rootValue(name: string): Value | undefined;
+  /** the value of an input root, binding its fallback on first demand (§5.6) */
+  inputRoot(name: string): Value;
 }
 /** local bindings in scope (comprehension loop variables) */
 type Locals = Map<string, Value>;
@@ -409,9 +411,10 @@ function compile(e: Expr, c: CCtx): Op {
           scope: { inst: null, locals: new Map(), rootName, menv },
         });
       }
+      if (c.menv.inputs.has(nm)) return (cx) => cx.inputRoot(nm);
       // otherwise a reference to another evaluation root, resolved at force time
-      // (every root is bound before the universe is forced); an input or a form
-      // this stage does not resolve stays Unsupported
+      // (every root is bound before the universe is forced); a form this stage
+      // does not resolve stays Unsupported
       return (cx) => {
         const r = cx.rootValue(nm);
         if (r === undefined) throw new Unsupported(`name ${nm}`);
@@ -692,6 +695,7 @@ class QEval {
       call: (fn, args) => this.helper.matVal(this.helper.call(fn, args, matchScope)),
       forceMember: (rec, name) => this.forceMember(rec, name),
       rootValue: (name) => this.env.roots.get(name),
+      inputRoot: (name) => this.demandInputRoot(name),
     };
     this.constCtx = {
       names: (n) => (env.consts.has(n) ? `const:${n}` : undefined),
@@ -742,6 +746,33 @@ class QEval {
     } catch {
       return ABSENT; // a tainted (invalid) value-layer member reads as absent
     }
+  }
+
+  /**
+   * The value of an input root (§5.5, §5.6): with no document supplied, its
+   * fallback binds on first demand and is cached in `env.roots`; without a
+   * fallback the input is unbound (E5006). Its slots stay lazy — forced on
+   * demand through the compute bridge like any query-graph record.
+   */
+  private demandInputRoot(name: string): Value {
+    const cached = this.env.roots.get(name);
+    if (cached !== undefined) return cached;
+    const decl = this.env.inputs.get(name);
+    if (!decl) throw new EvalErr(`unknown name ${name}`);
+    if (!decl.fallback) throw new EvalErr(`input ${name} is not bound`, 'E5006');
+    const rt = this.env.resolve(decl.type);
+    const cctx: CCtx = {
+      names: (n) => (this.env.consts.has(n) ? `const:${n}` : undefined),
+      self: null,
+      rootName: name,
+      locals: new Set(),
+      resolveType: (t) => this.env.resolve(t),
+      menv: this.env,
+    };
+    const sc: BindScope = { inst: null, locals: new Map(), rootName: name, menv: this.env };
+    const v = this.bindValue(decl.fallback, rt, [name], null, cctx, sc)(this.cx, NO_LOCALS);
+    this.env.roots.set(name, v);
+    return v;
   }
 
   /** the value a reference denotes: walk its path from the root (§7.4, §7.5) */
