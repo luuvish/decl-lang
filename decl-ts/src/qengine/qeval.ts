@@ -2,7 +2,9 @@
 // query computes and evaluate a module's outputs through the incremental core
 // (db.ts). Covered so far:
 //   scalars/const, records (slots as queries, cross-slot & nested & member
-//   access), references ($this/$parent/$root/$key, deref/navigation),
+//   access; required/optional/default/derived/hidden members; restate and
+//   missing/undeclared diagnostics), references ($this/$parent/$root/$key,
+//   deref/navigation),
 //   arrays & array comprehensions, ranges, indexing, maps & map comprehensions,
 //   `in`/`matches`, patterns, string templates, `match` over literal unions,
 //   quantities and dimensional arithmetic, std/module-function calls, lambdas,
@@ -185,7 +187,13 @@ const QOPS = new Set(['+', '-', '*', '/', '<', '<=', '>', '>=']);
 /** read member `name` of a record value through the query graph (§4.10, §7.5) */
 function access(cx: OpCx, x: Value, name: string): Value {
   if (isRec(x)) {
-    if (x.slots.has(name)) return cx.query(`slot:${pathStr(x.path)}.${name}`) as Value;
+    const s = x.slots.get(name);
+    if (s) {
+      // an absent optional or a failed member yields ABSENT (§4.10); a live slot
+      // is forced through the query graph (memoized)
+      if (s.state === 'absent' || s.state === 'invalid') return ABSENT;
+      return cx.query(`slot:${pathStr(x.path)}.${name}`) as Value;
+    }
     if (x.extras.has(name)) throw new EvalErr(`opaque field ${name} accessed`);
     return ABSENT; // a member admitted only through an optional bound is absent
   }
@@ -307,14 +315,16 @@ function compile(e: Expr, c: CCtx): Op {
       };
     }
     case 'name': {
-      if (c.locals.has(e.name)) {
-        const n = e.name;
-        return (_cx, l) => l.get(n);
-      }
-      const key = c.names(e.name);
+      const nm = e.name;
+      if (c.locals.has(nm)) return (_cx, l) => l.get(nm);
+      // a member of the enclosing record shadows module names; read it through
+      // access so an absent optional yields ABSENT rather than a missing query
+      const self = c.self;
+      if (self && self.slots.has(nm)) return (cx) => access(cx, self, nm);
+      const key = c.names(nm);
       if (key !== undefined) return (cx) => cx.query(key) as Value;
-      if (e.name === 'std') return () => ({ __std: true, path: [] });
-      const fn = c.menv.funcs.get(e.name);
+      if (nm === 'std') return () => ({ __std: true, path: [] });
+      const fn = c.menv.funcs.get(nm);
       if (fn) {
         // a module function is a closure over the module scope; its body runs
         // through the value layer, which is pure over its parameters and consts
@@ -618,11 +628,13 @@ class QEval {
     let cur: Value = this.env.roots.get(segs[0] as string);
     for (let i = 1; i < segs.length && cur !== undefined; i++) {
       const s = segText(segs[i]);
-      if (isRec(cur))
-        cur = cur.slots.has(s as string)
-          ? this.cx.query(`slot:${pathStr(cur.path)}.${s}`)
-          : undefined;
-      else if (isArr(cur)) cur = cur.items[s as number];
+      if (isRec(cur)) {
+        const slot = cur.slots.get(s as string);
+        cur =
+          slot && slot.state !== 'absent' && slot.state !== 'invalid'
+            ? this.cx.query(`slot:${pathStr(cur.path)}.${s}`)
+            : undefined;
+      } else if (isArr(cur)) cur = cur.items[s as number];
       else if (isMap(cur)) cur = cur.entries.get(s);
       else cur = undefined;
       if (cur === ABSENT) cur = undefined;
@@ -659,14 +671,8 @@ class QEval {
     (inst as unknown as { eng: Engine }).eng = this.helper;
     this.env.registry.push(inst);
 
-    const memberNames = new Set<string>(rt.members.map((m: { name: string }) => m.name));
     const cctx: CCtx = {
-      names: (n) =>
-        memberNames.has(n)
-          ? `slot:${instId}.${n}`
-          : this.env.consts.has(n)
-            ? `const:${n}`
-            : undefined,
+      names: (n) => (this.env.consts.has(n) ? `const:${n}` : undefined),
       self: inst,
       rootName: path[0] as string,
       locals: new Set(),
@@ -680,35 +686,135 @@ class QEval {
       menv: this.env,
     };
 
+    // assertions/when-blocks (§6), context declarations (§7.3), and open-record
+    // tails come in later stages; a record that uses them skips for now
+    if (rt.asserts && rt.asserts.length) throw new Unsupported('record asserts/when');
+    if (rt.ctxDecls && rt.ctxDecls.length) throw new Unsupported('context declarations');
+    if (rt.open) throw new Unsupported('open record');
+
     for (const m of rt.members) {
-      if (m.kind === 'opt' || m.kind === 'dflt') throw new Unsupported(`member kind ${m.kind}`);
-      if (m.type && m.type.t === 'ref') throw new Unsupported('ref-typed member');
       const memberPath = [...path, m.name];
-      const valExpr: Expr | undefined = m.kind === 'der' ? m.expr : supplied.get(m.name);
-      if (valExpr === undefined) throw new Unsupported(`missing member ${m.name}`);
-      let produce: Op;
-      if (m.type && m.type.t === 'rec') {
-        if (valExpr.e !== 'obj') throw new Unsupported('record member not an object literal');
-        const objEntries = valExpr.entries;
-        const memberRt = m.type;
-        produce = () => this.bindRecord(objEntries, memberRt, memberPath, inst);
-      } else {
-        const op = compile(valExpr, cctx);
-        const memberRt = m.type;
-        produce = (cx, l) => {
-          const v = op(cx, l);
-          return memberRt ? this.helper.bind(v, memberRt, memberPath, inst, sc) : v;
-        };
+      const key = `slot:${instId}.${m.name}`;
+      const has = supplied.has(m.name);
+      const types: RT[] = m.conj ?? (m.type ? [m.type] : []);
+      // a member declared `ref<T>` holds a navigation (§7.4) — a later stage
+      if (m.type && m.type.t === 'ref') throw new Unsupported('ref-typed member');
+
+      if (m.kind === 'der') {
+        if (has && m.hidden) {
+          // a hidden member is never part of the value: supplying it is an error
+          this.diagnostics.push({
+            severity: 'error',
+            message: `hidden member ${m.name} supplied`,
+            path: pathStr(memberPath),
+            code: 'E4006',
+          });
+          inst.slots.set(m.name, { kind: 'der', hidden: true, state: 'invalid', deferred: false });
+          continue;
+        }
+        let produce: Op;
+        if (m.type && m.type.t === 'rec' && m.expr.e === 'obj') {
+          if (has) throw new Unsupported('restated derived record');
+          const objEntries = m.expr.entries;
+          const memberRt = m.type;
+          produce = () => this.bindRecord(objEntries, memberRt, memberPath, inst);
+        } else {
+          const op = compile(m.expr, cctx);
+          const memberRt = m.type;
+          const restateOp = has ? compile(supplied.get(m.name)!, cctx) : undefined;
+          produce = (cx, l) => {
+            let v = op(cx, l);
+            if (memberRt) v = this.helper.bind(v, memberRt, memberPath, inst, sc);
+            if (restateOp) {
+              // a derived member also supplied must be restated identically (§5.4)
+              const rawR = restateOp(cx, l);
+              const restated = memberRt
+                ? this.helper.bind(rawR, memberRt, memberPath, inst, sc)
+                : rawR;
+              if (!valueEq(v, restated))
+                throw new EvalErr(
+                  `derived member ${m.name} restated with a differing value`,
+                  'E4005',
+                );
+            }
+            return v;
+          };
+        }
+        this.slotJobs.set(key, produce);
+        inst.slots.set(m.name, {
+          kind: 'der',
+          hidden: m.hidden || undefined,
+          state: 'unforced',
+          deferred: false,
+        });
+        continue;
       }
-      this.slotJobs.set(`slot:${instId}.${m.name}`, produce);
-      inst.slots.set(m.name, {
-        kind: m.kind,
-        hidden: m.hidden || undefined,
-        state: 'unforced',
-        deferred: false,
+
+      if (has) {
+        this.slotJobs.set(
+          key,
+          this.supplyProduce(supplied.get(m.name)!, types, memberPath, inst, cctx, sc),
+        );
+        inst.slots.set(m.name, {
+          kind: m.kind,
+          hidden: m.hidden || undefined,
+          state: 'unforced',
+          deferred: false,
+        });
+      } else if (m.kind === 'dflt') {
+        this.slotJobs.set(key, this.supplyProduce(m.dflt, types, memberPath, inst, cctx, sc));
+        inst.slots.set(m.name, { kind: 'dflt', state: 'unforced', deferred: false });
+      } else if (m.kind === 'opt') {
+        inst.slots.set(m.name, { kind: 'opt', state: 'absent', deferred: false });
+      } else {
+        inst.slots.set(m.name, { kind: 'req', state: 'invalid', deferred: false });
+        this.diagnostics.push({
+          severity: 'error',
+          message: `required member ${m.name} missing`,
+          path: pathStr(memberPath),
+          code: 'E4002',
+        });
+      }
+    }
+
+    // supplied keys not declared by the type: an error on a closed record (§3.9)
+    for (const k of supplied.keys()) {
+      if (rt.members.some((m: { name: string }) => m.name === k)) continue;
+      this.diagnostics.push({
+        severity: 'error',
+        message: `undeclared member ${k} on closed record${rt.name ? ' ' + rt.name : ''}`,
+        path: pathStr([...path, k]),
+        code: 'E4003',
       });
     }
     return inst;
+  }
+
+  /**
+   * Build the compute for a supplied or default member value: a record-typed
+   * object literal recurses into the query graph; anything else compiles and
+   * type-binds (through each conjunct in turn, §3.11).
+   */
+  private supplyProduce(
+    valExpr: Expr,
+    types: RT[],
+    memberPath: Seg[],
+    inst: RecInst,
+    cctx: CCtx,
+    sc: { inst: RecInst | null; locals: Map<string, unknown>; rootName: string; menv: Env },
+  ): Op {
+    const only = types.length === 1 ? types[0] : undefined;
+    if (only && only.t === 'rec' && valExpr.e === 'obj') {
+      const objEntries = valExpr.entries;
+      return () => this.bindRecord(objEntries, only, memberPath, inst);
+    }
+    const op = compile(valExpr, cctx);
+    return (cx, l) => {
+      const raw = op(cx, l);
+      let v: Value = raw;
+      for (const ty of types) v = this.helper.bind(raw, ty, memberPath, inst, sc);
+      return types.length ? v : raw;
+    };
   }
 
   /** force every slot into the RecInst tree so serialization can read it */
@@ -718,7 +824,7 @@ class QEval {
     const id = pathStr(inst.path);
     for (const m of inst.rt.members) {
       const s = inst.slots.get(m.name);
-      if (!s) continue;
+      if (!s || s.state !== 'unforced') continue; // absent/invalid slots have no compute
       try {
         const v = this.db.query(`slot:${id}.${m.name}`) as Value;
         s.value = v;
@@ -746,7 +852,6 @@ class QEval {
 
   run(): QReport {
     const outputs: { name: string; json: string }[] = [];
-    let ok = true;
     for (const o of this.env.outputs) {
       try {
         const rt = this.env.resolve(o.type);
@@ -777,7 +882,6 @@ class QEval {
         outputs.push({ name: o.name, json: this.helper.serialize(v, o.name) });
       } catch (err) {
         if (err instanceof EvalErr) {
-          ok = false;
           this.diagnostics.push({
             severity: 'error',
             message: err.message,
@@ -787,8 +891,9 @@ class QEval {
         } else throw err; // Unsupported (or a real bug) bubbles to the caller
       }
     }
-    if (this.diagnostics.some((d) => d.severity === 'error')) ok = false;
-    return { ok, outputs, diagnostics: this.diagnostics };
+    // a single error anywhere suppresses every output (§9.3, as evaluateSource)
+    const ok = !this.diagnostics.some((d) => d.severity === 'error');
+    return { ok, outputs: ok ? outputs : [], diagnostics: this.diagnostics };
   }
 }
 

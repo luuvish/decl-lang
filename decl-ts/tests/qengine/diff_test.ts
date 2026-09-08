@@ -211,6 +211,55 @@ const programs: { name: string; src: string }[] = [
     name: 'pipe into a std call with a lambda',
     src: 'export output xs: int[] = [1, 2, 3, 4] |> std.array.filter((x) => x > 2)',
   },
+  // member kinds: optional, default, required, hidden, restated (§3.9, §5.4)
+  {
+    name: 'optional member supplied',
+    src: 'type R = { name: string, nick?: string }\nexport output r: R = { name: "a", nick: "b" }',
+  },
+  {
+    name: 'optional member absent',
+    src: 'type R = { name: string, nick?: string }\nexport output r: R = { name: "a" }',
+  },
+  {
+    name: 'default member uses its default',
+    src: 'type R = { name: string, retries?: int = 3 }\nexport output r: R = { name: "a" }',
+  },
+  {
+    name: 'default member overridden',
+    src: 'type R = { name: string, retries?: int = 3 }\nexport output r: R = { name: "a", retries: 5 }',
+  },
+  {
+    name: 'required member missing errors',
+    src: 'type R = { name: string, port: int }\nexport output r: R = { name: "a" }',
+  },
+  {
+    name: 'undeclared member on a closed record errors',
+    src: 'type R = { name: string }\nexport output r: R = { name: "a", extra: 1 }',
+  },
+  {
+    name: 'absent optional coalesced by a derived',
+    src: 'type R = { name: string, nick?: string, display = nick ?? "none" }\nexport output r: R = { name: "a" }',
+  },
+  {
+    name: 'derived reads a supplied optional',
+    src: 'type R = { name: string, nick?: string, display = nick ?? name }\nexport output r: R = { name: "a", nick: "z" }',
+  },
+  {
+    name: 'hidden derived member read by a sibling',
+    src: 'type R = { name: string, tag$ = name + "!", vis = tag }\nexport output r: R = { name: "a" }',
+  },
+  {
+    name: 'supplying a hidden member errors',
+    src: 'type R = { name: string, tag$ = "x" }\nexport output r: R = { name: "a", tag: "b" }',
+  },
+  {
+    name: 'derived member restated identically',
+    src: 'type R = { x: int, dbl = x * 2 }\nexport output r: R = { x: 5, dbl: 10 }',
+  },
+  {
+    name: 'derived member restated differently errors',
+    src: 'type R = { x: int, dbl = x * 2 }\nexport output r: R = { x: 5, dbl: 11 }',
+  },
 ];
 
 let pass = 0;
