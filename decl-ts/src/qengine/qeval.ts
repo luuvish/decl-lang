@@ -812,12 +812,11 @@ class QEval {
       menv: this.env,
     };
 
-    // open-record tails come in a later stage; a record that uses them skips
-    // for now. Assertions and when-blocks (§6) are validated after the universe
-    // is forced (see run → validateAll). Context declarations (§7.3) are a
-    // checker obligation (D30), not an evaluator concern — $this/$parent/$root/
-    // $key resolve structurally — so they need no handling here.
-    if (rt.open) throw new Unsupported('open record');
+    // Assertions and when-blocks (§6) are validated after the universe is forced
+    // (see run → validateAll). Context declarations (§7.3) are a checker
+    // obligation (D30), not an evaluator concern — $this/$parent/$root/$key
+    // resolve structurally — so they need no handling here. An open record is
+    // fine unless a document actually supplies extra members (handled below).
 
     for (const m of rt.members) {
       const memberPath = [...path, m.name];
@@ -948,9 +947,11 @@ class QEval {
       }
     }
 
-    // supplied keys not declared by the type: an error on a closed record (§3.9)
+    // supplied keys not declared by the type: kept as extras on an open record
+    // (their storage/serialization is a later stage), an error on a closed one
     for (const k of supplied.keys()) {
       if (rt.members.some((m: { name: string }) => m.name === k)) continue;
+      if (rt.open) throw new Unsupported('open-record extras');
       this.diagnostics.push({
         severity: 'error',
         message: `undeclared member ${k} on closed record${rt.name ? ' ' + rt.name : ''}`,
