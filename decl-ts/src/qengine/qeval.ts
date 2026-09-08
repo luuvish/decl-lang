@@ -741,10 +741,11 @@ class QEval {
       menv: this.env,
     };
 
-    // context declarations (§7.3) and open-record tails come in later stages; a
-    // record that uses them skips for now. Assertions and when-blocks (§6) are
-    // validated after the universe is forced (see run → validateAll).
-    if (rt.ctxDecls && rt.ctxDecls.length) throw new Unsupported('context declarations');
+    // open-record tails come in a later stage; a record that uses them skips
+    // for now. Assertions and when-blocks (§6) are validated after the universe
+    // is forced (see run → validateAll). Context declarations (§7.3) are a
+    // checker obligation (D30), not an evaluator concern — $this/$parent/$root/
+    // $key resolve structurally — so they need no handling here.
     if (rt.open) throw new Unsupported('open record');
 
     for (const m of rt.members) {
