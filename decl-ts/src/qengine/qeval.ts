@@ -10,11 +10,12 @@
 //   quantities and dimensional arithmetic, std/module-function calls, lambdas,
 //   and the pipe.
 // Value semantics — equality, serialization, type binding, iteration, type
-// membership, unit resolution, quantity arithmetic, function application — are
-// reused from the current value layer, as the design intends; only the
-// evaluation strategy is new. `ref<T>` navigation members, context declarations,
-// unions of records in collection positions, `$referrers`, and the rest come in
-// later stages. (A closure passed to a std function has its body run by the
+// membership, unit resolution, quantity arithmetic, function application,
+// assertions/when-blocks — are reused from the current value layer, as the
+// design intends; only the evaluation strategy is new. Assertions run over the
+// forced universe (run → validateAll). `ref<T>` navigation members, context
+// declarations, record-bearing unions, non-literal record values, `$referrers`,
+// and the rest come in later stages. (A closure passed to a std function has its body run by the
 // value layer for now — pure over its parameters and consts, so byte-identical;
 // closures compile into the query graph in a later stage.)
 import { Db } from './db.ts';
@@ -714,9 +715,9 @@ class QEval {
       menv: this.env,
     };
 
-    // assertions/when-blocks (§6), context declarations (§7.3), and open-record
-    // tails come in later stages; a record that uses them skips for now
-    if (rt.asserts && rt.asserts.length) throw new Unsupported('record asserts/when');
+    // context declarations (§7.3) and open-record tails come in later stages; a
+    // record that uses them skips for now. Assertions and when-blocks (§6) are
+    // validated after the universe is forced (see run → validateAll).
     if (rt.ctxDecls && rt.ctxDecls.length) throw new Unsupported('context declarations');
     if (rt.open) throw new Unsupported('open record');
 
@@ -995,9 +996,14 @@ class QEval {
         else throw err;
       }
     }
-    // a single error anywhere suppresses every output (§9.3, as evaluateSource)
-    const ok = !this.diagnostics.some((d) => d.severity === 'error');
-    return { ok, outputs: ok ? outputs : [], diagnostics: this.diagnostics };
+    // validate the forced universe (§6): every instance's assertions and
+    // when-blocks, read from the materialized slots by the value layer
+    this.helper.validateAll('');
+    // a single error anywhere suppresses every output (§9.3, as evaluateSource);
+    // assertion diagnostics land on the shared env, the rest on our own list
+    const diagnostics = [...this.diagnostics, ...this.env.diagnostics];
+    const ok = !diagnostics.some((d) => d.severity === 'error');
+    return { ok, outputs: ok ? outputs : [], diagnostics };
   }
 }
 
