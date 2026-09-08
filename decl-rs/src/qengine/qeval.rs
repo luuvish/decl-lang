@@ -5,10 +5,11 @@
 //! from the value layer (`Engine`); only the evaluation strategy is new. Built
 //! up stage by stage; a form not yet compiled raises [`Unsupported`].
 use crate::ast::{Expr, TypeAst};
-use crate::engine::{num_cmp, Engine};
+use crate::engine::{num_cmp, Engine, Inst};
 use crate::qengine::db::{Db, DbErr};
 use crate::semantics::{
-    err_code, path_str, value_eq, Diag, Env, EvalErr, Fail, Scope, Seg, Value, R,
+    err_code, path_str, rec_members, seg_text, sort_diags, value_eq, Compute, Diag, Env, EvalErr,
+    Fail, MKind, RecInst, Scope, Seg, Slot, SlotState, Value, R, RT,
 };
 use rustc_hash::{FxHashMap, FxHashSet};
 use std::cell::RefCell;
@@ -16,6 +17,17 @@ use std::rc::{Rc, Weak};
 
 /// an expression or member form this stage of the port does not compile yet
 pub struct Unsupported(pub String);
+
+/// the sentinel code marking a form the query engine hit at run time but does
+/// not handle; qevaluate turns it back into [`Unsupported`] so the caller falls
+/// back to the tree walker
+const QUNSUP: &str = "__QUNSUP__";
+fn unsup(msg: &str) -> Fail {
+    Fail::Eval(EvalErr {
+        msg: format!("qeval unsupported: {msg}"),
+        code: Some(QUNSUP.into()),
+    })
+}
 
 /// bindings in scope (comprehension loop variables)
 pub type Locals = FxHashMap<String, Value>;
@@ -34,6 +46,7 @@ pub struct QReport {
 
 /// the lexical context a compile happens in
 struct CCtx {
+    self_inst: Option<Inst>, // the record instance being constructed (§4.3 siblings)
     #[allow(dead_code)] // consumed by later stages (refs, $this/$root, ctx)
     root_name: String,
     locals: FxHashSet<String>, // comprehension loop variables in scope
@@ -215,12 +228,41 @@ fn compile(e: &Rc<Expr>, c: &CCtx) -> Result<Op, Unsupported> {
                     Ok(l.get(&nm).cloned().unwrap_or(Value::Undef))
                 }));
             }
+            // a member of the enclosing record — or an ancestor, nearest first
+            // (§8 scoping) — shadows module names; read it through access so an
+            // absent optional yields ABSENT
+            let mut cur = c.self_inst.clone();
+            while let Some(inst) = cur {
+                if inst.borrow().has_slot(&nm) {
+                    let owner = inst.clone();
+                    let nm2 = nm.clone();
+                    return Ok(Rc::new(move |q, _l| {
+                        q.helper.access(&Value::Rec(owner.clone()), &nm2)
+                    }));
+                }
+                cur = inst.borrow().parent.clone();
+            }
             // an entry-module const is query-native (memoized here)
             if c.menv.consts.borrow().contains_key(&nm) && Rc::ptr_eq(&c.menv, &c.entry_env) {
                 let key = format!("const:{nm}");
                 return Ok(Rc::new(move |q, _l| q.query(&key)));
             }
             Err(Unsupported(format!("name {nm}")))
+        }
+        Expr::Member { x, name, safe } => {
+            let nm = name.clone();
+            let safe = *safe;
+            let xc = compile(x, c)?;
+            Ok(Rc::new(move |q, l| {
+                let mut xv = xc(q, l)?;
+                if safe && matches!(xv, Value::Null | Value::Absent) {
+                    return Ok(Value::Absent);
+                }
+                if matches!(xv, Value::Ref(_)) {
+                    xv = q.helper.deref(xv)?;
+                }
+                q.helper.access(&xv, &nm)
+            }))
         }
         other => Err(Unsupported(expr_kind(other).to_string())),
     }
@@ -258,7 +300,9 @@ pub struct QEval {
     env: Rc<Env>,
     helper: Rc<Engine>,
     db: Db,
+    weak: Weak<QEval>, // for bridge thunks and forceMember (query-graph records)
     const_ops: RefCell<FxHashMap<String, Op>>,
+    slot_jobs: RefCell<FxHashMap<String, Op>>, // a record slot's compiled compute
     diagnostics: RefCell<Vec<Diag>>,
 }
 
@@ -281,20 +325,207 @@ impl QEval {
                 env,
                 helper,
                 db,
+                weak: weak.clone(),
                 const_ops: RefCell::new(FxHashMap::default()),
+                slot_jobs: RefCell::new(FxHashMap::default()),
                 diagnostics: RefCell::new(Vec::new()),
             }
         })
     }
 
+    /// a thunk the value layer runs to force a query-graph slot (Compute::Bridge)
+    fn bridge(&self, key: String) -> Compute {
+        let w = self.weak.clone();
+        Compute::Bridge(Rc::new(move || {
+            w.upgrade().expect("qeval alive").query(&key)
+        }))
+    }
+
+    /// Bind an object literal to a record type: a RecInst whose members are slot
+    /// queries. A record-typed member recurses; a scalar/other member compiles
+    /// and type-binds. Slots carry a bridge compute so the value layer can force
+    /// them; `materialize`/`force_all` fills them.
+    fn bind_record(
+        &self,
+        entries: &[(String, Rc<Expr>)],
+        rt: &RT,
+        path: Vec<Seg>,
+        parent: Option<Inst>,
+    ) -> R<Value> {
+        let inst_id = path_str(&path, None);
+        let root_name = seg_text(&path[0]);
+        let supplied: FxHashMap<String, Rc<Expr>> = entries.iter().cloned().collect();
+        let entry_order: Vec<String> = entries.iter().map(|(k, _)| k.clone()).collect();
+        let inst: Inst = Rc::new(RefCell::new(RecInst {
+            type_name: rt.name.borrow().clone(),
+            rt: rt.clone(),
+            path: Rc::new(path.clone()),
+            ps: RefCell::new(None),
+            parent,
+            slots: Vec::new(),
+            entry_order,
+            extras: Vec::new(),
+            menv: Some(self.env.clone()),
+        }));
+        self.env.registry_push(inst.clone());
+        let cctx = CCtx {
+            self_inst: Some(inst.clone()),
+            root_name: root_name.clone(),
+            locals: FxHashSet::default(),
+            menv: self.env.clone(),
+            entry_env: self.env.clone(),
+        };
+        let members = rec_members(rt);
+        // pass 1: declare every slot first, so a member expression compiled in
+        // pass 2 can resolve its sibling names (has_slot). The value expression
+        // (with its type, and the member path) is planned per live member.
+        type Plan = Option<(String, Rc<Expr>, Option<RT>, Vec<Seg>)>;
+        let mut plan: Vec<Plan> = Vec::new();
+        {
+            let mut slots: Vec<(String, Slot)> = Vec::new();
+            for m in &members {
+                let mut member_path = path.clone();
+                member_path.push(Seg::Name(Rc::from(m.name.as_str())));
+                let key = format!("slot:{inst_id}.{}", m.name);
+                let has = supplied.contains_key(&m.name);
+                let ve: Option<(Rc<Expr>, Option<RT>)> = if m.kind == MKind::Der {
+                    Some((
+                        m.expr
+                            .clone()
+                            .ok_or_else(|| unsup("derived without expr"))?,
+                        m.ty.clone(),
+                    ))
+                } else if has {
+                    let t = m.ty.clone().ok_or_else(|| unsup("member without type"))?;
+                    Some((supplied.get(&m.name).unwrap().clone(), Some(t)))
+                } else if m.kind == MKind::Dflt {
+                    let t = m.ty.clone().ok_or_else(|| unsup("member without type"))?;
+                    Some((
+                        m.dflt
+                            .clone()
+                            .ok_or_else(|| unsup("default without expr"))?,
+                        Some(t),
+                    ))
+                } else {
+                    None
+                };
+                let state = match (&ve, m.kind) {
+                    (Some(_), _) => SlotState::Unforced,
+                    (None, MKind::Opt) => SlotState::Absent,
+                    (None, _) => {
+                        self.diagnostics.borrow_mut().push(Diag {
+                            severity: "error".into(),
+                            id: None,
+                            message: format!("required member {} missing", m.name),
+                            path: path_str(&member_path, None),
+                            code: Some("E4002".into()),
+                            loc: None,
+                            by: Some(format!("root:{root_name}")),
+                        });
+                        SlotState::Invalid
+                    }
+                };
+                plan.push(ve.map(|(e, t)| (key, e, t, member_path)));
+                slots.push((
+                    m.name.clone(),
+                    Slot {
+                        kind: m.kind,
+                        hidden: m.hidden,
+                        state,
+                        value: Value::Undef,
+                        compute: None,
+                    },
+                ));
+            }
+            inst.borrow_mut().slots = slots;
+        }
+        // pass 2: compile each live member's value op and give the slot a bridge
+        for (m, entry) in members.iter().zip(plan) {
+            if let Some((key, expr, ty, member_path)) = entry {
+                let op = match &ty {
+                    Some(t) => self.bind_value(&expr, t, member_path, Some(inst.clone()), &cctx),
+                    None => compile(&expr, &cctx),
+                }
+                .map_err(|u| unsup(&u.0))?;
+                self.slot_jobs.borrow_mut().insert(key.clone(), op);
+                inst.borrow_mut().slot_mut(&m.name).unwrap().compute = Some(self.bridge(key));
+            }
+        }
+        // supplied keys not declared by the type: an error on a closed record
+        for (k, _) in entries {
+            if members.iter().any(|m| &m.name == k) {
+                continue;
+            }
+            if matches!(&rt.k, crate::semantics::RTk::Rec(r) if r.open.get()) {
+                return Err(unsup("open-record extras"));
+            }
+            self.diagnostics.borrow_mut().push(Diag {
+                severity: "error".into(),
+                id: None,
+                message: format!(
+                    "undeclared member {k} on closed record{}",
+                    rt.name
+                        .borrow()
+                        .as_deref()
+                        .map(|n| format!(" {n}"))
+                        .unwrap_or_default()
+                ),
+                path: path_str(
+                    &{
+                        let mut p = path.clone();
+                        p.push(Seg::Name(Rc::from(k.as_str())));
+                        p
+                    },
+                    None,
+                ),
+                code: Some("E4003".into()),
+                by: Some(format!("root:{root_name}")),
+                loc: None,
+            });
+        }
+        Ok(Value::Rec(inst))
+    }
+
+    /// build the compute for a value expression bound to a type: a record
+    /// literal recurses into the query graph; anything else compiles + binds
+    fn bind_value(
+        &self,
+        val: &Rc<Expr>,
+        ty: &RT,
+        path: Vec<Seg>,
+        parent: Option<Inst>,
+        cctx: &CCtx,
+    ) -> Result<Op, Unsupported> {
+        use crate::semantics::RTk;
+        if let (RTk::Rec(_), Expr::Obj(entries)) = (&ty.k, &**val) {
+            let entries = entries.clone();
+            let ty = ty.clone();
+            return Ok(Rc::new(move |q, _l| {
+                q.bind_record(&entries, &ty, path.clone(), parent.clone())
+            }));
+        }
+        let op = compile(val, cctx)?;
+        let ty = ty.clone();
+        let root_name = seg_text(&path[0]);
+        Ok(Rc::new(move |q, l| {
+            let raw = op(q, l)?;
+            let sc = Scope::new(&root_name, Some(q.env.clone())).with_inst(parent.clone());
+            q.helper.bind(raw, &ty, &path, parent.as_ref(), &sc)
+        }))
+    }
+
     /// the compute for a query key: a const (compiled lazily) for now
     fn op_for(&self, key: &str) -> Option<Op> {
+        if key.starts_with("slot:") {
+            return self.slot_jobs.borrow().get(key).cloned();
+        }
         if let Some(name) = key.strip_prefix("const:") {
             if let Some(op) = self.const_ops.borrow().get(name) {
                 return Some(op.clone());
             }
             let con = self.env.consts.borrow().get(name)?.clone();
             let c = CCtx {
+                self_inst: None,
                 root_name: String::new(),
                 locals: FxHashSet::default(),
                 menv: self.env.clone(),
@@ -323,43 +554,36 @@ impl QEval {
     }
 
     fn run(self: &Rc<Self>, roots: &[(String, TypeAst, Rc<Expr>)]) -> QReport {
-        let mut outputs: Vec<(String, String)> = Vec::new();
+        // bind every root, then force the whole universe, then validate (§9.3)
+        let mut built: Vec<(String, Value)> = Vec::new();
         for (name, tyast, expr) in roots {
             let rt = match self.env.resolve(tyast, None) {
                 Ok(rt) => rt,
                 Err(_) => continue, // a type that does not resolve: the checker's domain
             };
             let c = CCtx {
+                self_inst: None,
                 root_name: name.clone(),
                 locals: FxHashSet::default(),
                 menv: self.env.clone(),
                 entry_env: self.env.clone(),
             };
-            let op = match compile(expr, &c) {
+            let path = vec![Seg::Name(name.as_str().into())];
+            let op = match self.bind_value(expr, &rt, path, None, &c) {
                 Ok(op) => op,
                 Err(u) => {
-                    // an unhandled form: skip the whole evaluation (the caller
-                    // falls back to the tree walker)
                     self.diagnostics.borrow_mut().push(Diag::error(
                         format!("qeval unsupported: {}", u.0),
                         name.clone(),
-                        Some("__QUNSUP__"),
+                        Some(QUNSUP),
                     ));
-                    return QReport {
-                        ok: false,
-                        outputs: Vec::new(),
-                        diagnostics: vec![],
-                    };
+                    return self.report();
                 }
             };
-            let sc = Scope::new(name, Some(self.env.clone()));
-            let path = [Seg::Name(name.as_str().into())];
-            match op(self, &Locals::default())
-                .and_then(|raw| self.helper.bind(raw, &rt, &path, None, &sc))
-            {
+            match op(self, &Locals::default()) {
                 Ok(v) => {
                     self.env.set_root(name, v.clone());
-                    outputs.push((name.clone(), self.helper.serialize(&v, name, false)));
+                    built.push((name.clone(), v));
                 }
                 Err(Fail::Eval(e)) => self.diagnostics.borrow_mut().push(Diag {
                     severity: "error".into(),
@@ -373,11 +597,34 @@ impl QEval {
                 Err(_) => {} // Taint: the value layer already reported it
             }
         }
-        let diags = self.diagnostics.borrow().clone();
+        // force every slot of the whole universe (query-graph slots via the
+        // bridge; value-layer records natively), then validate assertions (§6)
+        for (_, v) in &built {
+            self.helper.force_all(v);
+        }
+        self.helper.validate_all("");
+        let mut outputs: Vec<(String, String)> = Vec::new();
+        for (name, v) in &built {
+            outputs.push((name.clone(), self.helper.serialize(v, name, false)));
+        }
+        let report = self.report();
+        QReport {
+            ok: report.ok,
+            outputs: if report.ok { outputs } else { Vec::new() },
+            diagnostics: report.diagnostics,
+        }
+    }
+
+    /// combine this run's own diagnostics with the value layer's, sort them
+    /// (§6.7), and decide `ok`
+    fn report(&self) -> QReport {
+        let mut diags = self.diagnostics.borrow().clone();
+        diags.extend(self.env.diagnostics_vec());
+        let diags = sort_diags(diags);
         let ok = !diags.iter().any(|d| d.severity == "error");
         QReport {
             ok,
-            outputs: if ok { outputs } else { Vec::new() },
+            outputs: Vec::new(),
             diagnostics: diags,
         }
     }
@@ -406,11 +653,4 @@ pub fn qevaluate(env: Rc<Env>) -> Result<QReport, Unsupported> {
         return Err(Unsupported("form".into()));
     }
     Ok(report)
-}
-
-// silence unused-field warnings until later stages consume them
-#[allow(dead_code)]
-fn _uses(q: &QEval) {
-    let _ = &q.db;
-    let _ = path_str(&[], None);
 }

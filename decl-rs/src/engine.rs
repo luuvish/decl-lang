@@ -3070,6 +3070,7 @@ impl Engine {
                 }
                 Ok(v)
             }
+            Compute::Bridge(f) => f(),
         }
     }
 

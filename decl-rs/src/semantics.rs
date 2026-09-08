@@ -554,6 +554,10 @@ pub enum Compute {
         /// the module environment
         menv: Option<Rc<Env>>,
     },
+    /// a query-engine slot: forcing it runs the given thunk, which reads the
+    /// value through the incremental database (qengine). Lets the value layer
+    /// force a query-graph slot uniformly (§7.5 navigation, §6 asserts).
+    Bridge(Rc<dyn Fn() -> R<Value>>),
 }
 
 /// a member's slot in an instance

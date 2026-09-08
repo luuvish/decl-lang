@@ -177,3 +177,32 @@ fn diff_scalars_and_consts() {
         "expected most scalar programs to match, got {matched}"
     );
 }
+
+#[test]
+fn diff_records() {
+    let programs = [
+        "type Point = { x: int, y: int, sum = x + y, scaled = sum * 2 }\nexport output p: Point = { x: 3, y: 4 }",
+        "const k = 100\ntype R = { base: int, total = base + k }\nexport output r: R = { base: 5 }",
+        "type T = { n: int, name: string, doubled = n * 2, tag = name }\nexport output t: T = { n: 21, name: \"hi\" }",
+        "type C = { a: int, b = a + 1, c = b + 1, d = c + a }\nexport output c: C = { a: 10 }",
+        "type Inner = { a: int, b: int }\ntype Outer = { inner: Inner, total = inner.a + inner.b }\nexport output o: Outer = { inner: { a: 3, b: 4 } }",
+        "type L2 = { v: int }\ntype L1 = { deep: L2, twice = deep.v * 2 }\ntype Top = { mid: L1, plus = mid.deep.v + mid.twice }\nexport output t: Top = { mid: { deep: { v: 5 } } }",
+        "type R = { name: string, nick?: string }\nexport output r: R = { name: \"a\", nick: \"b\" }",
+        "type R = { name: string, nick?: string }\nexport output r: R = { name: \"a\" }",
+        "type R = { name: string, retries?: int = 3 }\nexport output r: R = { name: \"a\" }",
+        "type R = { name: string, retries?: int = 3 }\nexport output r: R = { name: \"a\", retries: 5 }",
+        "type R = { name: string, nick?: string, display = nick ?? \"none\" }\nexport output r: R = { name: \"a\" }",
+    ];
+    let mut matched = 0;
+    for src in programs {
+        match same(src) {
+            Some(true) => matched += 1,
+            Some(false) => panic!("query engine diverged on:\n{src}"),
+            None => {}
+        }
+    }
+    assert!(
+        matched >= 10,
+        "expected most record programs to match, got {matched}"
+    );
+}
