@@ -45,6 +45,7 @@ import {
   patternError,
   pathStr,
   segText,
+  sortDiags,
   valueEq,
 } from '../semantics.ts';
 import type { Env, RecInst, Value, Diag, Seg, RT } from '../semantics.ts';
@@ -272,6 +273,19 @@ function edgeEq(a: Edge, b: Edge): boolean {
     if (!f || refsKey(e.refs) !== refsKey(f.refs)) return false;
   }
   return true;
+}
+/** the path of the first candidate whose refs differ between two edges (§6.7) */
+function edgeDiff(a: Edge, b: Edge): string {
+  const paths = [...new Set([...a.keys(), ...b.keys()])]
+    .map((k) => (a.get(k) ?? b.get(k))!.path)
+    .sort(cmpPath);
+  for (const p of paths) {
+    const k = pathStr(p);
+    const e = a.get(k);
+    const f = b.get(k);
+    if (!e || !f || refsKey(e.refs) !== refsKey(f.refs)) return k;
+  }
+  return '';
 }
 /** a stable string for a whole round's edges, for cycle detection */
 function edgesKey(edges: Map<string, Edge>): string {
@@ -1087,6 +1101,7 @@ class QEval {
               message: `required member ${m.name} missing`,
               path: pathStr(memberPath),
               code: 'E4002',
+              by: `root:${path[0] as string}`,
             });
           }
           continue;
@@ -1117,6 +1132,7 @@ class QEval {
             message: `hidden member ${m.name} supplied`,
             path: pathStr(memberPath),
             code: 'E4006',
+            by: `root:${path[0] as string}`,
           });
           inst.slots.set(m.name, { kind: 'der', hidden: true, state: 'invalid', deferred: false });
           continue;
@@ -1185,6 +1201,7 @@ class QEval {
           message: `required member ${m.name} missing`,
           path: pathStr(memberPath),
           code: 'E4002',
+          by: `root:${path[0] as string}`,
         });
       }
     }
@@ -1199,6 +1216,7 @@ class QEval {
         message: `undeclared member ${k} on closed record${rt.name ? ' ' + rt.name : ''}`,
         path: pathStr([...path, k]),
         code: 'E4003',
+        by: `root:${path[0] as string}`,
       });
     }
     return inst;
@@ -1334,13 +1352,20 @@ class QEval {
         s.state = 'ok';
         this.materializeValue(v, seen);
       } catch (err) {
+        const by = `${id}.${m.name}`; // the slot forcing step that produced it (§6.7)
         if (err instanceof EvalErr) {
           s.state = 'invalid';
+          const code = (err as { code?: string }).code;
+          // the reference tags a diagnostic reported inside the forcing step
+          // (a reference or restate failure); a raw evaluation error (E5xxx)
+          // propagates and is reported untagged
+          const tagged = code === 'E6002' || code === 'E4005';
           this.diagnostics.push({
             severity: 'error',
             message: err.message,
             path: pathStr([...inst.path, m.name]),
-            code: (err as { code?: string }).code,
+            code,
+            ...(tagged ? { by } : {}),
           });
         } else if (err instanceof QueryCycle) {
           // a slot that (transitively) reads itself — §7.6/§9.3 dependency cycle
@@ -1351,6 +1376,7 @@ class QEval {
             message: `dependency cycle: ${ends[0]} -> ${ends[ends.length - 1]}`,
             path: pathStr([...inst.path, m.name]),
             code: 'E5007',
+            by,
           });
         } else if (err instanceof Taint) {
           s.state = 'invalid'; // the value layer already reported the diagnostic
@@ -1388,6 +1414,7 @@ class QEval {
         built.push({ name: o.name, v });
       } catch (err) {
         if (err instanceof EvalErr)
+          // a raw evaluation error at an output's root propagates untagged
           this.diagnostics.push({
             severity: 'error',
             message: err.message,
@@ -1443,8 +1470,9 @@ class QEval {
     // when-blocks, read from the materialized slots by the value layer
     this.helper.validateAll('');
     // a single error anywhere suppresses every output (§9.3, as evaluateSource);
-    // assertion diagnostics land on the shared env, the rest on our own list
-    const diagnostics = [...this.diagnostics, ...this.env.diagnostics];
+    // assertion diagnostics land on the shared env, the rest on our own list.
+    // Sort them in (path, id) order (§6.7), as the source pipeline does.
+    const diagnostics = sortDiags([...this.diagnostics, ...this.env.diagnostics]);
     const ok = !diagnostics.some((d) => d.severity === 'error');
     return { ok, outputs: ok ? outputs : [], diagnostics };
   }
@@ -1475,17 +1503,16 @@ function evalRounds(
     const cycled = !stable && seen.has(edgesKey(live));
     if (stable || cycled || round === ROUNDS) {
       if (stable) return report;
-      const diagnostics = report.diagnostics.slice();
-      for (const key of changed) {
+      const e5009 = changed.map((key) => {
         const [t, m] = key.split('|');
-        diagnostics.push({
+        return {
           severity: 'error',
           message: `$referrers(${t}, "${m}") does not stabilize after ${ROUNDS} rounds`,
-          path: t,
+          path: edgeDiff(live.get(key)!, prevEdges.get(key) ?? new Map()),
           code: 'E5009',
-        });
-      }
-      return { ok: false, outputs: [], diagnostics };
+        };
+      });
+      return { ok: false, outputs: [], diagnostics: sortDiags([...report.diagnostics, ...e5009]) };
     }
     seen.set(edgesKey(live), round);
     // this round becomes the next round's frozen universe; start over

@@ -23,6 +23,7 @@ const files = globSync('tests/validation/**/*.decl', { cwd: root }).sort();
 let matched = 0;
 let skipUnsup = 0;
 let skipStage = 0;
+let diagMismatch = 0;
 const reasons = new Map<string, number>();
 const bump = (k: string) => reasons.set(k, (reasons.get(k) ?? 0) + 1);
 
@@ -60,18 +61,28 @@ for (const rel of files) {
     check(rel, false, `crash: ${(e as Error).message.slice(0, 80)}`);
     continue;
   }
+  // the whole report must match — serialized outputs, `ok`, and the
+  // evaluation/validation diagnostics in field and sort order (§6.7, §12.2)
+  const refDiag = JSON.stringify(ref.diagnostics);
+  const gotDiag = JSON.stringify(got.diagnostics);
   const same =
-    JSON.stringify(ref.outputs) === JSON.stringify(got.outputs) && ref.ok === got.ok;
+    JSON.stringify(ref.outputs) === JSON.stringify(got.outputs) &&
+    ref.ok === got.ok &&
+    refDiag === gotDiag;
   check(
     rel,
     same,
-    same ? '' : `ref=${JSON.stringify(ref.outputs)} got=${JSON.stringify(got.outputs)} (ok ${ref.ok}/${got.ok})`,
+    same
+      ? ''
+      : `\n    ref(${ref.ok}): ${JSON.stringify(ref.outputs)} ${refDiag}\n    got(${got.ok}): ${JSON.stringify(got.outputs)} ${gotDiag}`,
   );
   if (same) matched++;
+  else if (JSON.stringify(ref.outputs) === JSON.stringify(got.outputs) && ref.ok === got.ok)
+    diagMismatch++; // outputs agree but diagnostics differ
 }
 
 console.log(
-  `\n  matched ${matched}, skipped ${skipUnsup} (unsupported form) + ${skipStage} (parser/checker) / ${files.length} fixtures`,
+  `\n  matched ${matched}, skipped ${skipUnsup} (unsupported form) + ${skipStage} (parser/checker) / ${files.length} fixtures; diagnostic mismatches: ${diagMismatch}`,
 );
 if (reasons.size) {
   console.log('  not-yet-compiled forms:');
