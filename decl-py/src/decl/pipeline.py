@@ -14,19 +14,22 @@ from .parse import parse_source
 from .qengine.qeval import Unsupported, qevaluate
 from .semantics import Env, Scope, sort_diags
 
+_FALSY = {"", "0", "false", "off", "no"}
+
 
 def use_qengine() -> bool:
-    """The incremental query engine may stand in for the tree walker
-    (qengine/DESIGN.md): a drop-in, byte-identical evaluator, off unless
-    DECL_QENGINE is set to a non-empty value — while it is validated across the
-    whole corpus. A non-empty env value is truthy, as the reference reads it."""
-    return bool(os.environ.get("DECL_QENGINE"))
+    """The incremental query engine (qengine/DESIGN.md) is the default evaluator,
+    a drop-in, byte-identical replacement for the tree walker; opt out of it with
+    DECL_QENGINE=0 (or false/off/no) to run the tree walker."""
+    v = os.environ.get("DECL_QENGINE")
+    return True if v is None else v.lower() not in _FALSY
 
 
 def strict_qengine() -> bool:
     """strict mode: an unhandled form is a hard error, not a silent fall back to
-    the tree walker — used to prove the query engine covers a corpus end to end"""
-    return bool(os.environ.get("DECL_QENGINE_STRICT"))
+    the tree walker — off unless DECL_QENGINE_STRICT is set, to prove coverage"""
+    v = os.environ.get("DECL_QENGINE_STRICT")
+    return v is not None and v.lower() not in _FALSY
 
 
 def run_pipeline(decls: list[Any]) -> dict[str, Any]:

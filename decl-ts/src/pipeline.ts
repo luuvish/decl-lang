@@ -10,15 +10,22 @@ import { Engine } from './engine.ts';
 import type { Decl } from './ast.ts';
 import { qevaluate, Unsupported } from './qengine/qeval.ts';
 
-/** the incremental query engine may be selected in place of the tree walker
- *  (qengine/DESIGN.md); it is a drop-in, byte-identical evaluator, off unless
- *  DECL_QENGINE is set — while it is validated across the whole corpus */
-const qEnv = (k: string): boolean =>
-  !!(globalThis as { process?: { env: Record<string, string | undefined> } }).process?.env[k];
-const useQEngine = (): boolean => qEnv('DECL_QENGINE');
+/** the incremental query engine (qengine/DESIGN.md) is the default evaluator, a
+ *  drop-in, byte-identical replacement for the tree walker; opt out of it with
+ *  DECL_QENGINE=0 (or false/off/no) to run the tree walker */
+const qRaw = (k: string): string | undefined =>
+  (globalThis as { process?: { env: Record<string, string | undefined> } }).process?.env[k];
+const FALSY = new Set(['', '0', 'false', 'off', 'no']);
+export const useQEngine = (): boolean => {
+  const v = qRaw('DECL_QENGINE');
+  return v === undefined ? true : !FALSY.has(v.toLowerCase());
+};
 /** strict mode: an unhandled form is an error, not a silent fall back to the
- *  tree walker — used to prove the query engine covers a corpus end to end */
-export const strictQEngine = (): boolean => qEnv('DECL_QENGINE_STRICT');
+ *  tree walker — DECL_QENGINE_STRICT, off unless set, to prove full coverage */
+export const strictQEngine = (): boolean => {
+  const v = qRaw('DECL_QENGINE_STRICT');
+  return v !== undefined && !FALSY.has(v.toLowerCase());
+};
 
 export type Pipeline = { env: Env; eng: Engine; diags: Diag[] };
 

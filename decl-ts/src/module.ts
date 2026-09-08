@@ -8,13 +8,7 @@ import type { Diag } from './semantics.ts';
 import type { Decl, Loc } from './ast.ts';
 import { Engine } from './engine.ts';
 import { qevaluateUniverse, Unsupported } from './qengine/qeval.ts';
-import { strictQEngine } from './pipeline.ts';
-
-/** the incremental query engine may evaluate the universe in place of the tree
- *  walker (qengine/DESIGN.md), off unless DECL_QENGINE is set */
-const useQEngine = (): boolean =>
-  !!(globalThis as { process?: { env: Record<string, string | undefined> } }).process?.env
-    .DECL_QENGINE;
+import { strictQEngine, useQEngine } from './pipeline.ts';
 
 export type ExportEntry = { env: Env; name: string };
 export type Module = {

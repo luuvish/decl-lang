@@ -10,21 +10,29 @@ use crate::qengine::qeval::qevaluate;
 use crate::semantics::{sort_diags, Diag, Env, Scope};
 use std::rc::Rc;
 
-/// The incremental query engine may stand in for the tree walker
-/// (qengine/DESIGN.md): a drop-in, byte-identical evaluator, off unless
-/// `DECL_QENGINE` is set to a non-empty value — while it is validated across
-/// the whole corpus. A non-empty env value is truthy, as the reference reads it.
-fn q_env(k: &str) -> bool {
-    std::env::var(k).map(|v| !v.is_empty()).unwrap_or(false)
+/// whether an env value reads as false: unset is the caller's default; a value
+/// of `0`/`false`/`off`/`no` (or empty) is off, anything else is on
+fn q_falsy(v: &str) -> bool {
+    matches!(
+        v.to_ascii_lowercase().as_str(),
+        "" | "0" | "false" | "off" | "no"
+    )
 }
-/// whether to evaluate through the query engine
+/// The incremental query engine (qengine/DESIGN.md) is the default evaluator, a
+/// drop-in, byte-identical replacement for the tree walker; opt out of it with
+/// `DECL_QENGINE=0` (or false/off/no) to run the tree walker.
 pub fn use_qengine() -> bool {
-    q_env("DECL_QENGINE")
+    match std::env::var("DECL_QENGINE") {
+        Err(_) => true, // unset: the query engine is the default
+        Ok(v) => !q_falsy(&v),
+    }
 }
 /// strict mode: an unhandled form is a hard error, not a silent fall back to
-/// the tree walker — used to prove the query engine covers a corpus end to end
+/// the tree walker — off unless `DECL_QENGINE_STRICT` is set, to prove coverage
 pub fn strict_qengine() -> bool {
-    q_env("DECL_QENGINE_STRICT")
+    std::env::var("DECL_QENGINE_STRICT")
+        .map(|v| !q_falsy(&v))
+        .unwrap_or(false)
 }
 
 /// one module evaluated: its environment, its engine, its diagnostics
