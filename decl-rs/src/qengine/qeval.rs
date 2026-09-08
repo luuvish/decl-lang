@@ -321,6 +321,29 @@ struct MArm {
     body: Op,
 }
 
+/// how a record slot's compute is built in `bind_record`'s second pass
+enum SlotPlan {
+    /// a slot with no compute (absent optional, invalid required/hidden)
+    Skip,
+    /// a `ref<T>` member: a place navigation checked for integrity (§7.4–7.5)
+    Ref { key: String, place: Rc<Expr> },
+    /// a derived member (§5.4), optionally restating a supplied value
+    Der {
+        key: String,
+        expr: Rc<Expr>,
+        ty: Option<RT>,
+        restate: Option<Rc<Expr>>,
+        member_path: Vec<Seg>,
+    },
+    /// a supplied or defaulted value member, bound through its type(s)
+    Supply {
+        key: String,
+        expr: Rc<Expr>,
+        types: Vec<RT>,
+        member_path: Vec<Seg>,
+    },
+}
+
 /// resolve a `match` arm's type against the module scope; the catch-all has none
 fn compile_arm_type(a: &MatchArm, c: &CCtx) -> Result<Option<RT>, Unsupported> {
     match &a.ty {
@@ -411,6 +434,125 @@ fn compile_callee(e: &Rc<Expr>, c: &CCtx) -> Result<Op, Unsupported> {
         }));
     }
     compile(e, c)
+}
+
+/// a compiled place navigation: the path segments a ref-position expression
+/// denotes, or None when the expression is not a place
+type PlaceOp = Rc<dyn Fn(&QEval, &Locals) -> R<Option<Vec<Seg>>>>;
+
+/// navigate an expression as a place (§7.4): a step past a missing member, key,
+/// or index still names the location (accumulated in a `Segs` value); a present
+/// step yields the value there. Mirrors the value layer's `ev_nav`.
+fn compile_nav(e: &Rc<Expr>, c: &CCtx) -> Result<Op, Unsupported> {
+    match &**e {
+        Expr::If { c: cc, t, f } => {
+            let cop = compile(cc, c)?;
+            let top = compile_nav(t, c)?;
+            let fop = compile_nav(f, c)?;
+            Ok(Rc::new(move |q, l| {
+                if truthy(&cop(q, l)?)? {
+                    top(q, l)
+                } else {
+                    fop(q, l)
+                }
+            }))
+        }
+        Expr::Paren(x) => compile_nav(x, c),
+        Expr::Member { x, name, .. } => {
+            let nm = name.clone();
+            let xop = compile_nav(x, c)?;
+            Ok(Rc::new(move |q, l| {
+                let x0 = xop(q, l)?;
+                if let Value::Segs(p) = &x0 {
+                    let mut p = (**p).clone();
+                    p.push(Seg::Name(Rc::from(nm.as_str())));
+                    return Ok(Value::Segs(Rc::new(p)));
+                }
+                let x = q.helper.deref(x0)?;
+                let v = q.helper.access(&x, &nm)?;
+                if v.is_absent() {
+                    if let Value::Rec(r) = &x {
+                        let mut p = r.borrow().path.to_vec();
+                        p.push(Seg::Name(Rc::from(nm.as_str())));
+                        return Ok(Value::Segs(Rc::new(p)));
+                    }
+                }
+                Ok(v)
+            }))
+        }
+        Expr::Index { x, i } => {
+            let normal = compile(e, c)?; // a non-collection base falls to normal eval
+            let xop = compile_nav(x, c)?;
+            let iop = compile(i, c)?;
+            Ok(Rc::new(move |q, l| {
+                let x0 = xop(q, l)?;
+                let iv = iop(q, l)?;
+                if let Value::Segs(p) = &x0 {
+                    let mut p = (**p).clone();
+                    match &iv {
+                        Value::Str(k) => p.push(Seg::Key(k.clone())),
+                        _ => p.push(Seg::Idx(to_index(&iv)?.max(0) as usize)),
+                    }
+                    return Ok(Value::Segs(Rc::new(p)));
+                }
+                let x = q.helper.deref(x0)?;
+                match &x {
+                    Value::Arr(a) => {
+                        let n = to_index(&iv)?;
+                        let b = a.borrow();
+                        if n >= 0 && (n as usize) < b.items.len() {
+                            Ok(b.items[n as usize].clone())
+                        } else {
+                            let mut p = b.path.to_vec();
+                            p.push(Seg::Idx(n.max(0) as usize));
+                            Ok(Value::Segs(Rc::new(p)))
+                        }
+                    }
+                    Value::Map(m) => {
+                        let Value::Str(k) = &iv else {
+                            return err("map index needs a string");
+                        };
+                        let b = m.borrow();
+                        match b.get(k) {
+                            Some(v) => Ok(v.clone()),
+                            None => {
+                                let mut p = b.path.to_vec();
+                                p.push(Seg::Key(k.clone()));
+                                Ok(Value::Segs(Rc::new(p)))
+                            }
+                        }
+                    }
+                    Value::Rec(r) => {
+                        let Value::Str(k) = &iv else {
+                            return err("index on record needs a string");
+                        };
+                        let v = q.helper.access(&x, k)?;
+                        if v.is_absent() {
+                            let mut p = r.borrow().path.to_vec();
+                            p.push(Seg::Name(k.clone()));
+                            Ok(Value::Segs(Rc::new(p)))
+                        } else {
+                            Ok(v)
+                        }
+                    }
+                    _ => normal(q, l),
+                }
+            }))
+        }
+        _ => compile(e, c),
+    }
+}
+
+/// the path segments a ref-position expression denotes, or None if not a place
+fn compile_place(e: &Rc<Expr>, c: &CCtx) -> Result<PlaceOp, Unsupported> {
+    let nav = compile_nav(e, c)?;
+    Ok(Rc::new(move |q, l| {
+        let v = nav(q, l)?;
+        Ok(match v {
+            Value::Segs(p) => Some((*p).clone()),
+            other => other.place(),
+        })
+    }))
 }
 
 /// compile an expression to a query compute (a closure over the query engine)
@@ -935,10 +1077,28 @@ impl QEval {
         }))
     }
 
+    /// report an evaluation-time diagnostic this run owns (a build-time member
+    /// error); `by` groups it under its root for `$referrers` rounds but is not
+    /// serialized (§12.2)
+    fn diag(&self, message: String, path: Vec<Seg>, code: &str, root_name: &str) {
+        self.diagnostics.borrow_mut().push(Diag {
+            severity: "error".into(),
+            id: None,
+            message,
+            path: path_str(&path, None),
+            code: Some(code.into()),
+            loc: None,
+            by: Some(format!("root:{root_name}")),
+        });
+    }
+
     /// Bind an object literal to a record type: a RecInst whose members are slot
-    /// queries. A record-typed member recurses; a scalar/other member compiles
-    /// and type-binds. Slots carry a bridge compute so the value layer can force
-    /// them; `materialize`/`force_all` fills them.
+    /// queries. A `ref<T>` member holds a navigation checked for reference
+    /// integrity; a derived member may restate a supplied value; a record-typed
+    /// member recurses; a scalar or conjunction member type-binds through the
+    /// value layer. Slots carry a bridge compute so the value layer can force
+    /// them; `force_all` fills them. Two passes so a member expression can
+    /// resolve a sibling declared later (§4.3).
     fn bind_record(
         &self,
         entries: &[(String, Rc<Expr>)],
@@ -970,93 +1130,165 @@ impl QEval {
             entry_env: self.env.clone(),
         };
         let members = rec_members(rt);
-        // pass 1: declare every slot first, so a member expression compiled in
-        // pass 2 can resolve its sibling names (has_slot). The value expression
-        // (with its type, and the member path) is planned per live member.
-        type Plan = Option<(String, Rc<Expr>, Option<RT>, Vec<Seg>)>;
-        let mut plan: Vec<Plan> = Vec::new();
-        {
-            let mut slots: Vec<(String, Slot)> = Vec::new();
-            for m in &members {
-                let mut member_path = path.clone();
-                member_path.push(Seg::Name(Rc::from(m.name.as_str())));
-                let key = format!("slot:{inst_id}.{}", m.name);
-                let has = supplied.contains_key(&m.name);
-                let ve: Option<(Rc<Expr>, Option<RT>)> = if m.kind == MKind::Der {
-                    Some((
-                        m.expr
-                            .clone()
-                            .ok_or_else(|| unsup("derived without expr"))?,
-                        m.ty.clone(),
-                    ))
-                } else if has {
-                    let t = m.ty.clone().ok_or_else(|| unsup("member without type"))?;
-                    Some((supplied.get(&m.name).unwrap().clone(), Some(t)))
+
+        // pass 1: decide each slot's kind and initial state and declare it, so a
+        // member expression compiled in pass 2 can resolve its sibling names;
+        // record how each live slot's compute is built
+        let mut plans: Vec<SlotPlan> = Vec::with_capacity(members.len());
+        let mut slots: Vec<(String, Slot)> = Vec::with_capacity(members.len());
+        let mut push_slot = |name: &str, kind: MKind, hidden: bool, state: SlotState| {
+            slots.push((
+                name.to_string(),
+                Slot {
+                    kind,
+                    hidden,
+                    state,
+                    value: Value::Undef,
+                    compute: None,
+                },
+            ));
+        };
+        for m in &members {
+            let mut member_path = path.clone();
+            member_path.push(Seg::Name(Rc::from(m.name.as_str())));
+            let key = format!("slot:{inst_id}.{}", m.name);
+            let has = supplied.get(&m.name).cloned();
+            let types: Vec<RT> = m
+                .conj
+                .clone()
+                .unwrap_or_else(|| m.ty.iter().cloned().collect());
+
+            // a `ref<T>` member holds a navigation (§7.4), forced for integrity
+            let is_ref = matches!(&m.ty, Some(t) if matches!(t.k, RTk::Ref(_))) && m.conj.is_none();
+            if is_ref {
+                let place = if m.kind == MKind::Der {
+                    m.expr.clone()
+                } else if has.is_some() {
+                    has.clone()
                 } else if m.kind == MKind::Dflt {
-                    let t = m.ty.clone().ok_or_else(|| unsup("member without type"))?;
-                    Some((
-                        m.dflt
-                            .clone()
-                            .ok_or_else(|| unsup("default without expr"))?,
-                        Some(t),
-                    ))
+                    m.dflt.clone()
                 } else {
                     None
                 };
-                let state = match (&ve, m.kind) {
-                    (Some(_), _) => SlotState::Unforced,
-                    (None, MKind::Opt) => SlotState::Absent,
-                    (None, _) => {
-                        self.diagnostics.borrow_mut().push(Diag {
-                            severity: "error".into(),
-                            id: None,
-                            message: format!("required member {} missing", m.name),
-                            path: path_str(&member_path, None),
-                            code: Some("E4002".into()),
-                            loc: None,
-                            by: Some(format!("root:{root_name}")),
-                        });
-                        SlotState::Invalid
+                match place {
+                    None if m.kind == MKind::Opt => {
+                        push_slot(&m.name, MKind::Opt, false, SlotState::Absent);
+                        plans.push(SlotPlan::Skip);
                     }
-                };
-                plan.push(ve.map(|(e, t)| (key, e, t, member_path)));
-                slots.push((
-                    m.name.clone(),
-                    Slot {
-                        kind: m.kind,
-                        hidden: m.hidden,
-                        state,
-                        value: Value::Undef,
-                        compute: None,
-                    },
-                ));
-            }
-            inst.borrow_mut().slots = slots;
-        }
-        // pass 2: compile each live member's value op and give the slot a bridge
-        for (m, entry) in members.iter().zip(plan) {
-            if let Some((key, expr, ty, member_path)) = entry {
-                let op = match &ty {
-                    Some(t) => self.bind_value(&expr, t, member_path, Some(inst.clone()), &cctx),
-                    None => compile(&expr, &cctx),
+                    None => {
+                        self.diag(
+                            format!("required member {} missing", m.name),
+                            member_path,
+                            "E4002",
+                            &root_name,
+                        );
+                        push_slot(&m.name, MKind::Req, false, SlotState::Invalid);
+                        plans.push(SlotPlan::Skip);
+                    }
+                    Some(pe) => {
+                        push_slot(&m.name, m.kind, m.hidden, SlotState::Unforced);
+                        plans.push(SlotPlan::Ref { key, place: pe });
+                    }
                 }
-                .map_err(|u| unsup(&u.0))?;
-                self.slot_jobs.borrow_mut().insert(key.clone(), op);
-                inst.borrow_mut().slot_mut(&m.name).unwrap().compute = Some(self.bridge(key));
+                continue;
+            }
+
+            // a derived member (§5.4): a hidden one may not be supplied; a
+            // restated one must restate an identical value
+            if m.kind == MKind::Der {
+                if has.is_some() && m.hidden {
+                    self.diag(
+                        format!("hidden member {} supplied", m.name),
+                        member_path,
+                        "E4006",
+                        &root_name,
+                    );
+                    push_slot(&m.name, MKind::Der, true, SlotState::Invalid);
+                    plans.push(SlotPlan::Skip);
+                    continue;
+                }
+                let member_rt = m.ty.clone();
+                let rec_bearing = member_rt
+                    .as_ref()
+                    .map(|t| has_rec(t, &mut Vec::new()))
+                    .unwrap_or(false);
+                if has.is_some() && rec_bearing {
+                    return Err(unsup("restated derived record"));
+                }
+                let expr = m
+                    .expr
+                    .clone()
+                    .ok_or_else(|| unsup("derived without expr"))?;
+                push_slot(&m.name, MKind::Der, m.hidden, SlotState::Unforced);
+                plans.push(SlotPlan::Der {
+                    key,
+                    expr,
+                    ty: member_rt,
+                    restate: has,
+                    member_path,
+                });
+                continue;
+            }
+
+            // a supplied or defaulted value member; else absent (opt) or a
+            // required-member error (req)
+            if let Some(sv) = has {
+                push_slot(&m.name, m.kind, m.hidden, SlotState::Unforced);
+                plans.push(SlotPlan::Supply {
+                    key,
+                    expr: sv,
+                    types,
+                    member_path,
+                });
+            } else if m.kind == MKind::Dflt {
+                let d = m
+                    .dflt
+                    .clone()
+                    .ok_or_else(|| unsup("default without expr"))?;
+                push_slot(&m.name, MKind::Dflt, false, SlotState::Unforced);
+                plans.push(SlotPlan::Supply {
+                    key,
+                    expr: d,
+                    types,
+                    member_path,
+                });
+            } else if m.kind == MKind::Opt {
+                push_slot(&m.name, MKind::Opt, false, SlotState::Absent);
+                plans.push(SlotPlan::Skip);
+            } else {
+                self.diag(
+                    format!("required member {} missing", m.name),
+                    member_path,
+                    "E4002",
+                    &root_name,
+                );
+                push_slot(&m.name, MKind::Req, false, SlotState::Invalid);
+                plans.push(SlotPlan::Skip);
             }
         }
+        inst.borrow_mut().slots = slots;
+
+        // pass 2: build each live slot's compute op and hand it a bridge
+        for (m, plan) in members.iter().zip(plans) {
+            let key = match self.build_plan(plan, &inst, &cctx, &root_name)? {
+                Some(key) => key,
+                None => continue,
+            };
+            inst.borrow_mut().slot_mut(&m.name).unwrap().compute = Some(self.bridge(key));
+        }
+
         // supplied keys not declared by the type: an error on a closed record
         for (k, _) in entries {
             if members.iter().any(|m| &m.name == k) {
                 continue;
             }
-            if matches!(&rt.k, crate::semantics::RTk::Rec(r) if r.open.get()) {
+            if matches!(&rt.k, RTk::Rec(r) if r.open.get()) {
                 return Err(unsup("open-record extras"));
             }
-            self.diagnostics.borrow_mut().push(Diag {
-                severity: "error".into(),
-                id: None,
-                message: format!(
+            let mut p = path.clone();
+            p.push(Seg::Name(Rc::from(k.as_str())));
+            self.diag(
+                format!(
                     "undeclared member {k} on closed record{}",
                     rt.name
                         .borrow()
@@ -1064,20 +1296,138 @@ impl QEval {
                         .map(|n| format!(" {n}"))
                         .unwrap_or_default()
                 ),
-                path: path_str(
-                    &{
-                        let mut p = path.clone();
-                        p.push(Seg::Name(Rc::from(k.as_str())));
-                        p
-                    },
-                    None,
-                ),
-                code: Some("E4003".into()),
-                by: Some(format!("root:{root_name}")),
-                loc: None,
-            });
+                p,
+                "E4003",
+                &root_name,
+            );
         }
         Ok(Value::Rec(inst))
+    }
+
+    /// build one slot's compute op from its plan and register it under its key;
+    /// returns the key (to attach the bridge), or None for a slot with no compute
+    fn build_plan(
+        &self,
+        plan: SlotPlan,
+        inst: &Inst,
+        cctx: &CCtx,
+        root_name: &str,
+    ) -> R<Option<String>> {
+        let job: (String, Op) = match plan {
+            SlotPlan::Skip => return Ok(None),
+            SlotPlan::Ref { key, place } => {
+                let place_op = compile_place(&place, cctx).map_err(|u| unsup(&u.0))?;
+                let job: Op = Rc::new(move |q, l| {
+                    let segs = place_op(q, l)?.ok_or_else(|| {
+                        Fail::Eval(EvalErr {
+                            msg: "not a place in ref position".into(),
+                            code: None,
+                        })
+                    })?;
+                    // reference integrity (§7.5): the place must hold a value
+                    if q.helper.resolve_segs(&segs)?.is_undef() {
+                        return Err(Fail::Eval(EvalErr {
+                            msg: format!("dangling reference {}", path_str(&segs, None)),
+                            code: Some("E6002".into()),
+                        }));
+                    }
+                    Ok(Value::Ref(Rc::new(segs)))
+                });
+                (key, job)
+            }
+            SlotPlan::Der {
+                key,
+                expr,
+                ty,
+                restate,
+                member_path,
+            } => {
+                let value_op = match &ty {
+                    Some(t) => {
+                        self.bind_value(&expr, t, member_path.clone(), Some(inst.clone()), cctx)
+                    }
+                    None => compile(&expr, cctx),
+                }
+                .map_err(|u| unsup(&u.0))?;
+                let restate_op: Option<Op> = match &restate {
+                    Some(sv) => Some(compile(sv, cctx).map_err(|u| unsup(&u.0))?),
+                    None => None,
+                };
+                let name = seg_text(member_path.last().unwrap());
+                let inst2 = inst.clone();
+                let root2 = root_name.to_string();
+                let mp = member_path;
+                let job: Op = Rc::new(move |q, l| {
+                    let v = value_op(q, l)?;
+                    if let Some(rop) = &restate_op {
+                        // a derived member also supplied restates identically (§5.4)
+                        let raw_r = rop(q, l)?;
+                        let restated = match &ty {
+                            Some(t) => {
+                                let sc = Scope::new(&root2, Some(q.env.clone()))
+                                    .with_inst(Some(inst2.clone()));
+                                q.helper.bind(raw_r, t, &mp, Some(&inst2), &sc)?
+                            }
+                            None => raw_r,
+                        };
+                        if !value_eq(&v, &restated) {
+                            return Err(Fail::Eval(EvalErr {
+                                msg: format!(
+                                    "derived member {name} restated with a differing value"
+                                ),
+                                code: Some("E4005".into()),
+                            }));
+                        }
+                    }
+                    Ok(v)
+                });
+                (key, job)
+            }
+            SlotPlan::Supply {
+                key,
+                expr,
+                types,
+                member_path,
+            } => {
+                let job = self
+                    .supply_produce(&expr, &types, member_path, inst.clone(), cctx)
+                    .map_err(|u| unsup(&u.0))?;
+                (key, job)
+            }
+        };
+        let (key, op) = job;
+        self.slot_jobs.borrow_mut().insert(key.clone(), op);
+        Ok(Some(key))
+    }
+
+    /// build the compute for a supplied or defaulted member value. A single type
+    /// binds through [`Self::bind_value`] (which keeps records in the query
+    /// graph); a conjunction (§3.11) validates the raw value against each
+    /// conjunct through the value layer.
+    fn supply_produce(
+        &self,
+        val: &Rc<Expr>,
+        types: &[RT],
+        member_path: Vec<Seg>,
+        inst: Inst,
+        cctx: &CCtx,
+    ) -> Result<Op, Unsupported> {
+        if types.len() == 1 {
+            return self.bind_value(val, &types[0], member_path, Some(inst), cctx);
+        }
+        let op = compile(val, cctx)?;
+        let types = types.to_vec();
+        let root_name = cctx.root_name.clone();
+        let mp = member_path;
+        Ok(Rc::new(move |q, l| {
+            let raw = op(q, l)?;
+            let mut v = raw.clone();
+            let sc = Scope::new(&root_name, Some(q.env.clone())).with_inst(Some(inst.clone()));
+            for ty in &types {
+                v = q.helper.bind(raw.clone(), ty, &mp, Some(&inst), &sc)?;
+            }
+            Ok(v)
+        }))
     }
 
     /// Bind a value expression to a type, keeping records in the query graph. A
@@ -1220,6 +1570,7 @@ impl QEval {
     fn run(self: &Rc<Self>, roots: &[(String, TypeAst, Rc<Expr>)]) -> QReport {
         // bind every root, then force the whole universe, then validate (§9.3)
         let mut built: Vec<(String, Value)> = Vec::new();
+        let mut deferred = false;
         for (name, tyast, expr) in roots {
             let rt = match self.env.resolve(tyast, None) {
                 Ok(rt) => rt,
@@ -1249,6 +1600,7 @@ impl QEval {
                     self.env.set_root(name, v.clone());
                     built.push((name.clone(), v));
                 }
+                Err(Fail::Defer) => deferred = true, // a $referrers-bearing root
                 Err(Fail::Eval(e)) => self.diagnostics.borrow_mut().push(Diag {
                     severity: "error".into(),
                     id: None,
@@ -1265,6 +1617,18 @@ impl QEval {
         // bridge; value-layer records natively), then validate assertions (§6)
         for (_, v) in &built {
             self.helper.force_all(v);
+        }
+        // a slot or root that reached `$referrers` before the universe was
+        // complete defers to a later round (§7.6); the rounds driver is a later
+        // stage of the port, so a universe that defers falls back to the tree
+        // walker rather than answer `$referrers` from an incomplete universe
+        if deferred || !self.helper.deferred_slots.borrow().is_empty() {
+            self.diagnostics.borrow_mut().push(Diag::error(
+                "qeval unsupported: $referrers rounds".to_string(),
+                roots.first().map(|(n, _, _)| n.clone()).unwrap_or_default(),
+                Some(QUNSUP),
+            ));
+            return self.report();
         }
         self.helper.validate_all("");
         let mut outputs: Vec<(String, String)> = Vec::new();
