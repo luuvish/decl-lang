@@ -29,6 +29,7 @@ import {
   isRange,
   isRec,
   isRef,
+  mapKey,
   patternError,
   pathStr,
   segText,
@@ -64,6 +65,13 @@ interface OpCx {
 /** local bindings in scope (comprehension loop variables) */
 type Locals = Map<string, Value>;
 const NO_LOCALS: Locals = new Map();
+/** the scope object the value layer's `bind`/`serialize` expect */
+type BindScope = {
+  inst: RecInst | null;
+  locals: Map<string, unknown>;
+  rootName: string;
+  menv: Env;
+};
 /** a compiled expression: a closure over the query context and local bindings */
 type Op = (cx: OpCx, locals: Locals) => Value;
 /** resolve a name to the query key it reads, or undefined if it is not in scope */
@@ -572,6 +580,7 @@ class QEval {
   // each slot's compute: it reads siblings/consts/references through the context
   private readonly slotJobs = new Map<string, Op>();
   private readonly diagnostics: Diag[] = [];
+  private readonly constCtx: CCtx;
 
   constructor(env: Env) {
     this.env = env;
@@ -580,7 +589,7 @@ class QEval {
       eq: valueEq,
       resolve: (key) => {
         const op = key.startsWith('const:')
-          ? this.constOps.get(key.slice(6))
+          ? this.constOp(key.slice(6))
           : key.startsWith('slot:')
             ? this.slotJobs.get(key)
             : undefined;
@@ -603,9 +612,12 @@ class QEval {
         }
       },
       qArith: (op, l, r) => this.helper.qArith(op, l, r),
-      call: (fn, args) => this.helper.call(fn, args, matchScope),
+      // the value layer may return a lazy prevalue (e.g. a fold accumulating an
+      // array by spread); materialize it once at the boundary so the query
+      // engine's own operators see a concrete value (§9.4)
+      call: (fn, args) => this.helper.matVal(this.helper.call(fn, args, matchScope)),
     };
-    const constCtx: CCtx = {
+    this.constCtx = {
       names: (n) => (env.consts.has(n) ? `const:${n}` : undefined),
       self: null,
       rootName: '',
@@ -613,7 +625,23 @@ class QEval {
       resolveType: (t) => env.resolve(t),
       menv: env,
     };
-    for (const [name, con] of env.consts) this.constOps.set(name, compile(con.expr, constCtx));
+  }
+
+  /**
+   * The compute for a module const, compiled on first demand and cached. Lazy
+   * compilation matters: a const that names an input or a form this stage does
+   * not yet handle stays uncompiled (and does not raise Unsupported) unless
+   * something actually reads it — matching the value layer, which forces consts
+   * on demand.
+   */
+  private constOp(name: string): Op | undefined {
+    const cached = this.constOps.get(name);
+    if (cached) return cached;
+    const con = this.env.consts.get(name);
+    if (!con) return undefined;
+    const op = compile(con.expr, this.constCtx);
+    this.constOps.set(name, op);
+    return op;
   }
 
   /** the value a reference denotes: walk its path from the root (§7.4, §7.5) */
@@ -712,34 +740,30 @@ class QEval {
           inst.slots.set(m.name, { kind: 'der', hidden: true, state: 'invalid', deferred: false });
           continue;
         }
-        let produce: Op;
-        if (m.type && m.type.t === 'rec' && m.expr.e === 'obj') {
-          if (has) throw new Unsupported('restated derived record');
-          const objEntries = m.expr.entries;
-          const memberRt = m.type;
-          produce = () => this.bindRecord(objEntries, memberRt, memberPath, inst);
-        } else {
-          const op = compile(m.expr, cctx);
-          const memberRt = m.type;
-          const restateOp = has ? compile(supplied.get(m.name)!, cctx) : undefined;
-          produce = (cx, l) => {
-            let v = op(cx, l);
-            if (memberRt) v = this.helper.bind(v, memberRt, memberPath, inst, sc);
-            if (restateOp) {
-              // a derived member also supplied must be restated identically (§5.4)
-              const rawR = restateOp(cx, l);
-              const restated = memberRt
-                ? this.helper.bind(rawR, memberRt, memberPath, inst, sc)
-                : rawR;
-              if (!valueEq(v, restated))
-                throw new EvalErr(
-                  `derived member ${m.name} restated with a differing value`,
-                  'E4005',
-                );
-            }
-            return v;
-          };
-        }
+        const memberRt: RT | undefined = m.type;
+        const recBearing = memberRt ? this.hasRec(memberRt, new Set()) : false;
+        // a restated derived record/collection is a later stage
+        if (has && recBearing) throw new Unsupported('restated derived record');
+        const valueOp: Op = memberRt
+          ? this.bindValue(m.expr, memberRt, memberPath, inst, cctx, sc)
+          : compile(m.expr, cctx);
+        const restateOp = has ? compile(supplied.get(m.name)!, cctx) : undefined;
+        const produce: Op = (cx, l) => {
+          const v = valueOp(cx, l);
+          if (restateOp) {
+            // a derived member also supplied must be restated identically (§5.4)
+            const rawR = restateOp(cx, l);
+            const restated = memberRt
+              ? this.helper.bind(rawR, memberRt, memberPath, inst, sc)
+              : rawR;
+            if (!valueEq(v, restated))
+              throw new EvalErr(
+                `derived member ${m.name} restated with a differing value`,
+                'E4005',
+              );
+          }
+          return v;
+        };
         this.slotJobs.set(key, produce);
         inst.slots.set(m.name, {
           kind: 'der',
@@ -791,9 +815,10 @@ class QEval {
   }
 
   /**
-   * Build the compute for a supplied or default member value: a record-typed
-   * object literal recurses into the query graph; anything else compiles and
-   * type-binds (through each conjunct in turn, §3.11).
+   * Build the compute for a supplied or default member value. A single type is
+   * bound through {@link bindValue} (which keeps records — nested, or inside
+   * arrays and maps — in the query graph); conjunction types (§3.11) bind
+   * through each conjunct in turn through the value layer.
    */
   private supplyProduce(
     valExpr: Expr,
@@ -801,13 +826,9 @@ class QEval {
     memberPath: Seg[],
     inst: RecInst,
     cctx: CCtx,
-    sc: { inst: RecInst | null; locals: Map<string, unknown>; rootName: string; menv: Env },
+    sc: BindScope,
   ): Op {
-    const only = types.length === 1 ? types[0] : undefined;
-    if (only && only.t === 'rec' && valExpr.e === 'obj') {
-      const objEntries = valExpr.entries;
-      return () => this.bindRecord(objEntries, only, memberPath, inst);
-    }
+    if (types.length === 1) return this.bindValue(valExpr, types[0], memberPath, inst, cctx, sc);
     const op = compile(valExpr, cctx);
     return (cx, l) => {
       const raw = op(cx, l);
@@ -815,6 +836,84 @@ class QEval {
       for (const ty of types) v = this.helper.bind(raw, ty, memberPath, inst, sc);
       return types.length ? v : raw;
     };
+  }
+
+  /** does a type contain a record anywhere (so its values live in the query graph)? */
+  private hasRec(t: RT, seen: Set<RT>): boolean {
+    if (seen.has(t)) return false;
+    seen.add(t);
+    switch (t.t) {
+      case 'rec':
+        return true;
+      case 'arr':
+        return this.hasRec(t.elem, seen);
+      case 'map':
+        return this.hasRec(t.val, seen);
+      case 'union':
+        return t.arms.some((a: RT) => this.hasRec(a, seen));
+      default:
+        return false;
+    }
+  }
+
+  /**
+   * Bind a value expression to a type, keeping records in the query graph. A
+   * record literal recurses into {@link bindRecord}; an array or map whose
+   * elements contain records builds each element at its own path (so a nested
+   * record's slots are query jobs, reachable by access and navigation); anything
+   * else (scalars, scalar collections, literal unions) compiles and type-binds
+   * through the value layer. Record-bearing unions and non-literal record-bearing
+   * collections are later stages.
+   */
+  private bindValue(
+    valExpr: Expr,
+    type: RT,
+    path: Seg[],
+    parent: RecInst | null,
+    cctx: CCtx,
+    sc: BindScope,
+  ): Op {
+    if (type.t === 'rec') {
+      if (valExpr.e !== 'obj') throw new Unsupported('non-literal record value');
+      const entries = valExpr.entries;
+      return () => this.bindRecord(entries, type, path, parent);
+    }
+    if (type.t === 'union' && this.hasRec(type, new Set()))
+      throw new Unsupported('union with records');
+    if (type.t === 'arr' && this.hasRec(type.elem, new Set())) {
+      if (valExpr.e !== 'arr') throw new Unsupported('record array not a literal');
+      if (valExpr.items.some((it) => it.spread)) throw new Unsupported('spread in a record array');
+      const elem = type.elem;
+      const lo = type.lo;
+      const hi = type.hi;
+      const elemOps = valExpr.items.map((it, i) =>
+        this.bindValue(it.expr, elem, [...path, i], parent, cctx, sc),
+      );
+      return (cx, l) => {
+        const items = elemOps.map((op) => op(cx, l));
+        if (lo !== undefined && (items.length < lo || items.length > hi))
+          throw new EvalErr(`array size ${items.length} outside ${lo}..${hi}`);
+        return { __arr: true, items, path };
+      };
+    }
+    if (type.t === 'map' && this.hasRec(type.val, new Set())) {
+      if (valExpr.e !== 'obj') throw new Unsupported('record map not a literal');
+      const val = type.val;
+      const entryOps = valExpr.entries.map((en) => {
+        if (en.val.e === 'spread') throw new Unsupported('spread in a record map');
+        return {
+          key: en.key,
+          op: this.bindValue(en.val, val, [...path, mapKey(en.key)], parent, cctx, sc),
+        };
+      });
+      return (cx, l) => {
+        const entries = new Map<string, Value>();
+        for (const e of entryOps) entries.set(e.key, e.op(cx, l));
+        return { __map: true, entries, path };
+      };
+    }
+    const op = compile(valExpr, cctx);
+    return (cx, l) => this.helper.bind(op(cx, l), type, path, parent, sc);
   }
 
   /** force every slot into the RecInst tree so serialization can read it */
@@ -851,44 +950,49 @@ class QEval {
   }
 
   run(): QReport {
-    const outputs: { name: string; json: string }[] = [];
+    // bind every root first, then force the universe (as the source pipeline
+    // does), so a reference from one root into another resolves (§9.3)
+    const built: { name: string; v: Value }[] = [];
     for (const o of this.env.outputs) {
       try {
         const rt = this.env.resolve(o.type);
-        let v: Value;
-        if (rt.t === 'rec' && o.expr.e === 'obj') {
-          v = this.bindRecord(o.expr.entries, rt, [o.name], null);
-          this.env.roots.set(o.name, v); // set before materialize so references resolve
-          this.materialize(v, new Set());
-        } else {
-          const cctx: CCtx = {
-            names: (n) => (this.env.consts.has(n) ? `const:${n}` : undefined),
-            self: null,
-            rootName: o.name,
-            locals: new Set(),
-            resolveType: (t) => this.env.resolve(t),
-            menv: this.env,
-          };
-          const raw = compile(o.expr, cctx)(this.cx, NO_LOCALS);
-          const sc = {
-            inst: null,
-            locals: new Map<string, unknown>(),
-            rootName: o.name,
-            menv: this.env,
-          };
-          v = this.helper.bind(raw, rt, [o.name], null, sc);
-          this.env.roots.set(o.name, v);
-        }
-        outputs.push({ name: o.name, json: this.helper.serialize(v, o.name) });
+        const cctx: CCtx = {
+          names: (n) => (this.env.consts.has(n) ? `const:${n}` : undefined),
+          self: null,
+          rootName: o.name,
+          locals: new Set(),
+          resolveType: (t) => this.env.resolve(t),
+          menv: this.env,
+        };
+        const sc: BindScope = { inst: null, locals: new Map(), rootName: o.name, menv: this.env };
+        const v = this.bindValue(o.expr, rt, [o.name], null, cctx, sc)(this.cx, NO_LOCALS);
+        this.env.roots.set(o.name, v);
+        built.push({ name: o.name, v });
       } catch (err) {
-        if (err instanceof EvalErr) {
+        if (err instanceof EvalErr)
           this.diagnostics.push({
             severity: 'error',
             message: err.message,
             path: o.name,
             code: (err as { code?: string }).code,
           });
-        } else throw err; // Unsupported (or a real bug) bubbles to the caller
+        else throw err; // Unsupported (or a real bug) bubbles to the caller
+      }
+    }
+    const outputs: { name: string; json: string }[] = [];
+    for (const { name, v } of built) {
+      try {
+        this.materializeValue(v, new Set());
+        outputs.push({ name, json: this.helper.serialize(v, name) });
+      } catch (err) {
+        if (err instanceof EvalErr)
+          this.diagnostics.push({
+            severity: 'error',
+            message: err.message,
+            path: name,
+            code: (err as { code?: string }).code,
+          });
+        else throw err;
       }
     }
     // a single error anywhere suppresses every output (§9.3, as evaluateSource)
