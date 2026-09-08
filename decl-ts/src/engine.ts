@@ -169,6 +169,10 @@ export class Engine {
   settled = false; // the last round: a reference into the snapshot resolves live
   snap: { insts: Map<string, RecInst[]>; edges: Map<string, Edge> } | null = null;
   queried = new Set<string>();
+  // an inverse index of each edge, `T|m` -> (target path -> its referrers'
+  // paths): built once from the edge so a `$referrers` query is a lookup, not
+  // a scan of every candidate's refs (§7.6). Rebuilt per round with the engine.
+  refIndex = new Map<string, Map<string, Seg[][]>>();
   // the edges being computed: a query for one of them from inside its own
   // computation is unanswerable in this round (the member is excluded)
   computingEdges = new Set<string>();
@@ -1079,9 +1083,27 @@ export class Engine {
     if (this.phase < 2) throw new DeferSig(); // universe not fully materialized yet
     this.record(`referrers:${typeName}`);
     const self = sc.inst!;
-    const out: Seg[][] = [];
-    for (const e of this.snapEdge(typeName, member).values())
-      if (e.refs.some((r) => cmpPath(r, self.path) === 0)) out.push(e.path);
+    const edge = this.snapEdge(typeName, member);
+    const key = `${typeName}|${member}`;
+    let inv = this.refIndex.get(key);
+    if (!inv) {
+      // one pass over the edge inverts it: each referrer is filed under every
+      // distinct place its member refers to, so the query below is O(1)
+      inv = new Map();
+      for (const e of edge.values()) {
+        const seen = new Set<string>();
+        for (const r of e.refs) {
+          const tk = pathStr(r);
+          if (seen.has(tk)) continue;
+          seen.add(tk);
+          const arr = inv.get(tk);
+          if (arr) arr.push(e.path);
+          else inv.set(tk, [e.path]);
+        }
+      }
+      this.refIndex.set(key, inv);
+    }
+    const out = (inv.get(pathStr(self.path)) ?? []).slice();
     out.sort(cmpPath);
     const items = out.map((p) =>
       this.prev ? { __ref: true, segs: p, snap: this.prev } : { __ref: true, segs: p },
@@ -1110,6 +1132,7 @@ export class Engine {
   }
   /** the snapshot's instances: the previous round's universe, else what is materialized now */
   takeSnapshot(edges: Map<string, Edge>) {
+    this.refIndex.clear();
     this.snap = { insts: groupByType(this.prev?.frozenRegistry ?? this.env.registry), edges };
   }
   /** every candidate's path with the places its member refers to (an invalid member: excluded silently, §6.6) */

@@ -419,9 +419,10 @@ pub fn doc_json(v: &Value) -> String {
 
 fn doc_step(v: &Value, seg: &Seg) -> Option<Value> {
     match (v, seg) {
-        (Value::JObj(es), Seg::Name(k)) | (Value::JObj(es), Seg::Key(k)) => {
-            es.iter().find(|(kk, _)| kk.as_str() == &**k).map(|(_, x)| x.clone())
-        }
+        (Value::JObj(es), Seg::Name(k)) | (Value::JObj(es), Seg::Key(k)) => es
+            .iter()
+            .find(|(kk, _)| kk.as_str() == &**k)
+            .map(|(_, x)| x.clone()),
         (Value::JArr(items), Seg::Idx(i)) => items.get(*i).cloned(),
         _ => None,
     }
@@ -1512,7 +1513,8 @@ impl Session {
             let idx = i;
             i += 1;
             let p = path_str(&inst.borrow().path, None);
-            let scratch_root = matches!(inst.borrow().path.first(), Some(Seg::Name(n)) if &**n == "_");
+            let scratch_root =
+                matches!(inst.borrow().path.first(), Some(Seg::Name(n)) if &**n == "_");
             if idx < reg {
                 !under_demanded(&p)
             } else {
@@ -2160,7 +2162,9 @@ impl Session {
                         s.state,
                         s.value.clone(),
                         b.entry_order.iter().any(|x| x.as_str() == &**n),
-                        rec_members(&b.rt).into_iter().find(|m| m.name.as_str() == &**n),
+                        rec_members(&b.rt)
+                            .into_iter()
+                            .find(|m| m.name.as_str() == &**n),
                     )
                 })
             }

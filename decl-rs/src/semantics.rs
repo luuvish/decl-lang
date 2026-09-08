@@ -4,8 +4,8 @@ use crate::ast::*;
 use num_bigint::BigInt;
 use num_traits::{ToPrimitive, Zero};
 use regex::Regex;
-use std::cell::{Cell, RefCell};
 use rustc_hash::FxHashMap;
+use std::cell::{Cell, RefCell};
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::fmt;
 use std::rc::Rc;
@@ -2810,7 +2810,9 @@ pub fn parse_path(s: &str, root_name: &str) -> R<SegPath> {
                 .or_else(|_| err(format!("bad path {s}")))?;
             let inner = &rest[1..j];
             if inner.starts_with('"') {
-                segs.push(Seg::Key(Rc::from(crate::parse::json_unquote(inner).unwrap_or_default())));
+                segs.push(Seg::Key(Rc::from(
+                    crate::parse::json_unquote(inner).unwrap_or_default(),
+                )));
             } else {
                 segs.push(Seg::Idx(inner.parse().unwrap_or(0)));
             }

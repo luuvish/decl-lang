@@ -7,9 +7,9 @@ use crate::semantics::*;
 use crate::subsume::subsumes;
 use num_bigint::BigInt;
 use num_traits::{FromPrimitive, Signed, ToPrimitive, Zero};
+use rustc_hash::{FxHashMap, FxHashSet};
 use std::cell::{Cell, RefCell};
 use std::cmp::Ordering::{self, Equal, Greater, Less};
-use rustc_hash::{FxHashMap, FxHashSet};
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::rc::{Rc, Weak};
 
@@ -63,6 +63,10 @@ pub struct Engine {
     snap: RefCell<Option<Snap>>,
     /// the edges `T|m` queried so far
     queried: RefCell<BTreeSet<String>>,
+    /// an inverse index of each edge, `T|m` -> (target path -> its referrers'
+    /// paths): built once from the edge so a `$referrers` query is a lookup,
+    /// not a scan of every candidate's refs (§7.6). Fresh per round.
+    ref_index: RefCell<FxHashMap<String, Rc<FxHashMap<String, Vec<SegPath>>>>>,
     /// the edges being computed: a query for one of them from inside its own
     /// computation is unanswerable in this round (the member is excluded)
     computing_edges: RefCell<HashSet<String>>,
@@ -390,6 +394,7 @@ impl Engine {
             settled: Cell::new(false),
             snap: RefCell::new(None),
             queried: RefCell::new(BTreeSet::new()),
+            ref_index: RefCell::new(FxHashMap::default()),
             computing_edges: RefCell::new(HashSet::new()),
             edge_bases: RefCell::new(vec![]),
             const_envs: RefCell::new(vec![]),
@@ -539,7 +544,9 @@ impl Engine {
                         if sc.root_name.is_empty() || self.root(&sc.root_name).is_none() {
                             return err_code("$root outside an evaluation root", "E4090");
                         }
-                        Ok(Value::Ref(Rc::new(vec![Seg::Name(Rc::from(sc.root_name.clone()))])))
+                        Ok(Value::Ref(Rc::new(vec![Seg::Name(Rc::from(
+                            sc.root_name.clone(),
+                        ))])))
                     }
                     "$key" => {
                         // the key or index under which $this sits in its parent's
@@ -1464,7 +1471,7 @@ impl Engine {
         };
         match name {
             "array.count" => Ok(Value::Int(BigInt::from(
-                self.mat_arr(arg(&a, 0, name)?)?.len(),
+                self.mat_arr_ref(arg(&a, 0, name)?)?.borrow().items.len(),
             ))),
             "array.all" => {
                 for x in self.mat_arr(arg(&a, 0, name)?)? {
@@ -1923,12 +1930,19 @@ impl Engine {
         }
     }
     fn mat_arr(&self, v: &Value) -> R<Vec<Value>> {
+        Ok(self.mat_arr_ref(v)?.borrow().items.clone())
+    }
+    /// the materialized array without copying its items: for callers that only
+    /// read (a length, an index) and never call back into user code while the
+    /// borrow is held — `mat_arr` clones because iterating callbacks would else
+    /// double-borrow this cell (F21: `count` was cloning the whole vector)
+    fn mat_arr_ref(&self, v: &Value) -> R<Rc<RefCell<ArrV>>> {
         let mut d = self.deref(v.clone())?;
         if matches!(d, Value::PreObj(_) | Value::PreArr(_)) {
             d = self.mat_pre(d)?;
         }
         match d {
-            Value::Arr(a) => Ok(a.borrow().items.clone()),
+            Value::Arr(a) => Ok(a),
             _ => err("expected array"),
         }
     }
@@ -1960,11 +1974,34 @@ impl Engine {
         };
         let target = self_inst.borrow().path.clone();
         let edge = self.snap_edge(type_name, member)?;
-        let mut out: Vec<SegPath> = edge
-            .values()
-            .filter(|(_, refs)| refs.iter().any(|r| cmp_path(r, &target) == Equal))
-            .map(|(p, _)| p.clone())
-            .collect();
+        let key = format!("{type_name}|{member}");
+        let inv = {
+            let cached = self.ref_index.borrow().get(&key).cloned();
+            match cached {
+                Some(i) => i,
+                None => {
+                    // one pass over the edge inverts it: each referrer is filed
+                    // under every distinct place its member refers to
+                    let mut inv: FxHashMap<String, Vec<SegPath>> = FxHashMap::default();
+                    for (rp, refs) in edge.values() {
+                        let mut seen: FxHashSet<String> = FxHashSet::default();
+                        for r in refs {
+                            let tk = path_str(r, None);
+                            if seen.insert(tk.clone()) {
+                                inv.entry(tk).or_default().push(rp.clone());
+                            }
+                        }
+                    }
+                    let rc = Rc::new(inv);
+                    self.ref_index.borrow_mut().insert(key, rc.clone());
+                    rc
+                }
+            }
+        };
+        let mut out: Vec<SegPath> = inv
+            .get(&path_str(&target, None))
+            .cloned()
+            .unwrap_or_default();
         out.sort_by(|a, b| path_key_cmp(a, b));
         let prev = self.prev.borrow().clone();
         let items = out
@@ -2023,6 +2060,7 @@ impl Engine {
     }
     /// the snapshot's instances: the previous round's universe, else what is materialized now
     fn take_snapshot(&self, edges: HashMap<String, Edge>) {
+        self.ref_index.borrow_mut().clear();
         let prev = self.prev.borrow().clone();
         let insts = match &prev {
             Some(p) => p.frozen_registry.borrow().clone().unwrap_or_default(),

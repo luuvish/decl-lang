@@ -35,7 +35,6 @@ from .semantics import (
     Slot,
     StdRef,
     Taint,
-    cmp_path,
     compile_pattern,
     dot_spellable,
     is_bool,
@@ -179,6 +178,10 @@ class Engine:
         self.settled = False  # the last round: a reference into the snapshot resolves live
         self.snap: dict[str, Any] | None = None  # {"insts": by type, "edges": by `T|m`}
         self.queried: set[str] = set()
+        # an inverse index of each edge, `T|m` -> (target path -> its referrers'
+        # paths): built once so a `$referrers` query is a lookup, not a scan of
+        # every candidate's refs (§7.6). Fresh per round with the engine.
+        self.ref_index: dict[str, dict[str, list[Any]]] = {}
         # the edges being computed: a query for one of them from inside its own
         # computation is unanswerable in this round (the member is excluded)
         self.computing_edges: set[str] = set()
@@ -1121,11 +1124,23 @@ class Engine:
             raise DeferSig()
         self.record(f"referrers:{type_name}")
         self_path = sc.inst.path
-        out = [
-            e["path"]
-            for e in self.snap_edge(type_name, member).values()
-            if any(cmp_path(r, self_path) == 0 for r in e["refs"])
-        ]
+        edge = self.snap_edge(type_name, member)
+        key = f"{type_name}|{member}"
+        inv = self.ref_index.get(key)
+        if inv is None:
+            # one pass over the edge inverts it: each referrer is filed under
+            # every distinct place its member refers to
+            inv = {}
+            for e in edge.values():
+                seen: set[str] = set()
+                for r in e["refs"]:
+                    tk = path_str(r)
+                    if tk in seen:
+                        continue
+                    seen.add(tk)
+                    inv.setdefault(tk, []).append(e["path"])
+            self.ref_index[key] = inv
+        out = list(inv.get(path_str(self_path), []))
         out.sort(key=_segs_key)
         return ArrV([Ref(p, self.prev) for p in out], [])
 
@@ -1153,6 +1168,7 @@ class Engine:
 
     def take_snapshot(self, edges: dict[str, Any]) -> None:
         """the snapshot's instances: the previous round's universe, else what is materialized now"""
+        self.ref_index.clear()
         insts = self.prev.frozen_registry if self.prev is not None else self.env.registry
         self.snap = {"insts": _group_by_type(insts or []), "edges": edges}
 

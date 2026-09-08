@@ -832,7 +832,8 @@ fn render_namespace(eng: Rc<Engine>, root_name: &str) -> Value {
     let indent: NatFn = Rc::new(|a: &[Value]| -> R<Value> {
         match (a.first(), a.get(1)) {
             (Some(Value::Str(s)), Some(Value::Int(n))) if *n >= BigInt::from(0) => Ok(Value::Str(
-                s.replace('\n', &format!("\n{}", " ".repeat(n.to_usize().unwrap()))).into(),
+                s.replace('\n', &format!("\n{}", " ".repeat(n.to_usize().unwrap())))
+                    .into(),
             )),
             _ => Err(eval_err("render.indent expects a string and a count")),
         }
@@ -1320,7 +1321,13 @@ pub fn emit_root(e: &Emission) -> RR<Emitted> {
             .borrow()
             .entries
             .iter()
-            .map(|(k, v)| (v.clone(), Value::Str(k.clone().into()), Seg::Key(Rc::from(k.clone()))))
+            .map(|(k, v)| {
+                (
+                    v.clone(),
+                    Value::Str(k.clone().into()),
+                    Seg::Key(Rc::from(k.clone())),
+                )
+            })
             .collect(),
         _ => {
             return Err(RenderError::new(
@@ -1334,7 +1341,10 @@ pub fn emit_root(e: &Emission) -> RR<Emitted> {
     let mut seen: HashSet<String> = HashSet::new();
     let mut paths = vec![];
     for (v, k, seg) in &elems {
-        let at = path_str(&[Seg::Name(Rc::from(e.root_name.clone())), seg.clone()], None);
+        let at = path_str(
+            &[Seg::Name(Rc::from(e.root_name.clone())), seg.clone()],
+            None,
+        );
         paths.push(fan_out_path(each, v, k, &at, &mut seen)?);
     }
     let mut files = vec![];
