@@ -5,13 +5,16 @@
 //   access), references ($this/$parent/$root/$key, deref/navigation),
 //   arrays & array comprehensions, ranges, indexing, maps & map comprehensions,
 //   `in`/`matches`, patterns, string templates, `match` over literal unions,
-//   quantities and dimensional arithmetic.
+//   quantities and dimensional arithmetic, std/module-function calls, lambdas,
+//   and the pipe.
 // Value semantics — equality, serialization, type binding, iteration, type
-// membership, unit resolution, quantity arithmetic — are reused from the current
-// value layer, as the design intends; only the evaluation strategy is new. Std
-// calls, lambdas/pipes, `ref<T>` navigation members, context declarations,
+// membership, unit resolution, quantity arithmetic, function application — are
+// reused from the current value layer, as the design intends; only the
+// evaluation strategy is new. `ref<T>` navigation members, context declarations,
 // unions of records in collection positions, `$referrers`, and the rest come in
-// later stages.
+// later stages. (A closure passed to a std function has its body run by the
+// value layer for now — pure over its parameters and consts, so byte-identical;
+// closures compile into the query graph in a later stage.)
 import { Db } from './db.ts';
 import { Engine } from '../engine.ts';
 import {
@@ -53,6 +56,8 @@ interface OpCx {
   unitInfo(sym: string): { key: string; toBase: number };
   /** quantity-aware arithmetic and comparison (§4.6) */
   qArith(op: string, l: Value, r: Value): Value;
+  /** apply a closure, native, or std function to evaluated arguments (§4.9, §13) */
+  call(fn: Value, args: Value[]): Value;
 }
 /** local bindings in scope (comprehension loop variables) */
 type Locals = Map<string, Value>;
@@ -68,6 +73,7 @@ interface CCtx {
   rootName: string;
   locals: Set<string>; // comprehension loop variables in scope
   resolveType: (t: TypeAst) => RT; // resolve a match arm's type annotation
+  menv: Env; // the module environment (funcs, consts, unit table)
 }
 
 // ---- value-level operators (§4.4–4.5), mirroring the reference exactly ----
@@ -201,6 +207,24 @@ function iterate(v: Value): Value[] {
 
 // ---- compile: an expression AST becomes a closure over the query context ----
 
+/**
+ * Compile a call's callee (§4.9): a member chain over `std` builds a std path
+ * (`std.math.min`) rather than a data access; anything else compiles normally
+ * (a name may resolve to a module function's closure).
+ */
+function compileCallee(e: Expr, c: CCtx): Op {
+  if (e.e === 'member') {
+    const nm = e.name;
+    const xOp = compileCallee(e.x, c);
+    return (cx, l) => {
+      const x = xOp(cx, l) as { __std?: true; path?: string[] };
+      if (x && x.__std) return { __std: true, path: [...(x.path ?? []), nm] };
+      return access(cx, isRef(x) ? cx.deref(x) : x, nm);
+    };
+  }
+  return compile(e, c);
+}
+
 function compile(e: Expr, c: CCtx): Op {
   switch (e.e) {
     case 'lit': {
@@ -230,6 +254,14 @@ function compile(e: Expr, c: CCtx): Op {
     }
     case 'bin': {
       const op = e.op;
+      if (op === '|>') {
+        // first-argument insertion (§4.9): `l |> f(a)` is `f(l, a)`
+        const call: Expr =
+          e.r.e === 'call'
+            ? { e: 'call', fn: e.r.fn, args: [e.l, ...e.r.args] }
+            : { e: 'call', fn: e.r, args: [e.l] };
+        return compile(call, c);
+      }
       const lc = compile(e.l, c);
       const rc = compile(e.r, c);
       if (op === '&&') return (cx, l) => (truthy(lc(cx, l)) ? truthy(rc(cx, l)) : false);
@@ -280,8 +312,24 @@ function compile(e: Expr, c: CCtx): Op {
         return (_cx, l) => l.get(n);
       }
       const key = c.names(e.name);
-      if (key === undefined) throw new Unsupported(`name ${e.name}`);
-      return (cx) => cx.query(key) as Value;
+      if (key !== undefined) return (cx) => cx.query(key) as Value;
+      if (e.name === 'std') return () => ({ __std: true, path: [] });
+      const fn = c.menv.funcs.get(e.name);
+      if (fn) {
+        // a module function is a closure over the module scope; its body runs
+        // through the value layer, which is pure over its parameters and consts
+        const params = fn.params.map((p) => p.name);
+        const body = fn.body;
+        const menv = c.menv;
+        const rootName = c.rootName;
+        return () => ({
+          __clo: true,
+          params,
+          body,
+          scope: { inst: null, locals: new Map(), rootName, menv },
+        });
+      }
+      throw new Unsupported(`name ${e.name}`);
     }
     case 'member': {
       const nm = e.name;
@@ -310,6 +358,29 @@ function compile(e: Expr, c: CCtx): Op {
         if (isRec(x)) return access(cx, x, i as string);
         throw new EvalErr('index on non-collection');
       };
+    }
+    case 'call': {
+      const fnOp = compileCallee(e.fn, c);
+      const argOps = e.args.map((a) => compile(a, c));
+      return (cx, l) =>
+        cx.call(
+          fnOp(cx, l),
+          argOps.map((op) => op(cx, l)),
+        );
+    }
+    case 'lambda': {
+      const params = e.params;
+      const body = e.body;
+      const menv = c.menv;
+      const rootName = c.rootName;
+      const self = c.self;
+      // a closure over the current locals; its body runs through the value layer
+      return (_cx, l) => ({
+        __clo: true,
+        params,
+        body,
+        scope: { inst: self, locals: new Map(l), rootName, menv },
+      });
     }
     case 'arr': {
       const parts = e.items.map((it) => ({ spread: it.spread, op: compile(it.expr, c) }));
@@ -522,6 +593,7 @@ class QEval {
         }
       },
       qArith: (op, l, r) => this.helper.qArith(op, l, r),
+      call: (fn, args) => this.helper.call(fn, args, matchScope),
     };
     const constCtx: CCtx = {
       names: (n) => (env.consts.has(n) ? `const:${n}` : undefined),
@@ -529,6 +601,7 @@ class QEval {
       rootName: '',
       locals: new Set(),
       resolveType: (t) => env.resolve(t),
+      menv: env,
     };
     for (const [name, con] of env.consts) this.constOps.set(name, compile(con.expr, constCtx));
   }
@@ -598,6 +671,7 @@ class QEval {
       rootName: path[0] as string,
       locals: new Set(),
       resolveType: (t) => this.env.resolve(t),
+      menv: this.env,
     };
     const sc = {
       inst,
@@ -688,6 +762,7 @@ class QEval {
             rootName: o.name,
             locals: new Set(),
             resolveType: (t) => this.env.resolve(t),
+            menv: this.env,
           };
           const raw = compile(o.expr, cctx)(this.cx, NO_LOCALS);
           const sc = {

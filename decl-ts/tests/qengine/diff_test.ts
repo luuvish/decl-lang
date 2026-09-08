@@ -1,7 +1,8 @@
-// Differential harness for the query engine (qengine/DESIGN.md, stage 2a): run
-// scalar/const programs through both the current engine and the query engine and
-// assert identical serialized outputs and `ok`. The subset grows stage by stage;
-// programs using a form the query engine does not compile yet are skipped.
+// Differential harness for the query engine (qengine/DESIGN.md): run a program
+// through both the current engine and the query engine and assert identical
+// serialized outputs and `ok`. The subset grows stage by stage; a program the
+// query engine does not compile yet raises Unsupported and is skipped, and a
+// program the parser or static checker decides (not the evaluator) is skipped.
 import { initParser } from '../../src/node.ts';
 import { parseSource } from '../../src/parse.ts';
 import { Env } from '../../src/semantics.ts';
@@ -177,6 +178,38 @@ const programs: { name: string; src: string }[] = [
   {
     name: 'derived quantity member',
     src: 'type Budget = { limit: quantity<Time>, doubled = limit + limit }\nexport output b: Budget = { limit: 250ms }',
+  },
+  // std functions, lambdas, module functions, and the pipe (§4.9, §13)
+  { name: 'std.math.min with a const', src: 'const MAX = 16\nexport output x: int = std.math.min(20, MAX)' },
+  { name: 'std.math.max', src: 'export output x: int = std.math.max(3, 9)' },
+  { name: 'std.math.abs', src: 'export output x: int = std.math.abs(-7)' },
+  { name: 'std.array.count', src: 'export output x: int = std.array.count([1, 2, 3, 4])' },
+  { name: 'std.array.sum', src: 'export output x: int = std.array.sum([1, 2, 3, 4])' },
+  { name: 'std.array.sort', src: 'export output xs: int[] = std.array.sort([3, 1, 2])' },
+  { name: 'std.array.reverse', src: 'export output xs: int[] = std.array.reverse([1, 2, 3])' },
+  {
+    name: 'std.array.filter with a lambda',
+    src: 'export output xs: int[] = std.array.filter([1, 2, 3, 4], (x) => x % 2 == 0)',
+  },
+  {
+    name: 'std.string.join',
+    src: 'export output s: string = std.string.join(["a", "b", "c"], "-")',
+  },
+  {
+    name: 'std.map.values in a derived member',
+    src: 'type R = { m: map<string, int>, vs = std.map.values(m) }\nexport output r: R = { m: { a: 1, b: 2 } }',
+  },
+  {
+    name: 'module function calling std',
+    src: 'const MAX = 16\nfunc cap(n: int): int = std.math.min(n, MAX)\nexport output x: int = cap(100)',
+  },
+  {
+    name: 'pipe into a bare std function',
+    src: 'export output x: int = [3, 1, 2] |> std.array.count',
+  },
+  {
+    name: 'pipe into a std call with a lambda',
+    src: 'export output xs: int[] = [1, 2, 3, 4] |> std.array.filter((x) => x > 2)',
   },
 ];
 
