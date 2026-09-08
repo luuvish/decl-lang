@@ -15,9 +15,11 @@ import { qevaluate, Unsupported } from '../../src/qengine/qeval.ts';
 import { check, total, root } from '../common/check.ts';
 
 await initParser();
-console.log('== qengine: differential over the valid corpus ==');
+console.log('== qengine: differential over the corpus ==');
 
-const files = globSync('tests/validation/**/valid/*.decl', { cwd: root }).sort();
+// every single-module fixture: valid and invalid (the checker decides most
+// invalid ones, but E5xxx evaluation errors exercise the engine's error paths)
+const files = globSync('tests/validation/**/*.decl', { cwd: root }).sort();
 let matched = 0;
 let skipUnsup = 0;
 let skipStage = 0;
@@ -69,7 +71,7 @@ for (const rel of files) {
 }
 
 console.log(
-  `\n  matched ${matched}, skipped ${skipUnsup} (unsupported form) + ${skipStage} (parser/checker) / ${files.length} valid fixtures`,
+  `\n  matched ${matched}, skipped ${skipUnsup} (unsupported form) + ${skipStage} (parser/checker) / ${files.length} fixtures`,
 );
 if (reasons.size) {
   console.log('  not-yet-compiled forms:');

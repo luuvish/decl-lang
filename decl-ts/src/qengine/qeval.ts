@@ -26,7 +26,7 @@
 // function has its body run by the value layer for now — pure over its
 // parameters and consts, so byte-identical; closures compile into the query
 // graph in a later stage.)
-import { Db } from './db.ts';
+import { Db, QueryCycle } from './db.ts';
 import { Engine } from '../engine.ts';
 import {
   ABSENT,
@@ -229,6 +229,12 @@ type Edge = Map<string, { path: Seg[]; refs: Seg[][] }>;
 interface Frozen {
   registry: RecInst[];
   edges: Map<string, Edge>;
+}
+
+/** the trailing member name of a slot key (`slot:hub.ports["a"].sel$` → `sel$`) */
+function memberOfSlotKey(key: string): string {
+  const m = /\.([A-Za-z_$][\w$]*)$|\["([^"]*)"\]$/.exec(key);
+  return m ? (m[1] ?? m[2]) : key;
 }
 
 /** every reference an object value holds, recursively (arrays and maps included) */
@@ -1300,6 +1306,16 @@ class QEval {
             message: err.message,
             path: pathStr([...inst.path, m.name]),
             code: (err as { code?: string }).code,
+          });
+        } else if (err instanceof QueryCycle) {
+          // a slot that (transitively) reads itself — §7.6/§9.3 dependency cycle
+          s.state = 'invalid';
+          const ends = err.cycle.map((k) => memberOfSlotKey(k));
+          this.diagnostics.push({
+            severity: 'error',
+            message: `dependency cycle: ${ends[0]} -> ${ends[ends.length - 1]}`,
+            path: pathStr([...inst.path, m.name]),
+            code: 'E5007',
           });
         } else throw err;
       }
