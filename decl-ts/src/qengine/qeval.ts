@@ -3,11 +3,12 @@
 // (db.ts). Covered so far:
 //   scalars/const, records (slots as queries, cross-slot & nested & member
 //   access), references ($this/$parent/$root/$key, deref/navigation),
-//   arrays & array comprehensions, ranges, indexing.
+//   arrays & array comprehensions, ranges, indexing, maps & map comprehensions.
 // Value semantics — equality, serialization, type binding, iteration — are
 // reused from the current value layer, as the design intends; only the
-// evaluation strategy is new. Maps, unions, patterns, `ref<T>` navigation
-// members, context declarations, `$referrers`, and the rest come in later stages.
+// evaluation strategy is new. Unions, patterns, `match`, templates, quantities,
+// std calls, `ref<T>` navigation members, context declarations, `$referrers`,
+// and the rest come in later stages.
 import { Db } from './db.ts';
 import { Engine } from '../engine.ts';
 import {
@@ -276,6 +277,56 @@ function compile(e: Expr, c: CCtx): Op {
         };
         rec(0, l);
         return { __arr: true, items, path: [] };
+      };
+    }
+    case 'obj': {
+      // an object literal reaches compile only in a map-typed position (a
+      // record-typed one is dispatched to bindRecord); build a map value,
+      // which the type binder validates against `map<K, V>`
+      const parts = e.entries.map((en) => {
+        if (en.val.e === 'spread') throw new Unsupported('spread in a map literal');
+        return { key: en.key, op: compile(en.val, c) };
+      });
+      return (cx, l) => {
+        const entries = new Map<string, Value>();
+        for (const p of parts) entries.set(p.key, p.op(cx, l));
+        return { __map: true, entries, path: [] };
+      };
+    }
+    case 'mapcomp': {
+      const allVars = e.clauses.map((cl) => cl.v);
+      const scope = new Set([...c.locals, ...allVars]);
+      const keyOp = compile(e.key, { ...c, locals: scope });
+      const valOp = compile(e.val, { ...c, locals: scope });
+      const clauses = e.clauses.map((cl, i) => {
+        const prior = new Set([...c.locals, ...allVars.slice(0, i)]);
+        const withThis = new Set([...prior, cl.v]);
+        return {
+          v: cl.v,
+          iterOp: compile(cl.iter, { ...c, locals: prior }),
+          filterOps: cl.filters.map((f) => compile(f, { ...c, locals: withThis })),
+        };
+      });
+      return (cx, l) => {
+        const entries = new Map<string, Value>();
+        const rec = (i: number, loc: Locals): void => {
+          if (i === clauses.length) {
+            const k = keyOp(cx, loc);
+            if (typeof k !== 'string') throw new EvalErr('map key must be string');
+            if (entries.has(k)) throw new EvalErr(`duplicate key ${k}`, 'E5004');
+            entries.set(k, valOp(cx, loc));
+            return;
+          }
+          const cl = clauses[i];
+          const it = cl.iterOp(cx, loc);
+          for (const el of iterate(isRef(it) ? cx.deref(it) : it)) {
+            const loc2 = new Map(loc);
+            loc2.set(cl.v, el);
+            if (cl.filterOps.every((f) => truthy(f(cx, loc2)))) rec(i + 1, loc2);
+          }
+        };
+        rec(0, l);
+        return { __map: true, entries, path: [] };
       };
     }
     case 'ctx': {

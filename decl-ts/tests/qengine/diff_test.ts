@@ -104,14 +104,43 @@ const programs: { name: string; src: string }[] = [
     name: 'derived scalar indexes a member array',
     src: 'type R = { ns: int[], first = ns[0], last = ns[2] }\nexport output r: R = { ns: [11, 22, 33] }',
   },
+  // maps: object literals and comprehensions bound to map<K, V> (§3.18, §4)
+  { name: 'map literal of ints', src: 'export output m: map<string, int> = { a: 1, b: 2 }' },
+  {
+    name: 'map values are expressions',
+    src: 'const k = 3\nexport output m: map<string, int> = { x: k + 1, y: k * 2 }',
+  },
+  {
+    name: 'map comprehension over strings',
+    src: 'export output m: map<string, int> = { s: 1 for s in ["a", "b", "c"] }',
+  },
+  {
+    name: 'map comprehension with a filter',
+    src: 'export output m: map<string, int> = { s: 9 for s in ["a", "b", "c"] if s != "b" }',
+  },
+  {
+    name: 'map member of a record',
+    src: 'type R = { m: map<string, int> }\nexport output r: R = { m: { a: 5, b: 6 } }',
+  },
+  {
+    name: 'derived reads a map member by key',
+    src: 'type R = { m: map<string, int>, got = (m["a"] ?? 0) + (m["b"] ?? 0) }\nexport output r: R = { m: { a: 5, b: 6 } }',
+  },
 ];
 
 let pass = 0;
 let fail = 0;
 let skip = 0;
-console.log('== qengine: differential vs the current engine (stage 2a) ==');
+console.log('== qengine: differential vs the current engine (stage 3) ==');
 for (const { name, src } of programs) {
   const ref = evaluateSource(src);
+  // the query engine replaces the evaluator, not the parser or static checker;
+  // a program the parser or checker decides is not an evaluator comparison
+  if (ref.phase !== 'evaluate') {
+    console.log(`  SKIP ${name}: decided at the ${ref.phase} stage`);
+    skip++;
+    continue;
+  }
   const { decls, errors } = parseSource(src);
   if (errors.length) {
     console.log(`  SKIP ${name}: parse errors`);
