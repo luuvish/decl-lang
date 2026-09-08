@@ -31,6 +31,7 @@ import { Engine } from '../engine.ts';
 import {
   ABSENT,
   EvalErr,
+  Taint,
   cmpPath,
   compilePattern,
   isArr,
@@ -1317,6 +1318,8 @@ class QEval {
             path: pathStr([...inst.path, m.name]),
             code: 'E5007',
           });
+        } else if (err instanceof Taint) {
+          s.state = 'invalid'; // the value layer already reported the diagnostic
         } else throw err;
       }
     }
@@ -1355,7 +1358,9 @@ class QEval {
             path: o.name,
             code: (err as { code?: string }).code,
           });
-        else throw err; // Unsupported (or a real bug) bubbles to the caller
+        else if (err instanceof Taint) {
+          // the value layer already reported the diagnostic to env.diagnostics
+        } else throw err; // Unsupported (or a real bug) bubbles to the caller
       }
     }
     // force the whole universe, not only what the outputs reach: $referrers
@@ -1393,7 +1398,9 @@ class QEval {
             path: name,
             code: (err as { code?: string }).code,
           });
-        else throw err;
+        else if (err instanceof Taint) {
+          // the value layer already reported the diagnostic to env.diagnostics
+        } else throw err;
       }
     }
     // validate the forced universe (§6): every instance's assertions and
