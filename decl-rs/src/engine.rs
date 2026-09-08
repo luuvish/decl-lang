@@ -294,7 +294,7 @@ fn member_of_key(key: &str) -> String {
     }
 }
 
-fn to_index(v: &Value) -> R<i64> {
+pub(crate) fn to_index(v: &Value) -> R<i64> {
     match v {
         Value::Int(i) => i.to_i64().ok_or(()).or_else(|_| err("index out of range")),
         Value::Float(f) => Ok(*f as i64),

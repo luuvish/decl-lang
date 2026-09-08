@@ -206,3 +206,47 @@ fn diff_records() {
         "expected most record programs to match, got {matched}"
     );
 }
+
+#[test]
+fn diff_collections_and_control() {
+    let programs = [
+        // arrays, spreads, indexing
+        "export output x: int[] = [1, 2, 3]",
+        "const ys = [10, 20]\nexport output x: int[] = [0, ...ys, 30]",
+        "export output x: int = [5, 6, 7][1]",
+        "export output x: bool = 2 in [1, 2, 3]",
+        "export output x: bool = 4 in [1, 2, 3]",
+        "export output x: bool = 3 in 1..5",
+        "export output x: bool = 5 in 1..<5",
+        // comprehensions
+        "export output x: int[] = [n * n for n in 1..3]",
+        "export output x: int[] = [n for n in 1..10 if n % 2 == 0]",
+        "export output x: int[] = [a * b for a in 1..2 for b in 1..3]",
+        // maps
+        "export output x: map<string, int> = { \"a\": 1, \"b\": 2 }",
+        "export output x: int = ({ \"a\": 1, \"b\": 2 })[\"b\"]",
+        "export output x: map<string, int> = { `k${n}`: n * 10 for n in 1..3 }",
+        // templates
+        "const who = \"world\"\nexport output x: string = `hello, ${who}!`",
+        "export output x: string = `sum is ${1 + 2}`",
+        // match over a discriminable union (literals and records)
+        "type L = \"low\" | \"mid\" | \"high\"\nconst pick: L = \"mid\"\nexport output x: int = match pick {\n    (l: \"low\") => 1\n    (l: \"mid\") => 2\n    (l: \"high\") => 3\n}",
+        "type C = { kind: \"c\", r: int }\ntype R = { kind: \"r\", w: int, h: int }\ntype S = C | R\nconst s: S = { kind: \"c\", r: 5 }\nexport output x: int = match s {\n    (c: C) => c.r * c.r\n    (r: R) => r.w * r.h\n}",
+        // pattern / matches
+        "export output x: bool = \"abc\" matches /a.c/",
+        // ctx / references inside records
+        "type P = { x: int, here = $path }\nexport output p: P = { x: 1 }",
+        "type P = { x: int, me = $this }\nexport output p: P = { x: 1 }",
+        // records inside arrays / maps
+        "type Pt = { x: int, y: int, s = x + y }\nexport output ps: Pt[] = [{ x: 1, y: 2 }, { x: 3, y: 4 }]",
+    ];
+    // these forms are all implemented, so every one must run through the query
+    // engine (not fall back) and match the tree walker byte for byte
+    for src in programs {
+        match same(src) {
+            Some(true) => {}
+            Some(false) => panic!("query engine diverged on:\n{src}"),
+            None => panic!("query engine unexpectedly fell back on:\n{src}"),
+        }
+    }
+}

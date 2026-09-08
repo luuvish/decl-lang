@@ -4,12 +4,13 @@
 //! semantics — equality, serialization, type binding, arithmetic — are reused
 //! from the value layer (`Engine`); only the evaluation strategy is new. Built
 //! up stage by stage; a form not yet compiled raises [`Unsupported`].
-use crate::ast::{Expr, TypeAst};
-use crate::engine::{num_cmp, Engine, Inst};
+use crate::ast::{Expr, ForClause, MatchArm, TPart, TypeAst};
+use crate::engine::{num_cmp, to_index, Engine, Inst};
 use crate::qengine::db::{Db, DbErr};
 use crate::semantics::{
-    err_code, path_str, rec_members, seg_text, sort_diags, value_eq, Compute, Diag, Env, EvalErr,
-    Fail, MKind, RecInst, Scope, Seg, Slot, SlotState, Value, R, RT,
+    compile_pattern, err, err_code, path_str, pattern_error, rec_members, seg_text, sort_diags,
+    value_eq, ArrV, Compute, Diag, Env, EvalErr, Fail, MKind, MapV, Num, RTk, RecInst, Scope, Seg,
+    Slot, SlotState, Value, R, RT,
 };
 use rustc_hash::{FxHashMap, FxHashSet};
 use std::cell::RefCell;
@@ -47,11 +48,10 @@ pub struct QReport {
 /// the lexical context a compile happens in
 struct CCtx {
     self_inst: Option<Inst>, // the record instance being constructed (§4.3 siblings)
-    #[allow(dead_code)] // consumed by later stages (refs, $this/$root, ctx)
-    root_name: String,
+    root_name: String,       // the enclosing evaluation root's name ($root, ctx)
     locals: FxHashSet<String>, // comprehension loop variables in scope
-    menv: Rc<Env>,             // the module scope (consts, funcs, unit table)
-    entry_env: Rc<Env>,        // the universe entry (its consts are query-native)
+    menv: Rc<Env>,           // the module scope (consts, funcs, unit table)
+    entry_env: Rc<Env>,      // the universe entry (its consts are query-native)
 }
 
 fn truthy(v: &Value) -> R<bool> {
@@ -152,6 +152,233 @@ fn apply_bin(op: &str, l: &Value, r: &Value) -> R<Value> {
     }
 }
 
+/// the `in` membership operator (§4.5): element/key/index presence. The
+/// container is materialized (a lazy prevalue flattened); `in` over a record
+/// needs slot forcing, so it defers to the value layer (Unsupported).
+fn in_op(q: &QEval, l: Value, r: Value) -> R<Value> {
+    use std::cmp::Ordering::{Equal, Greater, Less};
+    let container = q.helper.mat_val(r)?;
+    match &container {
+        Value::Range { lo, hi, excl } => {
+            let ge = matches!(num_cmp(&l, lo), Some(Greater | Equal));
+            let hi_ok = if *excl {
+                num_cmp(&l, hi) == Some(Less)
+            } else {
+                matches!(num_cmp(&l, hi), Some(Less | Equal))
+            };
+            Ok(Value::Bool(ge && hi_ok))
+        }
+        Value::Arr(a) => Ok(Value::Bool(
+            a.borrow().items.iter().any(|x| value_eq(&l, x)),
+        )),
+        Value::Map(m) => match &l {
+            Value::Str(k) => Ok(Value::Bool(m.borrow().has(k))),
+            _ => Ok(Value::Bool(false)),
+        },
+        Value::Rec(_) => Err(unsup("`in` over a record")),
+        _ => err("in: bad container"),
+    }
+}
+
+/// does a type contain a record anywhere (so its values live in the query
+/// graph)? `seen` breaks the cycle of a type that names itself (§3.1)
+fn has_rec(t: &RT, seen: &mut Vec<usize>) -> bool {
+    let id = Rc::as_ptr(t) as usize;
+    if seen.contains(&id) {
+        return false;
+    }
+    seen.push(id);
+    match &t.k {
+        RTk::Rec(_) => true,
+        RTk::Arr { elem, .. } => has_rec(elem, seen),
+        RTk::Map { val, .. } => has_rec(val, seen),
+        RTk::Union(arms) => arms.borrow().iter().any(|a| has_rec(a, seen)),
+        _ => false,
+    }
+}
+
+/// a fresh `CCtx` sharing everything but the in-scope local names
+fn with_locals(c: &CCtx, locals: FxHashSet<String>) -> CCtx {
+    CCtx {
+        self_inst: c.self_inst.clone(),
+        root_name: c.root_name.clone(),
+        locals,
+        menv: c.menv.clone(),
+        entry_env: c.entry_env.clone(),
+    }
+}
+
+/// a compiled comprehension clause: what it ranges over and its `if` filters
+struct CClause {
+    v: String,
+    iter: Op,
+    filters: Vec<Op>,
+}
+
+/// compile a comprehension's clauses (§4.8): each clause sees the prior loop
+/// variables in its range, and its own variable in its filters
+fn compile_clauses(
+    clauses: &[ForClause],
+    all_vars: &[String],
+    c: &CCtx,
+) -> Result<Vec<CClause>, Unsupported> {
+    let mut ccs = Vec::new();
+    for (i, cl) in clauses.iter().enumerate() {
+        let mut prior = c.locals.clone();
+        for v in &all_vars[..i] {
+            prior.insert(v.clone());
+        }
+        let iter = compile(&cl.iter, &with_locals(c, prior.clone()))?;
+        let mut with_this = prior;
+        with_this.insert(cl.v.clone());
+        let filters = cl
+            .filters
+            .iter()
+            .map(|f| compile(f, &with_locals(c, with_this.clone())))
+            .collect::<Result<Vec<Op>, Unsupported>>()?;
+        ccs.push(CClause {
+            v: cl.v.clone(),
+            iter,
+            filters,
+        });
+    }
+    Ok(ccs)
+}
+
+/// whether every filter of a clause holds for the given bindings
+fn filters_pass(q: &QEval, cl: &CClause, loc: &Locals) -> R<bool> {
+    for f in &cl.filters {
+        if !truthy(&(f)(q, loc)?)? {
+            return Ok(false);
+        }
+    }
+    Ok(true)
+}
+
+/// run an array comprehension, appending each head value in nested-loop order
+fn run_comp(
+    q: &QEval,
+    ccs: &[CClause],
+    i: usize,
+    loc: &Locals,
+    head: &Op,
+    out: &mut Vec<Value>,
+) -> R<()> {
+    if i == ccs.len() {
+        out.push((head)(q, loc)?);
+        return Ok(());
+    }
+    let cl = &ccs[i];
+    let it = q.helper.mat_val((cl.iter)(q, loc)?)?;
+    for el in q.helper.iterate(&it)? {
+        let mut loc2 = loc.clone();
+        loc2.insert(cl.v.clone(), el);
+        if filters_pass(q, cl, &loc2)? {
+            run_comp(q, ccs, i + 1, &loc2, head, out)?;
+        }
+    }
+    Ok(())
+}
+
+/// run a map comprehension, appending key/value pairs in nested-loop order
+fn run_mapcomp(
+    q: &QEval,
+    ccs: &[CClause],
+    i: usize,
+    loc: &Locals,
+    key: &Op,
+    val: &Op,
+    out: &mut Vec<(String, Value)>,
+) -> R<()> {
+    if i == ccs.len() {
+        let k = (key)(q, loc)?;
+        let Value::Str(ks) = &k else {
+            return err("map key must be string");
+        };
+        if out.iter().any(|(ek, _)| ek.as_str() == ks.as_ref()) {
+            return err_code(format!("duplicate key {ks}"), "E5004");
+        }
+        out.push((ks.to_string(), (val)(q, loc)?));
+        return Ok(());
+    }
+    let cl = &ccs[i];
+    let it = q.helper.mat_val((cl.iter)(q, loc)?)?;
+    for el in q.helper.iterate(&it)? {
+        let mut loc2 = loc.clone();
+        loc2.insert(cl.v.clone(), el);
+        if filters_pass(q, cl, &loc2)? {
+            run_mapcomp(q, ccs, i + 1, &loc2, key, val, out)?;
+        }
+    }
+    Ok(())
+}
+
+/// a compiled `match` arm: the type it selects on (none for the catch-all),
+/// the bound variable, and the body
+struct MArm {
+    v: String,
+    rt: Option<RT>,
+    body: Op,
+}
+
+/// resolve a `match` arm's type against the module scope; the catch-all has none
+fn compile_arm_type(a: &MatchArm, c: &CCtx) -> Result<Option<RT>, Unsupported> {
+    match &a.ty {
+        Some(t) => Ok(Some(
+            c.menv
+                .resolve(t, None)
+                .map_err(|_| Unsupported("match arm type".into()))?,
+        )),
+        None => Ok(None),
+    }
+}
+
+/// compile a context variable (§7.3): `$this`/`$parent`/`$root` are references
+/// to the containing instances; `$key`/`$path` are plain values
+fn compile_ctx(nm: &str, c: &CCtx) -> Result<Op, Unsupported> {
+    let self_inst = c.self_inst.clone();
+    let root_name = c.root_name.clone();
+    match nm {
+        "$this" => Ok(Rc::new(move |_q, _l| match &self_inst {
+            Some(i) => Ok(Value::Ref(i.borrow().path.clone())),
+            None => err_code("$this outside a record instance", "E4090"),
+        })),
+        "$parent" => Ok(Rc::new(move |_q, _l| {
+            match self_inst.as_ref().and_then(|i| i.borrow().parent.clone()) {
+                Some(p) => Ok(Value::Ref(p.borrow().path.clone())),
+                None => err_code("$parent: the evaluation root has no owner", "E4090"),
+            }
+        })),
+        "$root" => Ok(Rc::new(move |_q, _l| {
+            Ok(Value::Ref(Rc::new(vec![Seg::Name(Rc::from(
+                root_name.as_str(),
+            ))])))
+        })),
+        "$key" => Ok(Rc::new(move |_q, _l| {
+            let Some(i) = self_inst.as_ref() else {
+                return err_code("$key: the instance is not a collection element", "E4090");
+            };
+            let b = i.borrow();
+            let Some(parent) = &b.parent else {
+                return err_code("$key: the instance is not a collection element", "E4090");
+            };
+            if b.path.len() < parent.borrow().path.len() + 2 {
+                return err_code("$key: the instance is not a collection element", "E4090");
+            }
+            Ok(match b.path.last() {
+                Some(Seg::Idx(k)) => Value::Int(Num::from(*k)),
+                Some(Seg::Name(k)) | Some(Seg::Key(k)) => Value::Str(k.clone()),
+                None => Value::Absent,
+            })
+        })),
+        "$path" => Ok(Rc::new(move |_q, _l| match &self_inst {
+            Some(i) => Ok(Value::Str(path_str(&i.borrow().path, None).into())),
+            None => err_code("$path outside a record instance", "E4090"),
+        })),
+        _ => Err(Unsupported(format!("ctx {nm}"))),
+    }
+}
+
 /// compile an expression to a query compute (a closure over the query engine)
 fn compile(e: &Rc<Expr>, c: &CCtx) -> Result<Op, Unsupported> {
     match &**e {
@@ -218,7 +445,38 @@ fn compile(e: &Rc<Expr>, c: &CCtx) -> Result<Op, Unsupported> {
                         Ok(v)
                     }
                 })),
-                _ => Ok(Rc::new(move |q, l| apply_bin(&op, &lc(q, l)?, &rc(q, l)?))),
+                ".." | "..<" => {
+                    let excl = op == "..<";
+                    Ok(Rc::new(move |q, l| {
+                        Ok(Value::Range {
+                            lo: Box::new(lc(q, l)?),
+                            hi: Box::new(rc(q, l)?),
+                            excl,
+                        })
+                    }))
+                }
+                "matches" => Ok(Rc::new(move |q, l| {
+                    let (s, p) = (lc(q, l)?, rc(q, l)?);
+                    let (Value::Str(s), Value::Pat(p)) = (&s, &p) else {
+                        return err_code("matches needs a string and a pattern", "E5000");
+                    };
+                    if let Some(bad) = pattern_error(p) {
+                        return err_code(format!("malformed pattern /{p}/: {bad}"), "E4119");
+                    }
+                    let re = compile_pattern(p)
+                        .map_err(|m| Fail::Eval(EvalErr { msg: m, code: None }))?;
+                    Ok(Value::Bool(re.is_match(s)))
+                })),
+                "in" => Ok(Rc::new(move |q, l| in_op(q, lc(q, l)?, rc(q, l)?))),
+                _ => Ok(Rc::new(move |q, l| {
+                    let (lv, rv) = (lc(q, l)?, rc(q, l)?);
+                    if matches!(lv, Value::Q { .. }) || matches!(rv, Value::Q { .. }) {
+                        if let "+" | "-" | "*" | "/" | "<" | "<=" | ">" | ">=" = op.as_str() {
+                            return q.helper.q_arith(&op, &lv, &rv);
+                        }
+                    }
+                    apply_bin(&op, &lv, &rv)
+                })),
             }
         }
         Expr::Name(name) => {
@@ -264,6 +522,207 @@ fn compile(e: &Rc<Expr>, c: &CCtx) -> Result<Op, Unsupported> {
                 q.helper.access(&xv, &nm)
             }))
         }
+        Expr::Index { x, i } => {
+            let xc = compile(x, c)?;
+            let ic = compile(i, c)?;
+            Ok(Rc::new(move |q, l| {
+                // a literal (or document) operand is materialized before indexing
+                let x = q.helper.mat_val(xc(q, l)?)?;
+                let idx = ic(q, l)?;
+                match &x {
+                    Value::Arr(a) => {
+                        let n = to_index(&idx)?;
+                        let b = a.borrow();
+                        if n < 0 || n as usize >= b.items.len() {
+                            return err_code(format!("index {n} out of bounds"), "E5005");
+                        }
+                        Ok(b.items[n as usize].clone())
+                    }
+                    Value::Map(m) => match &idx {
+                        Value::Str(k) => Ok(m.borrow().get(k).cloned().unwrap_or(Value::Absent)),
+                        _ => Ok(Value::Absent),
+                    },
+                    Value::Rec(_) => match &idx {
+                        Value::Str(k) => q.helper.access(&x, k),
+                        _ => err("index on record needs a string"),
+                    },
+                    _ => err("index on non-collection"),
+                }
+            }))
+        }
+        Expr::Arr(items) => {
+            let parts = items
+                .iter()
+                .map(|(sp, ex)| Ok((*sp, compile(ex, c)?)))
+                .collect::<Result<Vec<(bool, Op)>, Unsupported>>()?;
+            Ok(Rc::new(move |q, l| {
+                let mut out: Vec<Value> = Vec::new();
+                for (sp, op) in &parts {
+                    let v = op(q, l)?;
+                    if *sp {
+                        for x in q.helper.iterate(&q.helper.mat_val(v)?)? {
+                            out.push(x);
+                        }
+                    } else {
+                        out.push(v);
+                    }
+                }
+                Ok(Value::Arr(Rc::new(RefCell::new(ArrV {
+                    items: out,
+                    path: Rc::new(vec![]),
+                }))))
+            }))
+        }
+        Expr::Comp { head, clauses } => {
+            let all_vars: Vec<String> = clauses.iter().map(|cl| cl.v.clone()).collect();
+            let mut head_locals = c.locals.clone();
+            for v in &all_vars {
+                head_locals.insert(v.clone());
+            }
+            let head_op = compile(head, &with_locals(c, head_locals))?;
+            let ccs = compile_clauses(clauses, &all_vars, c)?;
+            Ok(Rc::new(move |q, l| {
+                let mut out = Vec::new();
+                run_comp(q, &ccs, 0, l, &head_op, &mut out)?;
+                Ok(Value::Arr(Rc::new(RefCell::new(ArrV {
+                    items: out,
+                    path: Rc::new(vec![]),
+                }))))
+            }))
+        }
+        Expr::Obj(entries) => {
+            // an object literal reaches compile only in a map-typed position (a
+            // record-typed one is dispatched to bindRecord); build a map value,
+            // which the type binder validates against `map<K, V>`. A spread entry
+            // (§4.2) copies the entries of an object-valued expression in place.
+            enum Part {
+                Spread(Op),
+                Kv(String, Op),
+            }
+            let mut parts: Vec<Part> = Vec::new();
+            for (k, v) in entries {
+                if let Expr::Spread(inner) = &**v {
+                    parts.push(Part::Spread(compile(inner, c)?));
+                } else {
+                    parts.push(Part::Kv(k.clone(), compile(v, c)?));
+                }
+            }
+            Ok(Rc::new(move |q, l| {
+                let mut entries: Vec<(String, Value)> = Vec::new();
+                fn put(entries: &mut Vec<(String, Value)>, k: String, v: Value) -> R<()> {
+                    if entries.iter().any(|(ek, _)| *ek == k) {
+                        return err_code(format!("duplicate key {k}"), "E5004");
+                    }
+                    entries.push((k, v));
+                    Ok(())
+                }
+                for p in &parts {
+                    match p {
+                        Part::Spread(op) => {
+                            let mut s = op(q, l)?;
+                            if matches!(s, Value::Ref(_)) {
+                                s = q.helper.deref(s)?;
+                            }
+                            for (k, v) in q.helper.spread_entries(s)? {
+                                put(&mut entries, k, v)?;
+                            }
+                        }
+                        Part::Kv(k, op) => put(&mut entries, k.clone(), op(q, l)?)?,
+                    }
+                }
+                Ok(Value::Map(Rc::new(RefCell::new(MapV {
+                    entries,
+                    path: Rc::new(vec![]),
+                }))))
+            }))
+        }
+        Expr::MapComp { key, val, clauses } => {
+            let all_vars: Vec<String> = clauses.iter().map(|cl| cl.v.clone()).collect();
+            let mut scope = c.locals.clone();
+            for v in &all_vars {
+                scope.insert(v.clone());
+            }
+            let key_op = compile(key, &with_locals(c, scope.clone()))?;
+            let val_op = compile(val, &with_locals(c, scope))?;
+            let ccs = compile_clauses(clauses, &all_vars, c)?;
+            Ok(Rc::new(move |q, l| {
+                let mut out = Vec::new();
+                run_mapcomp(q, &ccs, 0, l, &key_op, &val_op, &mut out)?;
+                Ok(Value::Map(Rc::new(RefCell::new(MapV {
+                    entries: out,
+                    path: Rc::new(vec![]),
+                }))))
+            }))
+        }
+        Expr::Template(parts) => {
+            enum TP {
+                Text(String),
+                Op(Op),
+            }
+            let compiled = parts
+                .iter()
+                .map(|p| match p {
+                    TPart::Text(s) => Ok(TP::Text(s.clone())),
+                    TPart::Expr(e) => Ok(TP::Op(compile(e, c)?)),
+                })
+                .collect::<Result<Vec<TP>, Unsupported>>()?;
+            Ok(Rc::new(move |q, l| {
+                let mut s = String::new();
+                for p in &compiled {
+                    match p {
+                        TP::Text(t) => s.push_str(t),
+                        TP::Op(op) => s.push_str(&q.helper.to_str(&op(q, l)?)?),
+                    }
+                }
+                Ok(Value::Str(s.into()))
+            }))
+        }
+        Expr::Pattern(re) => {
+            let re = re.clone();
+            Ok(Rc::new(move |_q, _l| Ok(Value::Pat(re.clone()))))
+        }
+        Expr::Match { subject, arms } => {
+            let subj = compile(subject, c)?;
+            let mut marms: Vec<MArm> = Vec::new();
+            for a in arms {
+                let rt = compile_arm_type(a, c)?;
+                let mut loc = c.locals.clone();
+                loc.insert(a.v.clone());
+                let body = compile(&a.body, &with_locals(c, loc))?;
+                marms.push(MArm {
+                    v: a.v.clone(),
+                    rt,
+                    body,
+                });
+            }
+            Ok(Rc::new(move |q, l| {
+                let mut subjv = subj(q, l)?;
+                if matches!(subjv, Value::Ref(_)) {
+                    subjv = q.helper.deref(subjv)?;
+                }
+                let sc = Scope::new("", Some(q.env.clone()));
+                let mut catch: Option<&MArm> = None;
+                for a in &marms {
+                    match &a.rt {
+                        None => catch = Some(a),
+                        Some(rt) => {
+                            if q.helper.member_of(&subjv, rt, &sc) {
+                                let mut l2 = l.clone();
+                                l2.insert(a.v.clone(), subjv.clone());
+                                return (a.body)(q, &l2);
+                            }
+                        }
+                    }
+                }
+                if let Some(a) = catch {
+                    let mut l2 = l.clone();
+                    l2.insert(a.v.clone(), subjv);
+                    return (a.body)(q, &l2);
+                }
+                err("match: no arm matched")
+            }))
+        }
+        Expr::Ctx(nm) => compile_ctx(nm, c),
         other => Err(Unsupported(expr_kind(other).to_string())),
     }
 }
@@ -486,8 +945,13 @@ impl QEval {
         Ok(Value::Rec(inst))
     }
 
-    /// build the compute for a value expression bound to a type: a record
-    /// literal recurses into the query graph; anything else compiles + binds
+    /// Bind a value expression to a type, keeping records in the query graph. A
+    /// record literal recurses into [`Self::bind_record`]; a literal array or
+    /// map whose elements contain records builds each element at its own path
+    /// (so a nested record's slots stay query jobs, reachable by access and
+    /// navigation); anything else compiles and type-binds through the value
+    /// layer. Record-bearing unions and non-literal record-bearing collections
+    /// are a later stage.
     fn bind_value(
         &self,
         val: &Rc<Expr>,
@@ -496,7 +960,8 @@ impl QEval {
         parent: Option<Inst>,
         cctx: &CCtx,
     ) -> Result<Op, Unsupported> {
-        use crate::semantics::RTk;
+        // a record literal binds in the query graph; a record value from any
+        // other expression is left to the value layer, forced at materialize
         if let (RTk::Rec(_), Expr::Obj(entries)) = (&ty.k, &**val) {
             let entries = entries.clone();
             let ty = ty.clone();
@@ -504,6 +969,70 @@ impl QEval {
                 q.bind_record(&entries, &ty, path.clone(), parent.clone())
             }));
         }
+        // a literal array of record-bearing elements: build each at its own path
+        if let (RTk::Arr { elem, lo, hi }, Expr::Arr(items)) = (&ty.k, &**val) {
+            if has_rec(elem, &mut Vec::new()) && !items.iter().any(|(sp, _)| *sp) {
+                let (lo, hi) = (*lo, *hi);
+                let elem_ops = items
+                    .iter()
+                    .enumerate()
+                    .map(|(i, (_, ex))| {
+                        let mut p = path.clone();
+                        p.push(Seg::Idx(i));
+                        self.bind_value(ex, elem, p, parent.clone(), cctx)
+                    })
+                    .collect::<Result<Vec<Op>, Unsupported>>()?;
+                let apath = path;
+                return Ok(Rc::new(move |q, l| {
+                    let mut items = Vec::with_capacity(elem_ops.len());
+                    for op in &elem_ops {
+                        items.push(op(q, l)?);
+                    }
+                    if let Some(lo) = lo {
+                        let n = items.len() as i64;
+                        let h = hi.unwrap_or(i64::MAX);
+                        if n < lo || n > h {
+                            return err(format!("array size {n} outside {lo}..{h}"));
+                        }
+                    }
+                    Ok(Value::Arr(Rc::new(RefCell::new(ArrV {
+                        items,
+                        path: Rc::new(apath.clone()),
+                    }))))
+                }));
+            }
+        }
+        // a literal map of record-bearing values: one query record per key
+        if let (RTk::Map { val: vty, .. }, Expr::Obj(entries)) = (&ty.k, &**val) {
+            let spread = entries.iter().any(|(_, v)| matches!(&**v, Expr::Spread(_)));
+            if has_rec(vty, &mut Vec::new()) && !spread {
+                let entry_ops = entries
+                    .iter()
+                    .map(|(k, ve)| {
+                        let mut p = path.clone();
+                        p.push(Seg::Key(Rc::from(k.as_str())));
+                        Ok((
+                            k.clone(),
+                            self.bind_value(ve, vty, p, parent.clone(), cctx)?,
+                        ))
+                    })
+                    .collect::<Result<Vec<(String, Op)>, Unsupported>>()?;
+                let mpath = path;
+                return Ok(Rc::new(move |q, l| {
+                    let m = MapV {
+                        entries: Vec::new(),
+                        path: Rc::new(mpath.clone()),
+                    };
+                    let m = Rc::new(RefCell::new(m));
+                    for (k, op) in &entry_ops {
+                        let v = op(q, l)?;
+                        m.borrow_mut().set(k.clone(), v);
+                    }
+                    Ok(Value::Map(m))
+                }));
+            }
+        }
+        // otherwise compile + type-bind through the value layer
         let op = compile(val, cctx)?;
         let ty = ty.clone();
         let root_name = seg_text(&path[0]);
