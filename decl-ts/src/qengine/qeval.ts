@@ -74,6 +74,11 @@ interface OpCx {
   inputRoot(name: string): Value;
   /** the entries an object-valued expression contributes to a spread (§4.2) */
   spreadEntries(v: Value): [string, Value][];
+  /** read a member of a non-record value (a bare map, an unbound literal, …) */
+  accessRaw(x: Value, name: string): Value;
+  /** evaluate an expression through the value layer in a given scope, then
+   * materialize it — for forms the query graph delegates (e.g. `with`) */
+  evValue(expr: Expr, scope: BindScope): Value;
 }
 /** local bindings in scope (comprehension loop variables) */
 type Locals = Map<string, Value>;
@@ -205,12 +210,13 @@ const VALUE_OPS = new Set([
 /** the operators quantity operands take through qArith (§4.6) */
 const QOPS = new Set(['+', '-', '*', '/', '<', '<=', '>', '>=']);
 
-/** read member `name` of a record value (§4.10, §7.5) */
+/** read member `name` of a value (§4.10, §7.5) */
 function access(cx: OpCx, x: Value, name: string): Value {
+  // a record is read through the query graph; everything else (a bare map, an
+  // unbound literal from the value layer such as std.map.entries records, null,
+  // absent) is read by the value layer
   if (isRec(x)) return cx.forceMember(x, name);
-  if (x === null) throw new EvalErr('member access on null');
-  if (x === ABSENT) return ABSENT;
-  throw new Unsupported('member access on a non-record value');
+  return cx.accessRaw(x, name);
 }
 
 /** the elements of an iterable (an array or a range) */
@@ -479,6 +485,16 @@ function compile(e: Expr, c: CCtx): Op {
         scope: { inst: self, locals: new Map(l), rootName, menv },
       });
     }
+    case 'with': {
+      // `base with { patch }` (§4.2): merge patch into an object-valued base.
+      // Delegated to the value layer, which reads the query-graph base through
+      // the compute bridge; the result is a fresh unbound value, materialized.
+      const withExpr = e;
+      const self = c.self;
+      const rootName = c.rootName;
+      const menv = c.menv;
+      return (cx, l) => cx.evValue(withExpr, { inst: self, locals: l, rootName, menv });
+    }
     case 'arr': {
       const parts = e.items.map((it) => ({ spread: it.spread, op: compile(it.expr, c) }));
       return (cx, l) => {
@@ -716,6 +732,8 @@ class QEval {
       rootValue: (name) => this.env.roots.get(name),
       inputRoot: (name) => this.demandInputRoot(name),
       spreadEntries: (v) => this.helper.spreadEntries(v),
+      accessRaw: (x, name) => this.helper.access(x, name),
+      evValue: (expr, scope) => this.helper.matVal(this.helper.ev(expr, scope)),
     };
     this.constCtx = {
       names: (n) => (env.consts.has(n) ? `const:${n}` : undefined),

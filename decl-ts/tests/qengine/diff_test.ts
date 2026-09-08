@@ -293,6 +293,14 @@ const programs: { name: string; src: string }[] = [
     name: 'object spread merges maps',
     src: 'const d = { a: 1, b: 2 }\nexport output m: map<string, int> = { ...d, c: 3 }',
   },
+  {
+    name: 'with updates a map entry',
+    src: 'const base = { a: 1, b: 2 }\nexport output m: map<string, int> = base with { b: 9 }',
+  },
+  {
+    name: 'record read as a map by std.map',
+    src: 'type P = { x: int, y: int }\ntype R = { p: P, keys = std.map.keys(p) }\nexport output r: R = { p: { x: 1, y: 2 } }',
+  },
 ];
 
 let pass = 0;
