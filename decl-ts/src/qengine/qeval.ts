@@ -62,6 +62,11 @@ interface OpCx {
   qArith(op: string, l: Value, r: Value): Value;
   /** apply a closure, native, or std function to evaluated arguments (§4.9, §13) */
   call(fn: Value, args: Value[]): Value;
+  /** read a record member: a query-graph slot through the db, a value-layer one
+   * through the reference engine (§4.10) */
+  forceMember(rec: Value, name: string): Value;
+  /** the value of another evaluation root (another output), or undefined */
+  rootValue(name: string): Value | undefined;
 }
 /** local bindings in scope (comprehension loop variables) */
 type Locals = Map<string, Value>;
@@ -193,19 +198,9 @@ const VALUE_OPS = new Set([
 /** the operators quantity operands take through qArith (§4.6) */
 const QOPS = new Set(['+', '-', '*', '/', '<', '<=', '>', '>=']);
 
-/** read member `name` of a record value through the query graph (§4.10, §7.5) */
+/** read member `name` of a record value (§4.10, §7.5) */
 function access(cx: OpCx, x: Value, name: string): Value {
-  if (isRec(x)) {
-    const s = x.slots.get(name);
-    if (s) {
-      // an absent optional or a failed member yields ABSENT (§4.10); a live slot
-      // is forced through the query graph (memoized)
-      if (s.state === 'absent' || s.state === 'invalid') return ABSENT;
-      return cx.query(`slot:${pathStr(x.path)}.${name}`) as Value;
-    }
-    if (x.extras.has(name)) throw new EvalErr(`opaque field ${name} accessed`);
-    return ABSENT; // a member admitted only through an optional bound is absent
-  }
+  if (isRec(x)) return cx.forceMember(x, name);
   if (x === null) throw new EvalErr('member access on null');
   if (x === ABSENT) return ABSENT;
   throw new Unsupported('member access on a non-record value');
@@ -348,7 +343,14 @@ function compile(e: Expr, c: CCtx): Op {
           scope: { inst: null, locals: new Map(), rootName, menv },
         });
       }
-      throw new Unsupported(`name ${e.name}`);
+      // otherwise a reference to another evaluation root, resolved at force time
+      // (every root is bound before the universe is forced); an input or a form
+      // this stage does not resolve stays Unsupported
+      return (cx) => {
+        const r = cx.rootValue(nm);
+        if (r === undefined) throw new Unsupported(`name ${nm}`);
+        return r;
+      };
     }
     case 'member': {
       const nm = e.name;
@@ -617,6 +619,8 @@ class QEval {
       // array by spread); materialize it once at the boundary so the query
       // engine's own operators see a concrete value (§9.4)
       call: (fn, args) => this.helper.matVal(this.helper.call(fn, args, matchScope)),
+      forceMember: (rec, name) => this.forceMember(rec, name),
+      rootValue: (name) => this.env.roots.get(name),
     };
     this.constCtx = {
       names: (n) => (env.consts.has(n) ? `const:${n}` : undefined),
@@ -645,6 +649,30 @@ class QEval {
     return op;
   }
 
+  /**
+   * Read a record member (§4.10). A query-graph slot is forced through the db
+   * (recording a dependency); a value-layer record (built by the value layer for
+   * a call, a `with`, or a discriminated union) is forced through the reference
+   * engine. An already-forced slot returns its value; an absent optional or a
+   * failed member yields ABSENT.
+   */
+  private forceMember(rec: RecInst, name: string): Value {
+    const s = rec.slots.get(name);
+    if (!s) {
+      if (rec.extras.has(name)) throw new EvalErr(`opaque field ${name} accessed`);
+      return ABSENT;
+    }
+    if (s.state === 'ok') return s.value;
+    if (s.state === 'absent' || s.state === 'invalid') return ABSENT;
+    if ((rec as unknown as { __qeng?: boolean }).__qeng)
+      return this.db.query(`slot:${pathStr(rec.path)}.${name}`) as Value;
+    try {
+      return this.helper.forceSlot(rec, name);
+    } catch {
+      return ABSENT; // a tainted (invalid) value-layer member reads as absent
+    }
+  }
+
   /** the value a reference denotes: walk its path from the root (§7.4, §7.5) */
   private deref(ref: Value): Value {
     const segs = (ref as { segs: Seg[] }).segs;
@@ -658,11 +686,8 @@ class QEval {
     for (let i = 1; i < segs.length && cur !== undefined; i++) {
       const s = segText(segs[i]);
       if (isRec(cur)) {
-        const slot = cur.slots.get(s as string);
-        cur =
-          slot && slot.state !== 'absent' && slot.state !== 'invalid'
-            ? this.cx.query(`slot:${pathStr(cur.path)}.${s}`)
-            : undefined;
+        cur = cur.slots.has(s as string) ? this.forceMember(cur, s as string) : undefined;
+        if (cur === ABSENT) cur = undefined;
       } else if (isArr(cur)) cur = cur.items[s as number];
       else if (isMap(cur)) cur = cur.entries.get(s);
       else cur = undefined;
@@ -698,6 +723,7 @@ class QEval {
     };
     (inst as unknown as { menv: Env }).menv = this.env;
     (inst as unknown as { eng: Engine }).eng = this.helper;
+    (inst as unknown as { __qeng: boolean }).__qeng = true; // a query-graph record
     this.env.registry.push(inst);
 
     const cctx: CCtx = {
@@ -771,6 +797,7 @@ class QEval {
           hidden: m.hidden || undefined,
           state: 'unforced',
           deferred: false,
+          compute: () => this.db.query(key),
         });
         continue;
       }
@@ -785,10 +812,16 @@ class QEval {
           hidden: m.hidden || undefined,
           state: 'unforced',
           deferred: false,
+          compute: () => this.db.query(key),
         });
       } else if (m.kind === 'dflt') {
         this.slotJobs.set(key, this.supplyProduce(m.dflt, types, memberPath, inst, cctx, sc));
-        inst.slots.set(m.name, { kind: 'dflt', state: 'unforced', deferred: false });
+        inst.slots.set(m.name, {
+          kind: 'dflt',
+          state: 'unforced',
+          deferred: false,
+          compute: () => this.db.query(key),
+        });
       } else if (m.kind === 'opt') {
         inst.slots.set(m.name, { kind: 'opt', state: 'absent', deferred: false });
       } else {
@@ -874,16 +907,21 @@ class QEval {
     cctx: CCtx,
     sc: BindScope,
   ): Op {
-    if (type.t === 'rec') {
-      if (valExpr.e !== 'obj') throw new Unsupported('non-literal record value');
+    // a record literal binds in the query graph; a record value from any other
+    // expression (a call, a `with`, a reference, a discriminated union) is left
+    // to the value layer and forced during materialize
+    if (type.t === 'rec' && valExpr.e === 'obj') {
       const entries = valExpr.entries;
       return () => this.bindRecord(entries, type, path, parent);
     }
-    if (type.t === 'union' && this.hasRec(type, new Set()))
-      throw new Unsupported('union with records');
-    if (type.t === 'arr' && this.hasRec(type.elem, new Set())) {
-      if (valExpr.e !== 'arr') throw new Unsupported('record array not a literal');
-      if (valExpr.items.some((it) => it.spread)) throw new Unsupported('spread in a record array');
+    // a literal array of record-bearing elements: build each at its own path so
+    // a nested record's slots stay query jobs (reachable by access/navigation)
+    if (
+      type.t === 'arr' &&
+      this.hasRec(type.elem, new Set()) &&
+      valExpr.e === 'arr' &&
+      !valExpr.items.some((it) => it.spread)
+    ) {
       const elem = type.elem;
       const lo = type.lo;
       const hi = type.hi;
@@ -897,16 +935,18 @@ class QEval {
         return { __arr: true, items, path };
       };
     }
-    if (type.t === 'map' && this.hasRec(type.val, new Set())) {
-      if (valExpr.e !== 'obj') throw new Unsupported('record map not a literal');
+    // a literal map of record-bearing values: likewise, one query record per key
+    if (
+      type.t === 'map' &&
+      this.hasRec(type.val, new Set()) &&
+      valExpr.e === 'obj' &&
+      !valExpr.entries.some((en) => en.val.e === 'spread')
+    ) {
       const val = type.val;
-      const entryOps = valExpr.entries.map((en) => {
-        if (en.val.e === 'spread') throw new Unsupported('spread in a record map');
-        return {
-          key: en.key,
-          op: this.bindValue(en.val, val, [...path, mapKey(en.key)], parent, cctx, sc),
-        };
-      });
+      const entryOps = valExpr.entries.map((en) => ({
+        key: en.key,
+        op: this.bindValue(en.val, val, [...path, mapKey(en.key)], parent, cctx, sc),
+      }));
       return (cx, l) => {
         const entries = new Map<string, Value>();
         for (const e of entryOps) entries.set(e.key, e.op(cx, l));
@@ -921,6 +961,13 @@ class QEval {
   private materialize(inst: RecInst, seen: Set<RecInst>): void {
     if (seen.has(inst)) return;
     seen.add(inst);
+    // a value-layer record (a call/with/union result) forces through the
+    // reference engine, which recurses into any query-graph records it holds
+    // (their slots delegate to the db)
+    if (!(inst as unknown as { __qeng?: boolean }).__qeng) {
+      this.helper.forceAll(inst, false);
+      return;
+    }
     const id = pathStr(inst.path);
     for (const m of inst.rt.members) {
       const s = inst.slots.get(m.name);

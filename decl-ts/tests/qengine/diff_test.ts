@@ -260,6 +260,27 @@ const programs: { name: string; src: string }[] = [
     name: 'derived member restated differently errors',
     src: 'type R = { x: int, dbl = x * 2 }\nexport output r: R = { x: 5, dbl: 11 }',
   },
+  // records nested in collections, root references, computed records (§7)
+  {
+    name: 'records inside a map, values summed',
+    src: 'type Port = { id: int }\ntype Hub = { ports: map<string, Port>, ids = std.array.sum([p.id for p in std.map.values(ports)]) }\nexport output h: Hub = { ports: { a: { id: 1 }, b: { id: 2 } } }',
+  },
+  {
+    name: 'records inside an array, summed',
+    src: 'type P = { n: int }\ntype R = { ps: P[], total = std.array.sum([p.n for p in ps]) }\nexport output r: R = { ps: [{ n: 1 }, { n: 2 }, { n: 3 }] }',
+  },
+  {
+    name: 'derived member of a record inside an array',
+    src: 'type P = { n: int, sq = n * n }\ntype R = { ps: P[] }\nexport output r: R = { ps: [{ n: 2 }, { n: 3 }] }',
+  },
+  {
+    name: 'one output references another',
+    src: 'type R = { x: int }\nexport output a: R = { x: 5 }\nexport output b: int = a.x * 2',
+  },
+  {
+    name: 'record from a std call',
+    src: 'type R = { a: int, b: int }\nexport output r: R = std.object.merge({ a: 1, b: 2 }, { b: 9 })',
+  },
 ];
 
 let pass = 0;
