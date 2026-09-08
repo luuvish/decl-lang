@@ -1,22 +1,33 @@
-// The decl layer of the query engine (qengine/DESIGN.md), stages 2a–2b: compile
-// expressions to query computes and evaluate a module's outputs through the
-// incremental core (db.ts).
-//   2a — scalar/const computation: literals, unary/binary operators, `if`,
-//        `name` -> const.
-//   2b — records: an object literal bound to a record type becomes a RecInst
-//        whose members are slot QUERIES; a member that names a sibling reads it
-//        through the query graph (`slot b = a + 1` queries slot a), so the graph
-//        does the cross-slot dependency work.
+// The decl layer of the query engine (qengine/DESIGN.md), stages 2a–2b+:
+// compile expressions to query computes and evaluate a module's outputs through
+// the incremental core (db.ts).
+//   2a  — scalar/const: literals, unary/binary operators, `if`, `name` -> const.
+//   2b  — records: an object literal bound to a record type becomes a RecInst
+//         whose members are slot QUERIES; a member that names a sibling reads it
+//         through the query graph (`b = a + 1` queries slot a).
 //   2b+ — nested records (a record-typed member binds recursively) and member
-//        access (`inner.a` queries the nested record's slot). Required and
-//        derived members are covered; optional/default members, maps, refs and
-//        `$this`/`$parent` navigation come later.
+//         access (`inner.a` queries the nested slot).
+//   refs — `$this`/`$parent`/`$root`/`$key` are references (§7.3); a reference
+//         resolves by walking the query graph from the root (`deref`,
+//         `resolveSegs`), and member access through one dereferences first
+//         (§7.4, §7.5).
 // Value semantics — equality, serialization, and type binding — are reused from
 // the current value layer, as the design intends; only the evaluation strategy
-// is new.
+// is new. Optional/default members, maps, arrays, comprehensions, unions,
+// patterns, `ref<T>` navigation members, and `$referrers` come in later stages.
 import { Db } from './db.ts';
 import { Engine } from '../engine.ts';
-import { ABSENT, EvalErr, isRec, isRef, pathStr, valueEq } from '../semantics.ts';
+import {
+  ABSENT,
+  EvalErr,
+  isArr,
+  isMap,
+  isRec,
+  isRef,
+  pathStr,
+  segText,
+  valueEq,
+} from '../semantics.ts';
 import type { Env, RecInst, Value, Diag, Seg, RT } from '../semantics.ts';
 import type { Expr } from '../ast.ts';
 
@@ -27,10 +38,23 @@ export class Unsupported extends Error {
   }
 }
 
+/** the runtime context a compiled expression reads through */
+interface OpCx {
+  /** read a query's value (recording it as a dependency) */
+  query(key: string): unknown;
+  /** resolve a reference to the value it denotes (§7.4) */
+  deref(ref: Value): Value;
+}
 /** a compiled expression: a closure over the query context */
-type Op = (cx: { query(key: string): unknown }) => Value;
+type Op = (cx: OpCx) => Value;
 /** resolve a name to the query key it reads, or undefined if it is not in scope */
 type Names = (name: string) => string | undefined;
+/** the lexical context a compile happens in: names in scope, the enclosing instance, the root */
+interface CCtx {
+  names: Names;
+  self: RecInst | null;
+  rootName: string;
+}
 
 // ---- value-level operators (§4.4–4.5), mirroring the reference exactly ----
 
@@ -116,7 +140,7 @@ function applyBin(op: string, l: Value, r: Value): Value {
 }
 
 /** read member `name` of a record value through the query graph (§4.10, §7.5) */
-function access(cx: { query(key: string): unknown }, x: Value, name: string): Value {
+function access(cx: OpCx, x: Value, name: string): Value {
   if (isRec(x)) {
     if (x.slots.has(name)) return cx.query(`slot:${pathStr(x.path)}.${name}`) as Value;
     if (x.extras.has(name)) throw new EvalErr(`opaque field ${name} accessed`);
@@ -129,29 +153,29 @@ function access(cx: { query(key: string): unknown }, x: Value, name: string): Va
 
 // ---- compile: an expression AST becomes a closure over the query context ----
 
-function compile(e: Expr, names: Names): Op {
+function compile(e: Expr, c: CCtx): Op {
   switch (e.e) {
     case 'lit': {
       const v = e.v;
       return () => v;
     }
     case 'paren':
-      return compile(e.x, names);
+      return compile(e.x, c);
     case 'un': {
       const op = e.op;
-      const xc = compile(e.x, names);
+      const xc = compile(e.x, c);
       return (cx) => applyUn(op, xc(cx));
     }
     case 'if': {
-      const c = compile(e.c, names);
-      const t = compile(e.t, names);
-      const f = compile(e.f, names);
-      return (cx) => (truthy(c(cx)) ? t(cx) : f(cx));
+      const cc = compile(e.c, c);
+      const t = compile(e.t, c);
+      const f = compile(e.f, c);
+      return (cx) => (truthy(cc(cx)) ? t(cx) : f(cx));
     }
     case 'bin': {
       const op = e.op;
-      const lc = compile(e.l, names);
-      const rc = compile(e.r, names);
+      const lc = compile(e.l, c);
+      const rc = compile(e.r, c);
       if (op === '&&') return (cx) => (truthy(lc(cx)) ? truthy(rc(cx)) : false);
       if (op === '||') return (cx) => (truthy(lc(cx)) ? true : truthy(rc(cx)));
       if (op === '??')
@@ -162,20 +186,45 @@ function compile(e: Expr, names: Names): Op {
       return (cx) => applyBin(op, lc(cx), rc(cx));
     }
     case 'name': {
-      const key = names(e.name);
+      const key = c.names(e.name);
       if (key === undefined) throw new Unsupported(`name ${e.name}`);
       return (cx) => cx.query(key) as Value;
     }
     case 'member': {
       const nm = e.name;
       const safe = e.safe;
-      const xc = compile(e.x, names);
+      const xc = compile(e.x, c);
       return (cx) => {
-        const x = xc(cx);
+        let x = xc(cx);
         if (safe && (x === null || x === ABSENT)) return ABSENT;
-        if (isRef(x)) throw new Unsupported('member access through a reference');
+        if (isRef(x)) x = cx.deref(x);
         return access(cx, x, nm);
       };
+    }
+    case 'ctx': {
+      const nm = e.name;
+      const self = c.self;
+      const rootName = c.rootName;
+      if (nm === '$this')
+        return () => {
+          if (!self) throw new EvalErr('$this outside a record instance', 'E4090');
+          return { __ref: true, segs: self.path };
+        };
+      if (nm === '$parent')
+        return () => {
+          if (!self || !self.parent)
+            throw new EvalErr('$parent: the evaluation root has no owner', 'E4090');
+          return { __ref: true, segs: self.parent.path };
+        };
+      if (nm === '$root') return () => ({ __ref: true, segs: [rootName] });
+      if (nm === '$key')
+        return () => {
+          if (!self || !self.parent || self.path.length < self.parent.path.length + 2)
+            throw new EvalErr('$key: the instance is not a collection element', 'E4090');
+          const k = segText(self.path[self.path.length - 1]);
+          return typeof k === 'number' ? BigInt(k) : k;
+        };
+      throw new Unsupported(`ctx ${nm}`);
     }
     default:
       throw new Unsupported(e.e);
@@ -192,24 +241,60 @@ class QEval {
   private readonly env: Env;
   private readonly helper: Engine; // value layer only: type binding + serialization
   private readonly db: Db;
+  private readonly cx: OpCx;
   private readonly constOps = new Map<string, Op>();
-  // each slot's compute: it reads siblings/consts through the query context
+  // each slot's compute: it reads siblings/consts/references through the context
   private readonly slotJobs = new Map<string, Op>();
   private readonly diagnostics: Diag[] = [];
 
   constructor(env: Env) {
     this.env = env;
     this.helper = new Engine(env);
-    const constNames: Names = (n) => (env.consts.has(n) ? `const:${n}` : undefined);
-    for (const [name, c] of env.consts) this.constOps.set(name, compile(c.expr, constNames));
     this.db = new Db({
       eq: valueEq,
       resolve: (key) => {
-        if (key.startsWith('const:')) return this.constOps.get(key.slice(6));
-        if (key.startsWith('slot:')) return this.slotJobs.get(key);
-        return undefined;
+        // run each compute with our own context (query + deref); the Db still
+        // records dependencies, since our `query` calls back into it
+        const op = key.startsWith('const:')
+          ? this.constOps.get(key.slice(6))
+          : key.startsWith('slot:')
+            ? this.slotJobs.get(key)
+            : undefined;
+        return op ? () => op(this.cx) : undefined;
       },
     });
+    this.cx = { query: (k) => this.db.query(k), deref: (r) => this.deref(r) };
+    const constCtx: CCtx = {
+      names: (n) => (env.consts.has(n) ? `const:${n}` : undefined),
+      self: null,
+      rootName: '',
+    };
+    for (const [name, con] of env.consts) this.constOps.set(name, compile(con.expr, constCtx));
+  }
+
+  /** the value a reference denotes: walk its path from the root (§7.4, §7.5) */
+  private deref(ref: Value): Value {
+    const target = this.resolveSegs((ref as { segs: Seg[] }).segs);
+    if (target === undefined)
+      throw new EvalErr(`dangling reference ${pathStr((ref as { segs: Seg[] }).segs)}`, 'E6002');
+    return target;
+  }
+
+  private resolveSegs(segs: Seg[]): Value {
+    let cur: Value = this.env.roots.get(segs[0] as string);
+    for (let i = 1; i < segs.length && cur !== undefined; i++) {
+      const s = segText(segs[i]);
+      if (isRec(cur))
+        cur = cur.slots.has(s as string)
+          ? this.cx.query(`slot:${pathStr(cur.path)}.${s}`)
+          : undefined;
+      else if (isArr(cur)) cur = cur.items[s as number];
+      else if (isMap(cur)) cur = cur.entries.get(s);
+      else cur = undefined;
+      if (cur === ABSENT) cur = undefined;
+      if (isRef(cur)) cur = this.deref(cur);
+    }
+    return cur;
   }
 
   /**
@@ -241,12 +326,16 @@ class QEval {
     this.env.registry.push(inst);
 
     const memberNames = new Set<string>(rt.members.map((m: { name: string }) => m.name));
-    const names: Names = (n) =>
-      memberNames.has(n)
-        ? `slot:${instId}.${n}`
-        : this.env.consts.has(n)
-          ? `const:${n}`
-          : undefined;
+    const cctx: CCtx = {
+      names: (n) =>
+        memberNames.has(n)
+          ? `slot:${instId}.${n}`
+          : this.env.consts.has(n)
+            ? `const:${n}`
+            : undefined,
+      self: inst,
+      rootName: path[0] as string,
+    };
     const sc = {
       inst,
       locals: new Map<string, unknown>(),
@@ -256,6 +345,7 @@ class QEval {
 
     for (const m of rt.members) {
       if (m.kind === 'opt' || m.kind === 'dflt') throw new Unsupported(`member kind ${m.kind}`);
+      if (m.type && m.type.t === 'ref') throw new Unsupported('ref-typed member');
       const memberPath = [...path, m.name];
       const valExpr: Expr | undefined = m.kind === 'der' ? m.expr : supplied.get(m.name);
       if (valExpr === undefined) throw new Unsupported(`missing member ${m.name}`);
@@ -266,7 +356,7 @@ class QEval {
         const memberRt = m.type;
         produce = () => this.bindRecord(objEntries, memberRt, memberPath, inst);
       } else {
-        const op = compile(valExpr, names);
+        const op = compile(valExpr, cctx);
         const memberRt = m.type;
         produce = (cx) => {
           const v = op(cx);
@@ -320,10 +410,15 @@ class QEval {
         let v: Value;
         if (rt.t === 'rec' && o.expr.e === 'obj') {
           v = this.bindRecord(o.expr.entries, rt, [o.name], null);
+          this.env.roots.set(o.name, v); // set before materialize so references resolve
           this.materialize(v, new Set());
         } else {
-          const constNames: Names = (n) => (this.env.consts.has(n) ? `const:${n}` : undefined);
-          const raw = compile(o.expr, constNames)({ query: (k) => this.db.query(k) });
+          const cctx: CCtx = {
+            names: (n) => (this.env.consts.has(n) ? `const:${n}` : undefined),
+            self: null,
+            rootName: o.name,
+          };
+          const raw = compile(o.expr, cctx)(this.cx);
           const sc = {
             inst: null,
             locals: new Map<string, unknown>(),
@@ -331,8 +426,8 @@ class QEval {
             menv: this.env,
           };
           v = this.helper.bind(raw, rt, [o.name], null, sc);
+          this.env.roots.set(o.name, v);
         }
-        this.env.roots.set(o.name, v);
         outputs.push({ name: o.name, json: this.helper.serialize(v, o.name) });
       } catch (err) {
         if (err instanceof EvalErr) {

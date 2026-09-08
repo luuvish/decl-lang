@@ -57,6 +57,15 @@ const programs: { name: string; src: string }[] = [
     name: 'nested record read by a sibling derived',
     src: 'type P = { x: int, y: int }\ntype Q = { p: P, sx = p.x, sum = p.x + p.y }\nexport output q: Q = { p: { x: 8, y: 9 } }',
   },
+  // references and navigation (§7.3, §7.4)
+  {
+    name: '$this as a reference value',
+    src: 'type Node = { name: string, me = $this }\nexport output n: Node = { name: "a" }',
+  },
+  {
+    name: '$this dereferenced by member access',
+    src: 'type Node = { name: string, me = $this, echo = me.name }\nexport output n: Node = { name: "a" }',
+  },
 ];
 
 let pass = 0;
