@@ -3,21 +3,24 @@
 // (db.ts). Covered so far:
 //   scalars/const, records (slots as queries, cross-slot & nested & member
 //   access; required/optional/default/derived/hidden members; restate and
-//   missing/undeclared diagnostics), references ($this/$parent/$root/$key,
-//   deref/navigation),
+//   missing/undeclared diagnostics; records nested in arrays and maps),
+//   references ($this/$parent/$root/$key/$path, deref/navigation, ref<T>
+//   navigation members with the mirror rule), references to other roots,
 //   arrays & array comprehensions, ranges, indexing, maps & map comprehensions,
-//   `in`/`matches`, patterns, string templates, `match` over literal unions,
+//   `in`/`matches`, patterns, string templates, `match`, unions of records,
 //   quantities and dimensional arithmetic, std/module-function calls, lambdas,
-//   and the pipe.
+//   the pipe, and assertions/when-blocks.
 // Value semantics — equality, serialization, type binding, iteration, type
 // membership, unit resolution, quantity arithmetic, function application,
-// assertions/when-blocks — are reused from the current value layer, as the
-// design intends; only the evaluation strategy is new. Assertions run over the
-// forced universe (run → validateAll). `ref<T>` navigation members, context
-// declarations, record-bearing unions, non-literal record values, `$referrers`,
-// and the rest come in later stages. (A closure passed to a std function has its body run by the
-// value layer for now — pure over its parameters and consts, so byte-identical;
-// closures compile into the query graph in a later stage.)
+// assertions — are reused from the current value layer, as the design intends;
+// only the evaluation strategy is new. A record value the query graph does not
+// build itself (a call result, a `with`, a discriminated union) is bound and
+// forced through the value layer and read back uniformly by forceMember;
+// assertions run over the forced universe (run → validateAll). Open-record
+// tails, inputs, `with`, and `$referrers` come in later stages. (A closure
+// passed to a std function has its body run by the value layer for now — pure
+// over its parameters and consts, so byte-identical; closures compile into the
+// query graph in a later stage.)
 import { Db } from './db.ts';
 import { Engine } from '../engine.ts';
 import {
@@ -235,6 +238,69 @@ function compileCallee(e: Expr, c: CCtx): Op {
     };
   }
   return compile(e, c);
+}
+
+/** a place-navigation marker: the location a chain names even past absent steps */
+interface Segs {
+  __segs: Seg[];
+}
+const isSegs = (v: unknown): v is Segs => typeof v === 'object' && v !== null && '__segs' in v;
+
+/**
+ * Navigate an expression as a place (§7.4): a step past a missing member, key,
+ * or index still names the location (accumulated in `__segs`); a present step
+ * yields the value there. Mirrors the reference's evNav.
+ */
+function compileNav(e: Expr, c: CCtx): Op {
+  if (e.e === 'if') {
+    const cc = compile(e.c, c);
+    const t = compileNav(e.t, c);
+    const f = compileNav(e.f, c);
+    return (cx, l) => (truthy(cc(cx, l)) ? t(cx, l) : f(cx, l));
+  }
+  if (e.e === 'paren') return compileNav(e.x, c);
+  if (e.e === 'member') {
+    const nm = e.name;
+    const xOp = compileNav(e.x, c);
+    return (cx, l) => {
+      const x0 = xOp(cx, l);
+      if (isSegs(x0)) return { __segs: [...x0.__segs, nm] };
+      const x = isRef(x0) ? cx.deref(x0) : x0;
+      const v = access(cx, x, nm);
+      if (v === ABSENT && isRec(x)) return { __segs: [...x.path, nm] };
+      return v;
+    };
+  }
+  if (e.e === 'index') {
+    const xOp = compileNav(e.x, c);
+    const iOp = compile(e.i, c);
+    return (cx, l) => {
+      const x0 = xOp(cx, l);
+      const i = iOp(cx, l);
+      const seg: Seg = typeof i === 'bigint' ? Number(i) : mapKey(i);
+      if (isSegs(x0)) return { __segs: [...x0.__segs, seg] };
+      const x = isRef(x0) ? cx.deref(x0) : x0;
+      if (isArr(x)) return x.items[Number(i)] ?? { __segs: [...x.path, Number(i)] };
+      if (isMap(x)) return x.entries.has(i) ? x.entries.get(i) : { __segs: [...x.path, mapKey(i)] };
+      if (isRec(x)) {
+        const v = access(cx, x, i);
+        return v === ABSENT ? { __segs: [...x.path, i] } : v;
+      }
+      return x;
+    };
+  }
+  return compile(e, c);
+}
+
+/** the path segments a ref-position expression denotes, or null if not a place */
+function compilePlace(e: Expr, c: CCtx): (cx: OpCx, l: Locals) => Seg[] | null {
+  const navOp = compileNav(e, c);
+  return (cx, l) => {
+    const v = navOp(cx, l);
+    if (isSegs(v)) return v.__segs;
+    if (isRef(v)) return v.segs as Seg[];
+    return isRec(v) || isArr(v) || isMap(v) ? (v.path as Seg[]) : null;
+  };
 }
 
 function compile(e: Expr, c: CCtx): Op {
@@ -561,6 +627,11 @@ function compile(e: Expr, c: CCtx): Op {
           const k = segText(self.path[self.path.length - 1]);
           return typeof k === 'number' ? BigInt(k) : k;
         };
+      if (nm === '$path')
+        return () => {
+          if (!self) throw new EvalErr('$path outside a record instance', 'E4090');
+          return pathStr(self.path);
+        };
       throw new Unsupported(`ctx ${nm}`);
     }
     default:
@@ -753,8 +824,49 @@ class QEval {
       const key = `slot:${instId}.${m.name}`;
       const has = supplied.has(m.name);
       const types: RT[] = m.conj ?? (m.type ? [m.type] : []);
-      // a member declared `ref<T>` holds a navigation (§7.4) — a later stage
-      if (m.type && m.type.t === 'ref') throw new Unsupported('ref-typed member');
+
+      // a member declared `ref<T>` holds a navigation (§7.4): the expression
+      // names a place, checked for reference integrity (§7.5) when it is forced
+      if (m.type && m.type.t === 'ref' && !m.conj) {
+        const placeExpr: Expr | undefined =
+          m.kind === 'der'
+            ? m.expr
+            : has
+              ? supplied.get(m.name)
+              : m.kind === 'dflt'
+                ? m.dflt
+                : undefined;
+        if (placeExpr === undefined) {
+          if (m.kind === 'opt')
+            inst.slots.set(m.name, { kind: 'opt', state: 'absent', deferred: false });
+          else {
+            inst.slots.set(m.name, { kind: 'req', state: 'invalid', deferred: false });
+            this.diagnostics.push({
+              severity: 'error',
+              message: `required member ${m.name} missing`,
+              path: pathStr(memberPath),
+              code: 'E4002',
+            });
+          }
+          continue;
+        }
+        const placeOp = compilePlace(placeExpr, cctx);
+        this.slotJobs.set(key, (cx, l) => {
+          const segs = placeOp(cx, l);
+          if (!segs) throw new EvalErr('not a place in ref position');
+          if (this.resolveSegs(segs) === undefined)
+            throw new EvalErr(`dangling reference ${pathStr(segs)}`, 'E6002');
+          return { __ref: true, segs };
+        });
+        inst.slots.set(m.name, {
+          kind: m.kind,
+          hidden: m.hidden || undefined,
+          state: 'unforced',
+          deferred: false,
+          compute: () => this.db.query(key),
+        });
+        continue;
+      }
 
       if (m.kind === 'der') {
         if (has && m.hidden) {

@@ -281,6 +281,10 @@ const programs: { name: string; src: string }[] = [
     name: 'record from a std call',
     src: 'type R = { a: int, b: int }\nexport output r: R = std.object.merge({ a: 1, b: 2 }, { b: 9 })',
   },
+  {
+    name: 'ref-typed member and the mirror rule',
+    src: 'type Node = { name: string, self_ref: ref<Node> = $this, echo = self_ref.name }\nexport output n: Node = { name: "a" }',
+  },
 ];
 
 let pass = 0;
