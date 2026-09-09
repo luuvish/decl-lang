@@ -434,5 +434,74 @@
     "exit": 0,
     "stdout": "{\"o\":1}\n",
     "stderr": "<dir>/ann.decl:2:1: warn [W0001]: unknown annotation @todo\n"
+  },
+  {
+    "name": "evaluate: query fallback drops partial records before retrying",
+    "files": {
+      "main.decl": "type Row = {\n    x: int\n    assert soft: x in 1..10\n        else warn `unusual x ${x}`\n    ...\n}\nexport output row: Row = { x: 0, extra: \"kept\" }\nexport output marker: int = 1\n"
+    },
+    "args": [
+      "evaluate",
+      "<dir>/main.decl",
+      "--output",
+      "marker",
+      "--json"
+    ],
+    "exit": 0,
+    "stdout": "{\"ok\":true,\"value\":1,\"diagnostics\":[{\"file\":\"<dir>/main.decl\",\"code\":\"W6001\",\"id\":\"Row.soft\",\"severity\":\"warn\",\"message\":\"unusual x 0\",\"path\":\"row\"}]}\n",
+    "stderr": ""
+  },
+  {
+    "name": "evaluate: query fallback rebinds input errors once",
+    "files": {
+      "input.json": "{\"port\":0}\n",
+      "main.decl": "type Cfg = { port: 1..100 }\ninput cfg: Cfg\ntype Open = { ... }\noutput extra: Open = { note: \"kept\" }\nexport output marker: int = 1\n"
+    },
+    "args": [
+      "evaluate",
+      "<dir>/main.decl",
+      "--output",
+      "marker",
+      "--json",
+      "--input",
+      "cfg=<dir>/input.json"
+    ],
+    "exit": 1,
+    "stdout": "{\"ok\":false,\"value\":null,\"diagnostics\":[{\"file\":\"<dir>/main.decl\",\"code\":\"E4001\",\"severity\":\"error\",\"message\":\"out of range 1..100\",\"path\":\"cfg.port\"}]}\n",
+    "stderr": ""
+  },
+  {
+    "name": "evaluate: query fallback recomputes imported constants after a binding failure",
+    "files": {
+      "library.decl": "export type Row = {\n    x: int\n    assert soft: x in 1..10\n        else warn `unusual x ${x}`\n    ...\n}\nexport const saved: Row = { x: 0 }\n",
+      "main.decl": "import { Row, saved } from \"./library.decl\"\nexport output copy: Row = saved\ntype Open = { ... }\noutput extra: Open = { note: \"kept\" }\nexport output marker: int = 1\n"
+    },
+    "args": [
+      "evaluate",
+      "<dir>/main.decl",
+      "--output",
+      "marker",
+      "--json"
+    ],
+    "exit": 0,
+    "stdout": "{\"ok\":true,\"value\":1,\"diagnostics\":[{\"file\":\"<dir>/main.decl\",\"code\":\"W6001\",\"id\":\"Row.soft\",\"severity\":\"warn\",\"message\":\"unusual x 0\",\"path\":\"copy\"},{\"file\":\"<dir>/main.decl\",\"code\":\"W6001\",\"id\":\"Row.soft\",\"severity\":\"warn\",\"message\":\"unusual x 0\",\"path\":\"saved\"}]}\n",
+    "stderr": ""
+  },
+  {
+    "name": "evaluate: query fallback recomputes imported constants after a force failure",
+    "files": {
+      "library.decl": "export type Row = {\n    x: int\n    assert soft: x in 1..10\n        else warn `unusual x ${x}`\n    ...\n}\nexport const saved: Row = { x: 0 }\n",
+      "main.decl": "import { Row, saved } from \"./library.decl\"\nexport output copy: Row = saved\ntype Probe = { item: { x?: int }, present = \"x\" in item }\noutput probe: Probe = { item: { x: 1 } }\nexport output marker: int = 1\n"
+    },
+    "args": [
+      "evaluate",
+      "<dir>/main.decl",
+      "--output",
+      "marker",
+      "--json"
+    ],
+    "exit": 0,
+    "stdout": "{\"ok\":true,\"value\":1,\"diagnostics\":[{\"file\":\"<dir>/main.decl\",\"code\":\"W6001\",\"id\":\"Row.soft\",\"severity\":\"warn\",\"message\":\"unusual x 0\",\"path\":\"copy\"},{\"file\":\"<dir>/main.decl\",\"code\":\"W6001\",\"id\":\"Row.soft\",\"severity\":\"warn\",\"message\":\"unusual x 0\",\"path\":\"saved\"}]}\n",
+    "stderr": ""
   }
 ]

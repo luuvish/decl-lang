@@ -232,6 +232,12 @@ def run_universe(mods: list[Any], entry: Module, binds: list[Any] | None = None)
             entry.env.roots.clear()
             entry.env.registry.clear()
             entry.env.diagnostics.clear()
+            # Cached constants may own records from the discarded registry.
+            # Recompute them in the fresh universe so they are validated.
+            for m in mods:
+                for c in m.env.consts.values():
+                    c["state"] = "unforced"
+                    c.pop("value", None)
 
     def bind(eng: Engine) -> None:
         for m in mods:

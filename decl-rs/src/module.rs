@@ -444,6 +444,14 @@ pub fn run_universe(
                 entry.env.roots_clear();
                 entry.env.registry_clear();
                 entry.env.diag_set(vec![]);
+                // Cached constants may own records from the discarded registry.
+                // Recompute them in the fresh universe so they are validated.
+                for m in mods {
+                    for c in m.env.consts.borrow().values() {
+                        c.state.set(false);
+                        *c.value.borrow_mut() = Value::Undef;
+                    }
+                }
             }
         }
     }

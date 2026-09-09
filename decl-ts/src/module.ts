@@ -222,6 +222,17 @@ export function runUniverse(
       return { eng, diags: entry.env.diagnostics };
     } catch (e) {
       if (!(e instanceof Unsupported) || strictQEngine()) throw e; // else fall back
+      // A failed attempt can register records and memoize constants. The
+      // fallback starts a fresh universe: retaining either duplicates records
+      // or leaves cached values whose instances no longer get validated.
+      entry.env.roots.clear();
+      entry.env.registry.splice(0);
+      entry.env.diagnostics.length = 0;
+      for (const m of mods)
+        for (const c of m.env.consts.values()) {
+          c.state = 'unforced';
+          delete c.value;
+        }
     }
   }
   const bind = (eng: Engine) => {
