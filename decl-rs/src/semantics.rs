@@ -1,10 +1,11 @@
 //! Value model, environment, and type resolution — a port of the
 //! reference implementation's semantics.ts.
 use crate::ast::*;
+use indexmap::IndexMap;
 use num_bigint::{BigInt, Sign};
 use num_traits::{FromPrimitive, Signed, ToPrimitive};
 use regex::Regex;
-use rustc_hash::FxHashMap;
+use rustc_hash::{FxBuildHasher, FxHashMap};
 use std::cell::{Cell, RefCell};
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::fmt;
@@ -454,29 +455,29 @@ pub struct ArrV {
     /// its canonical path
     pub path: Rc<SegPath>,
 }
+/// An insertion-ordered table with indexed lookup. Iteration retains language
+/// order while reference navigation and member access avoid linear scans.
+pub type OrderedMap<T> = IndexMap<String, T, FxBuildHasher>;
+
 /// a map value
 pub struct MapV {
     /// the entries, in order
-    pub entries: Vec<(String, Value)>,
+    pub entries: OrderedMap<Value>,
     /// its canonical path
     pub path: Rc<SegPath>,
 }
 impl MapV {
     /// The value at a key.
     pub fn get(&self, k: &str) -> Option<&Value> {
-        self.entries.iter().find(|(n, _)| n == k).map(|(_, v)| v)
+        self.entries.get(k)
     }
     /// Whether the key is present.
     pub fn has(&self, k: &str) -> bool {
-        self.entries.iter().any(|(n, _)| n == k)
+        self.entries.contains_key(k)
     }
     /// Set a key's value.
     pub fn set(&mut self, k: String, v: Value) {
-        if let Some(e) = self.entries.iter_mut().find(|(n, _)| *n == k) {
-            e.1 = v;
-        } else {
-            self.entries.push((k, v));
-        }
+        self.entries.insert(k, v);
     }
 }
 
@@ -913,8 +914,9 @@ pub enum RTk {
 pub struct RecType {
     /// whether it is open
     pub open: Cell<bool>,
-    /// its members
-    pub members: RefCell<Vec<Member>>,
+    /// Its members, shared after resolution. Recursive type construction uses
+    /// copy-on-write so an earlier snapshot never changes underneath a reader.
+    pub members: RefCell<Rc<Vec<Member>>>,
     /// its assertions and guarded groups
     pub asserts: RefCell<Vec<AssertItem>>,
     /// `context $parent: ref<T>` declarations (D30), checked at embedding sites
@@ -928,7 +930,7 @@ pub struct RecType {
 pub fn rec_type(open: bool) -> RecType {
     RecType {
         open: Cell::new(open),
-        members: RefCell::new(vec![]),
+        members: RefCell::new(Rc::new(vec![])),
         asserts: RefCell::new(vec![]),
         ctx_decls: RefCell::new(vec![]),
         filling: Cell::new(false),
@@ -977,10 +979,10 @@ pub struct AssertItem {
 }
 
 /// The members of a record type; empty for any other type.
-pub fn rec_members(t: &RT) -> Vec<Member> {
+pub fn rec_members(t: &RT) -> Rc<Vec<Member>> {
     match &t.k {
         RTk::Rec(r) => r.members.borrow().clone(),
-        _ => vec![],
+        _ => Rc::new(vec![]),
     }
 }
 /// Whether the type is a record.
@@ -2115,7 +2117,7 @@ impl Env {
         if let Some(t) = base.tail.borrow().clone() {
             *target.tail.borrow_mut() = Some(t);
         }
-        let mut members: Vec<Member> = br.members.borrow().clone();
+        let mut members: Vec<Member> = (**br.members.borrow()).clone();
         for om in er.members.borrow().iter() {
             if let Some(i) = members.iter().position(|m| m.name == om.name) {
                 members[i] = om.clone();
@@ -2133,7 +2135,7 @@ impl Env {
                 ctx_decls.push(cd.clone());
             }
         }
-        *tr.members.borrow_mut() = members;
+        *tr.members.borrow_mut() = Rc::new(members);
         *tr.asserts.borrow_mut() = asserts;
         *tr.ctx_decls.borrow_mut() = ctx_decls;
         self.complete_record(target);
@@ -2401,7 +2403,7 @@ impl Env {
                     ty: t,
                     dflt,
                     ..
-                } => r.members.borrow_mut().push(Member {
+                } => Rc::make_mut(&mut r.members.borrow_mut()).push(Member {
                     kind: if dflt.is_some() {
                         MKind::Dflt
                     } else if *opt {
@@ -2423,7 +2425,7 @@ impl Env {
                     expr,
                     hidden,
                     ..
-                } => r.members.borrow_mut().push(Member {
+                } => Rc::make_mut(&mut r.members.borrow_mut()).push(Member {
                     kind: MKind::Der,
                     name: name.clone(),
                     hidden: *hidden,
@@ -2504,7 +2506,7 @@ impl Env {
             }));
         }
         let rec = rec_type(open);
-        *rec.members.borrow_mut() = members;
+        *rec.members.borrow_mut() = Rc::new(members);
         *rec.asserts.borrow_mut() = asserts;
         let rt = ty(RTk::Rec(rec));
         *rt.name.borrow_mut() = name.map(|s| s.to_string());

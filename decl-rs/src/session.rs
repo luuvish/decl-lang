@@ -2163,8 +2163,9 @@ impl Session {
                         s.value.clone(),
                         b.entry_order.iter().any(|x| x.as_str() == &**n),
                         rec_members(&b.rt)
-                            .into_iter()
-                            .find(|m| m.name.as_str() == &**n),
+                            .iter()
+                            .find(|m| m.name.as_str() == &**n)
+                            .cloned(),
                     )
                 })
             }
@@ -2394,7 +2395,7 @@ impl Session {
             fn members(t: Option<&RT>) -> Option<Vec<crate::semantics::Member>> {
                 let t = t?;
                 match &t.k {
-                    RTk::Rec(_) => Some(rec_members(t)),
+                    RTk::Rec(_) => Some(rec_members(t).to_vec()),
                     RTk::Union(arms) => {
                         let sets: Vec<Option<Vec<crate::semantics::Member>>> =
                             arms.borrow().iter().map(|a| members(Some(a))).collect();

@@ -226,6 +226,23 @@ The editors are checked by hand before a release:
 and the extensions' own tests (`npm test -w vscode-decl`,
 `extension/zed/test.sh`).
 
+### Performance measurements
+
+`mise exec -- cargo run --locked --release --example qbench` runs synthetic
+flat records, tagged unions, and reference graphs through both evaluators. Each
+sample loads the declarations, binds, evaluates, validates, and serializes every output;
+parsing and static checking are outside the timed region. The driver checks
+that both outputs agree, warms both paths, uses the CLI's allocator, and
+reports the median of nine runs. A query/tree ratio below 1 means the query
+engine is faster. Measure sequentially without builds or tests running beside
+the benchmark; compare identical workloads and measurement boundaries.
+
+For end-to-end measurements, time process startup through the requested output
+write. State whether definitions are precompiled or parsed and checked during
+the run, and whether the report scopes differ; verify the equivalent payload.
+Keep external models, data, profiles, and comparison reports outside the
+repository. Public benchmarks must be self-contained synthetic workloads.
+
 ## 5. Quality tools
 
 `make lint` runs each language's tools in check mode; `make format`

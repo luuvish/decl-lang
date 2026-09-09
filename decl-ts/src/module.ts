@@ -217,7 +217,7 @@ export function runUniverse(
   // are bound through the value layer before the outputs that read them
   if (useQEngine()) {
     try {
-      const { report, eng } = qevaluateUniverse(mods, entry, binds);
+      const { report, eng } = qevaluateUniverse(mods, entry, binds, false);
       entry.env.diagnostics.splice(0, entry.env.diagnostics.length, ...report.diagnostics);
       return { eng, diags: entry.env.diagnostics };
     } catch (e) {

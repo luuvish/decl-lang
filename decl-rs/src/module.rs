@@ -433,7 +433,7 @@ pub fn run_universe(
                     .clone(),
             })
             .collect();
-        match crate::qengine::qeval::qevaluate_universe(&m_envs, &entry.env, &bspecs) {
+        match crate::qengine::qeval::run_universe(&m_envs, &entry.env, &bspecs, false) {
             Ok((report, eng)) => return (eng, report.diagnostics),
             Err(u) => {
                 if crate::pipeline::strict_qengine() {

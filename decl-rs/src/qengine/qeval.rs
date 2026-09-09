@@ -326,10 +326,9 @@ enum SlotPlan {
     /// a slot with no compute (absent optional, invalid required/hidden)
     Skip,
     /// a `ref<T>` member: a place navigation checked for integrity (§7.4–7.5)
-    Ref { key: String, place: Rc<Expr> },
+    Ref { place: Rc<Expr> },
     /// a derived member (§5.4), optionally restating a supplied value
     Der {
-        key: String,
         expr: Rc<Expr>,
         ty: Option<RT>,
         restate: Option<Rc<Expr>>,
@@ -337,7 +336,6 @@ enum SlotPlan {
     },
     /// a supplied or defaulted value member, bound through its type(s)
     Supply {
-        key: String,
         expr: Rc<Expr>,
         types: Vec<RT>,
         member_path: Vec<Seg>,
@@ -852,7 +850,7 @@ fn compile(e: &Rc<Expr>, c: &CCtx) -> Result<Op, Unsupported> {
                     }
                 }
                 Ok(Value::Map(Rc::new(RefCell::new(MapV {
-                    entries,
+                    entries: entries.into_iter().collect(),
                     path: Rc::new(vec![]),
                 }))))
             }))
@@ -870,7 +868,7 @@ fn compile(e: &Rc<Expr>, c: &CCtx) -> Result<Op, Unsupported> {
                 let mut out = Vec::new();
                 run_mapcomp(q, &ccs, 0, l, &key_op, &val_op, &mut out)?;
                 Ok(Value::Map(Rc::new(RefCell::new(MapV {
-                    entries: out,
+                    entries: out.into_iter().collect(),
                     path: Rc::new(vec![]),
                 }))))
             }))
@@ -1053,7 +1051,10 @@ pub struct QEval {
     db: Db,
     weak: Weak<QEval>, // for bridge thunks and forceMember (query-graph records)
     const_ops: RefCell<FxHashMap<String, Op>>,
-    slot_jobs: RefCell<FxHashMap<String, Op>>, // a record slot's compiled compute
+    // Round-owned compiled bodies. Slots hold only a weak arena reference and
+    // an integer index: a body may capture its instance, so storing the body
+    // on that instance would create a reference cycle.
+    slot_ops: RefCell<Vec<Op>>,
 }
 
 impl QEval {
@@ -1077,16 +1078,26 @@ impl QEval {
                 db,
                 weak: weak.clone(),
                 const_ops: RefCell::new(FxHashMap::default()),
-                slot_jobs: RefCell::new(FxHashMap::default()),
+                slot_ops: RefCell::new(Vec::new()),
             }
         })
     }
 
     /// a thunk the value layer runs to force a query-graph slot (Compute::Bridge)
-    fn bridge(&self, key: String) -> Compute {
+    fn bridge(&self, op: Op) -> Compute {
         let w = self.weak.clone();
+        let index = self.slot_ops.borrow().len();
+        self.slot_ops.borrow_mut().push(op);
         Compute::Bridge(Rc::new(move || {
-            w.upgrade().expect("qeval alive").query(&key)
+            // The value-layer slot already memoizes its value, detects cycles,
+            // and handles deferral/taint. Invoke its compiled body directly:
+            // a second string-keyed memo would store the same value twice and
+            // collect dependencies that this one-round evaluator never reuses.
+            let q = w.upgrade().expect("qeval alive");
+            // Release the arena borrow before executing: binding a nested
+            // record can append more bodies to the same arena.
+            let op = q.slot_ops.borrow()[index].clone();
+            op(&q, &Locals::default())
         }))
     }
 
@@ -1121,7 +1132,6 @@ impl QEval {
         parent: Option<Inst>,
         menv: &Rc<Env>,
     ) -> R<Value> {
-        let inst_id = path_str(&path, None);
         let root_name = seg_text(&path[0]);
         let supplied: FxHashMap<String, Rc<Expr>> = entries.iter().cloned().collect();
         let entry_order: Vec<String> = entries.iter().map(|(k, _)| k.clone()).collect();
@@ -1163,10 +1173,9 @@ impl QEval {
                 },
             ));
         };
-        for m in &members {
+        for m in members.iter() {
             let mut member_path = path.clone();
             member_path.push(Seg::Name(Rc::from(m.name.as_str())));
-            let key = format!("slot:{inst_id}.{}", m.name);
             let has = supplied.get(&m.name).cloned();
             let types: Vec<RT> = m
                 .conj
@@ -1202,7 +1211,7 @@ impl QEval {
                     }
                     Some(pe) => {
                         push_slot(&m.name, m.kind, m.hidden, SlotState::Unforced);
-                        plans.push(SlotPlan::Ref { key, place: pe });
+                        plans.push(SlotPlan::Ref { place: pe });
                     }
                 }
                 continue;
@@ -1236,7 +1245,6 @@ impl QEval {
                     .ok_or_else(|| unsup("derived without expr"))?;
                 push_slot(&m.name, MKind::Der, m.hidden, SlotState::Unforced);
                 plans.push(SlotPlan::Der {
-                    key,
                     expr,
                     ty: member_rt,
                     restate: has,
@@ -1250,7 +1258,6 @@ impl QEval {
             if let Some(sv) = has {
                 push_slot(&m.name, m.kind, m.hidden, SlotState::Unforced);
                 plans.push(SlotPlan::Supply {
-                    key,
                     expr: sv,
                     types,
                     member_path,
@@ -1262,7 +1269,6 @@ impl QEval {
                     .ok_or_else(|| unsup("default without expr"))?;
                 push_slot(&m.name, MKind::Dflt, false, SlotState::Unforced);
                 plans.push(SlotPlan::Supply {
-                    key,
                     expr: d,
                     types,
                     member_path,
@@ -1285,11 +1291,11 @@ impl QEval {
 
         // pass 2: build each live slot's compute op and hand it a bridge
         for (m, plan) in members.iter().zip(plans) {
-            let key = match self.build_plan(plan, &inst, &cctx, &root_name)? {
-                Some(key) => key,
+            let op = match self.build_plan(plan, &inst, &cctx, &root_name)? {
+                Some(op) => op,
                 None => continue,
             };
-            inst.borrow_mut().slot_mut(&m.name).unwrap().compute = Some(self.bridge(key));
+            inst.borrow_mut().slot_mut(&m.name).unwrap().compute = Some(self.bridge(op));
         }
 
         // supplied keys not declared by the type: an error on a closed record
@@ -1319,18 +1325,17 @@ impl QEval {
         Ok(Value::Rec(inst))
     }
 
-    /// build one slot's compute op from its plan and register it under its key;
-    /// returns the key (to attach the bridge), or None for a slot with no compute
+    /// Build one slot's compiled body, or None for a slot with no compute.
     fn build_plan(
         &self,
         plan: SlotPlan,
         inst: &Inst,
         cctx: &CCtx,
         root_name: &str,
-    ) -> R<Option<String>> {
-        let job: (String, Op) = match plan {
+    ) -> R<Option<Op>> {
+        let job: Op = match plan {
             SlotPlan::Skip => return Ok(None),
-            SlotPlan::Ref { key, place } => {
+            SlotPlan::Ref { place } => {
                 let place_op = compile_place(&place, cctx).map_err(|u| unsup(&u.0))?;
                 let job: Op = Rc::new(move |q, l| {
                     let segs = place_op(q, l)?.ok_or_else(|| {
@@ -1348,10 +1353,9 @@ impl QEval {
                     }
                     Ok(Value::Ref(Rc::new(segs)))
                 });
-                (key, job)
+                job
             }
             SlotPlan::Der {
-                key,
                 expr,
                 ty,
                 restate,
@@ -1396,10 +1400,9 @@ impl QEval {
                     }
                     Ok(v)
                 });
-                (key, job)
+                job
             }
             SlotPlan::Supply {
-                key,
                 expr,
                 types,
                 member_path,
@@ -1407,12 +1410,10 @@ impl QEval {
                 let job = self
                     .supply_produce(&expr, &types, member_path, inst.clone(), cctx)
                     .map_err(|u| unsup(&u.0))?;
-                (key, job)
+                job
             }
         };
-        let (key, op) = job;
-        self.slot_jobs.borrow_mut().insert(key.clone(), op);
-        Ok(Some(key))
+        Ok(Some(job))
     }
 
     /// build the compute for a supplied or defaulted member value. A single type
@@ -1521,7 +1522,7 @@ impl QEval {
                 let mpath = path;
                 return Ok(Rc::new(move |q, l| {
                     let m = MapV {
-                        entries: Vec::new(),
+                        entries: Default::default(),
                         path: Rc::new(mpath.clone()),
                     };
                     let m = Rc::new(RefCell::new(m));
@@ -1546,9 +1547,6 @@ impl QEval {
 
     /// the compute for a query key: a const (compiled lazily) for now
     fn op_for(&self, key: &str) -> Option<Op> {
-        if key.starts_with("slot:") {
-            return self.slot_jobs.borrow().get(key).cloned();
-        }
         if let Some(name) = key.strip_prefix("const:") {
             if let Some(op) = self.const_ops.borrow().get(name) {
                 return Some(op.clone());
@@ -1660,7 +1658,7 @@ pub fn qevaluate(env: Rc<Env>) -> Result<QReport, Unsupported> {
         .iter()
         .map(|(n, t, e)| (n.clone(), t.clone(), e.clone(), env.clone()))
         .collect();
-    let (report, _eng) = eval_rounds(&env, &roots, &[], &[])?;
+    let (report, _eng) = eval_rounds(&env, &roots, &[], &[], true)?;
     Ok(report)
 }
 
@@ -1685,6 +1683,18 @@ pub fn qevaluate_universe(
     entry: &Rc<Env>,
     binds: &[BoundSpec],
 ) -> Result<(QReport, Rc<Engine>), Unsupported> {
+    run_universe(mods, entry, binds, true)
+}
+
+/// Evaluate module values and diagnostics, optionally serializing the outputs.
+/// Module consumers render selected roots themselves; building every root's
+/// JSON here would allocate a second output only to discard it.
+pub(crate) fn run_universe(
+    mods: &[Rc<Env>],
+    entry: &Rc<Env>,
+    binds: &[BoundSpec],
+    serialize_outputs: bool,
+) -> Result<(QReport, Rc<Engine>), Unsupported> {
     let roots: Vec<RootSpec> = mods
         .iter()
         .flat_map(|m| {
@@ -1695,7 +1705,7 @@ pub fn qevaluate_universe(
                 .collect::<Vec<_>>()
         })
         .collect();
-    eval_rounds(entry, &roots, binds, mods)
+    eval_rounds(entry, &roots, binds, mods, serialize_outputs)
 }
 
 /// The rounds driver shared by the single-module and universe entries: bind the
@@ -1709,6 +1719,7 @@ fn eval_rounds(
     roots: &[RootSpec],
     binds: &[BoundSpec],
     hook_mods: &[Rc<Env>],
+    serialize_outputs: bool,
 ) -> Result<(QReport, Rc<Engine>), Unsupported> {
     let holder: RefCell<Vec<Rc<QEval>>> = RefCell::new(Vec::new());
     let unsupported = Cell::new(false);
@@ -1741,7 +1752,7 @@ fn eval_rounds(
         return Err(Unsupported("form".into()));
     }
     let ok = !diags.iter().any(|d| d.severity == "error");
-    let outputs = if ok {
+    let outputs = if ok && serialize_outputs {
         roots
             .iter()
             .filter_map(|(n, _, _, _)| {

@@ -159,7 +159,7 @@ fn sub(env: &Rc<Env>, a: &RT, b: &RT, assume: &mut HashMap<usize, Vec<usize>>) -
             assume.entry(ia).or_default().push(ib);
             let bm = br.members.borrow().clone();
             let am = ar.members.borrow().clone();
-            for m in &bm {
+            for m in bm.iter() {
                 if m.hidden {
                     continue; // not part of the value: ⊑ never compares it (D34)
                 }

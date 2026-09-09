@@ -1083,10 +1083,12 @@ export class Engine {
     if (this.phase < 2) throw new DeferSig(); // universe not fully materialized yet
     this.record(`referrers:${typeName}`);
     const self = sc.inst!;
-    const edge = this.snapEdge(typeName, member);
     const key = `${typeName}|${member}`;
     let inv = this.refIndex.get(key);
     if (!inv) {
+      // The snapshot and its inverse are immutable within a round. Acquire
+      // the edge only when building the inverse, not on every target lookup.
+      const edge = this.snapEdge(typeName, member);
       // one pass over the edge inverts it: each referrer is filed under every
       // distinct place its member refers to, so the query below is O(1)
       inv = new Map();

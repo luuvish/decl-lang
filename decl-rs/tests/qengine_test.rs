@@ -1,8 +1,9 @@
 //! The query engine's incremental core (src/qengine/db.rs): memoization,
 //! dependency tracking, and the two early cutoffs. Recompute counts prove the
 //! cutoffs. The Rust counterpart of decl-ts/tests/qengine/db_test.ts.
+use decl_lang::checker::check_module;
 use decl_lang::parse::parse_source;
-use decl_lang::pipeline::{evaluate_source, Phase};
+use decl_lang::pipeline::run_pipeline;
 use decl_lang::qengine::db::{Db, DbErr};
 use decl_lang::qengine::qeval::qevaluate;
 use decl_lang::semantics::{Env, Num, Value};
@@ -131,18 +132,53 @@ fn a_query_that_reads_itself_is_a_cycle() {
 /// run a program through both engines; None = skip (parse/checker-decided, or a
 /// form the query engine does not compile yet); Some(true) = byte-identical
 fn same(src: &str) -> Option<bool> {
-    let reference = evaluate_source(src);
-    if !matches!(reference.phase, Phase::Evaluate) {
-        return None; // the parser or checker decided it, not the evaluator
-    }
     let parsed = parse_source(src);
     if !parsed.errors.is_empty() {
         return None;
     }
+    if check_module(&parsed.decls, None, None)
+        .iter()
+        .any(|d| d.severity == "error")
+    {
+        return None;
+    }
+    // The default source pipeline selects the query engine; use the explicit
+    // tree-walker entry so this comparison retains an independent oracle.
+    let reference = run_pipeline(&parsed.decls);
+    let ref_ok = !reference.diags.iter().any(|d| d.severity == "error");
+    let ref_outputs: Vec<_> = if ref_ok {
+        reference
+            .env
+            .outputs
+            .borrow()
+            .iter()
+            .filter_map(|(n, _, _)| {
+                reference
+                    .env
+                    .root(n)
+                    .map(|v| (n.clone(), reference.eng.serialize(&v, n, false)))
+            })
+            .collect()
+    } else {
+        vec![]
+    };
     let env = Env::new();
     env.load(&parsed.decls);
     let got = qevaluate(env).ok()?; // Unsupported form -> skip
-    Some(reference.outputs == got.outputs && reference.ok == got.ok)
+    Some(
+        ref_outputs == got.outputs
+            && ref_ok == got.ok
+            && reference
+                .diags
+                .iter()
+                .map(|d| d.to_json(None))
+                .collect::<Vec<_>>()
+                == got
+                    .diagnostics
+                    .iter()
+                    .map(|d| d.to_json(None))
+                    .collect::<Vec<_>>(),
+    )
 }
 
 #[test]

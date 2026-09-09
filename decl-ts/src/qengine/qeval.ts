@@ -1417,6 +1417,7 @@ class QEval {
   run(
     roots: RootSpec[] = this.env.outputs.map((o) => ({ ...o, menv: this.env })),
     binds: BoundSpec[] = [],
+    serializeOutputs = true,
   ): QReport {
     // a bound input document is a root of the universe (§9.2), bound from its
     // raw value through the value layer and available before the outputs that
@@ -1504,7 +1505,7 @@ class QEval {
     for (const { name, v } of built) {
       try {
         this.materializeValue(v, seen);
-        outputs.push({ name, json: this.helper.serialize(v, name) });
+        if (serializeOutputs) outputs.push({ name, json: this.helper.serialize(v, name) });
       } catch (err) {
         if (err instanceof EvalErr)
           this.diagnostics.push({
@@ -1602,6 +1603,9 @@ export function qevaluateUniverse(
   mods: { env: Env }[],
   entry: { env: Env },
   binds: { module?: { env: Env }; input: string; raw: unknown }[] = [],
+  // Module consumers serialize only the requested roots in their requested
+  // format. They need evaluated values and diagnostics, not discarded JSON.
+  serializeOutputs = true,
 ): RoundsResult {
   const roots: RootSpec[] = mods.flatMap((m) =>
     m.env.outputs.map((o) => ({ name: o.name, expr: o.expr, type: o.type, menv: m.env })),
@@ -1613,7 +1617,7 @@ export function qevaluateUniverse(
   }));
   return evalRounds(entry.env, (prev) => {
     const ev = new QEval(entry.env, prev, mods);
-    const report = ev.run(roots, bound);
+    const report = ev.run(roots, bound, serializeOutputs);
     return { report, live: ev.liveEdges(), eng: ev.engine() };
   });
 }

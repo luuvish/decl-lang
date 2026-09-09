@@ -1,42 +1,60 @@
 # Query engine (a from-scratch incremental, memoized evaluator)
 
-Status: **complete in the TypeScript reference, swapped in behind a flag;
-Rust and Python ports pending.** Built and validated differentially against
-`engine.ts` across the whole corpus — the reference layer (`qeval.ts`) is
-byte-identical to the tree walker on every fixture (validation valid and
-invalid, golden, examples, modules), matching serialized outputs, `ok`, and
-diagnostics (field and sort order, §6.7/§12.2). It is wired into the pipeline
-(`pipeline.ts` `evaluateSource`, `module.ts` `runUniverse`) selected by the
-`DECL_QENGINE` environment variable — off by default, so nothing changes for
-parity until all three implementations move together. With `DECL_QENGINE=1`
-(and `DECL_QENGINE_STRICT=1`, which turns the tree-walker fall-back into an
-error) the entire TypeScript test suite passes with the query engine handling
-every form and no fall-back.
+Status: **implemented in TypeScript, Rust, and Python; the default for source
+reports and module-universe evaluation since 2026-09-09.** `DECL_QENGINE=0`
+selects the tree walker. `DECL_QENGINE_STRICT=1` makes an unsupported form an
+error instead of falling back. Differential tests explicitly select the tree
+walker as their oracle; using the default source pipeline on both sides would
+compare the query engine with itself.
 
-Remaining before it becomes the default and the tree walker retires: port
-`qeval.ts`/`db.ts` to Rust (`decl-rs`) and Python (`decl-py`) so all three
-implementations are the query engine (parity, and the Rust performance win),
-then flip the default. Gates: `decl-ts/tests/qengine/` (`db_test`,
-`diff_test`, `corpus_test` — outputs+ok+diagnostics over the whole
-single-module corpus, `modules_test`).
+The current implementation is a compiled evaluation layer over the existing
+value model. Each `$referrers` round creates a fresh evaluator. `Db` implements
+revision-based memoization, but the language layer does **not** yet preserve
+that database across rounds or session edits. `Session` still uses `Engine`
+and its existing dependency tracking. The persistent edit model below is a
+design target, not a delivered execution path.
+
+The Rust batch path stores compiled bodies in a round-owned arena; a record
+slot addresses its body by an integer handle and a weak evaluator reference.
+The slot already memoizes its value and handles cycles, deferral, and taint;
+it does not need a second string-keyed memo of the same value. The arena also
+avoids an ownership cycle between a record and a body capturing it. Constants
+still use the query database. Map entries have an insertion-ordered index, like
+the reference's `Map` and Python's dictionary. Resolved record members are
+shared snapshots, with copy-on-write during recursive type construction;
+binding a value or selecting a union arm does not copy the entire schema.
+Performance representations may differ; observable behavior remains the shared
+corpus and parity contract.
+
+Every implementation builds a round's inverse reference index once and reuses
+it for target lookups. Reacquiring the full edge on a cache hit is unnecessary
+and, with an owned Rust edge, was a quadratic deep-copy cost. Taking a new
+snapshot clears the index. Module callers request values and diagnostics and
+serialize only their selected outputs; the query layer does not also build
+unused JSON for every internal root.
+
+Gates: `decl-ts/tests/qengine/`, the Rust and Python query tests, the shared
+corpora, and `make verify`. The synthetic `decl-rs/examples/qbench.rs` compares
+equal work (load, bind, evaluate, validate, serialize), checks output equality,
+warms both paths, and reports medians. Parsing and static checking are excluded.
 
 ## Why
 
-The current evaluator is a fresh-engine-per-round tree walker. Two costs it
-cannot shed (measured, F21):
-1. It re-walks the expression AST on every force (dispatch per node).
-2. `$referrers` runs the whole universe in rounds; a round redoes ~85% pure work
-   (proven), yet bolting incremental reuse onto the tree walker did not pay off
-   — its per-round cost is the tree WALK + edge computation + per-read taint
-   bookkeeping, not the pure-slot compute we could skip.
+The tree walker dispatches over the expression AST on every force. Each
+`$referrers` round then constructs a new universe and repeats pure work as well
+as reference-dependent work. The current query layer compiles literal record
+slots, but document binding and records produced by other expressions still
+use the value layer's evaluator. Compiling a closure per instance and attaching
+a second memo does not by itself remove either shared cost.
 
-A demand-driven, compiled, memoized **query** engine is a different *kind* of
-evaluator and sheds both costs: expressions compiled once to bound rules, a
-memoized query graph with revision + early cutoff, an absolute-path index, and a
-compact typed runtime. This engine adopts that architecture for the full decl
-language, staying byte-identical to the spec.
+The persistent design therefore separates immutable schema programs from
+instance state and makes structure and reference edges explicit dependencies.
+Its goal is to reuse both code and unchanged values while preserving Decl's
+rounds, diagnostics, and ordering. The batch benchmark also covers tagged
+unions, so improvements to literal records alone do not stand in for the cost
+of binding many values through a shared schema.
 
-## Shape
+## Target shape for persistent evaluation
 
 Three layers, sharing the current value model (`semantics.ts`: Value, RecInst,
 Ref, types, subsume) and parser/binder structure where possible.
@@ -94,7 +112,7 @@ inputs changed recomputes and yields a different instance set, and the edge
 queries over it see the new set. No registry sweep — structure is derived, not
 accumulated.
 
-## Live edits (the incremental core)
+## Live edits (not yet wired to the query database)
 
 The engine is demand-driven and memoized precisely so it handles *live changes*
 to the universe — not only a batch evaluate. This is a first-class goal: an
@@ -143,7 +161,15 @@ input at a new revision.
   dimensions/units, modules, asserts/validation, render/session. Each stage
   widens the fixture subset the harness runs green.
 
-## Non-goals for stage 1
-No Rust/Python port until the TS reference is byte-identical on the full corpus.
-No swap-in until then. This document is the blueprint; it will move to
-`docs/design/` when the approach is proven.
+## Remaining structural work
+
+Compile schema programs once independently of record identity, and pass the
+instance and lexical frame at execution time. Then represent supplied values,
+container membership, and frozen reference edges as explicit inputs before
+retaining memo entries across revisions. A cached answer must account for
+every input it reads, including validation and failed or absent reads; a stable
+path alone does not prove that the value at that path is unchanged.
+
+Before session adoption, compare each edit, structure change, rebind, undo, and
+redo against a fresh evaluation with identical outputs and diagnostics. Batch
+speed alone is not evidence of correct incremental invalidation.

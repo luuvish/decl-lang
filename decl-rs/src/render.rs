@@ -863,7 +863,7 @@ fn record_entries(eng: &Engine, inst: &Inst) -> R<Vec<(String, Value)>> {
             }
             out.push(n.clone());
         }
-        for m in rec_members(&b.rt) {
+        for m in rec_members(&b.rt).iter() {
             if done.contains(&m.name) && m.kind != MKind::Der {
                 continue;
             }

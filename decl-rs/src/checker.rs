@@ -781,7 +781,7 @@ pub fn check_module(
                     .for_each(|a| check_resolved(env, rep, a, name, seen));
             }
             RTk::Rec(_) => {
-                for m in rec_members(rt) {
+                for m in rec_members(rt).iter() {
                     if let Some(t) = &m.ty {
                         check_resolved(env, rep, t, name, seen);
                     }
@@ -864,11 +864,11 @@ pub fn check_module(
         // so only an anonymous inline type takes this, and a declaration overrides
         let enclosing = cx.vars.get("$this").cloned();
         let mut c = cx.child();
-        for m in rec_members(rt) {
+        for m in rec_members(rt).iter() {
             c.vars.insert(
                 m.name.clone(),
                 Ty {
-                    rt: member_ty(&m),
+                    rt: member_ty(m),
                     abs: m.kind == MKind::Opt,
                 },
             );
@@ -1021,7 +1021,7 @@ pub fn check_module(
             );
         }
         let members = rec.members.borrow().clone();
-        for m in &members {
+        for m in members.iter() {
             if m.kind == MKind::Der {
                 if let Some(x) = &m.expr {
                     check_expr(&binding(&cx_for(&m.menv)), x, m.ty.as_ref());
@@ -1151,7 +1151,7 @@ pub fn check_module(
                         );
                     }
                 }
-                for m in rec_members(t) {
+                for m in rec_members(t).iter() {
                     if let Some(mt) = &m.ty {
                         walk_root_bounds(env, rep, root_name, root_rt, mt, seen);
                     }

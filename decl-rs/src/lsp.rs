@@ -2746,7 +2746,7 @@ fn member_kind_of(rt: Option<&RT>, name: &str) -> Option<(MKind, bool)> {
         _ => rt.clone(),
     };
     rec_members(&r)
-        .into_iter()
+        .iter()
         .find(|m| m.name == name)
         .map(|m| (m.kind, m.hidden))
 }
@@ -3356,7 +3356,7 @@ impl<'a> HintWalk<'a> {
             (Value::Rec(inst), Expr::Obj(entries)) => {
                 let inst = inst.borrow();
                 let mut parts: Vec<String> = vec![];
-                for mem in rec_members(&inst.rt) {
+                for mem in rec_members(&inst.rt).iter() {
                     let Some((_, s)) = inst.slots.iter().find(|(n, _)| *n == mem.name) else {
                         continue;
                     };
@@ -5079,7 +5079,7 @@ fn code_actions(st: &mut State, uri: &str, range: (Pos, Pos), diagnostics: &[Val
             };
             let mem = rt
                 .as_ref()
-                .and_then(|r| rec_members(r).into_iter().find(|x| x.name == name));
+                .and_then(|r| rec_members(r).iter().find(|x| x.name == name).cloned());
             let value = placeholder_for(mem.as_ref().and_then(|x| x.ty.as_ref()));
             let Expr::Obj(entries) = &*obj else { continue };
             let edit = match entries.last().and_then(|(_, v)| expr_loc(v)) {
@@ -5355,8 +5355,9 @@ fn code_actions(st: &mut State, uri: &str, range: (Pos, Pos), diagnostics: &[Val
             if let Some(rt) = rt.filter(is_rec) {
                 let have: Vec<&str> = entries.iter().map(|(k, _)| k.as_str()).collect();
                 let missing: Vec<crate::semantics::Member> = rec_members(&rt)
-                    .into_iter()
+                    .iter()
                     .filter(|x| x.kind == MKind::Req && !have.contains(&x.name.as_str()))
+                    .cloned()
                     .collect();
                 if !missing.is_empty() {
                     let fill = missing
@@ -5800,7 +5801,7 @@ fn code_actions(st: &mut State, uri: &str, range: (Pos, Pos), diagnostics: &[Val
             };
             let disc: Option<String> = recs.first().and_then(|r0| {
                 rec_members(r0)
-                    .into_iter()
+                    .iter()
                     .find(|mm| {
                         is_lit(mm)
                             && recs.iter().all(|r| {
@@ -5809,7 +5810,7 @@ fn code_actions(st: &mut State, uri: &str, range: (Pos, Pos), diagnostics: &[Val
                                     .any(|x| x.name == mm.name && is_lit(x))
                             })
                     })
-                    .map(|mm| mm.name)
+                    .map(|mm| mm.name.clone())
             });
             if let Some(disc) = disc {
                 let subj_text = crate::session::expr_text(subject);
@@ -5832,7 +5833,7 @@ fn code_actions(st: &mut State, uri: &str, range: (Pos, Pos), diagnostics: &[Val
                         _ => None,
                     };
                     let lit = rec
-                        .and_then(|r| rec_members(r).into_iter().find(|x| x.name == disc))
+                        .and_then(|r| rec_members(r).iter().find(|x| x.name == disc).cloned())
                         .and_then(|x| x.ty)
                         .and_then(|ty| match &ty.k {
                             RTk::Lit(Value::Str(s)) => Some(s.clone()),

@@ -1124,10 +1124,12 @@ class Engine:
             raise DeferSig()
         self.record(f"referrers:{type_name}")
         self_path = sc.inst.path
-        edge = self.snap_edge(type_name, member)
         key = f"{type_name}|{member}"
         inv = self.ref_index.get(key)
         if inv is None:
+            # The snapshot and inverse are immutable within one round. Read
+            # the edge only when building the inverse, not for each target.
+            edge = self.snap_edge(type_name, member)
             # one pass over the edge inverts it: each referrer is filed under
             # every distinct place its member refers to
             inv = {}

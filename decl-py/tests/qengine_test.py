@@ -5,8 +5,9 @@ The Python counterpart of decl-rs/tests/qengine_test.rs."""
 
 from __future__ import annotations
 
+from decl.checker import check_module
 from decl.parse import parse_source
-from decl.pipeline import evaluate_source
+from decl.pipeline import run_pipeline
 from decl.qengine.db import Db, QCycle
 from decl.qengine.qeval import Unsupported, qevaluate
 from decl.semantics import Env
@@ -106,21 +107,33 @@ def test_a_query_that_reads_itself_is_a_cycle() -> None:
 def _same(src: str):
     """run a program through both engines; None = skip (parse/checker-decided, or
     a form the query engine does not compile yet); True = byte-identical"""
-    reference = evaluate_source(src)
-    if reference["phase"] != "evaluate":
-        return None
     parsed = parse_source(src)
     if parsed["errors"]:
         return None
+    if any(d["severity"] == "error" for d in check_module(parsed["decls"])):
+        return None
+    # The source pipeline defaults to the query engine; keep the oracle on
+    # the explicitly selected tree walker.
+    reference = run_pipeline(parsed["decls"])
+    ref_env, ref_eng, ref_diags = reference["env"], reference["eng"], reference["diags"]
+    ref_ok = not any(d["severity"] == "error" for d in ref_diags)
     env = Env()
     env.load(parsed["decls"])
     try:
         rep = qevaluate(env)
     except Unsupported:
         return None
-    ref_out = [(o["name"], o["json"]) for o in reference["outputs"]]
+    ref_out = (
+        [
+            (o["name"], ref_eng.serialize(ref_env.roots[o["name"]], o["name"]))
+            for o in ref_env.outputs
+            if o["name"] in ref_env.roots
+        ]
+        if ref_ok
+        else []
+    )
     q_out = [(o["name"], o["json"]) for o in rep.outputs]
-    return ref_out == q_out and reference["ok"] == rep.ok
+    return ref_out == q_out and ref_ok == rep.ok and ref_diags == rep.diagnostics
 
 
 def _all_match(programs: list[str]) -> None:

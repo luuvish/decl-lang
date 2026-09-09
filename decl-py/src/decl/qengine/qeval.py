@@ -1109,7 +1109,11 @@ def _member_of_slot_key(key: str) -> str:
 
 
 def _eval_rounds(
-    entry: Any, roots: list[Any], binds: list[Any], hook_mods: list[Any]
+    entry: Any,
+    roots: list[Any],
+    binds: list[Any],
+    hook_mods: list[Any],
+    serialize_outputs: bool = True,
 ) -> tuple[QReport, Engine]:
     """The rounds driver shared by the single-module and universe entries: bind
     the bound inputs and roots through a fresh QEval each round, forcing through
@@ -1150,7 +1154,7 @@ def _eval_rounds(
         raise Unsupported("form")
     ok = not any(d["severity"] == "error" for d in diags)
     outputs = []
-    if ok:
+    if ok and serialize_outputs:
         for name, _, _, _ in roots:
             if name in entry.roots:
                 outputs.append({"name": name, "json": eng.serialize(entry.roots[name], name)})
@@ -1164,7 +1168,9 @@ def qevaluate(env: Any) -> QReport:
     return report
 
 
-def qevaluate_universe(mods: list[Any], entry: Any, binds: list[Any]) -> tuple[QReport, Engine]:
+def qevaluate_universe(
+    mods: list[Any], entry: Any, binds: list[Any], serialize_outputs: bool = True
+) -> tuple[QReport, Engine]:
     """Evaluate a whole multi-module universe (§8.8): every module's outputs are
     roots, each bound in its own module scope into the entry universe; bound
     input documents are roots too. Returns the report and the settled round's
@@ -1173,4 +1179,4 @@ def qevaluate_universe(mods: list[Any], entry: Any, binds: list[Any]) -> tuple[Q
     for m in mods:
         for o in m.outputs:
             roots.append((o["name"], o["type"], o["expr"], m))
-    return _eval_rounds(entry, roots, binds, mods)
+    return _eval_rounds(entry, roots, binds, mods, serialize_outputs)

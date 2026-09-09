@@ -10,6 +10,9 @@ import { loadModules, runUniverse } from '../../src/module.ts';
 import { qevaluateUniverse } from '../../src/qengine/qeval.ts';
 import { check, total, root } from '../common/check.ts';
 
+// runUniverse must remain the tree-walker oracle after the default switch.
+process.env.DECL_QENGINE = '0';
+
 await initParser();
 console.log('== qengine: differential over multi-module universes ==');
 

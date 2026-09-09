@@ -1,16 +1,21 @@
 //! A performance comparison of the two evaluators — the tree walker
 //! (`run_pipeline`) and the query engine (`qevaluate`) — over generated
-//! workloads at a few scales, timed in process (the query engine is meant to be
-//! fastest in Rust). Run: `cargo run --release --example qbench`.
+//! workloads at a few scales, timed in process. Run:
+//! `cargo run --locked --release --example qbench`.
 //!
-//! This quantifies the query engine's per-evaluation overhead for one-shot
-//! evaluation and is the tool that drives the incremental work: the win is on
-//! re-evaluation after an edit, which a later mode of this bench will measure.
+//! Both paths load, evaluate, validate, and serialize identical outputs. This
+//! measures batch evaluation, not incremental edits. Parsing and checking are
+//! excluded. One warmup precedes nine samples; the median is reported.
 use decl_lang::parse::parse_source;
 use decl_lang::pipeline::run_pipeline;
 use decl_lang::qengine::qeval::qevaluate;
 use decl_lang::semantics::Env;
+use std::hint::black_box;
 use std::time::Instant;
+
+// Match the allocator used by the command line being optimized.
+#[global_allocator]
+static ALLOC: mimalloc::MiMalloc = mimalloc::MiMalloc;
 
 /// a flat bag of records with derived members — non-`$referrers`, one round
 fn flat(n: usize) -> String {
@@ -24,6 +29,27 @@ fn flat(n: usize) -> String {
          export output bag: Bag = {{ items: [{}] }}",
         items.join(", ")
     )
+}
+
+/// Many values share a wide, tagged schema. Union selection and record binding
+/// should read that schema, not copy every member for every candidate lookup.
+fn tagged(n: usize) -> String {
+    let fields = (0..12)
+        .map(|i| format!("field{i}: int = {i}"))
+        .collect::<Vec<_>>()
+        .join(", ");
+    let types = (0..8)
+        .map(|i| format!("type Row{i} = {{ kind: \"tag{i}\", {fields} }}\n"))
+        .collect::<String>();
+    let union = (0..8)
+        .map(|i| format!("Row{i}"))
+        .collect::<Vec<_>>()
+        .join(" | ");
+    let rows = (0..n)
+        .map(|i| format!("{{ kind: \"tag{}\" }}", i % 8))
+        .collect::<Vec<_>>()
+        .join(",\n");
+    format!("{types}type Row = {union}\nexport output rows: Row[] = [{rows}]")
 }
 
 /// a ring graph whose nodes count their `$referrers` — settles in a couple of
@@ -52,35 +78,53 @@ fn graph(n: usize) -> String {
     )
 }
 
-/// best of `k` runs of `f`, in milliseconds
-fn best_ms(k: usize, mut f: impl FnMut()) -> f64 {
-    let mut best = f64::INFINITY;
+/// median of `k` runs of `f`, in milliseconds (including result destruction)
+fn median_ms(k: usize, mut f: impl FnMut()) -> f64 {
+    let mut times = Vec::with_capacity(k);
     for _ in 0..k {
         let t = Instant::now();
         f();
-        best = best.min(t.elapsed().as_secs_f64() * 1000.0);
+        times.push(t.elapsed().as_secs_f64() * 1000.0);
     }
-    best
+    times.sort_by(f64::total_cmp);
+    times[k / 2]
 }
 
 fn bench(label: &str, src: &str, k: usize) {
     let parsed = parse_source(src);
     assert!(parsed.errors.is_empty(), "{label}: parse errors");
     let decls = parsed.decls.clone();
-    // warm
-    run_pipeline(&decls);
-    {
+    // Both paths load, bind, evaluate, validate AND serialize every output.
+    // Parsing and static checking are outside both timed regions.
+    let tree = || {
+        let p = run_pipeline(&decls);
+        assert!(!p.diags.iter().any(|d| d.severity == "error"), "{label}");
+        let outputs: Vec<(String, String)> = p
+            .env
+            .outputs
+            .borrow()
+            .iter()
+            .map(|(n, _, _)| {
+                let v = p.env.root(n).expect("output exists");
+                (n.clone(), p.eng.serialize(&v, n, false))
+            })
+            .collect();
+        outputs
+    };
+    let query = || {
         let env = Env::new();
         env.load(&decls);
-        let _ = qevaluate(env);
-    }
-    let tw = best_ms(k, || {
-        run_pipeline(&decls);
+        let r = qevaluate(env).unwrap_or_else(|u| panic!("{label}: unsupported {}", u.0));
+        assert!(r.ok, "{label}: query evaluation failed");
+        r.outputs
+    };
+    // Warm both paths and verify the measured workload before reporting a time.
+    assert_eq!(tree(), query(), "{label}: evaluators disagree");
+    let tw = median_ms(k, || {
+        black_box(tree());
     });
-    let qe = best_ms(k, || {
-        let env = Env::new();
-        env.load(&decls);
-        let _ = qevaluate(env);
+    let qe = median_ms(k, || {
+        black_box(query());
     });
     println!(
         "{label:28} tree-walker {tw:8.2} ms   query-engine {qe:8.2} ms   ratio {:.2}x",
@@ -89,9 +133,12 @@ fn bench(label: &str, src: &str, k: usize) {
 }
 
 fn main() {
-    println!("== one-shot evaluation: tree walker vs query engine (best of runs) ==");
-    bench("flat records n=500", &flat(500), 20);
-    bench("flat records n=2000", &flat(2000), 10);
-    bench("$referrers ring n=100", &graph(100), 20);
-    bench("$referrers ring n=400", &graph(400), 10);
+    println!("== load + evaluate + validate + serialize: median of 9 runs ==");
+    bench("flat records n=500", &flat(500), 9);
+    bench("flat records n=2000", &flat(2000), 9);
+    bench("tagged union n=500", &tagged(500), 9);
+    bench("tagged union n=2000", &tagged(2000), 9);
+    bench("$referrers ring n=100", &graph(100), 9);
+    bench("$referrers ring n=400", &graph(400), 9);
+    bench("$referrers ring n=1600", &graph(1600), 9);
 }

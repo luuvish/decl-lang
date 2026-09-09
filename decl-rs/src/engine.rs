@@ -1780,7 +1780,7 @@ impl Engine {
             for n in &b.entry_order {
                 push(n);
             }
-            for m in rec_members(&b.rt) {
+            for m in rec_members(&b.rt).iter() {
                 if m.kind == MKind::Dflt {
                     push(&m.name);
                 }
@@ -1881,7 +1881,12 @@ impl Engine {
         match s {
             Value::PreObj(es) => self.entries_of(&es),
             Value::JObj(es) => Ok((*es).clone()),
-            Value::Map(m) => Ok(m.borrow().entries.clone()),
+            Value::Map(m) => Ok(m
+                .borrow()
+                .entries
+                .iter()
+                .map(|(k, v)| (k.clone(), v.clone()))
+                .collect()),
             Value::Rec(r) => {
                 // the value's entries in serialization order (§10.3): supplied
                 // members in document order, then the members evaluation
@@ -1970,7 +1975,10 @@ impl Engine {
             Value::Rec(r) => {
                 let path = r.borrow().path.clone();
                 let entries = self.spread_entries(Value::Rec(r))?;
-                Ok(Rc::new(RefCell::new(MapV { entries, path })))
+                Ok(Rc::new(RefCell::new(MapV {
+                    entries: entries.into_iter().collect(),
+                    path,
+                })))
             }
             _ => err("expected map"),
         }
@@ -1986,13 +1994,16 @@ impl Engine {
             return err("$referrers outside a record");
         };
         let target = self_inst.borrow().path.clone();
-        let edge = self.snap_edge(type_name, member)?;
         let key = format!("{type_name}|{member}");
         let inv = {
             let cached = self.ref_index.borrow().get(&key).cloned();
             match cached {
                 Some(i) => i,
                 None => {
+                    // The inverse belongs to the frozen round. Reacquiring
+                    // its edge on a cache hit would deep-clone every referrer
+                    // for every target, turning indexed lookup quadratic.
+                    let edge = self.snap_edge(type_name, member)?;
                     // one pass over the edge inverts it: each referrer is filed
                     // under every distinct place its member refers to
                     let mut inv: FxHashMap<String, Vec<SegPath>> = FxHashMap::default();
@@ -2459,13 +2470,18 @@ impl Engine {
                 let es: Vec<(String, Value)> = match &raw {
                     Value::JObj(e) => (**e).clone(),
                     Value::PreObj(e) => self.entries_of(e)?,
-                    Value::Map(m) => m.borrow().entries.clone(),
+                    Value::Map(m) => m
+                        .borrow()
+                        .entries
+                        .iter()
+                        .map(|(k, v)| (k.clone(), v.clone()))
+                        .collect(),
                     // a record binds to a map as its value entries (§3.18)
                     Value::Rec(_) => self.spread_entries(raw.clone())?,
                     _ => return Err(fail("expected map".into(), None)),
                 };
                 let m = Rc::new(RefCell::new(MapV {
-                    entries: vec![],
+                    entries: OrderedMap::default(),
                     path: Rc::new(path.to_vec()),
                 }));
                 for (k, v) in es {
@@ -2775,7 +2791,12 @@ impl Engine {
             Value::JObj(e) => (**e).clone(),
             Value::PreObj(e) => self.entries_of(e)?,
             // a literal no record type claimed became a map; its entries bind like a document's
-            Value::Map(m) => m.borrow().entries.clone(),
+            Value::Map(m) => m
+                .borrow()
+                .entries
+                .iter()
+                .map(|(k, v)| (k.clone(), v.clone()))
+                .collect(),
             Value::Rec(r) => {
                 let (order, extras, ders) = {
                     let b = r.borrow();
@@ -2831,7 +2852,7 @@ impl Engine {
         for (k, v) in &entries {
             supplied.insert(k.clone(), v.clone());
         }
-        for m in &members {
+        for m in members.iter() {
             let name = m.name.clone();
             let types: Vec<RT> = m
                 .conj
@@ -3131,7 +3152,7 @@ impl Engine {
             }
             Value::PreObj(entries) => {
                 let m = Rc::new(RefCell::new(MapV {
-                    entries: vec![],
+                    entries: OrderedMap::default(),
                     path: Rc::new(path.to_vec()),
                 }));
                 for (k, pv) in self.entries_of(&entries)?.iter() {
@@ -3174,7 +3195,12 @@ impl Engine {
         if let Value::Map(m) = &base {
             // a literal no record type claimed: its entries, updated, still unbound
             let p = self.ev(patch, sc)?;
-            let mut entries = m.borrow().entries.clone();
+            let mut entries = m
+                .borrow()
+                .entries
+                .iter()
+                .map(|(k, v)| (k.clone(), v.clone()))
+                .collect();
             merge(&mut entries, p)?;
             return Ok(Value::PreObj(Rc::new(entries)));
         }
@@ -3210,7 +3236,7 @@ impl Engine {
             let v = self.force_slot(r, &n)?;
             entries.push((n, v));
         }
-        for m in &members {
+        for m in members.iter() {
             if m.kind != MKind::Dflt || entries.iter().any(|(k, _)| *k == m.name) {
                 continue;
             }
@@ -3731,7 +3757,7 @@ impl Engine {
                         parts.push(format!("{}:{g}", json_str(n)));
                     }
                 }
-                for m in rec_members(&b.rt) {
+                for m in rec_members(&b.rt).iter() {
                     if done.contains(&m.name) && m.kind != MKind::Der {
                         continue;
                     }

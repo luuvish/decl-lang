@@ -303,7 +303,7 @@ pub fn member_cycle(
     let siblings: HashSet<String> = members.iter().map(|m| m.name.clone()).collect();
     let mut exprs: Vec<(String, Rc<Expr>, bool)> = vec![];
     let mut member_type: HashMap<String, Option<RT>> = HashMap::new();
-    for m in &members {
+    for m in members.iter() {
         member_type.insert(m.name.clone(), m.ty.clone());
         let x = match m.kind {
             MKind::Der => m.expr.clone(),
@@ -2152,7 +2152,7 @@ pub fn check_expr(cx: &Ctx, e: &Rc<Expr>, expected: Option<&RT>) -> Ty {
             // entries see the record's members (siblings + inherited scope chain)
             let members = rec.members.borrow().clone();
             let mut cx_r = cx.child();
-            for m in &members {
+            for m in members.iter() {
                 cx_r.vars.insert(
                     m.name.clone(),
                     Ty {
@@ -2218,7 +2218,7 @@ pub fn check_expr(cx: &Ctx, e: &Rc<Expr>, expected: Option<&RT>) -> Ty {
                 require_val(&cx_r, v, t, "as a construction member");
             }
             if !dynamic {
-                for m in &members {
+                for m in members.iter() {
                     if m.kind == MKind::Req
                         && !provided.contains(&m.name)
                         && !entries.iter().any(|(k, _)| *k == m.name)

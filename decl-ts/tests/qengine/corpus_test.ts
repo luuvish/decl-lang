@@ -14,6 +14,10 @@ import { Env } from '../../src/semantics.ts';
 import { qevaluate, Unsupported } from '../../src/qengine/qeval.ts';
 import { check, total, root } from '../common/check.ts';
 
+// The default evaluator is now the query engine. Keep the independent oracle
+// on the tree walker; direct qevaluate calls below still exercise the new path.
+process.env.DECL_QENGINE = '0';
+
 await initParser();
 console.log('== qengine: differential over the corpus ==');
 

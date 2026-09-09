@@ -9,6 +9,9 @@ import { Env } from '../../src/semantics.ts';
 import { evaluateSource } from '../../src/pipeline.ts';
 import { qevaluate, Unsupported } from '../../src/qengine/qeval.ts';
 
+// evaluateSource must remain the tree-walker oracle after the default switch.
+process.env.DECL_QENGINE = '0';
+
 await initParser();
 
 const programs: { name: string; src: string }[] = [

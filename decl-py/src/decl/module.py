@@ -223,7 +223,8 @@ def run_universe(mods: list[Any], entry: Module, binds: list[Any] | None = None)
             BoundSpec(b["input"], b["raw"], (b.get("module") or entry).env) for b in (binds or [])
         ]
         try:
-            report, eng = qevaluate_universe(m_envs, entry.env, bspecs)
+            # The caller renders the selected roots; do not build discarded JSON.
+            report, eng = qevaluate_universe(m_envs, entry.env, bspecs, False)
             return {"eng": eng, "diags": report.diagnostics}
         except Unsupported as u:
             if strict_qengine():
