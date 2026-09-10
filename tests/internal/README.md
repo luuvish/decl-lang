@@ -39,3 +39,28 @@ corpus entry.
 `engine.reference_round_reuse`. Every case compares the query evaluator with
 fresh evaluation. Cases marked `reuse` also require multiple retained rounds
 and surviving records; matching output through fallback alone is insufficient.
+Cases marked `cutoff` also require equal-result and downstream verification
+cutoffs in the actual Engine slot graph.
+
+`programs.json` supplies document and function-produced record cases for
+`engine.shared_programs`. Each driver compares values and diagnostics with fresh
+compilation-free tree evaluation, then checks that increasing instance counts
+does not increase expression or schema compilation counts.
+
+`edits.json` supplies Session operation sequences for `session.retained_edits`.
+Each step compares all roots and diagnostics against fresh evaluation. The
+cases cover member and container edits, optional presence, rebinding, undo/redo,
+function scopes, aggregate comparisons, reference rounds, error recovery and
+removal of dependencies whose obsolete computation would otherwise fail.
+Work-count assertions also require stable program and record identities, few
+executed member programs, bounded preparation, and both result and downstream
+verification cutoffs.
+
+`temporary.json` checks repeated temporary expressions and errors in one Session.
+The persistent program cache, registered records, and slot graph must not grow;
+Rust's explicit materialization cache and Python/Rust input metadata must also
+stay bounded. Temporary request programs have their own lifetime.
+The same file drives `session.retained_lifetime`: repeated create/remove at
+unique map keys must not accumulate removed records, assertion dependencies or
+query change stamps. The Session operation log intentionally keeps undo history;
+these checks cover auxiliary evaluator caches instead.

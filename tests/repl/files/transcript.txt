@@ -8,7 +8,7 @@
 > :write scratch.decl
 > :history log.txt
 > :time
-total <ms> ms (load <ms> ms, check <ms> ms, bind <ms> ms, evaluate <ms> ms), recomputed 0 of 15 slots
+total <ms> ms (load <ms> ms, check <ms> ms, bind <ms> ms, evaluate <ms> ms), recomputed 2 of 15 slots
 > site.port
 443
 (partial)

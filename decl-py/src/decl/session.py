@@ -24,6 +24,8 @@ from .infer import STD, infer, make_ctx, type_text
 from .module import Module, load_modules
 from .package import open_package_universe, verify_lock
 from .parse import parse_expr_text, parse_source
+from .qengine.edits import Edits
+from .qengine.programs import Programs
 from .render import Emission, Form, RenderError, absolute, declared_form, emit_root, resolve_in
 from .semantics import (
     ABSENT,
@@ -433,11 +435,31 @@ class Session:
             raise SessionError(f"a path below a root is required, got {op['path']}")
         value = None if op["kind"] == "remove" else self._eval_to_doc(st, op["expr"])
         doc = self._document_of(st, root)
-        parent = doc.doc
+
+        # Preserve prior query inputs, copying only the edited path's containers.
+        def copy_container(v: Any) -> Any:
+            return (
+                JObj(list(v.entries))
+                if isinstance(v, JObj)
+                else list(v)
+                if isinstance(v, list)
+                else v
+            )
+
+        updated = copy_container(doc.doc)
+        parent = updated
         for idx_s, s in enumerate(segs[1:-1], start=1):
-            parent = _doc_step(parent, s)
-            if parent is _UNDEF:
+            child = _doc_step(parent, s)
+            if child is _UNDEF:
                 raise SessionError(f"nothing at {path_str(segs[: idx_s + 1])}")
+            next_ = copy_container(child)
+            key = seg_text(s)
+            if isinstance(parent, JObj):
+                i = next(i for i, (k, _) in enumerate(parent.entries) if k == key)
+                parent.entries[i] = (key, next_)
+            else:
+                parent[key] = next_
+            parent = next_
         last = segs[-1]
         k = seg_text(last)
         if isinstance(parent, JObj):
@@ -467,6 +489,7 @@ class Session:
                 del parent[k]
         else:
             raise SessionError(f"{path_str(segs[:-1])} is not a record, map, or array")
+        doc.doc = updated
         doc.edited = True
 
     # the document of a root, made if the root has none yet: an unbound
@@ -583,133 +606,42 @@ class Session:
         assert eng is not None and entry is not None  # a run that evaluated has both
         env = entry.env
 
-        # 1. what the change touches: the roots themselves, every slot under
-        #    them, and the `$referrers` queries over types instantiated under them
-        def under(path: str, root: str) -> bool:
-            return path == root or path.startswith(root + ".") or path.startswith(root + "[")
-
-        seeds: dict[str, Any] = {}
-        for root in changed:
-            seeds[f"root:{root}"] = True
-            for k in list(eng.reads.keys()):
-                if not k.startswith("root:") and under(re.sub(r"^assert:", "", k), root):
-                    seeds[k] = True
-            for inst in env.registry:
-                if under(path_str(inst.path), root) and inst.type_name:
-                    seeds[f"referrers:{inst.type_name}"] = True
-        # 2. everything that read them, transitively
-        readers: dict[str, Any] = {}
-        for reader, rs in eng.reads.items():
-            for k in rs:
-                readers.setdefault(k, {})[reader] = True
-        invalid: dict[str, Any] = {}
-        queue = list(seeds)
-        while queue:
-            k = queue.pop()
-            if k in invalid:
-                continue
-            invalid[k] = True
-            for rd in readers.get(k, {}):
-                if rd not in invalid:
-                    queue.append(rd)
-        # the roots to rebind: the changed ones, and every root that read them at binding
-        rebind = [k[5:] for k in invalid if k.startswith("root:")]
-        for root in rebind:
-            for inst in env.registry:
-                if under(path_str(inst.path), root) and inst.type_name:
-                    rk = f"referrers:{inst.type_name}"
-                    if rk not in invalid:
-                        invalid[rk] = True
-                        for rd in readers.get(rk, {}):
-                            if rd not in invalid:
-                                invalid[rd] = True
-                                queue.append(rd)
-        while queue:
-            k = queue.pop()
-            for rd in readers.get(k, {}):
-                if rd not in invalid:
-                    invalid[rd] = True
-                    queue.append(rd)
-
-        # 3. forget: the diagnostics of the invalidated steps and of the rebound roots, the slots,
-        # the instances
-        def gone(d: dict[str, Any]) -> bool:
-            by = d.get("by")
-            return (by is not None and by in invalid) or any(
-                under(d.get("path") or "", root) for root in rebind
-            )
-
-        env.diagnostics[:] = [d for d in env.diagnostics if not gone(d)]
-        recomputed = 0
-        for k in invalid:
-            if k.startswith(("root:", "assert:", "referrers:")):
-                continue
-            if any(under(k, root) for root in rebind):
-                eng.slots_by_key.pop(k, None)
-                eng.reads.pop(k, None)
-                continue
-            if eng.reset_slot(k):
-                recomputed += 1
-            eng.reads.pop(k, None)
-        dropped: set[Any] = set()
-        kept: list[Any] = []
-        for inst in env.registry:
-            if any(under(path_str(inst.path), root) for root in rebind):
-                dropped.add(id(inst))
-            else:
-                kept.append(inst)
-        env.registry[:] = kept
-        for root in rebind:
-            env.roots.pop(root, None)
-            eng.failed_inputs.discard(root)
-            eng.reads.pop(f"root:{root}", None)
-        eng.deferred_slots = [d for d in eng.deferred_slots if id(d[0]) not in dropped]
-        for k in list(eng.reads.keys()):
-            if k.startswith("assert:") and any(under(k[7:], root) for root in rebind):
-                eng.reads.pop(k, None)
-        # 4. rebind the roots in the fresh run's order — the documents in the
-        #    state's order, the modules' outputs in declaration order, the
-        #    session's outputs — then force everything: what is `ok` stays
-        #    (an unbound input is demanded through its fallback on first read)
-        rebinding = set(rebind)
-        eng.phase = 1
-        for name, d in st.documents.items():
-            if name not in rebinding:
-                continue
-            m = next((x for x in r.modules if name in x.env.inputs), entry)
-            eng.bind_root(
-                name,
-                d.doc,
-                m.env.resolve(m.env.inputs[name]["type"]),
-                Scope(None, {}, name, m.env),
-                False,
-            )
-        for om in r.modules:
-            for o in om.env.outputs:
-                if o["name"] not in rebinding:
-                    continue
-                eng.bind_root(
-                    o["name"],
-                    o["expr"],
-                    om.env.resolve(o["type"]),
-                    Scope(None, {}, o["name"], om.env),
-                    True,
-                )
-        for name, expr, rt in r.session_roots:
-            if name not in rebinding:
-                continue
-            eng.bind_root(name, expr, rt, Scope(None, {}, name, entry.env), True)
-        eng.force_all_roots(False)
-        # an incremental round answers `$referrers` from what it holds; a
-        # universe that needs another round is evaluated afresh
-        if not eng.settle()["stable"]:
+        edits = eng.edits
+        if edits is None:
             return None
-        # 5. the asserts of the instances that are new or whose asserts read what changed
-        for inst in list(env.registry):
-            key = f"assert:{path_str(inst.path)}"
-            if key not in eng.reads or key in invalid:
-                eng.validate_inst(inst, "")
+        before = edits.slot_computes
+        edits.begin(eng, set(changed), {name: doc.doc for name, doc in st.documents.items()})
+
+        def bind(current: Engine) -> None:
+            current.edits = edits
+            for m in r.modules:
+                m.env.const_eval = (lambda e: lambda n: current.force_const_in(e, n, ""))(m.env)
+                m.env.expr_eval = (lambda e: lambda x: current.ev(x, Scope(None, {}, "", e)))(m.env)
+            for name, d in st.documents.items():
+                m = next((x for x in r.modules if name in x.env.inputs), entry)
+                current.bind_root(
+                    name,
+                    d.doc,
+                    m.env.resolve(m.env.inputs[name]["type"]),
+                    Scope(None, {}, name, m.env),
+                    False,
+                )
+            for m in r.modules:
+                for o in m.env.outputs:
+                    current.bind_root(
+                        o["name"],
+                        o["expr"],
+                        m.env.resolve(o["type"]),
+                        Scope(None, {}, o["name"], m.env),
+                        True,
+                    )
+            for name, expr, rt in r.session_roots:
+                current.bind_root(name, expr, rt, Scope(None, {}, name, entry.env), True)
+
+        current = Engine.evaluate(env, bind, True, True, eng)
+        current.validate_all("")
         env.diagnostics[:] = sort_diags(env.diagnostics)
+        recomputed = edits.slot_computes - before
         timing = {
             "load": 0.0,
             "check": 0.0,
@@ -717,14 +649,14 @@ class Session:
             "evaluate": _now() - t0,
             "total": _now() - t0,
             "recomputed": recomputed,
-            "slots": len(eng.slots_by_key),
+            "slots": len(current.slots_by_key),
         }
         run = Run(r.modules, r.entry, r.load_diags, timing)
         run.checks, run.session_checks, run.session_roots, run.eng, run.diags = (
             r.checks,
             r.session_checks,
             r.session_roots,
-            eng,
+            current,
             env.diagnostics,
         )
         self._last = {"key": last["key"], "docs": docs, "run": run}
@@ -803,8 +735,10 @@ class Session:
             return finish()
 
         t2 = _now()
+        edits = Edits() if mode == "full" and not Session.full_recompute else None
 
         def bind(eng: Engine) -> None:
+            eng.edits = edits
             for m in b["modules"]:
                 menv = m.env
                 menv.const_eval = (lambda e_: lambda n: eng.force_const_in(e_, n, ""))(menv)
@@ -838,7 +772,7 @@ class Session:
             out.diags = entry.env.diagnostics
             return finish()
         t3 = _now()
-        eng = Engine.evaluate(entry.env, bind, True)
+        eng = Engine.evaluate(entry.env, bind, True, True)
         out.eng = eng
         out.timing["bind"] = t3 - t2
         eng.validate_all("")
@@ -886,9 +820,18 @@ class Session:
         n = len(env.diagnostics)
         reg = len(env.registry)
         roots = set(env.roots.keys())
+
+        def scratch_key(key: str) -> bool:
+            return key == "_" or key.startswith(("_.", "_["))
+
+        slots = {k: v for k, v in eng.slots_by_key.items() if scratch_key(k)}
+        reads = {k: v for k, v in eng.reads.items() if scratch_key(k.removeprefix("assert:"))}
+        programs = eng.programs
+        eng.programs = Programs() if programs is not None else None
         try:
             return f(eng, env)
         finally:
+            eng.programs = programs
             # an input demanded through its fallback by the expression alone is not a root of the
             # run
             demanded = [k for k in env.roots if k not in roots]
@@ -903,11 +846,13 @@ class Session:
                 eng.failed_inputs.discard(k)
                 eng.reads.pop(f"root:{k}", None)
             for k in list(eng.reads.keys()):
-                if under(re.sub(r"^assert:", "", k)):
+                if under(re.sub(r"^assert:", "", k)) or scratch_key(k.removeprefix("assert:")):
                     eng.reads.pop(k, None)
             for k in list(eng.slots_by_key.keys()):
-                if under(k):
+                if under(k) or scratch_key(k):
                     eng.slots_by_key.pop(k, None)
+            eng.slots_by_key.update(slots)
+            eng.reads.update(reads)
             del env.diagnostics[n:]
             env.registry[:] = [
                 inst
@@ -916,6 +861,8 @@ class Session:
                 or (i >= reg and inst.path[0] != "_" and not under(path_str(inst.path)))
             ]
             eng.computing.clear()
+            if eng.edits:
+                eng.edits.prune(eng)
 
     def evaluate_expr(self, text: str) -> dict[str, Any]:
         """partial evaluation of one expression (§2.1): {"value", "diags", "error"}"""

@@ -1,0 +1,35 @@
+{
+  "source": "type Item = { n: int, doubled = n * 2 }\nfunc make(n: int): Item = { n: n }\nexport output base: int = 7\n",
+  "iterations": 100,
+  "queries": [
+    {
+      "expr": "std.array.sum([base, {i}, {i} + 1])",
+      "factor": 2,
+      "offset": 8
+    },
+    {
+      "expr": "make({i}).n",
+      "factor": 1,
+      "offset": 0
+    },
+    {
+      "expr": "std.array.count([make(n) for n in 1..{i}])",
+      "factor": 1,
+      "offset": 0
+    },
+    {
+      "expr": "1 / 0",
+      "error": "E5001"
+    }
+  ],
+  "churn": {
+    "source": "type Item = { n: int, doubled = n * 2, assert positive: n > 0 else error `positive required` }\ninput items: map<string, Item>\nexport output sum: int = std.array.sum([x.doubled for x in std.map.values(items)])\n",
+    "root": "items",
+    "output": "sum",
+    "initial": "{}",
+    "item": "{ n: 1 }",
+    "iterations": 100,
+    "present": "2",
+    "absent": "0"
+  }
+}

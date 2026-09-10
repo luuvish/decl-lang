@@ -10,6 +10,9 @@ import math
 from collections.abc import Callable
 from typing import Any
 
+from decl.qengine.edits import Edits
+from decl.qengine.programs import Programs
+from decl.qengine.revisions import Revisions
 from decl.qengine.rounds import RoundCache
 
 from .semantics import (
@@ -166,6 +169,10 @@ class Engine:
         # Sessions and retained reference rounds enable dependency recording.
         # Ordinary one-shot work avoids the per-slot graph allocation (F21).
         self.track = False
+        self.programs: Programs | None = None
+        self.revisions: Revisions | None = None
+        self.edits: Edits | None = None
+        self.verifying_depth = -1
         self.round_cache: RoundCache | None = None
         self.round_roots: set[str] | None = None
         self.snapshot_value: Any = None
@@ -219,12 +226,20 @@ class Engine:
         return key
 
     def record(self, read: str) -> None:
-        if self.track and self.computing:
+        if self.track and self.computing and len(self.computing) > self.verifying_depth:
             top = self.computing[-1]
             deps = self.reads.get(top)
             if deps is None:
                 deps = self.reads[top] = set()
             deps.add(read)
+
+    def verify_reads(self, f: Callable[[], Any]) -> Any:
+        previous = self.verifying_depth
+        self.verifying_depth = len(self.computing)
+        try:
+            return f()
+        finally:
+            self.verifying_depth = previous
 
     def step(self, key: str, f: Any) -> Any:
         self.computing.append(key)
@@ -240,9 +255,11 @@ class Engine:
 
     # ---------- expression evaluation ----------
     def ev(self, e: dict[str, Any], sc: Scope) -> Any:
-        k = e["e"]
-        if k == "lit":
+        if e["e"] == "lit":
             return e["v"]
+        if self.programs is not None:
+            return self.programs.get(e)(self, sc)
+        k = e["e"]
         if k == "pattern":
             return Pattern(e["re"])
         if k == "unitlit":
@@ -277,60 +294,9 @@ class Engine:
         if k == "template":
             return "".join(p if is_str(p) else self.to_str(self.ev(p, sc)) for p in e["parts"])
         if k == "name":
-            name = e["name"]
-            if name in sc.locals:
-                return sc.locals[name]
-            if sc.inst is not None:
-                v = self.slot_lookup(sc.inst, name)
-                if v is not _UNDEF:
-                    return v
-            menv = sc.menv or self.env
-            bound = self.module_value(menv, name, sc.root_name)
-            if bound is not _UNDEF:
-                return bound
-            if name == "std":
-                return StdRef([])
-            if name in self.roots_map:
-                self.record(f"root:{name}")
-                return self.roots_map[name]
-            inp = self.demand_input(menv, name)
-            if inp is not _UNDEF:
-                return inp
-            raise EvalErr(f"unknown name {name}")
+            return self.name_value(e["name"], sc)
         if k == "ctx":
-            # $this / $parent / $root are references (§7.3): each denotes an
-            # instance that contains the current one, so a value reading would
-            # be a self-containing value; $key and $path are plain values
-            n = e["name"]
-            inst = sc.inst
-            if n == "$this":
-                if inst is None:
-                    raise EvalErr("$this outside a record instance", "E4090")
-                return Ref(inst.path)
-            if n == "$parent":
-                if inst is None or inst.parent is None:
-                    raise EvalErr("$parent: the evaluation root has no owner", "E4090")
-                return Ref(inst.parent.path)
-            if n == "$root":
-                if not sc.root_name or sc.root_name not in self.roots_map:
-                    raise EvalErr("$root outside an evaluation root", "E4090")
-                return Ref([sc.root_name])
-            if n == "$key":
-                # the key or index under which $this sits in its parent's
-                # collection: the last path segment, present only when the
-                # instance is a collection element (not a direct member)
-                if (
-                    inst is None
-                    or inst.parent is None
-                    or len(inst.path) < len(inst.parent.path) + 2
-                ):
-                    raise EvalErr("$key: the instance is not a collection element", "E4090")
-                return seg_text(inst.path[-1])
-            if n == "$path":
-                if inst is None:
-                    raise EvalErr("$path outside a record instance", "E4090")
-                return path_str(inst.path)
-            raise EvalErr(f"unsupported context var {n}")
+            return self.context_value(e["name"], sc)
         if k == "referrers":
             return self.referrers(e["type"], e["member"], sc)
         if k == "obj":
@@ -428,42 +394,69 @@ class Engine:
             return self.call(fn, args, sc)
         if k == "with":
             base = self.deref(self.ev(e["base"], sc))
-            if isinstance(base, (PreObj, MapV)):
-                # an unbound literal (e.g. a constructor func's result), or a literal
-                # no record type claimed: its entries, updated, still unbound
-                patch = self.ev(e["patch"], sc)
-                entries = (
-                    self.entries_of(base)
-                    if isinstance(base, PreObj)
-                    else list(base.entries.items())
-                )
-                for pk, pv in self.entries_of(patch):
-                    idx = next((j for j, (n, _) in enumerate(entries) if n == pk), -1)
-                    if idx >= 0:
-                        entries[idx] = (pk, pv)
-                    else:
-                        entries.append((pk, pv))
-                return PreObj(entries)
-            if not isinstance(base, RecInst):
+            if not isinstance(base, (PreObj, MapV, RecInst)):
                 raise EvalErr("with on non-record")
-            patch = self.ev(e["patch"], sc)
-            entries = []
-            for n in base.entry_order:
-                if n in base.extras:
-                    entries.append((n, base.extras[n]))
-                    continue
-                s = base.slots[n]
-                if s.kind == "der" or s.state == "absent":
-                    continue
-                entries.append((n, self.force_slot(base, n)))
-            for m in base.rt["members"]:
-                if (
-                    m["kind"] == "dflt"
-                    and not any(k_ == m["name"] for k_, _ in entries)
-                    and base.slots.get(m["name"]) is not None
-                    and base.slots[m["name"]].state != "absent"
-                ):
-                    entries.append((m["name"], self.force_slot(base, m["name"])))
+            return self.with_value(base, self.ev(e["patch"], sc))
+        raise EvalErr(f"ev: unhandled {k}")
+
+    def name_value(self, name: str, sc: Scope) -> Any:
+        if name in sc.locals:
+            return sc.locals[name]
+        if sc.inst is not None:
+            v = self.slot_lookup(sc.inst, name)
+            if v is not _UNDEF:
+                return v
+        menv = sc.menv or self.env
+        bound = self.module_value(menv, name, sc.root_name)
+        if bound is not _UNDEF:
+            return bound
+        if name == "std":
+            return StdRef([])
+        if name in self.roots_map:
+            self.record(f"root:{name}")
+            return self.roots_map[name]
+        inp = self.demand_input(menv, name)
+        if inp is not _UNDEF:
+            return inp
+        raise EvalErr(f"unknown name {name}")
+
+    def context_value(self, n: str, sc: Scope) -> Any:
+        # $this / $parent / $root are references (§7.3): each denotes an
+        # instance that contains the current one, so a value reading would
+        # be a self-containing value; $key and $path are plain values
+        inst = sc.inst
+        if n == "$this":
+            if inst is None:
+                raise EvalErr("$this outside a record instance", "E4090")
+            return Ref(inst.path)
+        if n == "$parent":
+            if inst is None or inst.parent is None:
+                raise EvalErr("$parent: the evaluation root has no owner", "E4090")
+            return Ref(inst.parent.path)
+        if n == "$root":
+            if not sc.root_name or sc.root_name not in self.roots_map:
+                raise EvalErr("$root outside an evaluation root", "E4090")
+            return Ref([sc.root_name])
+        if n == "$key":
+            # the key or index under which $this sits in its parent's
+            # collection: the last path segment, present only when the
+            # instance is a collection element (not a direct member)
+            if inst is None or inst.parent is None or len(inst.path) < len(inst.parent.path) + 2:
+                raise EvalErr("$key: the instance is not a collection element", "E4090")
+            return seg_text(inst.path[-1])
+        if n == "$path":
+            if inst is None:
+                raise EvalErr("$path outside a record instance", "E4090")
+            return path_str(inst.path)
+        raise EvalErr(f"unsupported context var {n}")
+
+    def with_value(self, base: Any, patch: Any) -> Any:
+        if isinstance(base, (PreObj, MapV)):
+            # an unbound literal (e.g. a constructor func's result), or a literal
+            # no record type claimed: its entries, updated, still unbound
+            entries = (
+                self.entries_of(base) if isinstance(base, PreObj) else list(base.entries.items())
+            )
             for pk, pv in self.entries_of(patch):
                 idx = next((j for j, (n, _) in enumerate(entries) if n == pk), -1)
                 if idx >= 0:
@@ -471,7 +464,32 @@ class Engine:
                 else:
                     entries.append((pk, pv))
             return PreObj(entries)
-        raise EvalErr(f"ev: unhandled {k}")
+        if not isinstance(base, RecInst):
+            raise EvalErr("with on non-record")
+        entries = []
+        for n in base.entry_order:
+            if n in base.extras:
+                entries.append((n, base.extras[n]))
+                continue
+            s = base.slots[n]
+            if s.kind == "der" or s.state == "absent":
+                continue
+            entries.append((n, self.force_slot(base, n)))
+        for m in base.rt["members"]:
+            if (
+                m["kind"] == "dflt"
+                and not any(k_ == m["name"] for k_, _ in entries)
+                and base.slots.get(m["name"]) is not None
+                and base.slots[m["name"]].state != "absent"
+            ):
+                entries.append((m["name"], self.force_slot(base, m["name"])))
+        for pk, pv in self.entries_of(patch):
+            idx = next((j for j, (n, _) in enumerate(entries) if n == pk), -1)
+            if idx >= 0:
+                entries[idx] = (pk, pv)
+            else:
+                entries.append((pk, pv))
+        return PreObj(entries)
 
     def entries_of(self, pre: PreObj) -> list[Any]:
         """the entries of an unbound object literal with its spreads (§4.2)
@@ -563,6 +581,8 @@ class Engine:
             del self.env.diagnostics[mark:]
 
     def ev_callee(self, e: dict[str, Any], sc: Scope) -> Any:
+        if self.programs is not None:
+            return self.programs.callee(e)(self, sc)
         if e["e"] == "member":
             x = self.ev_callee(e["x"], sc)
             if isinstance(x, StdRef):
@@ -626,10 +646,18 @@ class Engine:
             raise EvalErr(f"input {name} is not bound", "E5006")
         sc = Scope(None, {}, name, menv)
         try:
+
+            def produce() -> Any:
+                return self.bind(
+                    self.ev(decl["fallback"], sc), menv.resolve(decl["type"]), [name], None, sc
+                )
+
             v = self.step(
                 f"root:{name}",
-                lambda: self.bind(
-                    self.ev(decl["fallback"], sc), menv.resolve(decl["type"]), [name], None, sc
+                lambda: (
+                    self.edits.root(self, name, decl["fallback"], True, produce)
+                    if self.edits
+                    else produce()
                 ),
             )
             self.env.roots[name] = v
@@ -645,12 +673,14 @@ class Engine:
         if self.round_roots is not None and name not in self.round_roots:
             return
         try:
+
+            def produce() -> Any:
+                return self.bind(self.ev(raw, sc) if via_expr else raw, rt, [name], None, sc)
+
             v = self.step(
                 f"root:{name}",
                 lambda: (
-                    self.bind(self.ev(raw, sc), rt, [name], None, sc)
-                    if via_expr
-                    else self.bind(raw, rt, [name], None, sc)
+                    self.edits.root(self, name, raw, via_expr, produce) if self.edits else produce()
                 ),
             )
             self.env.roots[name] = v
@@ -721,7 +751,27 @@ class Engine:
         if op == "??":
             l = self.ev(le, sc)
             return self.ev(re_, sc) if (l is ABSENT or l is None) else l
-        l, r = self.ev(le, sc), self.ev(re_, sc)
+        return self.apply_bin(op, self.ev(le, sc), self.ev(re_, sc))
+
+    def equal_values(self, a: Any, b: Any) -> bool:
+        # Observe cached record contents without changing their forcing order.
+        if self.edits and self.track and self.computing:
+
+            def observe(v: Any) -> None:
+                if isinstance(v, RecInst):
+                    self.record(f"value:{path_str(v.path)}")
+                elif isinstance(v, ArrV):
+                    for x in v.items:
+                        observe(x)
+                elif isinstance(v, MapV):
+                    for x in v.entries.values():
+                        observe(x)
+
+            observe(a)
+            observe(b)
+        return value_eq(a, b)
+
+    def apply_bin(self, op: str, l: Any, r: Any) -> Any:
         if op in ("..", "..<"):
             return RangeV(l, r, op == "..<")
         if op == "matches":
@@ -733,9 +783,9 @@ class Engine:
             return compile_pattern(r.re).fullmatch(l) is not None
         # a literal operand is materialized: equality is structural over values (§4.5)
         if op == "==":
-            return value_eq(self.mat_val(l), self.mat_val(r))
+            return self.equal_values(self.mat_val(l), self.mat_val(r))
         if op == "!=":
-            return not value_eq(self.mat_val(l), self.mat_val(r))
+            return not self.equal_values(self.mat_val(l), self.mat_val(r))
         if op == "in":
             if isinstance(r, Ref):
                 r = self.deref(
@@ -744,9 +794,9 @@ class Engine:
             if isinstance(r, RangeV):
                 return l >= r.lo and (l < r.hi if r.excl else l <= r.hi)
             if isinstance(r, (PreArr, PreObj)):
-                return any(value_eq(l, x) for x in self.mat_arr(r))
+                return any(self.equal_values(l, x) for x in self.mat_arr(r))
             if isinstance(r, ArrV):
-                return any(value_eq(l, x) for x in r.items)
+                return any(self.equal_values(l, x) for x in r.items)
             if isinstance(r, MapV):
                 return l in r.entries
             if isinstance(r, RecInst):
@@ -960,7 +1010,7 @@ class Engine:
             items = self.mat_arr(a[0])
             for i in range(len(items)):
                 for j in range(i + 1, len(items)):
-                    if value_eq(items[i], items[j]):
+                    if self.equal_values(items[i], items[j]):
                         return False
             return True
         if name == "array.sum":
@@ -992,7 +1042,7 @@ class Engine:
         if name == "array.unique":
             out: list[Any] = []
             for x in self.mat_arr(a[0]):
-                if not any(value_eq(y, x) for y in out):
+                if not any(self.equal_values(y, x) for y in out):
                     out.append(x)
             return ArrV(out, [])
         if name == "array.reverse":
@@ -1264,7 +1314,11 @@ class Engine:
 
     @staticmethod
     def evaluate(
-        env: Env, bind: Callable[[Engine], None], track: bool = False, incremental: bool = False
+        env: Env,
+        bind: Callable[[Engine], None],
+        track: bool = False,
+        incremental: bool = False,
+        initial: Engine | None = None,
     ) -> Engine:
         """Evaluate a universe (§7.6, §9.3): `bind` binds every root on a fresh
         engine; the rounds repeat, each answering `$referrers` from the previous
@@ -1277,7 +1331,8 @@ class Engine:
         # once, not after the full round budget; §7.6)
         seen: set[str] = set()
         round_ = 0
-        retained: Engine | None = None
+        retained: Engine | None = initial
+        programs = initial.programs if initial else Programs() if incremental else None
         incremental = incremental and RoundCache.needed(env)
         cache = RoundCache() if incremental else None
         while True:
@@ -1286,6 +1341,8 @@ class Engine:
             eng = retained or Engine(env)
             retained = None
             eng.round_cache = cache
+            eng.revisions = cache.revisions if cache and cache.revisions.revision > 0 else None
+            eng.programs = programs
             eng.track = track or (incremental and reusing)
             eng.prev = prev
             mark = len(env.diagnostics)
@@ -1293,6 +1350,8 @@ class Engine:
             eng.force_all_roots(False)
             eng.track = eng.track or incremental
             r = eng.settle(edges)
+            if eng.edits:
+                eng.edits.finish(eng)
             ekey = _edges_key(r["edges"])
             cycled = not r["stable"] and ekey in seen
             if r["stable"] or cycled or round_ == Engine.ROUNDS:
@@ -1606,6 +1665,8 @@ class Engine:
         return None
 
     def ev_nav(self, e: dict[str, Any], sc: Scope) -> Any:
+        if self.programs is not None:
+            return self.programs.nav(e)(self, sc)
         # a conditional in a ref position chooses between places (§7.4):
         # only the taken branch is navigated
         if e["e"] == "if":
@@ -1674,18 +1735,37 @@ class Engine:
                 }
             )
             raise Taint()
-        inst = RecInst(rt.get("name"), rt, path, parent)
+        previous = self.edits.record(rt, path, parent) if self.edits and self.no_reg == 0 else None
+        if (
+            previous is not None
+            and self.edits is not None
+            and self.edits.unchanged(previous, entries)
+        ):
+            self.edits.activate(self, previous)
+            return previous
+        old_slots = previous.slots if previous is not None else None
+        inst = previous if previous is not None else RecInst(rt.get("name"), rt, path, parent)
+        if previous is not None:
+            inst.slots, inst.extras = {}, {}
         inst.entry_order = [k_ for k_, _ in entries]
         if self.no_reg == 0:
-            self.env.registry.append(inst)
+            if self.edits and self.edits.active:
+                self.edits.register(self, inst)
+            else:
+                self.env.registry.append(inst)
         inst.menv = sc.menv
         inst.eng = self
         isc0 = Scope(inst, {}, sc.root_name, sc.menv)
         supplied = dict(entries)
-        for m in rt["members"]:
+        schema = self.programs.schema(rt) if self.programs else None
+        plans = (
+            schema[0]
+            if schema
+            else [(m, m.get("conj") or [m["type"]], None, None, None) for m in rt["members"]]
+        )
+        for m, types, expression, fallback, deferred in plans:
             name = m["name"]
             has = name in supplied
-            types = m.get("conj") or [m["type"]]
             isc = isc0.with_menv(m["menv"]) if m.get("menv") is not None else isc0
             if m["kind"] == "der":
                 # a hidden member (D34) is never part of the value: a document or
@@ -1704,8 +1784,8 @@ class Engine:
                 inst.slots[name] = Slot(
                     "der",
                     "unforced",
-                    mentions_referrers(m["expr"]),
-                    self._mk_derived(m, inst, path, isc, has, supplied.get(name)),
+                    bool(deferred) if schema else mentions_referrers(m["expr"]),
+                    self._mk_derived(m, inst, path, isc, has, supplied.get(name), expression),
                     hidden=bool(m.get("hidden")),
                 )
                 if inst.slots[name].deferred:
@@ -1722,8 +1802,8 @@ class Engine:
                 inst.slots[name] = Slot(
                     "dflt",
                     "unforced",
-                    mentions_referrers(m["dflt"]),
-                    self._mk_default(m, types, inst, path, isc),
+                    bool(deferred) if schema else mentions_referrers(m["dflt"]),
+                    self._mk_default(m, types, inst, path, isc, fallback),
                 )
             elif m["kind"] == "opt":
                 inst.slots[name] = Slot("opt", "absent")
@@ -1738,7 +1818,7 @@ class Engine:
                     }
                 )
         for k_, v in entries:
-            if any(m["name"] == k_ for m in rt["members"]):
+            if k_ in schema[1] if schema else any(m["name"] == k_ for m in rt["members"]):
                 continue
             if rt.get("open"):
                 inst.extras[k_] = v
@@ -1752,6 +1832,8 @@ class Engine:
                         "code": "E4003",
                     }
                 )
+        if self.no_reg == 0 and self.edits:
+            self.edits.bound(self, inst, entries, old_slots)
         return inst
 
     def _mk_check(self, raw_v: Any, types: Any, m: Any, inst: Any, path: Any, isc: Any) -> Any:
@@ -1763,11 +1845,13 @@ class Engine:
 
         return compute
 
-    def _mk_default(self, m: Any, types: Any, inst: Any, path: Any, isc: Any) -> Any:
+    def _mk_default(
+        self, m: Any, types: Any, inst: Any, path: Any, isc: Any, op: Any = None
+    ) -> Any:
         def compute() -> Any:
             if m.get("type") is not None and m["type"]["t"] == "ref" and not m.get("conj"):
                 return self.bind(PreVal(m["dflt"], isc), m["type"], [*path, m["name"]], inst, isc)
-            v = self.ev(m["dflt"], isc)
+            v = op(self, isc) if op else self.ev(m["dflt"], isc)
             out = None
             for ty in types:
                 out = self.bind(v, ty, [*path, m["name"]], inst, isc)
@@ -1775,14 +1859,16 @@ class Engine:
 
         return compute
 
-    def _mk_derived(self, m: Any, inst: Any, path: Any, isc: Any, has: Any, supplied_v: Any) -> Any:
+    def _mk_derived(
+        self, m: Any, inst: Any, path: Any, isc: Any, has: Any, supplied_v: Any, op: Any = None
+    ) -> Any:
         def compute() -> Any:
             # a member declared `ref<T>` holds a navigation (§7.4) -> Any: the
             # expression names a place, and is bound as one
             if m.get("type") is not None and m["type"]["t"] == "ref":
                 v = self.bind(PreVal(m["expr"], isc), m["type"], [*path, m["name"]], inst, isc)
             else:
-                v = self.ev(m["expr"], isc)
+                v = op(self, isc) if op else self.ev(m["expr"], isc)
                 if m.get("type") is not None:
                     v = self.bind(v, m["type"], [*path, m["name"]], inst, isc)
                 elif isinstance(v, (PreObj, PreArr, JObj)):
@@ -1799,7 +1885,7 @@ class Engine:
                     )
                 finally:
                     self.no_reg -= 1
-                if not value_eq(v, restated):
+                if not self.equal_values(v, restated):
                     self.env.report(
                         {
                             "severity": "error",
@@ -1886,6 +1972,8 @@ class Engine:
             if s.state == "ok":
                 return self.round_cache.value(s.value, self.prev) if self.round_cache else s.value
             if s.state == "absent":
+                if self.edits:
+                    self.edits.absent(self.slot_key(inst, name))
                 return ABSENT
             if s.state == "invalid":
                 raise Taint()
@@ -1894,6 +1982,8 @@ class Engine:
         if s.state == "ok":
             return self.round_cache.value(s.value, self.prev) if self.round_cache else s.value
         if s.state == "absent":
+            if self.edits:
+                self.edits.absent(key)
             return ABSENT
         if s.state == "invalid":
             raise Taint()
@@ -1921,7 +2011,19 @@ class Engine:
         s.state = "forcing"
         self.slots_by_key[key] = (inst, name)
         try:
-            v = self.step(key, s.compute)
+
+            def produce() -> Any:
+                if self.edits:
+                    self.edits.slot_computes += 1
+                assert s.compute is not None
+                return s.compute()
+
+            def compute() -> Any:
+                if self.edits and self.edits.active:
+                    return self.edits.compute(self, key, produce)
+                return self.revisions.compute(self, key, produce) if self.revisions else produce()
+
+            v = self.step(key, compute)
             s.state, s.value = "ok", v
             return v
         except DeferSig:
@@ -1951,11 +2053,15 @@ class Engine:
     def force_const_in(self, env: Env, name: str, root_name: str) -> Any:
         if env not in self.const_envs:
             self.const_envs.append(env)
-        key = f"const:{self.const_envs.index(env)}|{name}" if self.round_cache else None
+        key = (
+            f"const:{self.const_envs.index(env)}|{name}" if self.round_cache or self.track else None
+        )
         if key:
             self.record(key)
         c = env.consts[name]
         if c["state"] == "ok":
+            if self.edits:
+                self.edits.activate(self, c["value"])
             return c["value"]
 
         def produce() -> Any:
@@ -1970,7 +2076,20 @@ class Engine:
             c["value"] = v
             return v
 
-        return self.step(key, produce) if key else produce()
+        v = (
+            self.step(
+                key,
+                lambda: (
+                    self.edits.compute(self, key, produce)
+                    if self.edits and self.edits.active
+                    else produce()
+                ),
+            )
+            if key
+            else produce()
+        )
+        c["state"], c["value"] = "ok", v
+        return v
 
     # ---------- driving ----------
     # Every root in insertion order, including roots added while walking.

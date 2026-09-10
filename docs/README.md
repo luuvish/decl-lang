@@ -70,6 +70,7 @@ charter and chapters remains a defect to fix on sight (§1.4).
 | [05. Renderer](tooling/05_render.md) | `@render`, documents in YAML, `--format` / `--indent`, and the template dialect implemented three times: the form a module declares for its outputs, as tooling (delivered, Phase 10) |
 | [Development handbook](DEVELOPMENT.md) | How the repository is set up and worked on: layout and configuration files, toolchains and versions, getting started, building and testing, quality tools, CI, releases, editors, conventions |
 | [Performance and optimization](PERFORMANCE.md) | Which runtime optimizations remove work, measured historical improvements, the query engine's current contribution, and further optimization priorities |
+| [Query optimization plan](OPTIMIZATION_PLAN.md) | Implementation scope, completion evidence, batch/edit measurement gates, and remaining performance boundaries |
 
 ### Validation cases (§0.5 desk-check artifacts)
 

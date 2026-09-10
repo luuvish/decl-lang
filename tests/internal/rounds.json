@@ -22,5 +22,10 @@
   {
     "file": "tests/validation/relationships/valid/referrers_nested_snapshots.decl",
     "reuse": true
+  },
+  {
+    "file": "tests/validation/relationships/valid/referrers_equal_result_cutoff.decl",
+    "reuse": true,
+    "cutoff": true
   }
 ]

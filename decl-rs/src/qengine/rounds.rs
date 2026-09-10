@@ -1,6 +1,7 @@
 //! Reference-round reuse over the value layer; mirrors qengine/rounds.ts.
 use crate::ast::{walk_expr_tree, walk_type_exprs, Expr};
 use crate::engine::{Edge, Engine, Inst};
+use crate::qengine::revisions::Revisions;
 use crate::semantics::*;
 use rustc_hash::{FxHashMap, FxHashSet};
 use std::cell::{Cell, RefCell};
@@ -128,6 +129,8 @@ fn snapshot_result(
 /// database copy; structural and reference reads use the same dependency graph.
 #[derive(Default)]
 pub struct RoundCache {
+    /// Revision verification for retained member slots.
+    pub revisions: Rc<Revisions>,
     /// Successfully reused round transitions.
     pub reused_rounds: Cell<usize>,
     /// Sum of retained record counts across transitions.
@@ -388,6 +391,7 @@ impl RoundCache {
                     .push(inst.clone());
             }
         }
+        let forced = pending.iter().cloned().collect();
         let mut invalid = FxHashSet::default();
         let mut dropped = FxHashSet::default();
         let mut roots = HashSet::new();
@@ -435,6 +439,7 @@ impl RoundCache {
             }
         }
         let snapshot = self.freeze(eng)?;
+        self.revisions.begin(eng, &invalid, &forced, &dropped);
         for inst in &registry {
             if dropped.contains(&address(inst)) {
                 for (n, _) in &inst.borrow().slots {
@@ -502,6 +507,7 @@ impl RoundCache {
         let tagger = eng.env.tagger.borrow().clone();
         let frozen = Engine::bare(eng.env.clone());
         *eng.env.tagger.borrow_mut() = tagger;
+        *frozen.programs.borrow_mut() = eng.programs.borrow().clone();
         *frozen.prev.borrow_mut() = eng.prev.borrow().clone();
         *frozen.snap_refs.borrow_mut() = eng.snap_refs.borrow().clone();
         *frozen.inverse_refs.borrow_mut() = eng.inverse_refs.borrow().clone();

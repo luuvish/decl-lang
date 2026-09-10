@@ -1,0 +1,332 @@
+[
+  {
+    "name": "member_cutoffs",
+    "source": "type Item = { n: int, bucket = if n > 0 then 1 else 0, answer = bucket * 7, optional?: int, chosen = optional ?? answer }\ntype Batch = { items: Item[], named: map<string, Item>, count = std.array.count(items), total = std.array.sum([x.answer for x in items]) }\ninput batch: Batch\nexport output total: int = batch.total\n",
+    "initial": [
+      {
+        "op": "bind",
+        "name": "batch",
+        "src": {
+          "kind": "inline",
+          "text": "{\"items\":[{\"n\":1},{\"n\":2},{\"n\":3}],\"named\":{\"a\":{\"n\":4}}}"
+        }
+      }
+    ],
+    "steps": [
+      {
+        "action": {
+          "op": "edit",
+          "kind": "update",
+          "path": "batch.items[0].n",
+          "expr": "5"
+        },
+        "max_computes": 4,
+        "min_verified": 3,
+        "min_value_cutoffs": 2,
+        "retained": "batch.items[1]",
+        "max_prepared": 12
+      },
+      {
+        "action": {
+          "op": "edit",
+          "kind": "create",
+          "path": "batch.items[1].optional",
+          "expr": "9"
+        }
+      },
+      {
+        "action": {
+          "op": "edit",
+          "kind": "remove",
+          "path": "batch.items[1].optional"
+        }
+      },
+      {
+        "action": {
+          "op": "edit",
+          "kind": "create",
+          "path": "batch.items[3]",
+          "expr": "{ n: -1 }"
+        }
+      },
+      {
+        "action": {
+          "op": "edit",
+          "kind": "remove",
+          "path": "batch.items[0]"
+        }
+      },
+      {
+        "action": {
+          "op": "edit",
+          "kind": "create",
+          "path": "batch.named[\"b\"]",
+          "expr": "{ n: 8 }"
+        }
+      },
+      {
+        "action": {
+          "op": "edit",
+          "kind": "remove",
+          "path": "batch.named[\"a\"]"
+        }
+      },
+      {
+        "action": {
+          "op": "undo"
+        }
+      },
+      {
+        "action": {
+          "op": "redo"
+        }
+      },
+      {
+        "action": {
+          "op": "bind",
+          "name": "batch",
+          "src": {
+            "kind": "inline",
+            "text": "{\"items\":[{\"n\":10}],\"named\":{}}"
+          }
+        }
+      },
+      {
+        "action": {
+          "op": "unbind",
+          "name": "batch"
+        }
+      },
+      {
+        "action": {
+          "op": "undo"
+        }
+      }
+    ]
+  },
+  {
+    "name": "function_context",
+    "source": "type Leaf = { n: int, doubled = n * 2 }\nfunc make(n: int): Leaf = { n: n }\ninput numbers: int[] = [1, 2, 3]\nexport output leaves: Leaf[] = [make(x) for x in numbers]\nexport output sum: int = std.array.sum([x.doubled for x in leaves])\n",
+    "initial": [
+      {
+        "op": "bind",
+        "name": "numbers",
+        "src": {
+          "kind": "inline",
+          "text": "[1,2,3]"
+        }
+      }
+    ],
+    "steps": [
+      {
+        "action": {
+          "op": "edit",
+          "kind": "update",
+          "path": "numbers[0]",
+          "expr": "4"
+        }
+      },
+      {
+        "action": {
+          "op": "edit",
+          "kind": "remove",
+          "path": "numbers[0]"
+        }
+      },
+      {
+        "action": {
+          "op": "edit",
+          "kind": "create",
+          "path": "numbers[2]",
+          "expr": "7"
+        }
+      },
+      {
+        "action": {
+          "op": "undo"
+        }
+      },
+      {
+        "action": {
+          "op": "redo"
+        }
+      },
+      {
+        "action": {
+          "op": "unbind",
+          "name": "numbers"
+        }
+      }
+    ]
+  },
+  {
+    "name": "diagnostic_recovery",
+    "source": "type Settings = { divisor: int, result = 12 / divisor, optional?: int, chosen = optional ?? 4, assert positive: divisor > 0 else error `positive divisor required` }\ninput settings: Settings\nexport output result: int = settings.chosen\n",
+    "initial": [
+      {
+        "op": "bind",
+        "name": "settings",
+        "src": {
+          "kind": "inline",
+          "text": "{\"divisor\":2}"
+        }
+      }
+    ],
+    "steps": [
+      {
+        "action": {
+          "op": "edit",
+          "kind": "update",
+          "path": "settings.divisor",
+          "expr": "0"
+        }
+      },
+      {
+        "action": {
+          "op": "edit",
+          "kind": "create",
+          "path": "settings.optional",
+          "expr": "8"
+        }
+      },
+      {
+        "action": {
+          "op": "edit",
+          "kind": "update",
+          "path": "settings.divisor",
+          "expr": "3"
+        }
+      },
+      {
+        "action": {
+          "op": "edit",
+          "kind": "remove",
+          "path": "settings.divisor"
+        }
+      },
+      {
+        "action": {
+          "op": "edit",
+          "kind": "create",
+          "path": "settings.divisor",
+          "expr": "4"
+        }
+      }
+    ]
+  },
+  {
+    "name": "record_aggregates",
+    "source": "type Item = { n: int }\ntype Batch = { items: Item[], distinct = std.array.all_distinct(items), unique = std.array.count(std.array.unique(items)) }\ninput batch: Batch\nexport output distinct: bool = batch.distinct\nexport output unique: int = batch.unique\n",
+    "initial": [
+      {
+        "op": "bind",
+        "name": "batch",
+        "src": {
+          "kind": "inline",
+          "text": "{\"items\":[{\"n\":1},{\"n\":1}]}"
+        }
+      }
+    ],
+    "steps": [
+      {
+        "action": {
+          "op": "edit",
+          "kind": "update",
+          "path": "batch.items[1].n",
+          "expr": "2"
+        }
+      },
+      {
+        "action": {
+          "op": "edit",
+          "kind": "update",
+          "path": "batch.items[0].n",
+          "expr": "2"
+        }
+      },
+      {
+        "action": {
+          "op": "edit",
+          "kind": "create",
+          "path": "batch.items[2]",
+          "expr": "{ n: 3 }"
+        }
+      }
+    ]
+  },
+  {
+    "name": "reference_rounds",
+    "source": "type Node = { incoming$ = $referrers(Link, \"target\"), count = std.array.count(incoming$), active = count > 0, answer = if active then 11 else 0 }\ntype Link = { $parent: ref<{ nodes: map<string, Node>, ... }>, dest: string, target: ref<Node> = $parent.nodes[dest] }\ntype Graph = {\n    start: string\n    nodes: map<string, Node> = { a: {}, b: {}, c: {} }\n    initial: Link[] = [{ dest: start }]\n    first: Link[] = if (nodes[\"a\"]?.count ?? 0) > 0 then [{ dest: \"b\" }] else []\n    second: Link[] = if (nodes[\"b\"]?.count ?? 0) > 0 then [{ dest: \"c\" }] else []\n}\ninput graph: Graph\nexport output answers: int[] = [n.answer for n in std.map.values(graph.nodes)]\n",
+    "initial": [
+      {
+        "op": "bind",
+        "name": "graph",
+        "src": {
+          "kind": "inline",
+          "text": "{\"start\":\"a\"}"
+        }
+      }
+    ],
+    "steps": [
+      {
+        "action": {
+          "op": "edit",
+          "kind": "update",
+          "path": "graph.start",
+          "expr": "\"b\""
+        }
+      },
+      {
+        "action": {
+          "op": "edit",
+          "kind": "update",
+          "path": "graph.start",
+          "expr": "\"a\""
+        }
+      },
+      {
+        "action": {
+          "op": "undo"
+        }
+      },
+      {
+        "action": {
+          "op": "redo"
+        }
+      }
+    ]
+  },
+  {
+    "name": "removed_dependencies",
+    "source": "type Item = { result = 12 / std.array.count(std.map.values(items)) }\ninput items: map<string, Item>\nexport output sum: int = std.array.sum([x.result for x in std.map.values(items)])\n",
+    "initial": [
+      {
+        "op": "bind",
+        "name": "items",
+        "src": {
+          "kind": "inline",
+          "text": "{\"a\":{}}"
+        }
+      }
+    ],
+    "steps": [
+      {
+        "action": {
+          "op": "edit",
+          "kind": "remove",
+          "path": "items[\"a\"]"
+        }
+      },
+      {
+        "action": {
+          "op": "undo"
+        }
+      },
+      {
+        "action": {
+          "op": "redo"
+        }
+      }
+    ]
+  }
+]

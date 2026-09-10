@@ -3,6 +3,9 @@
 //! slots with cycle detection, taint / root-cause diagnostics,
 //! $referrers universe ordering, canonical JSON output.
 use crate::ast::*;
+use crate::qengine::edits::Edits;
+use crate::qengine::programs::Programs;
+use crate::qengine::revisions::Revisions;
 use crate::qengine::rounds::RoundCache;
 use crate::semantics::*;
 use crate::subsume::subsumes;
@@ -23,7 +26,7 @@ pub struct Engine {
     pub env: Rc<Env>,
     /// slots whose forcing was deferred to phase 2 (a `$referrers` read, a reference not yet bound)
     pub deferred_slots: RefCell<Vec<(Inst, String)>>,
-    no_reg: Cell<u32>,
+    pub(crate) no_reg: Cell<u32>,
     pub(crate) phase: Cell<u8>,
     /// inputs whose fallback failed to bind: later demands are tainted, not re-reported
     pub failed_inputs: RefCell<HashSet<String>>,
@@ -57,7 +60,7 @@ pub struct Engine {
     /// the frozen instances by address: what `force_slot` delegates to this round
     pub(crate) frozen_set: RefCell<FxHashSet<usize>>,
     /// the last round: a reference into the snapshot resolves live
-    settled: Cell<bool>,
+    pub(crate) settled: Cell<bool>,
     /// the snapshot a round answers from
     pub(crate) snap: RefCell<Option<Snap>>,
     /// the edges `T|m` queried so far
@@ -80,6 +83,13 @@ pub struct Engine {
     /// kept alive): its elements are pure, and a chain of spreads (a fold accumulating an array)
     /// would otherwise re-evaluate every level at every read
     mat_cache: RefCell<FxHashMap<usize, (Value, Value)>>,
+    /// Shared executable programs, enabled by the query evaluator.
+    pub programs: RefCell<Option<Rc<Programs>>>,
+    /// Revision stamps for retained queries.
+    pub revisions: RefCell<Option<Rc<Revisions>>>,
+    /// Retained queries for document edits in a Session.
+    pub edits: RefCell<Option<Rc<Edits>>>,
+    verifying_depth: Cell<Option<usize>>,
     /// Reference-round reuse state, enabled by the query evaluator.
     pub round_cache: RefCell<Option<Rc<RoundCache>>>,
     pub(crate) round_roots: RefCell<Option<HashSet<String>>>,
@@ -377,6 +387,42 @@ pub fn fmt_f(n: f64) -> String {
 }
 
 impl Engine {
+    /// Number of retained unbound-literal materializations (a diagnostic counter).
+    pub fn cached_literals(&self) -> usize {
+        self.mat_cache.borrow().len()
+    }
+
+    /// Unbound literals may close over replaced records. Keep their auxiliary
+    /// materializations within an edit; retained member values live in slots.
+    pub(crate) fn clear_materialized(&self) {
+        self.mat_cache.borrow_mut().clear();
+    }
+
+    /// Request syntax and literal materializations live only for that request.
+    pub(crate) fn transient<T>(&self, f: impl FnOnce() -> T) -> T {
+        struct Restore<'a> {
+            engine: &'a Engine,
+            programs: Option<Rc<Programs>>,
+            materialized: FxHashMap<usize, (Value, Value)>,
+        }
+        impl Drop for Restore<'_> {
+            fn drop(&mut self) {
+                *self.engine.programs.borrow_mut() = self.programs.take();
+                *self.engine.mat_cache.borrow_mut() = std::mem::take(&mut self.materialized);
+            }
+        }
+        let programs = self.programs.borrow_mut().take();
+        if programs.is_some() {
+            *self.programs.borrow_mut() = Some(Rc::new(Programs::default()));
+        }
+        let _restore = Restore {
+            engine: self,
+            programs,
+            materialized: std::mem::take(&mut *self.mat_cache.borrow_mut()),
+        };
+        f()
+    }
+
     /// how many rounds a universe may take to settle (§7.6)
     pub const ROUNDS: u32 = 8;
     /// an engine without registering itself as the environment's evaluator
@@ -405,6 +451,10 @@ impl Engine {
             const_envs: RefCell::new(vec![]),
             snap_refs: RefCell::new(FxHashMap::default()),
             mat_cache: RefCell::new(FxHashMap::default()),
+            programs: RefCell::new(None),
+            revisions: RefCell::new(None),
+            edits: RefCell::new(None),
+            verifying_depth: Cell::new(None),
             round_cache: RefCell::new(None),
             round_roots: RefCell::new(None),
             round_resets: RefCell::new(Vec::new()),
@@ -441,13 +491,26 @@ impl Engine {
     }
     /// Record that the computation in progress read a slot (dependency tracking).
     pub fn record(&self, read: String) {
-        if !self.track.get() {
+        if !self.track.get()
+            || self
+                .verifying_depth
+                .get()
+                .is_some_and(|d| self.computing.borrow().len() <= d)
+        {
             return;
         }
         let top = self.computing.borrow().last().cloned();
         if let Some(top) = top {
             self.reads.borrow_mut().entry(top).or_default().insert(read);
         }
+    }
+    pub(crate) fn verify_reads<T>(&self, f: impl FnOnce() -> T) -> T {
+        let previous = self
+            .verifying_depth
+            .replace(Some(self.computing.borrow().len()));
+        let result = f();
+        self.verifying_depth.set(previous);
+        result
     }
     /// Run a computation as a step of the dependency graph, its reads recorded under `key`.
     pub fn step<T>(&self, key: &str, f: impl FnOnce() -> T) -> T {
@@ -498,6 +561,13 @@ impl Engine {
     // ---------- expression evaluation ----------
     /// Evaluate an expression in a scope (§4, §9).
     pub fn ev(&self, e: &Rc<Expr>, sc: &Scope) -> R<Value> {
+        if let Expr::Lit(v) = &**e {
+            return Ok(v.clone());
+        }
+        let programs = self.programs.borrow().clone();
+        if let Some(p) = programs {
+            return p.get(e)(self, sc);
+        }
         match &**e {
             Expr::Lit(v) => Ok(v.clone()),
             Expr::Pattern(s) => Ok(Value::Pat(s.clone())),
@@ -515,89 +585,8 @@ impl Engine {
                 Ok(Value::PreObj(Rc::new(entries)))
             }
             Expr::Template(parts) => Ok(Value::Str(self.render(parts, sc)?.into())),
-            Expr::Name(name) => {
-                if let Some(v) = sc.locals.get(name) {
-                    return Ok(v.clone());
-                }
-                if let Some(inst) = &sc.inst {
-                    if let Some(v) = self.slot_lookup(inst, name)? {
-                        return Ok(v);
-                    }
-                }
-                let menv = sc.menv.clone().unwrap_or_else(|| self.env.clone());
-                if let Some(v) = self.module_value(&menv, name, &sc.root_name)? {
-                    return Ok(v);
-                }
-                if name == "std" {
-                    return Ok(Value::Std(Rc::new(vec![])));
-                }
-                if let Some(v) = self.root(name) {
-                    self.record(format!("root:{name}"));
-                    return Ok(v);
-                }
-                if let Some(v) = self.demand_input(&menv, name)? {
-                    return Ok(v);
-                }
-                err(format!("unknown name {name}"))
-            }
-            Expr::Ctx(n) => {
-                // $this / $parent / $root are references (§7.3): each denotes an
-                // instance that contains the current one, so a value reading would
-                // be a self-containing value; $key and $path are plain values
-                let inst = sc.inst.as_ref();
-                match n.as_str() {
-                    "$this" => match inst {
-                        Some(i) => Ok(Value::Ref(i.borrow().path.clone())),
-                        None => err_code("$this outside a record instance", "E4090"),
-                    },
-                    "$parent" => match inst.and_then(|i| i.borrow().parent.clone()) {
-                        Some(p) => Ok(Value::Ref(p.borrow().path.clone())),
-                        None => err_code("$parent: the evaluation root has no owner", "E4090"),
-                    },
-                    "$root" => {
-                        if sc.root_name.is_empty() || self.root(&sc.root_name).is_none() {
-                            return err_code("$root outside an evaluation root", "E4090");
-                        }
-                        Ok(Value::Ref(Rc::new(vec![Seg::Name(Rc::from(
-                            sc.root_name.clone(),
-                        ))])))
-                    }
-                    "$key" => {
-                        // the key or index under which $this sits in its parent's
-                        // collection: the last path segment, present only when the
-                        // instance is a collection element (not a direct member)
-                        let Some(i) = inst else {
-                            return err_code(
-                                "$key: the instance is not a collection element",
-                                "E4090",
-                            );
-                        };
-                        let b = i.borrow();
-                        let Some(parent) = &b.parent else {
-                            return err_code(
-                                "$key: the instance is not a collection element",
-                                "E4090",
-                            );
-                        };
-                        if b.path.len() < parent.borrow().path.len() + 2 {
-                            return err_code(
-                                "$key: the instance is not a collection element",
-                                "E4090",
-                            );
-                        }
-                        Ok(match b.path.last() {
-                            Some(Seg::Idx(k)) => Value::Int(Num::from(*k)),
-                            Some(Seg::Name(k)) | Some(Seg::Key(k)) => Value::Str(k.clone()),
-                            None => Value::Absent,
-                        })
-                    }
-                    "$path" => match inst {
-                        Some(i) => Ok(Value::Str(path_str(&i.borrow().path, None).into())),
-                        None => err_code("$path outside a record instance", "E4090"),
-                    },
-                    _ => err(format!("unsupported context var {n}")),
-                }
-            }
+            Expr::Name(name) => self.name_value(name, sc),
+            Expr::Ctx(n) => self.context_value(n, sc),
             Expr::Referrers { ty, member } => self.referrers(ty, member, sc),
             Expr::Spread(_) => err("spread outside an object literal"),
             Expr::Obj(entries) => Ok(Value::PreObj(Rc::new(
@@ -753,6 +742,82 @@ impl Engine {
         }
     }
 
+    pub(crate) fn name_value(&self, name: &str, sc: &Scope) -> R<Value> {
+        if let Some(v) = sc.locals.get(name) {
+            return Ok(v.clone());
+        }
+        if let Some(inst) = &sc.inst {
+            if let Some(v) = self.slot_lookup(inst, name)? {
+                return Ok(v);
+            }
+        }
+        let menv = sc.menv.clone().unwrap_or_else(|| self.env.clone());
+        if let Some(v) = self.module_value(&menv, name, &sc.root_name)? {
+            return Ok(v);
+        }
+        if name == "std" {
+            return Ok(Value::Std(Rc::new(vec![])));
+        }
+        if let Some(v) = self.root(name) {
+            self.record(format!("root:{name}"));
+            return Ok(v);
+        }
+        if let Some(v) = self.demand_input(&menv, name)? {
+            return Ok(v);
+        }
+        err(format!("unknown name {name}"))
+    }
+
+    pub(crate) fn context_value(&self, n: &str, sc: &Scope) -> R<Value> {
+        // $this / $parent / $root are references (§7.3): each denotes an
+        // instance that contains the current one, so a value reading would
+        // be a self-containing value; $key and $path are plain values
+        let inst = sc.inst.as_ref();
+        match n {
+            "$this" => match inst {
+                Some(i) => Ok(Value::Ref(i.borrow().path.clone())),
+                None => err_code("$this outside a record instance", "E4090"),
+            },
+            "$parent" => match inst.and_then(|i| i.borrow().parent.clone()) {
+                Some(p) => Ok(Value::Ref(p.borrow().path.clone())),
+                None => err_code("$parent: the evaluation root has no owner", "E4090"),
+            },
+            "$root" => {
+                if sc.root_name.is_empty() || self.root(&sc.root_name).is_none() {
+                    return err_code("$root outside an evaluation root", "E4090");
+                }
+                Ok(Value::Ref(Rc::new(vec![Seg::Name(Rc::from(
+                    sc.root_name.clone(),
+                ))])))
+            }
+            "$key" => {
+                // the key or index under which $this sits in its parent's
+                // collection: the last path segment, present only when the
+                // instance is a collection element (not a direct member)
+                let Some(i) = inst else {
+                    return err_code("$key: the instance is not a collection element", "E4090");
+                };
+                let b = i.borrow();
+                let Some(parent) = &b.parent else {
+                    return err_code("$key: the instance is not a collection element", "E4090");
+                };
+                if b.path.len() < parent.borrow().path.len() + 2 {
+                    return err_code("$key: the instance is not a collection element", "E4090");
+                }
+                Ok(match b.path.last() {
+                    Some(Seg::Idx(k)) => Value::Int(Num::from(*k)),
+                    Some(Seg::Name(k)) | Some(Seg::Key(k)) => Value::Str(k.clone()),
+                    None => Value::Absent,
+                })
+            }
+            "$path" => match inst {
+                Some(i) => Ok(Value::Str(path_str(&i.borrow().path, None).into())),
+                None => err_code("$path outside a record instance", "E4090"),
+            },
+            _ => err(format!("unsupported context var {n}")),
+        }
+    }
+
     fn render(&self, parts: &[TPart], sc: &Scope) -> R<String> {
         let mut s = String::new();
         for p in parts {
@@ -861,6 +926,10 @@ impl Engine {
     }
 
     fn ev_callee(&self, e: &Rc<Expr>, sc: &Scope) -> R<Value> {
+        let programs = self.programs.borrow().clone();
+        if let Some(p) = programs {
+            return p.callee(e)(self, sc);
+        }
         if let Expr::Member { x, name, .. } = &**e {
             let x = self.ev_callee(x, sc)?;
             return match &x {
@@ -952,10 +1021,16 @@ impl Engine {
             return err_code(format!("input {name} is not bound"), "E5006");
         };
         let sc = Scope::new(name, Some(menv.clone()));
-        let bound = self.step(&format!("root:{name}"), || -> R<Value> {
+        let produce = || -> R<Value> {
             let v = self.ev(&fallback, &sc)?;
             let rt = menv.resolve(&ty_ast, None).or_else(err)?;
             self.bind(v, &rt, &[Seg::Name(Rc::from(name.to_string()))], None, &sc)
+        };
+        let bound = self.step(&format!("root:{name}"), || {
+            match self.edits.borrow().as_ref() {
+                Some(edits) => edits.root(self, name, &RootSrc::Expr(&fallback), produce),
+                None => produce(),
+            }
         });
         match bound {
             Ok(v) => {
@@ -990,12 +1065,18 @@ impl Engine {
             RootSrc::Expr(e) => OwnedRootSrc::Expr((*e).clone()),
             RootSrc::Doc(v) => OwnedRootSrc::Doc(v.clone()),
         };
-        let bound = self.step(&format!("root:{name}"), || -> R<Value> {
-            let raw = match src {
+        let produce = || -> R<Value> {
+            let raw = match &src {
                 RootSrc::Expr(e) => self.ev(e, sc)?,
-                RootSrc::Doc(v) => v,
+                RootSrc::Doc(v) => v.clone(),
             };
             self.bind(raw, rt, &[Seg::Name(Rc::from(name.to_string()))], None, sc)
+        };
+        let bound = self.step(&format!("root:{name}"), || {
+            match self.edits.borrow().as_ref() {
+                Some(edits) => edits.root(self, name, &src, produce),
+                None => produce(),
+            }
         });
         match bound {
             Ok(v) => self.env.set_root(name, v),
@@ -1131,7 +1212,7 @@ impl Engine {
         }
     }
 
-    fn truthy(&self, v: &Value) -> R<bool> {
+    pub(crate) fn truthy(&self, v: &Value) -> R<bool> {
         match v {
             Value::Bool(b) => Ok(*b),
             _ => err("non-bool condition"),
@@ -1164,8 +1245,36 @@ impl Engine {
             }
             _ => {}
         }
-        let l = self.ev(le, sc)?;
-        let mut r = self.ev(re, sc)?;
+        self.apply_bin(op, self.ev(le, sc)?, self.ev(re, sc)?)
+    }
+
+    fn equal_values(&self, a: &Value, b: &Value) -> bool {
+        fn observe(eng: &Engine, v: &Value) {
+            match v {
+                Value::Rec(inst) => {
+                    eng.record(format!("value:{}", path_str(&inst.borrow().path, None)))
+                }
+                Value::Arr(a) => {
+                    for v in &a.borrow().items {
+                        observe(eng, v);
+                    }
+                }
+                Value::Map(m) => {
+                    for v in m.borrow().entries.values() {
+                        observe(eng, v);
+                    }
+                }
+                _ => {}
+            }
+        }
+        if self.edits.borrow().is_some() && self.track.get() && !self.computing.borrow().is_empty()
+        {
+            observe(self, a);
+            observe(self, b);
+        }
+        value_eq(a, b)
+    }
+    pub(crate) fn apply_bin(&self, op: &str, l: Value, mut r: Value) -> R<Value> {
         match op {
             ".." | "..<" => {
                 return Ok(Value::Range {
@@ -1185,8 +1294,16 @@ impl Engine {
                 return Ok(Value::Bool(re.is_match(s)));
             }
             // a literal operand is materialized: equality is structural over values (§4.5)
-            "==" => return Ok(Value::Bool(value_eq(&self.mat_val(l)?, &self.mat_val(r)?))),
-            "!=" => return Ok(Value::Bool(!value_eq(&self.mat_val(l)?, &self.mat_val(r)?))),
+            "==" => {
+                return Ok(Value::Bool(
+                    self.equal_values(&self.mat_val(l)?, &self.mat_val(r)?),
+                ))
+            }
+            "!=" => {
+                return Ok(Value::Bool(
+                    !self.equal_values(&self.mat_val(l)?, &self.mat_val(r)?),
+                ))
+            }
             "in" => {
                 if matches!(r, Value::Ref(_)) {
                     r = self.deref(r)?; // the container may be reached through a reference ($this, $parent)
@@ -1202,10 +1319,10 @@ impl Engine {
                         Ok(Value::Bool(ge && hi_ok))
                     }
                     Value::PreArr(_) | Value::PreObj(_) => Ok(Value::Bool(
-                        self.mat_arr(&r)?.iter().any(|x| value_eq(&l, x)),
+                        self.mat_arr(&r)?.iter().any(|x| self.equal_values(&l, x)),
                     )),
                     Value::Arr(a) => Ok(Value::Bool(
-                        a.borrow().items.iter().any(|x| value_eq(&l, x)),
+                        a.borrow().items.iter().any(|x| self.equal_values(&l, x)),
                     )),
                     Value::Map(m) => {
                         let Value::Str(k) = &l else {
@@ -1582,7 +1699,7 @@ impl Engine {
                 let items = self.mat_arr(arg(&a, 0, name)?)?;
                 for i in 0..items.len() {
                     for j in i + 1..items.len() {
-                        if value_eq(&items[i], &items[j]) {
+                        if self.equal_values(&items[i], &items[j]) {
                             return Ok(Value::Bool(false));
                         }
                     }
@@ -1642,7 +1759,7 @@ impl Engine {
             "array.unique" => {
                 let mut out: Vec<Value> = vec![];
                 for x in self.mat_arr(arg(&a, 0, name)?)? {
-                    if !out.iter().any(|y| value_eq(y, &x)) {
+                    if !out.iter().any(|y| self.equal_values(y, &x)) {
                         out.push(x);
                     }
                 }
@@ -2274,17 +2391,26 @@ impl Engine {
     /// round, until the queried edges are stable — the settled engine is the
     /// result. A universe still changing after `ROUNDS` rounds is E5009.
     pub fn evaluate(env: &Rc<Env>, bind: &dyn Fn(&Rc<Engine>), track: bool) -> Rc<Engine> {
-        Self::evaluate_rounds(env, bind, track, false)
+        Self::evaluate_rounds(env, bind, track, false, None)
     }
     /// Evaluate with retained member, structure and reference dependencies.
     pub fn evaluate_query(env: &Rc<Env>, bind: &dyn Fn(&Rc<Engine>)) -> Rc<Engine> {
-        Self::evaluate_rounds(env, bind, false, true)
+        Self::evaluate_rounds(env, bind, false, true, None)
+    }
+    /// Evaluate a Session, reusing its engine after an edited materialization.
+    pub fn evaluate_session(
+        env: &Rc<Env>,
+        bind: &dyn Fn(&Rc<Engine>),
+        initial: Option<Rc<Engine>>,
+    ) -> Rc<Engine> {
+        Self::evaluate_rounds(env, bind, true, true, initial)
     }
     fn evaluate_rounds(
         env: &Rc<Env>,
         bind: &dyn Fn(&Rc<Engine>),
         track: bool,
         incremental: bool,
+        initial: Option<Rc<Engine>>,
     ) -> Rc<Engine> {
         let mut prev: Option<Rc<Engine>> = None;
         let mut edges: HashMap<String, Edge> = HashMap::new();
@@ -2293,14 +2419,23 @@ impl Engine {
         // once, not after the full round budget; §7.6)
         let mut seen: HashSet<String> = HashSet::new();
         let mut round = 0;
-        let mut retained: Option<Rc<Engine>> = None;
+        let programs = initial
+            .as_ref()
+            .and_then(|e| e.programs.borrow().clone())
+            .or_else(|| incremental.then(|| Rc::new(Programs::default())));
+        let mut retained = initial;
         let mut incremental = incremental && RoundCache::needed(env);
         let mut cache = incremental.then(|| Rc::new(RoundCache::default()));
         loop {
             round += 1;
             let reusing = retained.is_some();
             let eng = retained.take().unwrap_or_else(|| Engine::new(env.clone()));
+            *eng.programs.borrow_mut() = programs.clone();
             *eng.round_cache.borrow_mut() = cache.clone();
+            *eng.revisions.borrow_mut() = cache
+                .as_ref()
+                .filter(|c| c.revisions.revision.get() > 0)
+                .map(|c| c.revisions.clone());
             eng.track.set(track || (incremental && reusing));
             *eng.prev.borrow_mut() = prev.clone();
             let mark = env.diag_len();
@@ -2308,6 +2443,9 @@ impl Engine {
             eng.force_roots(env);
             eng.track.set(eng.track.get() || incremental);
             let r = eng.settle(env, edges);
+            if let Some(edits) = eng.edits.borrow().as_ref() {
+                edits.finish(&eng);
+            }
             let ekey = edges_key(&r.edges);
             let cycled = !r.stable && seen.contains(&ekey);
             if r.stable || cycled || round == Engine::ROUNDS {
@@ -2790,6 +2928,10 @@ impl Engine {
     }
 
     fn ev_nav(&self, e: &Rc<Expr>, sc: &Scope) -> R<Value> {
+        let programs = self.programs.borrow().clone();
+        if let Some(p) = programs {
+            return p.nav(e)(self, sc);
+        }
         match &**e {
             // a conditional in a ref position chooses between places (§7.4):
             // only the taken branch is navigated
@@ -2942,30 +3084,63 @@ impl Engine {
             }
         };
         let members = rec.members.borrow().clone();
-        let inst: Inst = Rc::new(RefCell::new(RecInst {
-            ps: RefCell::new(None),
-            type_name: rt.name.borrow().clone(),
-            rt: rt.clone(),
-            path: Rc::new(path.to_vec()),
-            parent: parent.cloned(),
-            slots: vec![],
-            entry_order: entries.iter().map(|(k, _)| k.clone()).collect(),
-            extras: vec![],
-            menv: sc.menv.clone(),
-        }));
+        let edits = self.edits.borrow().clone();
+        let previous = edits
+            .as_ref()
+            .filter(|_| self.no_reg.get() == 0)
+            .and_then(|e| e.record(rt, path, parent));
+        if let (Some(previous), Some(edits)) = (&previous, &edits) {
+            if edits.unchanged(previous, &entries) {
+                edits.activate(self, &Value::Rec(previous.clone()));
+                return Ok(Value::Rec(previous.clone()));
+            }
+        }
+        let old_slots = previous
+            .as_ref()
+            .map(|i| std::mem::take(&mut i.borrow_mut().slots))
+            .unwrap_or_default();
+        let inst = previous.unwrap_or_else(|| {
+            Rc::new(RefCell::new(RecInst {
+                ps: RefCell::new(None),
+                type_name: rt.name.borrow().clone(),
+                rt: rt.clone(),
+                path: Rc::new(path.to_vec()),
+                parent: parent.cloned(),
+                slots: vec![],
+                entry_order: vec![],
+                extras: vec![],
+                menv: sc.menv.clone(),
+            }))
+        });
+        {
+            let mut b = inst.borrow_mut();
+            b.slots.clear();
+            b.extras.clear();
+            b.entry_order = entries.iter().map(|(k, _)| k.clone()).collect();
+            b.menv = sc.menv.clone();
+        }
         if self.no_reg.get() == 0 {
-            self.env.registry_push(inst.clone());
+            if let Some(edits) = edits.as_ref().filter(|e| e.active.get()) {
+                edits.register(self, &inst);
+            } else {
+                self.env.registry_push(inst.clone());
+            }
         }
         let mut supplied: HashMap<String, Value> = HashMap::new();
         for (k, v) in &entries {
             supplied.insert(k.clone(), v.clone());
         }
-        for m in members.iter() {
+        let schema = self.programs.borrow().as_ref().map(|p| p.schema(rt));
+        for (index, m) in members.iter().enumerate() {
+            let plan = schema.as_ref().map(|s| &s.members[index]);
             let name = m.name.clone();
-            let types: Vec<RT> = m
-                .conj
-                .clone()
-                .unwrap_or_else(|| m.ty.iter().cloned().collect());
+            let types = plan.map(|p| p.types.clone()).unwrap_or_else(|| {
+                Rc::new(
+                    m.conj
+                        .clone()
+                        .unwrap_or_else(|| m.ty.iter().cloned().collect()),
+                )
+            });
             let menv = m.menv.clone().or_else(|| sc.menv.clone());
             let root_name = sc.root_name.clone();
             let has = supplied.get(&name).cloned();
@@ -2999,7 +3174,9 @@ impl Engine {
                         .clone()
                         .unwrap_or_else(|| Rc::new(Expr::Lit(Value::Null)));
                     // $referrers needs the whole universe: schedule for phase 2 up front
-                    push_deferred = mentions_referrers(&expr);
+                    push_deferred = plan
+                        .map(|p| p.deferred)
+                        .unwrap_or_else(|| mentions_referrers(&expr));
                     Slot {
                         kind: MKind::Der,
                         hidden: m.hidden,
@@ -3007,6 +3184,7 @@ impl Engine {
                         value: Value::Undef,
                         compute: Some(Compute::Derived {
                             expr,
+                            op: plan.and_then(|p| p.expression.clone()),
                             ty: m.ty.clone(),
                             supplied: has,
                             name: name.clone(),
@@ -3040,6 +3218,7 @@ impl Engine {
                         value: Value::Undef,
                         compute: Some(Compute::Default {
                             expr,
+                            op: plan.and_then(|p| p.fallback.clone()),
                             types,
                             name: name.clone(),
                             root_name,
@@ -3077,7 +3256,11 @@ impl Engine {
             }
         }
         for (k, v) in &entries {
-            if members.iter().any(|m| m.name == *k) {
+            if schema
+                .as_ref()
+                .map(|s| s.names.contains(k))
+                .unwrap_or_else(|| members.iter().any(|m| m.name == *k))
+            {
                 continue;
             }
             if rec.open.get() {
@@ -3096,6 +3279,11 @@ impl Engine {
                     path_str(&p, None),
                     Some("E4003"),
                 ));
+            }
+        }
+        if self.no_reg.get() == 0 {
+            if let Some(edits) = &edits {
+                edits.bound(self, &inst, &entries, old_slots);
             }
         }
         Ok(Value::Rec(inst))
@@ -3125,13 +3313,14 @@ impl Engine {
                 let isc = scope_for(root_name, menv);
                 let mp = member_path(name);
                 let mut v = Value::Null;
-                for t in types {
+                for t in types.iter() {
                     v = self.bind(raw.clone(), t, &mp, Some(inst), &isc)?;
                 }
                 Ok(v)
             }
             Compute::Default {
                 expr,
+                op,
                 types,
                 name,
                 root_name,
@@ -3146,15 +3335,19 @@ impl Engine {
                     }));
                     return self.bind(pv, &types[0], &mp, Some(inst), &isc);
                 }
-                let v = self.ev(expr, &isc)?;
+                let v = match op {
+                    Some(op) => op(self, &isc)?,
+                    None => self.ev(expr, &isc)?,
+                };
                 let mut out = Value::Null;
-                for t in types {
+                for t in types.iter() {
                     out = self.bind(v.clone(), t, &mp, Some(inst), &isc)?;
                 }
                 Ok(out)
             }
             Compute::Derived {
                 expr,
+                op,
                 ty: t,
                 supplied,
                 name,
@@ -3173,7 +3366,10 @@ impl Engine {
                         }));
                         self.bind(pv, t, &mp, Some(inst), &isc)?
                     }
-                    _ => self.ev(expr, &isc)?,
+                    _ => match op {
+                        Some(op) => op(self, &isc)?,
+                        None => self.ev(expr, &isc)?,
+                    },
                 };
                 if let Some(t) = t {
                     if !matches!(t.k, RTk::Ref(_)) {
@@ -3188,7 +3384,7 @@ impl Engine {
                     let restated = self.bind(sv.clone(), &against, &mp, Some(inst), &isc);
                     self.no_reg.set(self.no_reg.get() - 1);
                     let restated = restated?;
-                    if !value_eq(&v, &restated) {
+                    if !self.equal_values(&v, &restated) {
                         self.env.report(Diag::error(
                             format!("derived member {name} restated with a differing value"),
                             path_str(&mp, None),
@@ -3281,6 +3477,13 @@ impl Engine {
 
     fn with_expr(&self, base: &Rc<Expr>, patch: &Rc<Expr>, sc: &Scope) -> R<Value> {
         let base = self.deref(self.ev(base, sc)?)?;
+        if !matches!(base, Value::PreObj(_) | Value::Map(_) | Value::Rec(_)) {
+            return err("with on non-record");
+        }
+        self.with_value(base, self.ev(patch, sc)?)
+    }
+
+    pub(crate) fn with_value(&self, base: Value, p: Value) -> R<Value> {
         let merge = |entries: &mut Vec<(String, Value)>, patch: Value| -> R<()> {
             let Value::PreObj(pes) = patch else {
                 return err("with: patch must be an object");
@@ -3295,14 +3498,12 @@ impl Engine {
             Ok(())
         };
         if let Value::PreObj(bes) = &base {
-            let p = self.ev(patch, sc)?;
             let mut entries = self.entries_of(bes)?;
             merge(&mut entries, p)?;
             return Ok(Value::PreObj(Rc::new(entries)));
         }
         if let Value::Map(m) = &base {
             // a literal no record type claimed: its entries, updated, still unbound
-            let p = self.ev(patch, sc)?;
             let mut entries = m
                 .borrow()
                 .entries
@@ -3315,7 +3516,6 @@ impl Engine {
         let Value::Rec(r) = &base else {
             return err("with on non-record");
         };
-        let p = self.ev(patch, sc)?;
         let (order, members) = {
             let b = r.borrow();
             (b.entry_order.clone(), rec_members(&b.rt))
@@ -3425,7 +3625,14 @@ impl Engine {
                     None => v,
                 });
             }
-            SlotState::Absent => return Ok(Value::Absent),
+            SlotState::Absent => {
+                if let Some(edits) = self.edits.borrow().as_ref().filter(|e| e.active.get()) {
+                    edits
+                        .revisions
+                        .accept(self, &Self::slot_key(inst, name), &Value::Absent);
+                }
+                return Ok(Value::Absent);
+            }
             SlotState::Invalid => return Err(Fail::Taint),
             _ => {}
         }
@@ -3460,7 +3667,23 @@ impl Engine {
             .borrow_mut()
             .insert(key.clone(), (inst.clone(), name.to_string()));
         let res = match &compute {
-            Some(c) => self.step(&key, || self.run_compute(inst, c)),
+            Some(c) => self.step(&key, || {
+                let edits = self.edits.borrow().clone();
+                let produce = || {
+                    if let Some(edits) = &edits {
+                        edits.slot_computes.set(edits.slot_computes.get() + 1);
+                    }
+                    self.run_compute(inst, c)
+                };
+                if let Some(edits) = edits.as_ref().filter(|e| e.active.get()) {
+                    return edits.compute(self, &key, produce);
+                }
+                let revisions = self.revisions.borrow().clone();
+                match revisions {
+                    Some(revisions) => revisions.compute(self, &key, produce),
+                    None => produce(),
+                }
+            }),
             None => Ok(Value::Null),
         };
         match res {
@@ -3513,7 +3736,7 @@ impl Engine {
         if !self.const_envs.borrow().iter().any(|e| Rc::ptr_eq(e, env)) {
             self.const_envs.borrow_mut().push(env.clone());
         }
-        let key = self.round_cache.borrow().as_ref().map(|_| {
+        let key = (self.round_cache.borrow().is_some() || self.track.get()).then(|| {
             let index = self
                 .const_envs
                 .borrow()
@@ -3530,7 +3753,11 @@ impl Engine {
             return err(format!("unknown constant {name}"));
         };
         if c.state.get() {
-            return Ok(c.value.borrow().clone());
+            let v = c.value.borrow().clone();
+            if let Some(edits) = self.edits.borrow().as_ref() {
+                edits.activate(self, &v);
+            }
+            return Ok(v);
         }
         let produce = || {
             c.state.set(true);
@@ -3548,10 +3775,18 @@ impl Engine {
             *c.value.borrow_mut() = v.clone();
             Ok(v)
         };
-        match key {
-            Some(key) => self.step(&key, produce),
+        let v = match key {
+            Some(key) => self.step(&key, || {
+                match self.edits.borrow().as_ref().filter(|e| e.active.get()) {
+                    Some(edits) => edits.compute(self, &key, produce),
+                    None => produce(),
+                }
+            }),
             None => produce(),
-        }
+        }?;
+        c.state.set(true);
+        *c.value.borrow_mut() = v.clone();
+        Ok(v)
     }
 
     // ---------- driving ----------

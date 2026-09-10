@@ -1,16 +1,18 @@
 # Performance and optimization
 
-Measured release history through `03d7a97` (2026-09-09), followed by the
-reference-round reuse implementation (2026-09-10).
+Measured release history through `03d7a97` (2026-09-09), retained reference
+rounds at `65e5939`, and shared programs with retained Session queries
+(2026-09-10).
 This document records runtime behavior and engineering priorities; the
 [evaluation specification](specification/09_semantics.md) defines the language.
 
 The largest measured gains come from avoiding repeated computation, sharing
 data instead of copying it, and indexing reference lookups. These changes
-benefit both evaluators. At the last measured release, the query layer had no
-demonstrated overall batch advantage over the optimized tree walker. The new
-round cache retains eligible structures and computations; arbitrary session
-edits and result-level cutoff remain future work.
+benefit both evaluators. At `03d7a97`, the query layer had no demonstrated
+overall batch advantage over the optimized tree walker. The current implementation shares executable
+programs, retains eligible structures across rounds and Session edits, and
+stops downstream recomputation when results stay equal. Section 5 separates
+its edit improvements from one-shot evaluation costs.
 
 ## 1. What the optimizations remove
 
@@ -186,9 +188,9 @@ proves absence of whole-engine fallback, not compilation of every expression.
 See the [query-engine design](../decl-ts/src/qengine/DESIGN.md) for the current
 implementation boundary.
 
-## 4. Retained reference rounds (2026-09-10)
+## 4. Retained reference rounds at `65e5939` (2026-09-10)
 
-The query evaluator now retains a universe between eligible reference rounds.
+At this checkpoint, the query evaluator retains a universe between eligible reference rounds.
 The optimization has five parts:
 
 1. **One value cache.** Compiled slots use the existing Engine slot cache and
@@ -222,7 +224,7 @@ states switch to fresh-round evaluation for the remaining rounds. This is batch
 reuse through the Engine's
 slot graph, not adoption of the generic database's revision API by Session.
 Transitive invalidation is conservative; unchanged recomputed values do not
-currently stop further invalidation.
+stop further invalidation at this checkpoint. Section 5 adds this cutoff.
 
 The shared structural regression case adds and removes collections over three
 reused transitions. It checks outputs and diagnostics against fresh evaluation,
@@ -244,24 +246,103 @@ They show the remaining bookkeeping cost, especially for reference queries
 that already settle in the first round. Retention targets repeated work; it
 does not make every one-shot program faster.
 
-## 5. Further optimization
+## 5. Shared programs and retained Session queries (2026-09-10)
 
-1. **Compile a schema program once and share it across instances.** A type's
-   expression such as `sum = x + y` needs one reusable operation, with the
-   instance supplied at execution time. Sharing executable code goes beyond
-   the current sharing of member definitions and reduces repeated preparation
-   and storage for large collections of the same type.
-2. **Add result-level cutoff to retained rounds.** Version supplied values,
-   container membership, and reference answers independently. If recomputation
-   returns an unchanged result, stop before invalidating downstream work. The
-   current implementation conservatively invalidates all transitive readers.
-3. **Connect the retained database to Session edits.** Reuse unchanged results
-   after updates, create/remove, rebind, and undo/redo. Equal-result cutoff can
-   stop downstream recomputation even when an upstream input changed. Existing
-   Session partial recomputation is the baseline to compare against.
+This change completes the implementation steps in the
+[query optimization plan](OPTIMIZATION_PLAN.md), relative to `65e5939`.
 
-These are implementation priorities, not measured future speedups. Invalidation
-must include absent and failed reads, structural changes, and diagnostics.
-Before adoption, compare each edit against a fresh evaluation with identical
-outputs and diagnostics. Measure cold CLI execution, preloaded batch work,
-reference rounds, and edit latency separately.
+- **Shared schema and expression programs:** compile operations once per AST
+  and record plans once per resolved schema. Instances pass their own runtime
+  scope. The shared regression increases records from 1 to 128 without
+  increasing compilation counts. Trivial literals bypass compilation; lazy
+  literal children compile only when demanded.
+- **Result and dependency cutoff:** recomputed equal values retain their
+  previous change stamp. Dependent queries verify their reads and skip their
+  programs. A shared multi-round reference case requires both kinds of cutoff.
+- **Selective Session preparation and binding reuse:** compare changed supplied
+  inputs down to member paths and follow their readers. Unaffected queries keep
+  cached slots without reset or verification; unchanged records reuse their
+  bindings. A single-member regression prepares at most 12 queries and executes
+  at most four member programs, retaining sibling record identities.
+- **Bounded auxiliary caches:** temporary requests have their own program cache;
+  deleted records lose input metadata, dependencies and change stamps. Rust's
+  unbound-literal materialization cache has an edit lifetime. Shared regressions
+  run 400 temporary expressions and 100 unique-path create/remove cycles.
+
+The measurement below covers the complete bundle. It does not assign isolated
+milliseconds to individual mechanisms. Compilation/work counters prove which
+work is removed; elapsed timings include remaining binding, graph traversal,
+validation and Session bookkeeping.
+
+### Session measurements
+
+The same Apple M4, 16 GiB, macOS 26.6.2 machine ran both revisions, using
+Node 24.18.1, Python 3.12.14 and Rust 1.97.1 release builds with mimalloc.
+The shared [`session.json`](../tests/benchmarks/session.json) workload binds
+and evaluates before timing. Each sample includes applying one edit, evaluation,
+full validation and scalar serialization, with output and diagnostic checks.
+Two warmup edits precede nine timed edits; the table reports medians. Builds
+and tests were finished before timing. Source loading and process/parser startup
+are excluded.
+
+“Equal” changes a positive input while its derived bucket remains one. “Changed”
+alternates positive/negative inputs so the bucket and final output change.
+
+| Language | Records | Equal: baseline → current | Reduction | Changed: baseline → current | Reduction |
+|---|---:|---:|---:|---:|---:|
+| TypeScript | 100 | 1.03 → 1.02 ms | 0.7% | 0.60 → 0.66 ms | -9.9% |
+| TypeScript | 1,000 | 8.21 → 4.72 ms | 42.5% | 5.94 → 4.59 ms | 22.7% |
+| TypeScript | 5,000 | 39.75 → 24.25 ms | 39.0% | 40.62 → 23.40 ms | 42.4% |
+| Python | 100 | 2.99 → 1.89 ms | 36.9% | 2.96 → 2.02 ms | 31.6% |
+| Python | 1,000 | 36.86 → 18.01 ms | 51.1% | 36.22 → 19.76 ms | 45.4% |
+| Python | 5,000 | 255.96 → 107.66 ms | 57.9% | 248.45 → 117.84 ms | 52.6% |
+| Rust | 100 | 0.94 → 0.79 ms | 16.3% | 0.80 → 0.79 ms | 2.0% |
+| Rust | 1,000 | 5.21 → 3.10 ms | 40.4% | 5.12 → 3.14 ms | 38.7% |
+| Rust | 5,000 | 30.12 → 16.26 ms | 46.0% | 32.59 → 17.46 ms | 46.4% |
+
+At 5,000 records the complete change cuts edit latency by **39–42% in
+TypeScript, 53–58% in Python and 46% in Rust**. The smallest TypeScript changed
+case instead costs about 0.06 ms more (9.9%); preparation overhead is not free.
+The baseline is the previous incremental Session. They are workload-specific, not language-wide multipliers.
+
+Reproduce with the [three benchmark drivers](../tests/benchmarks/README.md).
+
+### Preloaded batch measurements
+
+The release `qbench` harness loads, binds, evaluates, validates, serializes and
+destroys the result, excluding parsing and static checking. One warmup and nine
+samples yield each median; both evaluators must produce identical outputs.
+Three process runs per revision, alternating their order, check repeatability;
+the table reports the median of those three medians. The same machine and Rust
+toolchain were used. An unusually slow first baseline sample is therefore not
+treated as the whole improvement.
+
+| Workload | Baseline query | Current query | Change in time | Current tree walker |
+|---|---:|---:|---:|---:|
+| Flat records, 2,000 | 7.52 ms | 7.13 ms | −5.2% | 7.10 ms |
+| Tagged union, 2,000 | 15.21 ms | 15.49 ms | +1.8% | 15.55 ms |
+| Reference ring, 1,600 | 10.38 ms | 11.14 ms | +7.3% | 9.29 ms |
+
+The reference ring already settles without rebuilding changing structure, so
+this change has no retained-edit work to eliminate there. Its remaining query
+preparation and bookkeeping cost is visible. The timings do not establish a
+single cause for that small regression. Shared programs are useful for repeated
+schemas and edits; they do not make every batch program faster.
+
+Final validation passed `make verify` (**1,277 identical comparisons, zero
+differences**), including all implementation tests (360 Python tests), and
+`make lint`. A final `make format` check leaves the working files unchanged.
+
+### Remaining costs
+
+Revision preparation, supplied-data comparison and final validation still walk
+the live graph; editing one field is not constant-time in document size.
+Whole-record comparisons prepare values conservatively to preserve fresh
+handling of unforced members. A previous runtime error reruns query programs
+for diagnostic recovery. Frozen/context-bearing results and ineligible
+reference transitions use conservative recomputation. Source/schema changes
+may rebuild the universe.
+
+These are candidates for further optimization, with new correctness and work
+criteria required before changing them. The current change preserves the
+specification's reference rounds and final validation.

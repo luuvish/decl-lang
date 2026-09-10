@@ -2,6 +2,7 @@
 // member reads (also cache hits), roots, frozen member reads and edge answers.
 // A failed eligibility check keeps the fresh-round evaluator as the fallback.
 import type { Engine } from '../engine.ts';
+import { Revisions } from './revisions.ts';
 import { isArr, isMap, isRec, isRef, isQ, isRange, pathStr, valueEq } from '../semantics.ts';
 import type { Env, RecInst, Seg, Value } from '../semantics.ts';
 
@@ -99,6 +100,7 @@ export class RoundCache {
     );
   }
 
+  readonly revisions = new Revisions();
   rounds = 0;
   reusedRounds = 0;
   retainedRecords = 0;
@@ -197,6 +199,7 @@ export class RoundCache {
     const invalid = new Set<string>();
     const dropped = new Set<RecInst>();
     const roots = new Set<string>();
+    const forced = new Set(pending);
     const queue = pending;
     const subtrees = new Map<string, RecInst[]>();
     for (const inst of records.values())
@@ -246,6 +249,7 @@ export class RoundCache {
       if (error instanceof IneligibleSnapshot) return null;
       throw error;
     }
+    this.revisions.begin(eng, invalid, forced, dropped);
     for (const inst of dropped)
       for (const name of inst.slots.keys()) {
         const key = slotKey(inst, name);
@@ -355,6 +359,7 @@ export class RoundCache {
     frozen.slotsByKey = new Map();
     frozen.snapshotValue = copy;
     frozen.roundCache = null;
+    frozen.revisions = null;
     frozen.roundRoots = null;
     frozen.track = false;
     frozen.computing = [];

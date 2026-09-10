@@ -9,6 +9,7 @@ from __future__ import annotations
 from copy import copy
 from typing import TYPE_CHECKING, Any
 
+from decl.qengine.revisions import Revisions
 from decl.semantics import ArrV, JObj, MapV, Quantity, RangeV, RecInst, Ref, path_str, value_eq
 
 if TYPE_CHECKING:
@@ -105,6 +106,7 @@ class RoundCache:
         )
 
     def __init__(self) -> None:
+        self.revisions = Revisions()
         self.clean_records: set[RecInst] = set()
         self.rounds = 0
         self.reused_rounds = 0
@@ -189,6 +191,7 @@ class RoundCache:
                         av = eng.prev.snapshot_value(av)
                     if a is None or b is None or a.state != b.state or not same(av, b.value):
                         pending.append(dep)
+        forced = set(pending)
         invalid: set[str] = set()
         dropped: set[RecInst] = set()
         roots: set[str] = set()
@@ -236,6 +239,7 @@ class RoundCache:
             snapshot = self.freeze(eng)
         except IneligibleSnapshot:
             return None
+        self.revisions.begin(eng, invalid, forced, dropped)
         for inst in dropped:
             for name in inst.slots:
                 key = slot_key(inst, name)
@@ -342,6 +346,7 @@ class RoundCache:
         frozen.slots_by_key = {}
         frozen.snapshot_value = clone
         frozen.round_cache = None
+        frozen.revisions = None
         frozen.round_roots = None
         frozen.track = False
         frozen.computing = []

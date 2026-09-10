@@ -1,10 +1,105 @@
 //! engine: the engine's boundary through the single-module pipeline —
 //! quantities, references, $referrers, a cycle.
 use super::common::{get, read_json, text};
+use decl_lang::engine::{Engine, RootSrc};
 use decl_lang::parse::parse_source;
 use decl_lang::pipeline::run_pipeline;
-use decl_lang::qengine::qeval::qevaluate_universe;
-use decl_lang::semantics::{Env, Seg, Value};
+use decl_lang::qengine::qeval::{qevaluate_universe, BoundSpec};
+use decl_lang::semantics::{sort_diags, Env, Scope, Seg, Value};
+
+#[test]
+fn shared_programs() {
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .unwrap();
+    let Value::JArr(cases) =
+        read_json(&std::fs::read_to_string(root.join("tests/internal/programs.json")).unwrap())
+            .ok()
+            .unwrap()
+    else {
+        panic!("programs.json is a list");
+    };
+    for row in cases.iter() {
+        let decls = parse_source(text(get(row, "source").unwrap())).decls;
+        let input = text(get(row, "input").unwrap());
+        let element = text(get(row, "element").unwrap());
+        let Some(Value::JArr(sizes)) = get(row, "sizes") else {
+            panic!("sizes is a list");
+        };
+        let mut first = None;
+        for size in sizes.iter() {
+            let Value::Int(size) = size else {
+                panic!("size is an int");
+            };
+            let size: usize = size.to_string().parse().unwrap();
+            let raw = read_json(&format!("[{}]", vec![element; size].join(",")))
+                .ok()
+                .unwrap();
+            let reference = Env::new();
+            reference.load(&decls);
+            let tree = Engine::evaluate(
+                &reference,
+                &|eng| {
+                    let ty = reference.inputs.borrow().get(input).unwrap().0.clone();
+                    let rt = reference.resolve(&ty, None).unwrap();
+                    eng.bind_root(
+                        input,
+                        RootSrc::Doc(raw.clone()),
+                        &rt,
+                        &Scope::new(input, None),
+                    );
+                    for (name, ty, expr) in reference.outputs.borrow().iter() {
+                        let rt = reference.resolve(ty, None).unwrap();
+                        eng.bind_root(name, RootSrc::Expr(expr), &rt, &Scope::new(name, None));
+                    }
+                },
+                false,
+            );
+            tree.validate_all("");
+            let env = Env::new();
+            env.load(&decls);
+            let (report, eng) = qevaluate_universe(
+                std::slice::from_ref(&env),
+                &env,
+                &[BoundSpec {
+                    name: input.into(),
+                    raw,
+                    menv: env.clone(),
+                }],
+            )
+            .unwrap();
+            assert!(report.ok, "{:?}", report.diagnostics);
+            let expected: Vec<_> = reference
+                .outputs
+                .borrow()
+                .iter()
+                .map(|(name, _, _)| {
+                    (
+                        name.clone(),
+                        tree.serialize(&reference.root(name).unwrap(), name, false),
+                    )
+                })
+                .collect();
+            assert_eq!(report.outputs, expected);
+            let diagnostics = |ds: Vec<decl_lang::semantics::Diag>| {
+                ds.iter().map(|d| d.to_json(None)).collect::<Vec<_>>()
+            };
+            assert_eq!(
+                diagnostics(report.diagnostics),
+                diagnostics(sort_diags(reference.diagnostics_vec()))
+            );
+            assert!(env.registry_snapshot().len() >= size);
+            let programs = eng.programs.borrow();
+            let programs = programs.as_ref().unwrap();
+            let counts = (programs.compiled.get(), programs.compiled_schemas.get());
+            assert!(counts.0 > 0 && counts.1 > 0);
+            if let Some(first) = first {
+                assert_eq!(counts, first, "size {size}");
+            }
+            first = Some(counts);
+        }
+    }
+}
 
 #[test]
 fn values() {
@@ -94,6 +189,12 @@ fn reference_round_reuse() {
             let cache = cache.as_ref().unwrap();
             assert!(cache.reused_rounds.get() >= 3, "{file}");
             assert!(cache.retained_records.get() >= 20, "{file}");
+        }
+        if matches!(get(row, "cutoff"), Some(Value::Bool(true))) {
+            let revisions = eng.revisions.borrow();
+            let revisions = revisions.as_ref().unwrap();
+            assert!(revisions.verified_cutoffs.get() >= 3, "{file}");
+            assert!(revisions.value_cutoffs.get() >= 3, "{file}");
         }
     }
 }

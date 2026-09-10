@@ -1,0 +1,16 @@
+[
+  {
+    "name": "document_schemas",
+    "source": "type Leaf = { value: int, doubled = value * 2 }\ntype Item = { value: int, increment?: int = value + 1, leaf?: Leaf = { value: increment }, positive = [value, increment] |> std.array.filter((x) => x > 0), label = \"${leaf.doubled}\" }\ninput batch: Item[]\noutput result: int = std.array.sum([r.leaf.doubled for r in batch])\n",
+    "input": "batch",
+    "element": "{\"value\":3}",
+    "sizes": [1, 128]
+  },
+  {
+    "name": "function_schemas",
+    "source": "type Item = { value: int, result = value + 7, optional?: int, chosen = optional ?? result }\nfunc make(n: int): Item = { value: n }\ninput values: int[]\noutput batch: Item[] = [make(n) for n in values]\n",
+    "input": "values",
+    "element": "5",
+    "sizes": [1, 128]
+  }
+]

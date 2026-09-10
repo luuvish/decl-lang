@@ -25,3 +25,7 @@ comparison); the parity harness requires the Rust
 and Python REPLs to print the same bytes and leave the same files. The
 command line's own REPL arguments (`--input`, `--script -`, `--compact`,
 the usage errors) are cases of `tests/cli/`.
+
+The recomputation count includes member programs executed while rebinding an
+edited document and in subsequent reference rounds. The `files` case recomputes
+`deployed.port` and its derived `label`; the other 13 slots are retained.

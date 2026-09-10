@@ -1,0 +1,28 @@
+// Incoming edges grow over several snapshots. An already-active node keeps
+// the same answer, so its answer/list/total chain need not execute again.
+type Node = {
+    incoming$ = $referrers(Link, "target")
+    count = std.array.count(incoming$)
+    active = count > 0
+    answer = if active then 11 else 0
+    values = [answer, answer + 1]
+    total = std.array.sum(values)
+}
+type Link = {
+    $parent: ref<{ nodes: { [string]: Node }, ... }>
+    dest: string
+    target: ref<Node> = $parent.nodes[dest]
+}
+type Item = { value: int, squared = value * value }
+type Graph = {
+    nodes: { [string]: Node } = { a: {}, b: {}, c: {}, d: {} }
+    initial: Link[] = [{ dest: "a" }]
+    first: Link[] = if (nodes["a"]?.count ?? 0) > 0
+        then [{ dest: "a" }, { dest: "b" }] else []
+    second: Link[] = if (nodes["b"]?.count ?? 0) > 0
+        then [{ dest: "a" }, { dest: "c" }] else []
+    third: Link[] = if (nodes["c"]?.count ?? 0) > 0
+        then [{ dest: "a" }, { dest: "d" }] else []
+    unchanged: Item[] = [{ value: n } for n in 1..20]
+}
+export output graph: Graph = {}

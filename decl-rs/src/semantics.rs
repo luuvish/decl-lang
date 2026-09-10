@@ -519,7 +519,7 @@ pub enum Compute {
         /// the value supplied
         raw: Value,
         /// the types to check against
-        types: Vec<RT>,
+        types: Rc<Vec<RT>>,
         /// the member
         name: String,
         /// the root
@@ -531,8 +531,10 @@ pub enum Compute {
     Default {
         /// the expression
         expr: Rc<Expr>,
+        /// the shared executable program, when queries are enabled
+        op: Option<crate::qengine::programs::Op>,
         /// the types to check against
-        types: Vec<RT>,
+        types: Rc<Vec<RT>>,
         /// the member
         name: String,
         /// the root
@@ -544,6 +546,8 @@ pub enum Compute {
     Derived {
         /// the expression
         expr: Rc<Expr>,
+        /// the shared executable program, when queries are enabled
+        op: Option<crate::qengine::programs::Op>,
         /// the declared type
         ty: Option<RT>,
         /// the value the document supplied, to compare (§10.5)
@@ -639,6 +643,17 @@ pub struct LocalFrame {
     next: Option<Rc<LocalFrame>>,
 }
 impl Locals {
+    /// Visible bindings, for comparing captured scopes between Session edits.
+    pub(crate) fn entries(&self) -> FxHashMap<Rc<str>, Value> {
+        let mut out = FxHashMap::default();
+        let mut current = &self.0;
+        while let Some(frame) = current {
+            out.entry(frame.name.clone())
+                .or_insert_with(|| frame.value.clone());
+            current = &frame.next;
+        }
+        out
+    }
     /// The empty scope.
     pub fn new() -> Locals {
         Locals(None)

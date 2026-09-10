@@ -61,8 +61,13 @@
   },
   {
     "module": "engine",
+    "name": "shared_programs",
+    "check": "The shared programs.json document and function cases match fresh evaluation; a 128-fold increase in record instances does not increase expression or schema compilation counts."
+  },
+  {
+    "module": "engine",
     "name": "reference_round_reuse",
-    "check": "The shared reference-round cases (rounds.json) match fresh evaluation in outputs and diagnostics; structural additions/removals retain unchanged records across at least three transitions."
+    "check": "The shared reference-round cases (rounds.json) match fresh evaluation in outputs and diagnostics; structural additions/removals retain unchanged records across at least three transitions, and cases marked cutoff skip downstream programs when recomputed results are equal."
   },
   {
     "module": "engine",
@@ -143,5 +148,20 @@
     "module": "session",
     "name": "undo_redo",
     "check": "over tests/repl/documents/main.decl, binding an inline document to `extra` makes its text available; undo removes it (the root is invalid), redo restores it; a new operation after undo discards what was undone, so redo then steps nothing"
+  },
+  {
+    "module": "session",
+    "name": "retained_edits",
+    "check": "The shared edits.json sequences match fresh evaluation after every update/create/remove, binding change, undo/redo, and error recovery; unchanged programs and records are retained, and equal member results skip dependent programs."
+  },
+  {
+    "module": "session",
+    "name": "temporary_programs",
+    "check": "Repeated temporary expressions from temporary.json preserve their values and errors without growing the persistent Programs cache, record registry or slot graph; representations with explicit metadata/materialization caches prune request-owned entries."
+  },
+  {
+    "module": "session",
+    "name": "retained_lifetime",
+    "check": "Repeated creation and removal of distinct record paths from temporary.json preserve output and diagnostics while retained program, record, dependency and revision metadata stay bounded by the live query graph."
   }
 ]

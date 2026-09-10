@@ -31,8 +31,16 @@ import type { RecInst, RT, Seg, Slot, Value } from './semantics.ts';
 import type { Expr } from './ast.ts';
 import { subsumes } from './subsume.ts';
 import { RoundCache } from './qengine/rounds.ts';
+import { Programs } from './qengine/programs.ts';
+import type { Revisions } from './qengine/revisions.ts';
+import type { Edits } from './qengine/edits.ts';
 
-type Scope = { inst: RecInst | null; locals: Map<string, any>; rootName: string; menv?: Env };
+export type Scope = {
+  inst: RecInst | null;
+  locals: Map<string, any>;
+  rootName: string;
+  menv?: Env;
+};
 /** the values `std.array.sort` orders: one primitive kind per call (§13.2) */
 function isOrderable(x: any): boolean {
   return typeof x === 'bigint' || typeof x === 'number' || typeof x === 'string';
@@ -135,6 +143,10 @@ export class Engine {
   // Sessions and retained reference rounds enable dependency recording.
   // Ordinary one-shot work avoids the per-slot graph allocation (F21).
   track = false;
+  programs: Programs | null = null;
+  revisions: Revisions | null = null;
+  edits: Edits | null = null;
+  private verifyingDepth = -1;
   /** Incremental reference rounds share the value cache and dependency graph. */
   roundCache: RoundCache | null = null;
   roundRoots: Set<string> | null = null;
@@ -152,9 +164,18 @@ export class Engine {
     return key;
   }
   record(read: string) {
-    if (!this.track) return;
+    if (!this.track || this.computing.length <= this.verifyingDepth) return;
     const top = this.computing[this.computing.length - 1];
     if (top) (this.reads.get(top) ?? this.reads.set(top, new Set()).get(top)!).add(read);
+  }
+  verifyReads<T>(f: () => T): T {
+    const previous = this.verifyingDepth;
+    this.verifyingDepth = this.computing.length;
+    try {
+      return f();
+    } finally {
+      this.verifyingDepth = previous;
+    }
   }
   step<T>(key: string, f: () => T): T {
     this.computing.push(key);
@@ -206,9 +227,9 @@ export class Engine {
 
   // ---------- expression evaluation ----------
   ev(e: Expr, sc: Scope): any {
+    if (e.e === 'lit') return e.v;
+    if (this.programs) return this.programs.get(e)(this, sc);
     switch (e.e) {
-      case 'lit':
-        return e.v;
       case 'unitlit': {
         let u: { key: string; toBase: number };
         try {
@@ -248,58 +269,10 @@ export class Engine {
         for (const p of e.parts) s += typeof p === 'string' ? p : this.toStr(this.ev(p, sc));
         return s;
       }
-      case 'name': {
-        if (sc.locals.has(e.name)) return sc.locals.get(e.name);
-        if (sc.inst) {
-          const v = this.slotLookup(sc.inst, e.name);
-          if (v !== undefined) return v;
-        }
-        const menv = sc.menv ?? this.env;
-        const bound = this.moduleValue(menv, e.name, sc.rootName);
-        if (bound !== undefined) return bound;
-        if (e.name === 'std') return { __std: true, path: [] };
-        if (this.rootsMap.has(e.name)) {
-          this.record(`root:${e.name}`);
-          return this.rootsMap.get(e.name);
-        }
-        const inp = this.demandInput(menv, e.name);
-        if (inp !== undefined) return inp;
-        throw new EvalErr(`unknown name ${e.name}`);
-      }
-      case 'ctx': {
-        // $this / $parent / $root are references (§7.3): each denotes an
-        // instance that contains the current one, so a value reading would
-        // be a self-containing value; $key and $path are plain values
-        const inst = sc.inst;
-        if (e.name === '$this') {
-          if (!inst) throw new EvalErr('$this outside a record instance', 'E4090');
-          return { __ref: true, segs: inst.path };
-        }
-        if (e.name === '$parent') {
-          if (!inst || !inst.parent)
-            throw new EvalErr('$parent: the evaluation root has no owner', 'E4090');
-          return { __ref: true, segs: inst.parent.path };
-        }
-        if (e.name === '$root') {
-          if (!sc.rootName || !this.rootsMap.has(sc.rootName))
-            throw new EvalErr('$root outside an evaluation root', 'E4090');
-          return { __ref: true, segs: [sc.rootName] };
-        }
-        if (e.name === '$key') {
-          // the key or index under which $this sits in its parent's
-          // collection: the last path segment, present only when the
-          // instance is a collection element (not a direct member)
-          if (!inst || !inst.parent || inst.path.length < inst.parent.path.length + 2)
-            throw new EvalErr('$key: the instance is not a collection element', 'E4090');
-          const k = segText(inst.path[inst.path.length - 1]);
-          return typeof k === 'number' ? BigInt(k) : k;
-        }
-        if (e.name === '$path') {
-          if (!inst) throw new EvalErr('$path outside a record instance', 'E4090');
-          return pathStr(inst.path);
-        }
-        throw new EvalErr(`unsupported context var ${e.name}`);
-      }
+      case 'name':
+        return this.nameValue(e.name, sc);
+      case 'ctx':
+        return this.contextValue(e.name, sc);
       case 'referrers':
         return this.referrers(e.type, e.member, sc);
       case 'obj':
@@ -401,59 +374,113 @@ export class Engine {
       }
       case 'with': {
         const base = this.deref(this.ev(e.base, sc));
-        if (base && base.__pre === 'obj') {
-          // an unbound literal (e.g. a constructor func's result):
-          // merge entries directly, still unbound
-          const patch = this.ev(e.patch, sc);
-          const entries: [string, any][] = this.entriesOf(base).map(([k, v]: any) => [k, v]);
-          for (const [k, v] of this.entriesOf(patch)) {
-            const i = entries.findIndex(([n]) => n === k);
-            if (i >= 0) entries[i] = [k, v];
-            else entries.push([k, v]);
-          }
-          return { __pre: 'obj', entries };
-        }
-        if (isMap(base)) {
-          // a literal no record type claimed: its entries, updated, still unbound
-          const patch = this.ev(e.patch, sc);
-          const entries: [string, any][] = [...base.entries.entries()].map(([k, v]: any) => [k, v]);
-          for (const [k, v] of this.entriesOf(patch)) {
-            const i = entries.findIndex(([n]) => n === k);
-            if (i >= 0) entries[i] = [k, v];
-            else entries.push([k, v]);
-          }
-          return { __pre: 'obj', entries };
-        }
-        if (!isRec(base)) throw new EvalErr('with on non-record');
-        const patch = this.ev(e.patch, sc);
-        const entries: [string, any][] = [];
-        for (const n of base.entryOrder) {
-          if (base.extras.has(n)) {
-            entries.push([n, base.extras.get(n)]);
-            continue;
-          }
-          const s = base.slots.get(n)!;
-          if (s.kind === 'der') continue; // derived: dropped, recomputed downstream
-          if (s.state === 'absent') continue;
-          entries.push([n, this.forceSlot(base, n)]);
-        }
-        for (const m of base.rt.members) {
-          // defaulted members not in entryOrder
-          if (
-            m.kind === 'dflt' &&
-            !entries.some(([k]) => k === m.name) &&
-            base.slots.get(m.name)?.state !== 'absent'
-          )
-            entries.push([m.name, this.forceSlot(base, m.name)]);
-        }
-        for (const [k, v] of this.entriesOf(patch)) {
-          const i = entries.findIndex(([n]) => n === k);
-          if (i >= 0) entries[i] = [k, v];
-          else entries.push([k, v]);
-        }
-        return { __pre: 'obj', entries };
+        if (!(base?.__pre === 'obj' || isMap(base) || isRec(base)))
+          throw new EvalErr('with on non-record');
+        return this.withValue(base, this.ev(e.patch, sc));
       }
     }
+  }
+  nameValue(name: string, sc: Scope): any {
+    if (sc.locals.has(name)) return sc.locals.get(name);
+    if (sc.inst) {
+      const v = this.slotLookup(sc.inst, name);
+      if (v !== undefined) return v;
+    }
+    const menv = sc.menv ?? this.env;
+    const bound = this.moduleValue(menv, name, sc.rootName);
+    if (bound !== undefined) return bound;
+    if (name === 'std') return { __std: true, path: [] };
+    if (this.rootsMap.has(name)) {
+      this.record(`root:${name}`);
+      return this.rootsMap.get(name);
+    }
+    const inp = this.demandInput(menv, name);
+    if (inp !== undefined) return inp;
+    throw new EvalErr(`unknown name ${name}`);
+  }
+  contextValue(name: string, sc: Scope): any {
+    // $this / $parent / $root are references (§7.3): each denotes an
+    // instance that contains the current one, so a value reading would
+    // be a self-containing value; $key and $path are plain values
+    const inst = sc.inst;
+    if (name === '$this') {
+      if (!inst) throw new EvalErr('$this outside a record instance', 'E4090');
+      return { __ref: true, segs: inst.path };
+    }
+    if (name === '$parent') {
+      if (!inst || !inst.parent)
+        throw new EvalErr('$parent: the evaluation root has no owner', 'E4090');
+      return { __ref: true, segs: inst.parent.path };
+    }
+    if (name === '$root') {
+      if (!sc.rootName || !this.rootsMap.has(sc.rootName))
+        throw new EvalErr('$root outside an evaluation root', 'E4090');
+      return { __ref: true, segs: [sc.rootName] };
+    }
+    if (name === '$key') {
+      // the key or index under which $this sits in its parent's
+      // collection: the last path segment, present only when the
+      // instance is a collection element (not a direct member)
+      if (!inst || !inst.parent || inst.path.length < inst.parent.path.length + 2)
+        throw new EvalErr('$key: the instance is not a collection element', 'E4090');
+      const k = segText(inst.path[inst.path.length - 1]);
+      return typeof k === 'number' ? BigInt(k) : k;
+    }
+    if (name === '$path') {
+      if (!inst) throw new EvalErr('$path outside a record instance', 'E4090');
+      return pathStr(inst.path);
+    }
+    throw new EvalErr(`unsupported context var ${name}`);
+  }
+  withValue(base: any, patch: any): any {
+    if (base && base.__pre === 'obj') {
+      // an unbound literal (e.g. a constructor func's result):
+      // merge entries directly, still unbound
+      const entries: [string, any][] = this.entriesOf(base).map(([k, v]: any) => [k, v]);
+      for (const [k, v] of this.entriesOf(patch)) {
+        const i = entries.findIndex(([n]) => n === k);
+        if (i >= 0) entries[i] = [k, v];
+        else entries.push([k, v]);
+      }
+      return { __pre: 'obj', entries };
+    }
+    if (isMap(base)) {
+      // a literal no record type claimed: its entries, updated, still unbound
+      const entries: [string, any][] = [...base.entries.entries()].map(([k, v]: any) => [k, v]);
+      for (const [k, v] of this.entriesOf(patch)) {
+        const i = entries.findIndex(([n]) => n === k);
+        if (i >= 0) entries[i] = [k, v];
+        else entries.push([k, v]);
+      }
+      return { __pre: 'obj', entries };
+    }
+    if (!isRec(base)) throw new EvalErr('with on non-record');
+    const entries: [string, any][] = [];
+    for (const n of base.entryOrder) {
+      if (base.extras.has(n)) {
+        entries.push([n, base.extras.get(n)]);
+        continue;
+      }
+      const s = base.slots.get(n)!;
+      if (s.kind === 'der') continue; // derived: dropped, recomputed downstream
+      if (s.state === 'absent') continue;
+      entries.push([n, this.forceSlot(base, n)]);
+    }
+    for (const m of base.rt.members) {
+      // defaulted members not in entryOrder
+      if (
+        m.kind === 'dflt' &&
+        !entries.some(([k]) => k === m.name) &&
+        base.slots.get(m.name)?.state !== 'absent'
+      )
+        entries.push([m.name, this.forceSlot(base, m.name)]);
+    }
+    for (const [k, v] of this.entriesOf(patch)) {
+      const i = entries.findIndex(([n]) => n === k);
+      if (i >= 0) entries[i] = [k, v];
+      else entries.push([k, v]);
+    }
+    return { __pre: 'obj', entries };
   }
   // the entries of an unbound object literal with its spreads (§4.2) expanded
   // in place: a spread copies the entries of an object-valued operand — a
@@ -524,6 +551,7 @@ export class Engine {
     }
   }
   evCallee(e: Expr, sc: Scope): any {
+    if (this.programs) return this.programs.callee(e)(this, sc);
     if (e.e === 'member') {
       const x = this.evCallee(e.x, sc);
       if (x && x.__std) return { __std: true, path: [...x.path, e.name] };
@@ -586,8 +614,10 @@ export class Engine {
     if (!decl.fallback) throw new EvalErr(`input ${name} is not bound`, 'E5006');
     const sc: Scope = { inst: null, locals: new Map(), rootName: name, menv };
     try {
+      const produce = () =>
+        this.bind(this.ev(decl.fallback!, sc), menv.resolve(decl.type), [name], null, sc);
       const v = this.step(`root:${name}`, () =>
-        this.bind(this.ev(decl.fallback!, sc), menv.resolve(decl.type), [name], null, sc),
+        this.edits ? this.edits.root(this, name, decl.fallback, true, produce) : produce(),
       );
       this.env.roots.set(name, v);
       return v;
@@ -602,10 +632,12 @@ export class Engine {
   bindRoot(name: string, raw: any, rt: RT, sc: Scope, viaExpr: boolean) {
     if (this.roundRoots && !this.roundRoots.has(name)) return;
     try {
-      const v = this.step(`root:${name}`, () =>
+      const produce = () =>
         viaExpr
           ? this.bind(this.ev(raw, sc), rt, [name], null, sc)
-          : this.bind(raw, rt, [name], null, sc),
+          : this.bind(raw, rt, [name], null, sc);
+      const v = this.step(`root:${name}`, () =>
+        this.edits ? this.edits.root(this, name, raw, viaExpr, produce) : produce(),
       );
       this.env.roots.set(name, v);
     } catch (e) {
@@ -681,8 +713,23 @@ export class Engine {
       const l = this.ev(le, sc);
       return l === ABSENT || l === null ? this.ev(re, sc) : l;
     }
-    const l = this.ev(le, sc);
-    let r = this.ev(re, sc);
+    return this.applyBin(op, this.ev(le, sc), this.ev(re, sc));
+  }
+  equalValues(a: Value, b: Value): boolean {
+    // Structural equality observes cached record contents without forcing
+    // members. Track this aggregate read without changing evaluation order.
+    if (this.edits && this.track && this.computing.length) {
+      const observe = (v: Value): void => {
+        if (isRec(v)) this.record(`value:${pathStr(v.path)}`);
+        else if (isArr(v)) v.items.forEach(observe);
+        else if (isMap(v)) [...v.entries.values()].forEach(observe);
+      };
+      observe(a);
+      observe(b);
+    }
+    return valueEq(a, b);
+  }
+  applyBin(op: string, l: any, r: any): any {
     if (op === '..' || op === '..<') return { __range: true, lo: l, hi: r, excl: op === '..<' };
     if (op === 'matches') {
       if (typeof l !== 'string' || !r || !r.__pat)
@@ -692,13 +739,13 @@ export class Engine {
       return compilePattern(r.re).test(l);
     }
     // a literal operand is materialized: equality is structural over values (§4.5)
-    if (op === '==') return valueEq(this.matVal(l), this.matVal(r));
-    if (op === '!=') return !valueEq(this.matVal(l), this.matVal(r));
+    if (op === '==') return this.equalValues(this.matVal(l), this.matVal(r));
+    if (op === '!=') return !this.equalValues(this.matVal(l), this.matVal(r));
     if (op === 'in') {
       if (isRef(r)) r = this.deref(r); // the container may be reached through a reference ($this, $parent)
       if (isRange(r)) return l >= r.lo && (r.excl ? l < r.hi : l <= r.hi);
-      if (r && r.__pre) return this.matArr(r).some((x: any) => valueEq(l, x));
-      if (isArr(r)) return r.items.some((x: any) => valueEq(l, x));
+      if (r && r.__pre) return this.matArr(r).some((x: any) => this.equalValues(l, x));
+      if (isArr(r)) return r.items.some((x: any) => this.equalValues(l, x));
       if (isMap(r)) return r.entries.has(l);
       if (isRec(r)) {
         const s = r.slots.get(l);
@@ -901,7 +948,8 @@ export class Engine {
       case 'array.all_distinct': {
         const items = this.matArr(a[0]);
         for (let i = 0; i < items.length; i++)
-          for (let j = i + 1; j < items.length; j++) if (valueEq(items[i], items[j])) return false;
+          for (let j = i + 1; j < items.length; j++)
+            if (this.equalValues(items[i], items[j])) return false;
         return true;
       }
       case 'array.sum': {
@@ -929,7 +977,8 @@ export class Engine {
       }
       case 'array.unique': {
         const out: any[] = [];
-        for (const x of this.matArr(a[0])) if (!out.some((y) => valueEq(y, x))) out.push(x);
+        for (const x of this.matArr(a[0]))
+          if (!out.some((y) => this.equalValues(y, x))) out.push(x);
         return { __arr: true, items: out, path: [] };
       }
       case 'array.reverse':
@@ -1234,6 +1283,7 @@ export class Engine {
     roots: () => Iterable<any>,
     track = false,
     incremental = false,
+    initial: Engine | null = null,
   ): Engine {
     let prev: Engine | null = null;
     let edges = new Map<string, Edge>();
@@ -1241,7 +1291,8 @@ export class Engine {
     // deterministic, so a repeat is a cycle that never settles — report at
     // once, not after the full round budget; §7.6)
     const seen = new Map<string, number>();
-    let retained: Engine | null = null;
+    let retained: Engine | null = initial;
+    const programs = initial?.programs ?? (incremental ? new Programs() : null);
     incremental &&= RoundCache.needed(env);
     let cache = incremental ? new RoundCache() : null;
     for (let round = 1; ; round++) {
@@ -1249,6 +1300,8 @@ export class Engine {
       const eng: Engine = retained ?? new Engine(env);
       retained = null;
       eng.roundCache = cache;
+      eng.revisions = cache && cache.revisions.revision > 0 ? cache.revisions : null;
+      eng.programs = programs;
       // A successful initial phase cannot observe a reference answer: it
       // would defer. Capture dependencies from the settle phase onward. A
       // reused universe can read cached answers even during phase 1.
@@ -1259,6 +1312,7 @@ export class Engine {
       for (const v of roots()) eng.forceAll(v, false);
       eng.track ||= incremental;
       const r = eng.settle(roots, edges);
+      eng.edits?.finish(eng);
       const cycled = !r.stable && seen.has(edgesKey(r.edges));
       if (r.stable || cycled || round === Engine.ROUNDS) {
         if (!r.stable)
@@ -1589,6 +1643,7 @@ export class Engine {
     return isRec(v) || isArr(v) || isMap(v) ? v.path : null;
   }
   evNav(e: Expr, sc: Scope): any {
+    if (this.programs) return this.programs.nav(e)(this, sc);
     // a conditional in a ref position chooses between places (§7.4):
     // only the taken branch is navigated
     if (e.e === 'if')
@@ -1645,7 +1700,13 @@ export class Engine {
       throw new Taint();
     }
 
-    const inst: RecInst = {
+    const previous = this.noReg === 0 ? this.edits?.record(rt, path, parent) : undefined;
+    if (previous && this.edits!.unchanged(previous, entries)) {
+      this.edits!.activate(this, previous);
+      return previous;
+    }
+    const oldSlots = previous?.slots;
+    const inst: RecInst = previous ?? {
       __rec: true,
       typeName: rt.name,
       rt,
@@ -1655,15 +1716,27 @@ export class Engine {
       entryOrder: entries.map(([k]) => k),
       extras: new Map(),
     };
-    if (this.noReg === 0) this.env.registry.push(inst);
+    if (previous) {
+      inst.slots = new Map();
+      inst.entryOrder = entries.map(([k]) => k);
+      inst.extras = new Map();
+    }
+    if (this.noReg === 0) {
+      if (this.edits?.active) this.edits.register(this, inst);
+      else this.env.registry.push(inst);
+    }
     (inst as any).menv = sc.menv; // module scope for asserts/diagnostics
     (inst as any).eng = this;
     const isc0: Scope = { inst, locals: new Map(), rootName: sc.rootName, menv: sc.menv };
     const supplied = new Map(entries);
 
-    for (const m of rt.members) {
+    const schema = this.programs?.schema(rt, mentionsReferrersLocal);
+    const plans =
+      schema?.members ?? rt.members.map((m: RT) => ({ member: m, types: m.conj ?? [m.type] }));
+    for (const plan of plans) {
+      const m = plan.member;
       const has = supplied.has(m.name);
-      const types = m.conj ?? [m.type];
+      const types = plan.types;
       const isc: Scope = m.menv ? { ...isc0, menv: m.menv } : isc0;
       const mkCheck = (rawV: any) => () => {
         let v: any;
@@ -1687,7 +1760,7 @@ export class Engine {
           kind: 'der',
           hidden: m.hidden || undefined,
           state: 'unforced',
-          deferred: mentionsReferrersLocal(m.expr),
+          deferred: schema ? plan.deferred : mentionsReferrersLocal(m.expr),
           compute: () => {
             let v: any;
             // a member declared `ref<T>` holds a navigation (§7.4): the
@@ -1695,7 +1768,7 @@ export class Engine {
             if (m.type?.t === 'ref')
               v = this.bind({ __expr: m.expr, scope: isc }, m.type, [...path, m.name], inst, isc);
             else {
-              v = this.ev(m.expr, isc);
+              v = plan.expression ? plan.expression(this, isc) : this.ev(m.expr, isc);
               if (m.type) v = this.bind(v, m.type, [...path, m.name], inst, isc);
               else if (v && (v.__pre || v.__jobj))
                 v = this.materialize(v, [...path, m.name], inst, isc);
@@ -1714,7 +1787,7 @@ export class Engine {
               } finally {
                 this.noReg--;
               }
-              if (!valueEq(v, restated)) {
+              if (!this.equalValues(v, restated)) {
                 this.env.report({
                   severity: 'error',
                   message: `derived member ${m.name} restated with a differing value`,
@@ -1742,7 +1815,7 @@ export class Engine {
         inst.slots.set(m.name, {
           kind: 'dflt',
           state: 'unforced',
-          deferred: mentionsReferrersLocal(m.dflt),
+          deferred: schema ? plan.deferred : mentionsReferrersLocal(m.dflt),
           compute: () => {
             if (m.type?.t === 'ref' && !m.conj)
               return this.bind(
@@ -1752,7 +1825,7 @@ export class Engine {
                 inst,
                 isc,
               );
-            const v = this.ev(m.dflt, isc);
+            const v = plan.fallback ? plan.fallback(this, isc) : this.ev(m.dflt, isc);
             let out: any;
             for (const ty of types) out = this.bind(v, ty, [...path, m.name], inst, isc);
             return out;
@@ -1771,7 +1844,7 @@ export class Engine {
       }
     }
     for (const [k, v] of entries) {
-      if (rt.members.some((m: any) => m.name === k)) continue;
+      if (schema ? schema.names.has(k) : rt.members.some((m: any) => m.name === k)) continue;
       if (rt.open) inst.extras.set(k, v);
       else
         this.env.report({
@@ -1781,6 +1854,7 @@ export class Engine {
           code: 'E4003',
         });
     }
+    if (this.noReg === 0) this.edits?.bound(this, inst, entries, oldSlots);
     return inst;
   }
   materialize(v: any, path: Seg[], parent: RecInst | null, sc: Scope): any {
@@ -1861,14 +1935,20 @@ export class Engine {
     if (!this.track || this.computing.length === 0) {
       if (s.state === 'ok')
         return this.roundCache ? this.roundCache.value(s.value, this.prev) : s.value;
-      if (s.state === 'absent') return ABSENT;
+      if (s.state === 'absent') {
+        this.edits?.absent(Engine.slotKey(inst, name));
+        return ABSENT;
+      }
       if (s.state === 'invalid') throw new Taint();
     }
     const key = Engine.slotKey(inst, name);
     this.record(key);
     if (s.state === 'ok')
       return this.roundCache ? this.roundCache.value(s.value, this.prev) : s.value;
-    if (s.state === 'absent') return ABSENT;
+    if (s.state === 'absent') {
+      this.edits?.absent(Engine.slotKey(inst, name));
+      return ABSENT;
+    }
     if (s.state === 'invalid') throw new Taint();
     if (s.state === 'deferred') {
       if (this.phase < 2) throw new DeferSig(); // known to wait for phase 2: not attempted again
@@ -1891,7 +1971,17 @@ export class Engine {
     s.state = 'forcing';
     this.slotsByKey.set(key, { inst, name });
     try {
-      const v = this.step(key, () => s.compute!());
+      const produce = () => {
+        if (this.edits) this.edits.slotComputes++;
+        return s.compute!();
+      };
+      const v = this.step(key, () =>
+        this.edits?.active
+          ? this.edits.compute(this, key, produce)
+          : this.revisions
+            ? this.revisions.compute(this, key, produce)
+            : produce(),
+      );
       s.state = 'ok';
       s.value = v;
       return v;
@@ -1922,10 +2012,14 @@ export class Engine {
   }
   forceConstIn(env: Env, name: string, rootName: string): any {
     this.constEnvs.add(env);
-    const key = this.roundCache ? `const:${[...this.constEnvs].indexOf(env)}|${name}` : null;
+    const key =
+      this.roundCache || this.track ? `const:${[...this.constEnvs].indexOf(env)}|${name}` : null;
     if (key) this.record(key);
     const c = env.consts.get(name)!;
-    if (c.state === 'ok') return c.value;
+    if (c.state === 'ok') {
+      this.edits?.activate(this, c.value);
+      return c.value;
+    }
     const produce = () => {
       c.state = 'ok';
       const sc = { inst: null, locals: new Map(), rootName, menv: env };
@@ -1938,7 +2032,14 @@ export class Engine {
       }
       return c.value;
     };
-    return key ? this.step(key, produce) : produce();
+    const v = key
+      ? this.step(key, () =>
+          this.edits?.active ? this.edits.compute(this, key, produce) : produce(),
+        )
+      : produce();
+    c.state = 'ok';
+    c.value = v;
+    return v;
   }
 
   // ---------- driving ----------

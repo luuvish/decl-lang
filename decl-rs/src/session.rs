@@ -15,6 +15,7 @@ use crate::infer::{infer, make_ctx, std_names, type_text, Ctx, Ty};
 use crate::module::{load_modules, Module};
 use crate::package::{open_package_universe, verify_lock};
 use crate::parse::{parse_expr_text, parse_source};
+use crate::qengine::edits::Edits;
 use crate::render::{absolute, declared_form, emit_root, resolve_in, Emission, Emitted, Form};
 use crate::semantics::{
     json_str, parse_path, path_str, read_json, rec_members, seg_text, sort_diags, Diag, Env, Fail,
@@ -526,6 +527,8 @@ pub struct Session {
     pub cursor: usize,
     /// the last run's timing
     pub last_timing: Cell<Option<Timing>>,
+    /// Disable retained document queries for this Session (a fresh-evaluation oracle).
+    pub full_recompute: bool,
     snapshot0: HashMap<PathBuf, String>,
     state: State,
     // the last full run, kept for the incremental step (§6): reused as long
@@ -566,6 +569,7 @@ impl Session {
             log: vec![],
             cursor: 0,
             last_timing: Cell::new(None),
+            full_recompute: false,
             snapshot0: HashMap::new(),
             state: State::default(),
             last: RefCell::new(None),
@@ -955,7 +959,7 @@ impl Session {
         self.run_state(&self.state, mode)
     }
     fn run_state(&self, st: &State, mode: Mode) -> Run {
-        if mode == Mode::Full && !full_recompute() {
+        if mode == Mode::Full && !self.full_recompute && !full_recompute() {
             if let Some(r) = self.step_from(st) {
                 return r;
             }
@@ -1031,214 +1035,61 @@ impl Session {
         let t0 = Instant::now();
         let r = &last.run;
         let env = entry.env.clone();
-        // 1. what the change touches: the roots themselves, every slot under
-        //    them, and the `$referrers` queries over types instantiated under them
-        let mut seeds: Vec<String> = vec![];
-        let read_keys: Vec<String> = eng.reads.borrow().keys().cloned().collect();
-        let registry = env.registry_snapshot();
-        for root in &changed {
-            seeds.push(format!("root:{root}"));
-            for k in &read_keys {
-                if !k.starts_with("root:") && under(k.strip_prefix("assert:").unwrap_or(k), root) {
-                    seeds.push(k.clone());
-                }
-            }
-            for inst in &registry {
-                let b = inst.borrow();
-                if under(&path_str(&b.path, None), root) {
-                    if let Some(tn) = &b.type_name {
-                        seeds.push(format!("referrers:{tn}"));
-                    }
-                }
-            }
-        }
-        // 2. everything that read them, transitively
-        let mut readers: HashMap<String, HashSet<String>> = HashMap::new();
-        for (reader, set) in eng.reads.borrow().iter() {
-            for k in set {
-                readers.entry(k.clone()).or_default().insert(reader.clone());
-            }
-        }
-        let mut invalid: HashSet<String> = HashSet::new();
-        let mut queue: Vec<String> = seeds;
-        while let Some(k) = queue.pop() {
-            if !invalid.insert(k.clone()) {
-                continue;
-            }
-            if let Some(rs) = readers.get(&k) {
-                for rd in rs {
-                    if !invalid.contains(rd) {
-                        queue.push(rd.clone());
-                    }
-                }
-            }
-        }
-        // the roots to rebind: the changed ones, and every root that read them at binding
-        let mut rebind: HashSet<String> = invalid
-            .iter()
-            .filter_map(|k| k.strip_prefix("root:").map(|s| s.to_string()))
-            .collect();
-        loop {
-            let mut grew = false;
-            for root in rebind.clone() {
-                for inst in &registry {
-                    let (p, tn) = {
-                        let b = inst.borrow();
-                        (path_str(&b.path, None), b.type_name.clone())
-                    };
-                    let Some(tn) = tn else { continue };
-                    if !under(&p, &root) {
-                        continue;
-                    }
-                    let rk = format!("referrers:{tn}");
-                    if invalid.insert(rk.clone()) {
-                        if let Some(rs) = readers.get(&rk) {
-                            for rd in rs {
-                                if !invalid.contains(rd) {
-                                    invalid.insert(rd.clone());
-                                    queue.push(rd.clone());
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-            while let Some(k) = queue.pop() {
-                if let Some(rs) = readers.get(&k) {
-                    for rd in rs {
-                        if !invalid.contains(rd) {
-                            invalid.insert(rd.clone());
-                            queue.push(rd.clone());
-                        }
-                    }
-                }
-            }
-            for k in &invalid {
-                if let Some(r) = k.strip_prefix("root:") {
-                    if rebind.insert(r.to_string()) {
-                        grew = true;
-                    }
-                }
-            }
-            if !grew {
-                break;
-            }
-        }
-        // 3. forget: the diagnostics of the invalidated steps and of the rebound roots, the slots, the instances
-        let gone = |d: &Diag| {
-            d.by.as_ref().map(|b| invalid.contains(b)).unwrap_or(false)
-                || rebind.iter().any(|root| under(&d.path, root))
-        };
-        env.diag_set(
-            env.diagnostics_vec()
-                .into_iter()
-                .filter(|d| !gone(d))
+        let edits = eng.edits.borrow().clone()?;
+        let before = edits.slot_computes.get();
+        edits.begin(
+            &eng,
+            &changed,
+            &st.documents
+                .iter()
+                .map(|(n, d)| (n.clone(), d.doc.clone()))
                 .collect(),
         );
-        let mut recomputed = 0usize;
-        for k in &invalid {
-            if k.starts_with("root:") || k.starts_with("assert:") || k.starts_with("referrers:") {
-                continue;
+        let bind = |current: &Rc<Engine>| {
+            *current.edits.borrow_mut() = Some(edits.clone());
+            for m in &r.modules {
+                current.install_hooks(&m.env, true);
             }
-            if rebind.iter().any(|root| under(k, root)) {
-                eng.slots_by_key.borrow_mut().remove(k);
-                eng.reads.borrow_mut().remove(k);
-                continue;
-            }
-            if eng.reset_slot(k) {
-                recomputed += 1;
-            }
-            eng.reads.borrow_mut().remove(k);
-        }
-        let mut dropped: Vec<crate::engine::Inst> = vec![];
-        env.registry_retain(|inst| {
-            let g = rebind
-                .iter()
-                .any(|root| under(&path_str(&inst.borrow().path, None), root));
-            if g {
-                dropped.push(inst.clone());
-            }
-            !g
-        });
-        for root in &rebind {
-            env.remove_root(root);
-            eng.failed_inputs.borrow_mut().remove(root);
-            eng.reads.borrow_mut().remove(&format!("root:{root}"));
-        }
-        eng.deferred_slots
-            .borrow_mut()
-            .retain(|(i, _)| !dropped.iter().any(|d| Rc::ptr_eq(d, i)));
-        let assert_keys: Vec<String> = eng
-            .reads
-            .borrow()
-            .keys()
-            .filter(|k| k.starts_with("assert:"))
-            .cloned()
-            .collect();
-        for k in assert_keys {
-            if rebind.iter().any(|root| under(&k[7..], root)) {
-                eng.reads.borrow_mut().remove(&k);
-            }
-        }
-        // 4. rebind the roots in the fresh run's order — the documents in the
-        //    state's order, the modules' outputs in declaration order, the
-        //    session's outputs — then force everything: what is `ok` stays
-        //    (an unbound input is demanded through its fallback on first read)
-        eng.set_phase(1);
-        for (name, d) in &st.documents {
-            if !rebind.contains(name) {
-                continue;
-            }
-            let m = r
-                .modules
-                .iter()
-                .find(|x| x.env.inputs.borrow().contains_key(name))
-                .cloned()
-                .unwrap_or_else(|| entry.clone());
-            let decl = m.env.inputs.borrow().get(name).cloned();
-            let Some((ty_ast, _)) = decl else { continue };
-            let sc = Scope::new(name, Some(m.env.clone()));
-            match m.env.resolve(&ty_ast, None) {
-                Ok(rt) => eng.bind_root(name, RootSrc::Doc(d.doc.clone()), &rt, &sc),
-                Err(e) => env.report(Diag::error(e, name.clone(), None)),
-            }
-        }
-        for m in &r.modules {
-            let outs = m.env.outputs.borrow().clone();
-            for (name, ty_ast, expr) in outs {
-                if !rebind.contains(&name) {
+            for (name, d) in &st.documents {
+                let m = r
+                    .modules
+                    .iter()
+                    .find(|x| x.env.inputs.borrow().contains_key(name))
+                    .cloned()
+                    .unwrap_or_else(|| entry.clone());
+                let decl = m.env.inputs.borrow().get(name).cloned();
+                let Some((ty_ast, _)) = decl else {
                     continue;
-                }
-                let sc = Scope::new(&name, Some(m.env.clone()));
+                };
+                let sc = Scope::new(name, Some(m.env.clone()));
                 match m.env.resolve(&ty_ast, None) {
-                    Ok(rt) => eng.bind_root(&name, RootSrc::Expr(&expr), &rt, &sc),
+                    Ok(rt) => current.bind_root(name, RootSrc::Doc(d.doc.clone()), &rt, &sc),
                     Err(e) => env.report(Diag::error(e, name.clone(), None)),
                 }
             }
-        }
-        for (name, expr, rt) in &r.session_roots {
-            if !rebind.contains(name) {
-                continue;
+            for m in &r.modules {
+                for (name, ty_ast, expr) in m.env.outputs.borrow().clone() {
+                    let sc = Scope::new(&name, Some(m.env.clone()));
+                    match m.env.resolve(&ty_ast, None) {
+                        Ok(rt) => current.bind_root(&name, RootSrc::Expr(&expr), &rt, &sc),
+                        Err(e) => env.report(Diag::error(e, name.clone(), None)),
+                    }
+                }
             }
-            let sc = Scope::new(name, Some(entry.env.clone()));
-            eng.bind_root(name, RootSrc::Expr(expr), rt, &sc);
-        }
-        eng.force_roots(&env);
-        // an incremental round answers `$referrers` from what it holds; a
-        // universe that needs another round is evaluated afresh
-        if !eng.settle(&env, HashMap::new()).stable {
-            return None;
-        }
-        // 5. the asserts of the instances that are new or whose asserts read what changed
-        for inst in env.registry_snapshot() {
-            let key = format!("assert:{}", path_str(&inst.borrow().path, None));
-            let fresh = !eng.reads.borrow().contains_key(&key);
-            if fresh || invalid.contains(&key) {
-                eng.validate_inst(&inst, "");
+            for (name, expr, rt) in &r.session_roots {
+                current.bind_root(
+                    name,
+                    RootSrc::Expr(expr),
+                    rt,
+                    &Scope::new(name, Some(entry.env.clone())),
+                );
             }
-        }
+        };
+        let current = Engine::evaluate_session(&env, &bind, Some(eng));
+        current.validate_all("");
         let sorted = sort_diags(env.diagnostics_vec());
         env.diag_set(sorted.clone());
+        let recomputed = edits.slot_computes.get() - before;
         let elapsed = ms(t0);
         let timing = Timing {
             load: 0.0,
@@ -1247,9 +1098,10 @@ impl Session {
             evaluate: elapsed,
             total: elapsed,
             recomputed: Some(recomputed),
-            slots: Some(eng.slots_by_key.borrow().len()),
+            slots: Some(current.slots_by_key.borrow().len()),
         };
         let run = Run {
+            eng: Some(current),
             diags: sorted,
             timing,
             ..r.clone()
@@ -1403,7 +1255,10 @@ impl Session {
 
         let t2 = Instant::now();
         let modules = out.modules.clone();
+        let edits = (mode == Mode::Full && !self.full_recompute && !full_recompute())
+            .then(|| Rc::new(Edits::default()));
         let bind = |eng: &Rc<Engine>| {
+            *eng.edits.borrow_mut() = edits.clone();
             for m in &modules {
                 eng.install_hooks(&m.env, true);
             }
@@ -1449,7 +1304,7 @@ impl Session {
             return finish(out);
         }
         let t3 = Instant::now();
-        let eng = Engine::evaluate(&entry.env, &bind, true);
+        let eng = Engine::evaluate_session(&entry.env, &bind, None);
         out.session_roots = session_roots;
         out.eng = Some(eng.clone());
         out.timing.bind = t3.duration_since(t2).as_secs_f64() * 1000.0; // between two instants: never negative
@@ -1482,7 +1337,21 @@ impl Session {
         let n = env.diag_len();
         let reg = env.registry_snapshot().len();
         let roots: HashSet<String> = env.root_names().into_iter().collect();
-        let out = f(&eng, &env);
+        let slots: Vec<_> = eng
+            .slots_by_key
+            .borrow()
+            .iter()
+            .filter(|(k, _)| under(k, "_"))
+            .map(|(k, v)| (k.clone(), v.clone()))
+            .collect();
+        let reads: Vec<_> = eng
+            .reads
+            .borrow()
+            .iter()
+            .filter(|(k, _)| under(k.strip_prefix("assert:").unwrap_or(k), "_"))
+            .map(|(k, v)| (k.clone(), v.clone()))
+            .collect();
+        let out = eng.transient(|| f(&eng, &env));
         // an input demanded through its fallback by the expression alone is not a root of the run
         let demanded: Vec<String> = env
             .root_names()
@@ -1497,16 +1366,20 @@ impl Session {
         }
         let keys: Vec<String> = eng.reads.borrow().keys().cloned().collect();
         for k in keys {
-            if under_demanded(k.strip_prefix("assert:").unwrap_or(&k)) {
+            if under_demanded(k.strip_prefix("assert:").unwrap_or(&k))
+                || under(k.strip_prefix("assert:").unwrap_or(&k), "_")
+            {
                 eng.reads.borrow_mut().remove(&k);
             }
         }
         let skeys: Vec<String> = eng.slots_by_key.borrow().keys().cloned().collect();
         for k in skeys {
-            if under_demanded(&k) {
+            if under_demanded(&k) || under(&k, "_") {
                 eng.slots_by_key.borrow_mut().remove(&k);
             }
         }
+        eng.slots_by_key.borrow_mut().extend(slots);
+        eng.reads.borrow_mut().extend(reads);
         env.diag_truncate(n);
         let mut i = 0usize;
         env.registry_retain(|inst| {
@@ -1522,6 +1395,9 @@ impl Session {
             }
         });
         eng.computing.borrow_mut().clear();
+        if let Some(edits) = eng.edits.borrow().as_ref() {
+            edits.prune(&eng);
+        }
         out
     }
 

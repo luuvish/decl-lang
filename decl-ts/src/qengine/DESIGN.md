@@ -1,224 +1,152 @@
-# Query engine (a from-scratch incremental, memoized evaluator)
+# Query engine
 
-Status: **implemented in TypeScript, Rust, and Python; the default for source
-reports and module-universe evaluation since 2026-09-09.** `DECL_QENGINE=0`
-selects the tree walker. `DECL_QENGINE_STRICT=1` makes an unsupported form an
-error instead of falling back. Differential tests explicitly select the tree
-walker as their oracle; using the default source pipeline on both sides would
-compare the query engine with itself.
+Implemented in TypeScript, Rust, and Python. The query evaluator is the default
+for source reports and module universes. `DECL_QENGINE=0` selects the tree
+walker; `DECL_QENGINE_STRICT=1` rejects an unsupported form instead of falling
+back. Differential tests explicitly select fresh tree evaluation as their
+oracle.
 
-The implementation compiles expressions over the existing value model and
-retains eligible universes across `$referrers` rounds. `RoundCache` and the
-Engine dependency graph use member slots as their single value cache. The
-standalone `Db` still memoizes constants; its revisions are **not** the mechanism
-that retains the language universe. Its context-dependent memo is cleared
-before a retained round advances. `Session` remains on its existing engine;
-retention across arbitrary edits is still a design target.
+The language implementation uses the Engine's member slots as its single value
+cache. `Programs` shares executable code, `Revisions` verifies invalidated
+queries, `RoundCache` retains eligible reference rounds, and `Edits` connects
+Session document changes to the same slot graph. The standalone generic `Db`
+is independently tested; it is not the language universe's storage layer.
 
-## Delivered: retained reference rounds
+## Shared programs, separate instance state
 
-All three implementations share these rules:
+`Programs` caches expression operations by AST identity and record plans by
+resolved schema identity. An operation receives its Engine and runtime scope;
+it does not capture a particular instance, root, or module environment. Record
+plans share default/derived operations, conjunction type lists and member-name
+indexes. Recursive schema construction may replace a member list, so the cache
+checks its identity before reuse.
 
-- A dependency records a member read (including cache hits and absent optionals),
-  a root read, a constant read, an inverse-reference answer for one target, or a
-  member read from the previous round's frozen universe.
-- At a round boundary, compare observed inverse-reference answers, including
-  empty answers. An unchanged target avoids invalidation even when another
-  target of the same relationship changes. Compare observed frozen member
-  values and container shapes with the next snapshot; ordinary scalar reads
-  survive when those inputs are unchanged. Track inverse-reference origin
-  independently of whether a reference can be rebased. A calculation that
-  forwards inverse references or frozen record views, or navigates a deeper
-  snapshot, must recompute on each transition even if its paths match. This
-  preserves nested snapshot depth without invalidating every reference reader.
-- A root or member owns the records it constructs beneath its canonical path.
-  Invalidating that producer removes its registered descendants and their
-  dependency entries before rebinding. Unaffected records and slot values stay
-  live. Clean record subtrees do not need another `forceAll` walk.
-- A frozen read observes the previous universe. A retained referrer value is
-  rebased to that universe before reuse. TypeScript and Python share frozen
-  slot maps and replace live slots with copy-on-write; container/record reads
-  resolve through the frozen owner. Rust copies owned snapshot slots, gives
-  frozen inverse references separate identities, and carries reference owners
-  from frozen member results into the caller. Snapshots do not build an unused
-  field-key index.
-- The initial materialization phase cannot successfully read a reference answer:
-  it must defer. Dependency capture starts at settlement, then covers both
-  phases of every reused round. Programs without reference queries skip it.
-  Dependency sets allocate only on the first read; cached field identities and
-  unobserved cache-hit paths avoid repeated key construction.
-- Diagnostics, unfinished slots, duplicate paths, context-bearing snapshot
-  values, invalidated constants, and a root replacement that would reorder
-  retained roots switch to fresh-round evaluation for all remaining rounds.
-  Final validation still runs over
-  the whole result. Incremental diagnostics and result-level early cutoff are
-  not delivered by this path.
+Document inputs, function-produced records and literal roots use the same
+binder. Lazy literals retain their source scope until binding supplies the
+instance context. Navigation, short-circuiting, closures and module lookups
+preserve the tree evaluator's order. Trivial literals read directly and lazy
+children compile only when demanded. The former per-instance compiler and its
+second constant cache have been removed.
 
-Rounds keep their existing language meaning and stability test. This removes
-reconstruction where reuse is proven; it does not remove the fixed-point check.
-`tests/internal/rounds.json` exercises additions, removals, computed roots,
-constant aliases, nested snapshot references, and unstable/cyclic references
-against fresh evaluation.
-The structural case also requires at least three reused transitions and
-retained records, so fallback cannot make that test pass by itself.
+One Programs object survives both retained and fallback reference rounds, and
+Session edits with an unchanged source universe. Source/schema changes may
+rebuild the universe. Temporary expressions use request-local programs so
+unique requests do not grow the source program cache.
 
-The Rust batch path stores compiled bodies in an evaluator-owned arena; a record
-slot addresses its body by an integer handle and a weak evaluator reference.
-The slot already memoizes its value and handles cycles, deferral, and taint;
-it does not need a second string-keyed memo of the same value. The arena also
-avoids an ownership cycle between a record and a body capturing it. Constants
-still use the query database. Map entries have an insertion-ordered index, like
-the reference's `Map` and Python's dictionary. Resolved record members are
-shared snapshots, with copy-on-write during recursive type construction;
-binding a value or selecting a union arm does not copy the entire schema.
-Performance representations may differ; observable behavior remains the shared
-corpus and parity contract.
+## Query observations and cutoff
 
-Every implementation builds a round's inverse reference index once and reuses
-it for target lookups. Reacquiring the full edge on a cache hit is unnecessary
-and, with an owned Rust edge, was a quadratic deep-copy cost. Taking a new
-snapshot clears the index. Module callers request values and diagnostics and
-serialize only their selected outputs; the query layer does not also build
-unused JSON for every internal root.
+Dependencies include:
 
-Gates: `decl-ts/tests/qengine/`, the Rust and Python query tests, the shared
-corpora, and `make verify`. The synthetic `decl-rs/examples/qbench.rs` compares
-equal work (load, bind, evaluate, validate, serialize), checks output equality,
-warms both paths, and reports medians. Parsing and static checking are excluded.
+- Root and member reads, including cached values and absent optional members.
+- Constant reads.
+- Inverse-reference answers for a specific target, including empty answers.
+- Frozen member values, container shapes and snapshot depth.
+- Aggregate record observations for whole-value comparisons.
 
-## Why
+An invalidated query temporarily retains its old result, dependencies and
+change stamp. Verification brings those dependencies up to date. If their
+stamps remain unchanged, the old result returns without executing its program.
+If execution produces an equal result, the query restores its old change stamp
+so downstream readers can stop at verification.
 
-The tree walker dispatches over the expression AST on every force. Its fresh-round driver constructs a new universe and repeats pure work as
-well as reference-dependent work. The retained path removes that repetition
-for eligible rounds. The current query layer compiles literal record
-slots, but document binding and records produced by other expressions still
-use the value layer's evaluator. Compiling a closure per instance and attaching
-a second memo does not by itself remove either shared cost.
+Container paths, key order and membership participate in comparison. During a
+Session edit, a retained record's shape includes its identity, type, owner,
+member kinds, entry order and extras; ordinary member values remain separate
+queries. Equal canonical paths alone do not prove equal snapshot ownership.
+Frozen references and unsafe captured contexts therefore recompute.
 
-The persistent design therefore separates immutable schema programs from
-instance state and makes structure and reference edges explicit dependencies.
-Its goal is to reuse both code and unchanged values while preserving Decl's
-rounds, diagnostics, and ordering. The batch benchmark also covers tagged
-unions, so improvements to literal records alone do not stand in for the cost
-of binding many values through a shared schema.
+Verification uses the normal forcing stack for cycles and deferral, but its
+reads do not become new dependencies of the caller. Roots are verified before
+queries in their former contents: removing a collection member must not force
+that obsolete member just to verify an old reader.
 
-## Target shape for persistent evaluation
+## Retained reference rounds
 
-Three layers, sharing the current value model (`semantics.ts`: Value, RecInst,
-Ref, types, subsume) and parser/binder structure where possible.
+A round still answers `$referrers` from the previous frozen universe and uses
+the specification's stability test. Retention avoids reconstruction where it
+is safe; it does not remove the fixed-point check or change its iteration limit.
 
-### 1. Compiled expressions
-Each declaration's expression is compiled once (AST -> a closure `Op`,
-`(cx: Cx) => Value`, or a small bytecode) so a force is a call, not an AST walk.
-Variable references resolve to slot/const/param reads at compile time. The
-compile is pure and cached per module.
+At a transition, compare observed inverse answers per target. An unchanged
+target avoids invalidation when another target of the same relationship
+changes. Compare observed frozen values and container shapes too. Forwarded
+inverse references, frozen record views and deeper snapshot reads account for
+their owner and snapshot age.
 
-### 2. Query graph + memo (the core)
-A `Db` holds memo entries keyed by a `Query`:
-- `slot(instId, member)`   a record slot's value
-- `root(name)`, `const(name)`
-- `edge(Type, member)`     the `$referrers` inverse index for a type/member
-- structural: `nodes(id)`, `children(id)` as needed
-Instances carry a stable **id** and are indexed by absolute path (O(1) lookup),
-replacing per-force path string building.
+A root/member owns the records constructed beneath its canonical path. An
+invalidated producer drops its registered descendants before rebuilding;
+unaffected records and clean subtrees remain live. TypeScript and Python share
+frozen slot maps and replace live slots with copy-on-write. Rust copies owned
+snapshot slots and carries frozen reference owners through navigation.
 
-`memo[query] = { value, deps: Query[], changedRev, verifiedRev }`.
+The initial materialization defers reference answers. Dependency capture for
+one-shot evaluation starts at settlement, then covers both phases of a reused
+round. Programs without reference queries skip this bookkeeping. Dependency
+sets allocate on the first read; cached field identities avoid repeated keys.
 
-```
-query(q):
-  m = memo[q]
-  if m && m.verifiedRev == rev: return m.value          # already current
-  if m:                                                  # re-verify deps
-     if every d in m.deps has query(d).changedRev <= m.verifiedRev:
-        m.verifiedRev = rev; return m.value              # EARLY CUTOFF
-  push q; deps=[]                                        # (re)compute
-  v = run(compiled[q])                                   # records deps via cx.query
-  pop
-  if m && eq(v, m.value): m.changedRev unchanged         # EARLY CUTOFF
-  else m.changedRev = rev
-  memo[q] = { value:v, deps, changedRev, verifiedRev:rev }
-  return v
-```
+Diagnostics, unfinished slots, duplicate paths, unsupported snapshot ownership,
+invalidated constants and unsafe root ordering trigger fresh evaluation for
+remaining rounds. The shared Programs object survives this fallback. Final
+validation always visits the complete result.
 
-`eq` is structural value equality (the same identity §4.5 uses); early cutoff at
-both the result (a recompute that yields the same value does not bump changedRev)
-and the verify (unchanged deps skip recompute).
+Each round builds its inverse-reference index once. A cache hit does not
+reacquire or deep-copy the source edge. Taking a new snapshot clears the index.
+Module callers serialize selected outputs rather than unused internal roots.
 
-### 3. Fully derived rounds as revisions (§7.6; future extension)
-`$referrers` answers from the previous round's universe. Map "round" to a
-revision: round N answers `edge(T,m)` at revision N-1's values. The `edge` query
-depends on the `member` slot of every candidate; when those change, the edge's
-changedRev bumps, and dependents recompute — but only them (early cutoff keeps
-the pure majority). A universe still changing after ROUNDS is E5009, detected by
-the edge queries' changedRev never settling. This would extend the delivered dependency invalidation with revision
-verification and result-level early cutoff.
+## Session edits
 
-Structure that depends on referrers (a node/link exists only for a certain
-answer) is handled because the queries that *produce* structure (a container's
-`children`) are themselves memoized and re-verified; a structural query whose
-inputs changed recomputes and yields a different instance set, and the edge
-queries over it see the new set. No registry sweep — structure is derived, not
-accumulated.
+An update copies only document containers along its path. `Edits` compares old
+and new supplied data down to the changed members, follows reverse dependency
+edges, and prepares only affected queries for verification. Unaffected slots
+stay cached without being reset or verified. An expression that produces
+records also makes its descendants candidates, because their captured inputs
+may change when the producer executes.
 
-## Live edits (not yet wired to the query database)
+Root binding reconciles records with the same canonical path, type and parent.
+An unchanged supplied record reuses its existing slots without rebuilding their
+closures. Changed member inputs force their own queries; unaffected siblings
+retain their identities. Create/remove, bind/unbind and undo/redo use this same
+revision lifecycle.
 
-The engine is demand-driven and memoized precisely so it handles *live changes*
-to the universe — not only a batch evaluate. This is a first-class goal: an
-interactive edit / diff / repl model where each edit recomputes only what it
-reaches.
+Reference settlement starts with the edited inputs, never the previous settled
+universe as its initial snapshot. Later transitions use the ordinary RoundCache.
+Removed producers lose their instances, dependency entries and change stamps.
+Assertions run during final validation, so their old dependency entries are
+discarded before that pass.
 
-The document and every supplied value are the **input layer**; the entire
-evaluation (slots, structure, referrers edges, outputs) is *derived* from it. An
-edit is a mutation of the input layer, and re-querying recomputes only the slice
-the edit reaches — the same revision + early-cutoff machinery, no re-evaluation:
+Record-input metadata is weakly keyed in TypeScript. Python and Rust explicitly
+prune it to live records, avoiding captured-scope back references that would keep
+removed records alive. Rust's auxiliary unbound-literal materialization cache is
+scoped to an edit; temporary expressions save and restore it with their request
+programs. Session's intentional undo/redo history is separate from these caches.
 
-- **value edit** (`:update g.nodes["b"].weight = 5`): the supplied value at that
-  path is an input; `setInput` bumps its revision, and only queries that
-  transitively read it recompute (a query whose recomputed value is unchanged
-  cuts its dependents off).
-- **structural edit** (`:create g.nodes["c"] = …`, `:remove g.edges[2]`): the
-  container's supplied member set is an input; changing it recomputes the
-  container's *derived* structure query — a different instance set — and the
-  referrers edges over it. Structure is derived, never accumulated, so create and
-  remove propagate without a stale registry (the failure that sank the earlier,
-  in-place attempt).
-- **rebind / unbind** (`:bind g { … }`, `:unbind g`): replaces (or clears) a
-  root's input; its subtree recomputes, the rest is reused.
-- **undo/redo**: the session restores a prior input layer; revisions advance and
-  the memo re-verifies. The memo persists across edits — that persistence is the
-  whole point of the incremental engine.
+## Boundaries and evidence
 
-The session/REPL (`session.ts`) sits on top: it owns the operation log and the
-input layer, applies each edit as input mutations, and asks the engine for the
-affected answers. `tests/repl/incremental/` (a scripted create/update/remove/
-bind/unbind/undo/redo session that must match a full recomputation at every
-step) is the edit-model's differential target, beside the batch corpora.
+Revision preparation still walks live records, dependency edges and supplied
+document data. Final validation is also a full walk. Small recomputation counts
+therefore do not imply constant-time edit latency.
 
-`Db` already provides the mechanism: inputs, revision, verify + value cutoff. The
-decl layer adds the input grammar (a supplied value per path) and the derived
-structure queries; nothing about edits is special-cased — an edit is just an
-input at a new revision.
+Whole-record comparisons conservatively prepare all values on edits to preserve
+the fresh evaluator's handling of unforced members. A previous runtime diagnostic
+reruns query programs during recovery; fine-grained diagnostic retention is not
+implemented. Frozen/context-bearing results require safe ownership to be reused.
+These are explicit remaining performance boundaries, not omitted language cases.
 
-## Byte-identical strategy
-- Value equality, diagnostics order (§6.7), path canonicalization, referrers
-  ordering, E5007/E5009 — reproduce exactly. The differential harness diffs this
-  engine against `engine.ts` on every fixture/golden/repl/benchmark; a diff is a
-  bug in this engine.
-- Build order: (a) core Db/query/compile skeleton; (b) scalars + records + refs;
-  (c) comprehensions, maps, unions/patterns; (d) `$referrers` rounds; (e)
-  dimensions/units, modules, asserts/validation, render/session. Each stage
-  widens the fixture subset the harness runs green.
+The shared internal data prove the optimized path as well as correctness:
 
-## Remaining structural work
+- `programs.json`: 1 versus 128 instances leaves compilation counts unchanged;
+  document and function cases match fresh values and diagnostics.
+- `rounds.json`: additions/removals, constants, computed roots, nested snapshots,
+  cyclic/unstable cases and result cutoff match fresh evaluation. Selected cases
+  require several reused transitions and surviving records.
+- `edits.json`: every edit matches fresh evaluation, including optional absence,
+  captured contexts, aggregate comparison, reference rounds, diagnostic recovery
+  and removal of obsolete dependencies. Work limits cover both executed programs
+  and prepared queries.
+- `temporary.json`: repeated expressions/errors and creation/removal at unique
+  paths preserve results while auxiliary caches stay bounded by live work.
 
-Compile schema programs once independently of record identity, and pass the
-instance and lexical frame at execution time. The delivered round cache uses
-producer ownership and dependency invalidation. Extending it to arbitrary
-edits requires independently versioned supplied values, container membership,
-and frozen reference edges, with result-level early cutoff. A cached answer must account for
-every input it reads, including validation and failed or absent reads; a stable
-path alone does not prove that the value at that path is unchanged.
-
-Before session adoption, compare each edit, structure change, rebind, undo, and
-redo against a fresh evaluation with identical outputs and diagnostics. Batch
-speed alone is not evidence of correct incremental invalidation.
+`make verify` runs the language tests and byte-for-byte CLI/REPL/LSP parity.
+`qbench` measures preloaded batch work; the shared Session benchmark measures
+apply, evaluate, validate and scalar serialization after initial loading.
+See [performance results](../../../docs/PERFORMANCE.md) and the
+[completion plan](../../../docs/OPTIMIZATION_PLAN.md).

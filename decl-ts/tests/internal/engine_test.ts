@@ -3,7 +3,8 @@
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { qevaluateUniverse } from '../../src/qengine/qeval.ts';
-import { Env } from '../../src/semantics.ts';
+import { Env, readJson, sortDiags } from '../../src/semantics.ts';
+import { Engine } from '../../src/engine.ts';
 import { initParser } from '../../src/node.ts';
 import { parseSource } from '../../src/parse.ts';
 import { isQ } from '../../src/semantics.ts';
@@ -39,7 +40,7 @@ await initParser();
   check('cycle', p.diags.some((d) => d.code === 'E5007'), JSON.stringify(p.diags));
 }
 {
-  const cases: { file: string; reuse: boolean }[] = JSON.parse(
+  const cases: { file: string; reuse: boolean; cutoff?: boolean }[] = JSON.parse(
     readFileSync(join(root, 'tests/internal/rounds.json'), 'utf8'),
   );
   for (const row of cases) {
@@ -61,9 +62,33 @@ await initParser();
         JSON.stringify(report.outputs) === JSON.stringify(outputs) &&
         JSON.stringify(report.diagnostics) === JSON.stringify(ref.diags) &&
         (!row.reuse ||
-          (eng.roundCache!.reusedRounds >= 3 && eng.roundCache!.retainedRecords >= 20)),
+          (eng.roundCache!.reusedRounds >= 3 && eng.roundCache!.retainedRecords >= 20)) &&
+        (!row.cutoff || (eng.revisions!.verifiedCutoffs >= 3 && eng.revisions!.valueCutoffs >= 3)),
       row.file,
     );
+  }
+}
+{
+  const cases: { name: string; source: string; input: string; element: string; sizes: number[] }[] = JSON.parse(readFileSync(join(root, 'tests/internal/programs.json'), 'utf8'));
+  for (const row of cases) {
+    const decls = parseSource(row.source).decls;
+    let first: number[] | undefined;
+    for (const size of row.sizes) {
+      const raw = readJson('[' + Array(size).fill(row.element).join(',') + ']');
+      const reference = new Env();
+      reference.load(decls);
+      const tree = Engine.evaluate(reference, (eng) => {
+        eng.bindRoot(row.input, raw, reference.resolve(reference.inputs.get(row.input)!.type), { inst: null, locals: new Map(), rootName: row.input }, false);
+        for (const o of reference.outputs) eng.bindRoot(o.name, o.expr, reference.resolve(o.type), { inst: null, locals: new Map(), rootName: o.name }, true);
+      }, () => reference.roots.values());
+      tree.validateAll('');
+      const env = new Env(); env.load(decls);
+      const { report, eng } = qevaluateUniverse([{ env }], { env }, [{ input: row.input, raw }]);
+      const counts = [eng.programs!.compiled, eng.programs!.compiledSchemas];
+      const expected = reference.outputs.map((o) => ({ name: o.name, json: tree.serialize(reference.roots.get(o.name), o.name) }));
+      check('shared_programs', report.ok && JSON.stringify(report.outputs) === JSON.stringify(expected) && JSON.stringify(report.diagnostics) === JSON.stringify(sortDiags(reference.diagnostics)) && env.registry.length >= size && counts.every((n) => n > 0) && (!first || JSON.stringify(first) === JSON.stringify(counts)), `${row.name} size=${size} compiled=${JSON.stringify(counts)} first=${JSON.stringify(first)}`);
+      first ??= counts;
+    }
   }
 }
 total();

@@ -13,6 +13,8 @@ import { loadModules } from './module.ts';
 import type { Module } from './module.ts';
 import { openPackageUniverse, verifyLock } from './package.ts';
 import { Engine } from './engine.ts';
+import { Edits } from './qengine/edits.ts';
+import { Programs } from './qengine/programs.ts';
 import {
   Env,
   EvalErr,
@@ -413,11 +415,25 @@ export class Session {
     if (segs.length < 2) throw new SessionError(`a path below a root is required, got ${op.path}`);
     const value = op.kind === 'remove' ? undefined : this.evalToDoc(st, op.expr!);
     const doc = this.documentOf(st, root);
-    let parent = doc.doc;
+    // Keep the previous query inputs immutable. Only containers on the edited
+    // path are copied; all unaffected document branches remain shared.
+    const copyContainer = (v: any): any =>
+      v?.__jobj
+        ? { ...v, entries: v.entries.map(([k, x]: any) => [k, x]) }
+        : Array.isArray(v)
+          ? [...v]
+          : v;
+    const updated = copyContainer(doc.doc);
+    let parent = updated;
     for (const s of segs.slice(1, -1)) {
-      parent = docStep(parent, s);
-      if (parent === undefined)
+      const child = docStep(parent, s);
+      if (child === undefined)
         throw new SessionError(`nothing at ${pathStr(segs.slice(0, segs.indexOf(s) + 1))}`);
+      const next = copyContainer(child),
+        key = segText(s);
+      if (parent?.__jobj) parent.entries.find(([k]: any) => k === key)[1] = next;
+      else parent[key as number] = next;
+      parent = next;
     }
     const last = segs[segs.length - 1];
     const k = segText(last);
@@ -438,6 +454,7 @@ export class Session {
       else if (op.kind === 'update') parent[k] = value;
       else parent.splice(k, 1);
     } else throw new SessionError(`${pathStr(segs.slice(0, -1))} is not a record, map, or array`);
+    doc.doc = updated;
     doc.edited = true;
   }
 
@@ -541,131 +558,49 @@ export class Session {
     const eng = r.eng!,
       entry = r.entry!,
       env = entry.env;
-    // 1. what the change touches: the roots themselves, every slot under
-    //    them, and the `$referrers` queries over types instantiated under them
-    const under = (path: string, root: string) =>
-      path === root || path.startsWith(root + '.') || path.startsWith(root + '[');
-    const seeds = new Set<string>();
-    for (const root of changed) {
-      seeds.add(`root:${root}`);
-      for (const k of eng.reads.keys())
-        if (k.startsWith('root:') ? false : under(k.replace(/^assert:/, ''), root)) seeds.add(k);
-      for (const inst of env.registry)
-        if (under(pathStr(inst.path), root) && inst.typeName)
-          seeds.add(`referrers:${inst.typeName}`);
-    }
-    // 2. everything that read them, transitively
-    const readers = new Map<string, Set<string>>();
-    for (const [reader, set] of eng.reads)
-      for (const k of set) (readers.get(k) ?? readers.set(k, new Set()).get(k)!).add(reader);
-    const invalid = new Set<string>();
-    const queue = [...seeds];
-    while (queue.length) {
-      const k = queue.pop()!;
-      if (invalid.has(k)) continue;
-      invalid.add(k);
-      for (const rd of readers.get(k) ?? []) if (!invalid.has(rd)) queue.push(rd);
-    }
-    // the roots to rebind: the changed ones, and every root that read them at binding
-    const rebind = new Set<string>();
-    for (const k of invalid) if (k.startsWith('root:')) rebind.add(k.slice(5));
-    for (const root of rebind)
-      for (const inst of env.registry)
-        if (under(pathStr(inst.path), root) && inst.typeName) {
-          const rk = `referrers:${inst.typeName}`;
-          if (!invalid.has(rk)) {
-            invalid.add(rk);
-            for (const rd of readers.get(rk) ?? [])
-              if (!invalid.has(rd)) {
-                invalid.add(rd);
-                queue.push(rd);
-              }
-          }
-        }
-    while (queue.length) {
-      const k = queue.pop()!;
-      for (const rd of readers.get(k) ?? [])
-        if (!invalid.has(rd)) {
-          invalid.add(rd);
-          queue.push(rd);
-        }
-    }
-    // 3. forget: the diagnostics of the invalidated steps and of the rebound roots, the slots, the instances
-    const gone = (d: any) =>
-      (d.by !== undefined && invalid.has(d.by)) || [...rebind].some((root) => under(d.path, root));
-    env.diagnostics.splice(0, env.diagnostics.length, ...env.diagnostics.filter((d) => !gone(d)));
-    let recomputed = 0;
-    for (const k of invalid) {
-      if (k.startsWith('root:') || k.startsWith('assert:') || k.startsWith('referrers:')) continue;
-      if ([...rebind].some((root) => under(k, root))) {
-        eng.slotsByKey.delete(k);
-        eng.reads.delete(k);
-        continue;
+    const edits = eng.edits;
+    if (!edits) return null;
+    const before = edits.slotComputes;
+    edits.begin(eng, changed, new Map([...st.documents].map(([name, doc]) => [name, doc.doc])));
+    const bind = (current: Engine) => {
+      current.edits = edits;
+      for (const m of r.modules) {
+        m.env.constEval = (n: string) => current.forceConstIn(m.env, n, '');
+        m.env.exprEval = (e: Expr) =>
+          current.ev(e, { inst: null, locals: new Map(), rootName: '', menv: m.env });
       }
-      if (eng.resetSlot(k)) recomputed++;
-      eng.reads.delete(k);
-    }
-    const dropped = new Set<any>();
-    env.registry.splice(
-      0,
-      env.registry.length,
-      ...env.registry.filter((inst) => {
-        const g = [...rebind].some((root) => under(pathStr(inst.path), root));
-        if (g) dropped.add(inst);
-        return !g;
-      }),
-    );
-    for (const root of rebind) {
-      env.roots.delete(root);
-      eng.failedInputs.delete(root);
-      eng.reads.delete(`root:${root}`);
-    }
-    eng.deferredSlots = eng.deferredSlots.filter((d) => !dropped.has(d.inst));
-    for (const k of [...eng.reads.keys()])
-      if (k.startsWith('assert:') && [...rebind].some((root) => under(k.slice(7), root)))
-        eng.reads.delete(k);
-    // 4. rebind the roots in the fresh run's order — the documents in the
-    //    state's order, the modules' outputs in declaration order, the
-    //    session's outputs — then force everything: what is `ok` stays
-    //    (an unbound input is demanded through its fallback on first read)
-    eng.phase = 1;
-    for (const [name, d] of st.documents) {
-      if (!rebind.has(name)) continue;
-      const m = r.modules.find((x) => x.env.inputs.has(name)) ?? entry;
-      const sc: any = { inst: null, locals: new Map(), rootName: name, menv: m.env };
-      eng.bindRoot(name, d.doc, m.env.resolve(m.env.inputs.get(name)!.type), sc, false);
-    }
-    for (const om of r.modules)
-      for (const o of om.env.outputs) {
-        if (!rebind.has(o.name)) continue;
-        eng.bindRoot(
-          o.name,
-          o.expr,
-          om.env.resolve(o.type),
-          { inst: null, locals: new Map(), rootName: o.name, menv: om.env },
-          true,
+      for (const [name, d] of st.documents) {
+        const m = r.modules.find((x) => x.env.inputs.has(name)) ?? entry;
+        current.bindRoot(
+          name,
+          d.doc,
+          m.env.resolve(m.env.inputs.get(name)!.type),
+          { inst: null, locals: new Map(), rootName: name, menv: m.env },
+          false,
         );
       }
-    for (const s of r.sessionRoots) {
-      if (!rebind.has(s.name)) continue;
-      eng.bindRoot(
-        s.name,
-        s.expr,
-        s.rt,
-        { inst: null, locals: new Map(), rootName: s.name, menv: entry.env },
-        true,
-      );
-    }
-    for (const v of env.roots.values()) eng.forceAll(v, false);
-    // an incremental round answers `$referrers` from what it holds; a
-    // universe that needs another round is evaluated afresh
-    if (!eng.settle(() => env.roots.values()).stable) return null;
-    // 5. the asserts of the instances that are new or whose asserts read what changed
-    for (const inst of env.registry) {
-      const key = `assert:${pathStr(inst.path)}`;
-      if (!eng.reads.has(key) || invalid.has(key)) eng.validateInst(inst, '');
-    }
+      for (const m of r.modules)
+        for (const o of m.env.outputs)
+          current.bindRoot(
+            o.name,
+            o.expr,
+            m.env.resolve(o.type),
+            { inst: null, locals: new Map(), rootName: o.name, menv: m.env },
+            true,
+          );
+      for (const o of r.sessionRoots)
+        current.bindRoot(
+          o.name,
+          o.expr,
+          o.rt,
+          { inst: null, locals: new Map(), rootName: o.name, menv: entry.env },
+          true,
+        );
+    };
+    const current = Engine.evaluate(env, bind, () => env.roots.values(), true, true, eng);
+    current.validateAll('');
     env.diagnostics.splice(0, env.diagnostics.length, ...sortDiags(env.diagnostics));
+    const recomputed = edits.slotComputes - before;
     const timing: Timing = {
       load: 0,
       check: 0,
@@ -673,9 +608,9 @@ export class Session {
       evaluate: now() - t0,
       total: now() - t0,
       recomputed,
-      slots: eng.slotsByKey.size,
+      slots: current.slotsByKey.size,
     };
-    const run: Run = { ...r, diags: env.diagnostics, timing };
+    const run: Run = { ...r, eng: current, diags: env.diagnostics, timing };
     this.last = { key: last.key, docs, run };
     this.lastTiming = timing;
     return run;
@@ -754,7 +689,9 @@ export class Session {
       return finish();
 
     const t2 = now();
+    const edits = mode === 'full' && !Session.fullRecompute ? new Edits() : null;
     const bind = (eng: Engine) => {
+      eng.edits = edits;
       for (const m of b.modules) {
         m.env.constEval = (n: string) => eng.forceConstIn(m.env, n, '');
         m.env.exprEval = (e: any) =>
@@ -790,7 +727,7 @@ export class Session {
       return finish();
     }
     const t3 = now();
-    const eng = Engine.evaluate(entry.env, bind, () => entry.env.roots.values(), true);
+    const eng = Engine.evaluate(entry.env, bind, () => entry.env.roots.values(), true, true);
     out.eng = eng;
     out.timing.bind = t3 - t2;
     eng.validateAll('');
@@ -849,9 +786,16 @@ export class Session {
     const n = env.diagnostics.length;
     const reg = env.registry.length;
     const roots = new Set(env.roots.keys());
+    const scratchKey = (key: string) => key === '_' || key.startsWith('_.') || key.startsWith('_[');
+    const slots = [...eng.slotsByKey].filter(([key]) => scratchKey(key));
+    const reads = [...eng.reads].filter(([key]) => scratchKey(key.replace(/^assert:/, '')));
+    const programs = eng.programs;
+    // A request's syntax must not become part of the source universe's cache.
+    eng.programs = programs ? new Programs() : null;
     try {
       return f(eng, env);
     } finally {
+      eng.programs = programs;
       // an input demanded through its fallback by the expression alone is not a root of the run
       const demanded = [...env.roots.keys()].filter((k) => !roots.has(k));
       const under = (p: string) =>
@@ -862,8 +806,12 @@ export class Session {
         eng.reads.delete(`root:${k}`);
       }
       for (const k of [...eng.reads.keys()])
-        if (under(k.replace(/^assert:/, ''))) eng.reads.delete(k);
-      for (const k of [...eng.slotsByKey.keys()]) if (under(k)) eng.slotsByKey.delete(k);
+        if (under(k.replace(/^assert:/, '')) || scratchKey(k.replace(/^assert:/, '')))
+          eng.reads.delete(k);
+      for (const k of [...eng.slotsByKey.keys()])
+        if (under(k) || scratchKey(k)) eng.slotsByKey.delete(k);
+      for (const [key, value] of slots) eng.slotsByKey.set(key, value);
+      for (const [key, value] of reads) eng.reads.set(key, value);
       env.diagnostics.splice(n);
       env.registry.splice(
         0,

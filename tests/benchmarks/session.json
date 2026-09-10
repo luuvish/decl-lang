@@ -1,0 +1,10 @@
+{
+  "source": "type Item = { n: int, bucket = if n > 0 then 1 else 0, answer = bucket * 7, optional?: int, chosen = optional ?? answer }\ntype Batch = { items: Item[], total = std.array.sum([x.chosen for x in items]) }\ninput batch: Batch\nexport output total: int = batch.total\n",
+  "sizes": [
+    100,
+    1000,
+    5000
+  ],
+  "warmups": 2,
+  "samples": 9
+}
