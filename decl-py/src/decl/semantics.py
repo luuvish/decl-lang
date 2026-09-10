@@ -59,12 +59,16 @@ class Quantity:
 
 
 class Ref:
-    __slots__ = ("segs", "snap")
+    __slots__ = ("inverse", "round_ref", "segs", "snap")
 
-    def __init__(self, segs: list[Any], snap: Any = None):
+    def __init__(
+        self, segs: list[Any], snap: Any = None, round_ref: bool = False, inverse: bool = False
+    ):
         # `snap`: the frozen round this reference resolves in until the rounds end (§7.6)
         self.segs = segs
         self.snap = snap
+        self.round_ref = round_ref
+        self.inverse = inverse or round_ref
 
 
 class RangeV:
@@ -207,7 +211,7 @@ class MapV:
 
 
 class Slot:
-    __slots__ = ("compute", "deferred", "hidden", "kind", "state", "value")
+    __slots__ = ("compute", "deferred", "hidden", "key", "kind", "state", "value")
 
     def __init__(
         self,
@@ -219,6 +223,7 @@ class Slot:
     ) -> None:
         self.kind, self.state, self.deferred, self.compute = kind, state, deferred, compute
         self.value = None
+        self.key: str | None = None
         self.hidden = hidden  # `x$ = e`: computed, never part of the value (D34)
 
 

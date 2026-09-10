@@ -36,6 +36,7 @@ export const isRange = (v: any) => v && v.__range === true;
 export const isClo = (v: any) => v && v.__clo === true;
 
 export type Slot = {
+  key?: string; // cached dependency identity; the owning path is immutable
   kind: 'req' | 'opt' | 'dflt' | 'der';
   hidden?: boolean; // `x$ = e`: computed, never part of the value (D34)
   // `deferred`: the computation reached `$referrers` before the universe was complete — it is

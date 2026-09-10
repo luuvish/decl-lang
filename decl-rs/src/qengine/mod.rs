@@ -3,3 +3,5 @@
 //! incremental core; `qeval` (the decl layer) is built on it.
 pub mod db;
 pub mod qeval;
+
+pub mod rounds;

@@ -1,39 +1,13 @@
-// The decl layer of the query engine (qengine/DESIGN.md). Compile expressions to
-// query computes and evaluate a module's outputs through the incremental core
-// (db.ts). Covered so far:
-//   scalars/const, records (slots as queries, cross-slot & nested & member
-//   access; required/optional/default/derived/hidden members; restate and
-//   missing/undeclared diagnostics; records nested in arrays and maps),
-//   references ($this/$parent/$root/$key/$path, deref/navigation, ref<T>
-//   navigation members with the mirror rule), references to other roots,
-//   arrays & array comprehensions, ranges, indexing, maps & map comprehensions,
-//   `in`/`matches`, patterns, string templates, `match`, unions of records,
-//   quantities and dimensional arithmetic, std/module-function calls, lambdas,
-//   the pipe, object spread, `with`, inputs (fallback on demand), open records,
-//   assertions/when-blocks, `$referrers` evaluated in rounds (§7.6), and
-//   multi-module universes (§8: imports, namespaces, cross-module roots).
-// This covers the whole valid corpus byte-for-byte against the current engine.
-// Value semantics — equality, serialization, type binding, iteration, type
-// membership, unit resolution, quantity arithmetic, function application,
-// assertions — are reused from the current value layer, as the design intends;
-// only the evaluation strategy is new. A record value the query graph does not
-// build itself (a call result, a `with`, a discriminated union, a
-// comprehension) is bound and forced through the value layer and read back
-// uniformly by forceMember; assertions run over the forced universe, and a
-// value-layer member that reads $referrers is completed in a settle phase once
-// the universe is fully built (run). The universe is evaluated in rounds
-// (qevaluate), each answering $referrers from the previous round's frozen
-// universe, until the queried edges stabilize. (A closure passed to a std
-// function has its body run by the value layer for now — pure over its
-// parameters and consts, so byte-identical; closures compile into the query
-// graph in a later stage.)
-import { Db, QueryCycle } from './db.ts';
+// Compiled expression bodies share the value layer's slots, dependency graph,
+// reference rounds, binding and diagnostics. Constants retain a separate Db;
+// a retained round clears its context-dependent memo before computing again.
+import { Db } from './db.ts';
 import { Engine } from '../engine.ts';
 import {
   ABSENT,
+  DeferSig,
   EvalErr,
   Taint,
-  cmpPath,
   compilePattern,
   isArr,
   isMap,
@@ -74,8 +48,7 @@ interface OpCx {
   qArith(op: string, l: Value, r: Value): Value;
   /** apply a closure, native, or std function to evaluated arguments (§4.9, §13) */
   call(fn: Value, args: Value[]): Value;
-  /** read a record member: a query-graph slot through the db, a value-layer one
-   * through the reference engine (§4.10) */
+  /** Read a compiled or interpreted member through the shared slot cache. */
   forceMember(rec: Value, name: string): Value;
   /** the value of another evaluation root (another output), or undefined */
   rootValue(name: string): Value | undefined;
@@ -242,71 +215,7 @@ const QOPS = new Set(['+', '-', '*', '/', '<', '<=', '>', '>=']);
 
 // ---- $referrers: the universe is evaluated in rounds until its edges settle ----
 
-/** the maximum rounds a universe may take to stabilize before E5009 (§7.6) */
-const ROUNDS = 8;
-/** one `$referrers(Type, member)` edge: each referring instance and its refs */
-type Edge = Map<string, { path: Seg[]; refs: Seg[][] }>;
-/** a frozen round: the universe a later round answers `$referrers` against */
-interface Frozen {
-  registry: RecInst[];
-  edges: Map<string, Edge>;
-}
-
-/** the trailing member name of a slot key (`slot:hub.ports["a"].sel$` → `sel$`) */
-function memberOfSlotKey(key: string): string {
-  const m = /\.([A-Za-z_$][\w$]*)$|\["([^"]*)"\]$/.exec(key);
-  return m ? (m[1] ?? m[2]) : key;
-}
-
-/** every reference an object value holds, recursively (arrays and maps included) */
-function refsIn(v: Value, out: Seg[][]): void {
-  if (isRef(v)) out.push(v.segs);
-  else if (isArr(v)) for (const x of v.items) refsIn(x, out);
-  else if (isMap(v)) for (const x of v.entries.values()) refsIn(x, out);
-}
-/** a stable string for a set of refs (order-insensitive), for edge comparison */
-function refsKey(refs: Seg[][]): string {
-  return refs
-    .map((r) => pathStr(r))
-    .sort()
-    .join('\n');
-}
-/** whether two edges hold the same referrers with the same refs */
-function edgeEq(a: Edge, b: Edge): boolean {
-  if (a.size !== b.size) return false;
-  for (const [k, e] of a) {
-    const f = b.get(k);
-    if (!f || refsKey(e.refs) !== refsKey(f.refs)) return false;
-  }
-  return true;
-}
-/** the path of the first candidate whose refs differ between two edges (§6.7) */
-function edgeDiff(a: Edge, b: Edge): string {
-  const paths = [...new Set([...a.keys(), ...b.keys()])]
-    .map((k) => (a.get(k) ?? b.get(k))!.path)
-    .sort(cmpPath);
-  for (const p of paths) {
-    const k = pathStr(p);
-    const e = a.get(k);
-    const f = b.get(k);
-    if (!e || !f || refsKey(e.refs) !== refsKey(f.refs)) return k;
-  }
-  return '';
-}
-/** a stable string for a whole round's edges, for cycle detection */
-function edgesKey(edges: Map<string, Edge>): string {
-  return [...edges.keys()]
-    .sort()
-    .map((k) => {
-      const e = edges.get(k)!;
-      return `${k}=${[...e.keys()]
-        .sort()
-        .map((pk) => `${pk}:${refsKey(e.get(pk)!.refs)}`)
-        .join(';')}`;
-    })
-    .join('|');
-}
-
+/** A prior frozen view; reference rounds are driven by the value layer. */
 /** read member `name` of a value (§4.10, §7.5) */
 function access(cx: OpCx, x: Value, name: string): Value {
   // a record is read through the query graph; everything else (a bare map, an
@@ -809,14 +718,11 @@ class QEval {
   private readonly slotJobs = new Map<string, Op>();
   private readonly diagnostics: Diag[] = [];
   private readonly constCtx: CCtx;
-  private readonly prev: Frozen | null; // the previous round's frozen universe
-  private readonly queriedEdges = new Set<string>(); // `$referrers` keys asked this round
-  private readonly refIndexCache = new Map<string, Map<string, Seg[][]>>();
 
-  constructor(env: Env, prev: Frozen | null = null, mods: { env: Env }[] = []) {
+  constructor(env: Env, mods: { env: Env }[], helper: Engine) {
     this.env = env;
-    this.prev = prev;
-    this.helper = new Engine(env);
+    this.diagnostics = env.diagnostics;
+    this.helper = helper;
     // §4.13 elaboration hooks (a const in a type position, a unit factor) for
     // every module, pointing at this round's value layer — as runUniverse does
     for (const m of mods) {
@@ -834,13 +740,18 @@ class QEval {
             : undefined;
         // run each compute with our own context (query + deref); the Db still
         // records dependencies, since our `query` calls back into it
-        return op ? () => op(this.cx, NO_LOCALS) : undefined;
+        return op ? () => this.helper.step(key, () => op(this.cx, NO_LOCALS)) : undefined;
       },
     });
     const matchScope = { inst: null, locals: new Map<string, unknown>(), rootName: '', menv: env };
     this.cx = {
-      query: (k) => this.db.query(k),
-      deref: (r) => this.deref(r),
+      query: (k) => {
+        // Record constant dependencies even on a memo hit. A constant affected
+        // by a round requires a fresh context (see RoundCache.advance).
+        this.helper.record(k);
+        return this.db.query(k);
+      },
+      deref: (r) => this.helper.deref(r),
       memberOf: (v, rt) => this.helper.memberOf(v, rt, matchScope),
       toStr: (v) => this.helper.toStr(v),
       unitInfo: (sym) => {
@@ -858,15 +769,24 @@ class QEval {
       call: (fn, args) => this.helper.call(fn, args, matchScope),
       matVal: (v) => this.helper.matVal(v),
       forceMember: (rec, name) => this.forceMember(rec, name),
-      rootValue: (name) => this.env.roots.get(name),
+      rootValue: (name) => {
+        this.helper.record(`root:${name}`);
+        return this.env.roots.get(name);
+      },
       inputRoot: (name) => this.demandInputRoot(name),
       spreadEntries: (v) => this.helper.spreadEntries(v),
       accessRaw: (x, name) => this.helper.access(x, name),
       evValue: (expr, scope) => this.helper.matVal(this.helper.ev(expr, scope)),
-      referrers: (typeName, member, self) => this.referrers(typeName, member, self),
+      referrers: (typeName, member, self) =>
+        this.helper.referrers(typeName, member, {
+          inst: self,
+          locals: new Map(),
+          rootName: String(segText(self.path[0])),
+        }),
       moduleValue: (menv, name) => this.helper.matVal(this.helper.moduleValue(menv, name, '')),
       nsValue: (ns, name) => this.helper.matVal(this.helper.nsValue(ns, name, matchScope)),
     };
+    this.helper.roundResets.push(() => this.db.clear());
     this.constCtx = {
       entryEnv: env,
       self: null,
@@ -895,27 +815,19 @@ class QEval {
   }
 
   /**
-   * Read a record member (§4.10). A query-graph slot is forced through the db
-   * (recording a dependency); a value-layer record (built by the value layer for
-   * a call, a `with`, or a discriminated union) is forced through the reference
-   * engine. An already-forced slot returns its value; an absent optional or a
-   * failed member yields ABSENT.
+   * Read a record member (§4.10) through the shared value cache and dependency
+   * graph. An absent optional or a failed compiled member yields ABSENT.
    */
   private forceMember(rec: RecInst, name: string): Value {
-    const s = rec.slots.get(name);
-    if (!s) {
+    if (this.helper.track && this.helper.computing.length)
+      this.helper.record(Engine.slotKey(rec, name));
+    const slot = rec.slots.get(name);
+    if (!slot) {
       if (rec.extras.has(name)) throw new EvalErr(`opaque field ${name} accessed`);
       return ABSENT;
     }
-    if (s.state === 'ok') return s.value;
-    if (s.state === 'absent' || s.state === 'invalid') return ABSENT;
-    if ((rec as unknown as { __qeng?: boolean }).__qeng)
-      return this.db.query(`slot:${pathStr(rec.path)}.${name}`) as Value;
-    try {
-      return this.helper.forceSlot(rec, name);
-    } catch {
-      return ABSENT; // a tainted (invalid) value-layer member reads as absent
-    }
+    if (slot.state === 'invalid') return ABSENT;
+    return this.helper.forceSlot(rec, name);
   }
 
   /**
@@ -925,6 +837,7 @@ class QEval {
    * demand through the compute bridge like any query-graph record.
    */
   private demandInputRoot(name: string): Value {
+    this.helper.record(`root:${name}`);
     const cached = this.env.roots.get(name);
     if (cached !== undefined) return cached;
     const decl = this.env.inputs.get(name);
@@ -946,101 +859,10 @@ class QEval {
   }
 
   /**
-   * `$referrers(Type, member)` for `self` (§7.6): the references that point at
-   * `self`, answered from the previous round's frozen universe (empty in round
-   * 1). One pass inverts the edge — each referrer filed under every distinct
-   * place its member refers to — so the lookup is O(1); the result is sorted by
-   * canonical path.
-   */
-  private referrers(typeName: string, member: string, self: RecInst): Value {
-    const key = `${typeName}|${member}`;
-    this.queriedEdges.add(key);
-    let inv = this.refIndexCache.get(key);
-    if (!inv) {
-      inv = new Map<string, Seg[][]>();
-      const edge = this.edgeOver(this.prev ? this.prev.registry : [], typeName, member);
-      for (const e of edge.values()) {
-        const seen = new Set<string>();
-        for (const r of e.refs) {
-          const tk = pathStr(r);
-          if (seen.has(tk)) continue;
-          seen.add(tk);
-          const arr = inv.get(tk);
-          if (arr) arr.push(e.path);
-          else inv.set(tk, [e.path]);
-        }
-      }
-      this.refIndexCache.set(key, inv);
-    }
-    const out = (inv.get(pathStr(self.path)) ?? []).slice();
-    out.sort(cmpPath);
-    return { __arr: true, items: out.map((p) => ({ __ref: true, segs: p })), path: [] };
-  }
-
-  /** the edge for (type, member) over a registry: each instance of the type and
-   * the references its member holds */
-  private edgeOver(registry: RecInst[], typeName: string, member: string): Edge {
-    const edge: Edge = new Map();
-    for (const cand of registry) {
-      if (cand.typeName !== typeName || !cand.slots.has(member)) continue;
-      let v: Value;
-      try {
-        v = this.forceMember(cand, member);
-      } catch {
-        continue; // a member that could not be forced contributes no ref
-      }
-      const refs: Seg[][] = [];
-      refsIn(v, refs);
-      edge.set(pathStr(cand.path), { path: cand.path, refs });
-    }
-    return edge;
-  }
-
-  /** the value layer this round used — its roots are populated and forced, so a
-   * caller can serialize through it exactly as runUniverse's engine does */
-  engine(): Engine {
-    return this.helper;
-  }
-
-  /** this round's edges for every queried key, over the current registry */
-  liveEdges(): Map<string, Edge> {
-    const out = new Map<string, Edge>();
-    for (const key of this.queriedEdges) {
-      const [t, m] = key.split('|');
-      out.set(key, this.edgeOver(this.env.registry, t, m));
-    }
-    return out;
-  }
-
-  /** the value a reference denotes: walk its path from the root (§7.4, §7.5) */
-  private deref(ref: Value): Value {
-    const segs = (ref as { segs: Seg[] }).segs;
-    const target = this.resolveSegs(segs);
-    if (target === undefined) throw new EvalErr(`dangling reference ${pathStr(segs)}`, 'E6002');
-    return target;
-  }
-
-  private resolveSegs(segs: Seg[]): Value {
-    let cur: Value = this.env.roots.get(segs[0] as string);
-    for (let i = 1; i < segs.length && cur !== undefined; i++) {
-      const s = segText(segs[i]);
-      if (isRec(cur)) {
-        cur = cur.slots.has(s as string) ? this.forceMember(cur, s as string) : undefined;
-        if (cur === ABSENT) cur = undefined;
-      } else if (isArr(cur)) cur = cur.items[s as number];
-      else if (isMap(cur)) cur = cur.entries.get(s);
-      else cur = undefined;
-      if (cur === ABSENT) cur = undefined;
-      if (isRef(cur)) cur = this.deref(cur);
-    }
-    return cur;
-  }
-
-  /**
    * Bind an object literal to a record type: a RecInst whose members are slot
    * queries. A record-typed member binds recursively; a scalar/array member
    * compiles and type-binds its value. Slots are registered but not yet forced —
-   * `materialize` fills them for serialization.
+   * `forceAll` fills them for serialization.
    */
   private bindRecord(
     entries: { key: string; val: Expr }[],
@@ -1081,10 +903,20 @@ class QEval {
     };
 
     // Assertions and when-blocks (§6) are validated after the universe is forced
-    // (see run → validateAll). Context declarations (§7.3) are a checker
+    // (see evalRounds → validateAll). Context declarations (§7.3) are a checker
     // obligation (D30), not an evaluator concern — $this/$parent/$root/$key
     // resolve structurally — so they need no handling here. An open record is
     // fine unless a document actually supplies extra members (handled below).
+
+    // Declare every member before compiling expressions, so forward sibling
+    // names resolve to the record rather than to a module root (§4.3).
+    for (const m of rt.members)
+      inst.slots.set(m.name, {
+        kind: m.kind,
+        hidden: m.hidden || undefined,
+        state: 'unforced',
+        deferred: false,
+      });
 
     for (const m of rt.members) {
       const memberPath = [...path, m.name];
@@ -1122,7 +954,7 @@ class QEval {
         this.slotJobs.set(key, (cx, l) => {
           const segs = placeOp(cx, l);
           if (!segs) throw new EvalErr('not a place in ref position');
-          if (this.resolveSegs(segs) === undefined)
+          if (this.helper.resolveSegs(segs) === undefined)
             throw new EvalErr(`dangling reference ${pathStr(segs)}`, 'E6002');
           return { __ref: true, segs };
         });
@@ -1131,7 +963,7 @@ class QEval {
           hidden: m.hidden || undefined,
           state: 'unforced',
           deferred: false,
-          compute: () => this.db.query(key),
+          compute: () => this.slotJobs.get(key)!(this.cx, NO_LOCALS),
         });
         continue;
       }
@@ -1179,7 +1011,7 @@ class QEval {
           hidden: m.hidden || undefined,
           state: 'unforced',
           deferred: false,
-          compute: () => this.db.query(key),
+          compute: () => this.slotJobs.get(key)!(this.cx, NO_LOCALS),
         });
         continue;
       }
@@ -1194,7 +1026,7 @@ class QEval {
           hidden: m.hidden || undefined,
           state: 'unforced',
           deferred: false,
-          compute: () => this.db.query(key),
+          compute: () => this.slotJobs.get(key)!(this.cx, NO_LOCALS),
         });
       } else if (m.kind === 'dflt') {
         this.slotJobs.set(key, this.supplyProduce(m.dflt, types, memberPath, inst, cctx, sc));
@@ -1202,7 +1034,7 @@ class QEval {
           kind: 'dflt',
           state: 'unforced',
           deferred: false,
-          compute: () => this.db.query(key),
+          compute: () => this.slotJobs.get(key)!(this.cx, NO_LOCALS),
         });
       } else if (m.kind === 'opt') {
         inst.slots.set(m.name, { kind: 'opt', state: 'absent', deferred: false });
@@ -1295,7 +1127,7 @@ class QEval {
   ): Op {
     // a record literal binds in the query graph; a record value from any other
     // expression (a call, a `with`, a reference, a discriminated union) is left
-    // to the value layer and forced during materialize
+    // to the value layer and forced during settle
     if (type.t === 'rec' && valExpr.e === 'obj') {
       const entries = valExpr.entries;
       return () => this.bindRecord(entries, type, path, parent);
@@ -1343,252 +1175,101 @@ class QEval {
     return (cx, l) => this.helper.bind(op(cx, l), type, path, parent, sc);
   }
 
-  /** force every slot into the RecInst tree so serialization can read it */
-  private materialize(inst: RecInst, seen: Set<RecInst>): void {
-    if (seen.has(inst)) return;
-    seen.add(inst);
-    // a value-layer record (a call/with/union result) forces through the
-    // reference engine, which recurses into any query-graph records it holds
-    // (their slots delegate to the db)
-    if (!(inst as unknown as { __qeng?: boolean }).__qeng) {
-      this.helper.forceAll(inst, false);
-      return;
-    }
-    const id = pathStr(inst.path);
-    for (const m of inst.rt.members) {
-      const s = inst.slots.get(m.name);
-      if (!s) continue;
-      // an already-forced slot (forced by a sibling or another root reading it)
-      // is still deep-materialized, so a value-layer record it holds — a func or
-      // `with` result whose derived members are not yet forced — is completed;
-      // materializing from the roots reaches every reachable instance this way
-      // (as the reference's forceAll recurses into slot values), without touching
-      // a dead instance the registry may still hold (§9.2)
-      if (s.state === 'ok') {
-        this.materializeValue(s.value, seen);
-        continue;
-      }
-      if (s.state !== 'unforced') continue; // absent/invalid slots have no compute
-      try {
-        const v = this.db.query(`slot:${id}.${m.name}`) as Value;
-        s.value = v;
-        s.state = 'ok';
-        this.materializeValue(v, seen);
-      } catch (err) {
-        const by = `${id}.${m.name}`; // the slot forcing step that produced it (§6.7)
-        if (err instanceof EvalErr) {
-          s.state = 'invalid';
-          const code = (err as { code?: string }).code;
-          // the reference tags a diagnostic reported inside the forcing step
-          // (a reference or restate failure); a raw evaluation error (E5xxx)
-          // propagates and is reported untagged
-          const tagged = code === 'E6002' || code === 'E4005';
-          this.diagnostics.push({
-            severity: 'error',
-            message: err.message,
-            path: pathStr([...inst.path, m.name]),
-            code,
-            ...(tagged ? { by } : {}),
-          });
-        } else if (err instanceof QueryCycle) {
-          // a slot that (transitively) reads itself — §7.6/§9.3 dependency cycle
-          s.state = 'invalid';
-          const ends = err.cycle.map((k) => memberOfSlotKey(k));
-          this.diagnostics.push({
-            severity: 'error',
-            message: `dependency cycle: ${ends[0]} -> ${ends[ends.length - 1]}`,
-            path: pathStr([...inst.path, m.name]),
-            code: 'E5007',
-            by,
-          });
-        } else if (err instanceof Taint) {
-          s.state = 'invalid'; // the value layer already reported the diagnostic
-        } else throw err;
-      }
-    }
-  }
-
-  private materializeValue(v: Value, seen: Set<RecInst>): void {
-    if (isRec(v)) this.materialize(v, seen);
-    else if (isArr(v)) for (const x of v.items) this.materializeValue(x, seen);
-    else if (isMap(v)) for (const x of v.entries.values()) this.materializeValue(x, seen);
-  }
-
-  run(
-    roots: RootSpec[] = this.env.outputs.map((o) => ({ ...o, menv: this.env })),
-    binds: BoundSpec[] = [],
-    serializeOutputs = true,
-  ): QReport {
-    // a bound input document is a root of the universe (§9.2), bound from its
-    // raw value through the value layer and available before the outputs that
-    // read it (§5.5); it is not itself serialized as an output
+  bindRoots(roots: RootSpec[], binds: BoundSpec[]): void {
     for (const b of binds) {
       const decl = b.menv.inputs.get(b.name);
       if (!decl) continue;
-      const sc: BindScope = { inst: null, locals: new Map(), rootName: b.name, menv: b.menv };
+      this.helper.bindRoot(
+        b.name,
+        b.raw,
+        b.menv.resolve(decl.type),
+        { inst: null, locals: new Map(), rootName: b.name, menv: b.menv },
+        false,
+      );
+    }
+    for (const o of roots) {
+      if (this.helper.roundRoots && !this.helper.roundRoots.has(o.name)) continue;
+      const rt = o.menv.resolve(o.type);
+      const sc = { inst: null, locals: new Map<string, Value>(), rootName: o.name, menv: o.menv };
+      // Computed roots need the same deferred-root handling as typed inputs.
+      // Their field bodies can still be compiled by the schema/value adapter.
+      if ((o.expr.e !== 'obj' && o.expr.e !== 'arr') || !this.hasRec(rt, new Set())) {
+        this.helper.bindRoot(o.name, o.expr, rt, sc, true);
+        continue;
+      }
+      const cctx: CCtx = {
+        entryEnv: this.env,
+        self: null,
+        rootName: o.name,
+        locals: new Set(),
+        resolveType: (t) => o.menv.resolve(t),
+        menv: o.menv,
+      };
       try {
-        this.env.roots.set(
-          b.name,
-          this.helper.bind(b.raw, b.menv.resolve(decl.type), [b.name], null, sc),
+        const value = this.helper.step(`root:${o.name}`, () =>
+          this.bindValue(o.expr, rt, [o.name], null, cctx, sc)(this.cx, NO_LOCALS),
         );
+        this.env.roots.set(o.name, value);
       } catch (err) {
-        if (err instanceof EvalErr)
-          this.diagnostics.push({
+        if (err instanceof DeferSig)
+          this.helper.deferredRoots.push({ name: o.name, raw: o.expr, rt, sc, viaExpr: true });
+        else if (err instanceof EvalErr)
+          this.env.report({
             severity: 'error',
             message: err.message,
-            path: b.name,
-            code: (err as { code?: string }).code,
+            code: err.code,
+            path: o.name,
           });
         else if (!(err instanceof Taint)) throw err;
       }
     }
-    // bind every root first, then force the universe (as the source pipeline
-    // does), so a reference from one root into another resolves (§9.3). Across
-    // modules every module's outputs are roots, each in its own module scope.
-    const built: { name: string; v: Value }[] = [];
-    for (const o of roots) {
-      try {
-        const menv = o.menv;
-        const rt = menv.resolve(o.type);
-        const cctx: CCtx = {
-          entryEnv: this.env,
-          self: null,
-          rootName: o.name,
-          locals: new Set(),
-          resolveType: (t) => menv.resolve(t),
-          menv,
-        };
-        const sc: BindScope = { inst: null, locals: new Map(), rootName: o.name, menv };
-        const v = this.bindValue(o.expr, rt, [o.name], null, cctx, sc)(this.cx, NO_LOCALS);
-        this.env.roots.set(o.name, v);
-        built.push({ name: o.name, v });
-      } catch (err) {
-        if (err instanceof EvalErr)
-          // a raw evaluation error at an output's root propagates untagged
-          this.diagnostics.push({
-            severity: 'error',
-            message: err.message,
-            path: o.name,
-            code: (err as { code?: string }).code,
-          });
-        else if (err instanceof Taint) {
-          // the value layer already reported the diagnostic to env.diagnostics
-        } else throw err; // Unsupported (or a real bug) bubbles to the caller
-      }
-    }
-    // force every root — the bound inputs and the outputs — as the reference's
-    // phase-1 forceAll does (over env.roots, not the registry); materializing a
-    // root builds and forces the records it reaches, so every candidate instance
-    // of the universe exists, while a dead instance (an input bound more than
-    // once keeps only the last as a root) is left untouched — as the tree walker
-    // leaves it. A candidate's own $referrers member is forced later by
-    // liveEdges. `seen` avoids re-forcing.
-    const seen = new Set<RecInst>();
-    for (const v of this.env.roots.values()) this.materializeValue(v, seen);
-    // A value-layer record (a call/with/union/comprehension result) may carry a
-    // member that reads $referrers; the reference's binder marks such members
-    // deferred and its forceAll leaves them for phase 2. With the universe now
-    // fully built, complete that phase over it, so those members answer against
-    // the whole registry (as the reference's settle does).
-    const eng = this.helper as unknown as {
-      phase: number;
-      deferredSlots: { inst: RecInst; name: string }[];
-      takeSnapshot(edges: Map<string, unknown>): void;
-      forceSlotSafe(inst: RecInst, name: string): void;
-    };
-    if (eng.deferredSlots.length) {
-      eng.phase = 2;
-      eng.takeSnapshot(new Map());
-      for (const d of eng.deferredSlots.splice(0)) eng.forceSlotSafe(d.inst, d.name);
-    }
-    const outputs: { name: string; json: string }[] = [];
-    for (const { name, v } of built) {
-      try {
-        this.materializeValue(v, seen);
-        if (serializeOutputs) outputs.push({ name, json: this.helper.serialize(v, name) });
-      } catch (err) {
-        if (err instanceof EvalErr)
-          this.diagnostics.push({
-            severity: 'error',
-            message: err.message,
-            path: name,
-            code: (err as { code?: string }).code,
-          });
-        else if (err instanceof Taint) {
-          // the value layer already reported the diagnostic to env.diagnostics
-        } else throw err;
-      }
-    }
-    // validate the forced universe (§6): every instance's assertions and
-    // when-blocks, read from the materialized slots by the value layer
-    this.helper.validateAll('');
-    // a single error anywhere suppresses every output (§9.3, as evaluateSource);
-    // assertion diagnostics land on the shared env, the rest on our own list.
-    // Sort them in (path, id) order (§6.7), as the source pipeline does.
-    const diagnostics = sortDiags([...this.diagnostics, ...this.env.diagnostics]);
-    const ok = !diagnostics.some((d) => d.severity === 'error');
-    return { ok, outputs: ok ? outputs : [], diagnostics };
   }
 }
 
-/**
- * Evaluate a universe in rounds (§7.6): each round runs a fresh QEval that
- * answers `$referrers` from the previous round's frozen universe, until the
- * queried edges settle (E5009 if they never do). A universe that never asks
- * `$referrers` queries no edges and settles in one round — the loop is
- * transparent for it. `mkEval` builds a round's QEval and result over the entry
- * env, which is reset between rounds.
- */
+/** The settled values and report of the shared reference-round driver. */
 export interface RoundsResult {
   report: QReport;
   eng: Engine; // the final round's value layer, for serialization by a caller
 }
 function evalRounds(
-  entryEnv: Env,
-  mkEval: (prev: Frozen | null) => { report: QReport; live: Map<string, Edge>; eng: Engine },
+  entry: Env,
+  roots: RootSpec[],
+  binds: BoundSpec[],
+  mods: { env: Env }[],
+  serializeOutputs: boolean,
 ): RoundsResult {
-  let prev: Frozen | null = null;
-  let prevEdges = new Map<string, Edge>();
-  const seen = new Map<string, number>();
-  for (let round = 1; ; round++) {
-    const { report, live, eng } = mkEval(prev);
-    const changed = [...live.keys()]
-      .filter((k) => !edgeEq(live.get(k)!, prevEdges.get(k) ?? new Map()))
-      .sort();
-    const stable = changed.length === 0;
-    // a repeated edge set never settles: report at once, not after the budget
-    const cycled = !stable && seen.has(edgesKey(live));
-    if (stable || cycled || round === ROUNDS) {
-      if (stable) return { report, eng };
-      const e5009 = changed.map((key) => {
-        const [t, m] = key.split('|');
-        return {
-          severity: 'error',
-          message: `$referrers(${t}, "${m}") does not stabilize after ${ROUNDS} rounds`,
-          path: edgeDiff(live.get(key)!, prevEdges.get(key) ?? new Map()),
-          code: 'E5009',
-        };
-      });
-      const diagnostics = sortDiags([...report.diagnostics, ...e5009]);
-      return { report: { ok: false, outputs: [], diagnostics }, eng };
-    }
-    seen.set(edgesKey(live), round);
-    // this round becomes the next round's frozen universe; start over
-    prev = { registry: entryEnv.registry.slice(), edges: live };
-    prevEdges = live;
-    entryEnv.roots.clear();
-    entryEnv.registry.splice(0);
-    entryEnv.diagnostics.length = 0;
-  }
+  const eng = Engine.evaluate(
+    entry,
+    (helper) => {
+      const ev = new QEval(entry, mods, helper);
+      ev.bindRoots(roots, binds);
+    },
+    () => entry.roots.values(),
+    false,
+    true,
+  );
+  eng.validateAll('');
+  const diagnostics = sortDiags(entry.diagnostics.slice());
+  entry.diagnostics.splice(0, entry.diagnostics.length, ...diagnostics);
+  const ok = !diagnostics.some((d) => d.severity === 'error');
+  const outputs =
+    ok && serializeOutputs
+      ? roots
+          .filter((o) => entry.roots.has(o.name))
+          .map((o) => ({ name: o.name, json: eng.serialize(entry.roots.get(o.name), o.name) }))
+      : [];
+  return { eng, report: { ok, outputs, diagnostics } };
 }
 
 /** evaluate a single module's outputs (its own env is the whole universe) */
 export function qevaluate(env: Env): QReport {
-  return evalRounds(env, (prev) => {
-    const ev = new QEval(env, prev);
-    const report = ev.run();
-    return { report, live: ev.liveEdges(), eng: ev.engine() };
-  }).report;
+  return evalRounds(
+    env,
+    env.outputs.map((o) => ({ ...o, menv: env })),
+    [],
+    [],
+    true,
+  ).report;
 }
 
 /**
@@ -1615,9 +1296,5 @@ export function qevaluateUniverse(
     raw: b.raw,
     menv: (b.module ?? entry).env,
   }));
-  return evalRounds(entry.env, (prev) => {
-    const ev = new QEval(entry.env, prev, mods);
-    const report = ev.run(roots, bound, serializeOutputs);
-    return { report, live: ev.liveEdges(), eng: ev.engine() };
-  });
+  return evalRounds(entry.env, roots, bound, mods, serializeOutputs);
 }

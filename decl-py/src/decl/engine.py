@@ -10,6 +10,8 @@ import math
 from collections.abc import Callable
 from typing import Any
 
+from decl.qengine.rounds import RoundCache
+
 from .semantics import (
     ABSENT,
     ArrV,
@@ -161,10 +163,13 @@ class Engine:
         # records what it read: slots, roots, and `$referrers` queries by type
         # (`referrers:Type`); diagnostics carry the step that produced them
         self.reads: dict[str, Any] = {}
-        # dependency tracking is recorded only for a session; a one-shot
-        # evaluate/validate never reads it, so it is off by default — avoiding a
-        # per-slot set allocation that dominates at scale (F21)
+        # Sessions and retained reference rounds enable dependency recording.
+        # Ordinary one-shot work avoids the per-slot graph allocation (F21).
         self.track = False
+        self.round_cache: RoundCache | None = None
+        self.round_roots: set[str] | None = None
+        self.snapshot_value: Any = None
+        self.round_resets: list[Callable[[], None]] = []
         self.computing: list[Any] = []
         self.slots_by_key: dict[str, Any] = {}
         # ---- `$referrers` is answered in rounds (§7.6) ----
@@ -201,20 +206,33 @@ class Engine:
     @staticmethod
     def slot_key(inst: RecInst, name: str) -> str:
         # inst.path is immutable, so path_str is computed once per instance (F21)
+        slot = inst.slots.get(name)
+        if slot is not None and slot.key is not None:
+            return slot.key
         ps = inst._ps
         if ps is None:
             ps = path_str(inst.path)
             inst._ps = ps
-        return f"{ps}.{name}"
+        key = f"{ps}.{name}"
+        if slot is not None:
+            slot.key = key
+        return key
 
     def record(self, read: str) -> None:
         if self.track and self.computing:
-            self.reads[self.computing[-1]].add(read)
+            top = self.computing[-1]
+            deps = self.reads.get(top)
+            if deps is None:
+                deps = self.reads[top] = set()
+            deps.add(read)
 
     def step(self, key: str, f: Any) -> Any:
         self.computing.append(key)
         if self.track:
-            self.reads[key] = set()
+            if self.round_cache:
+                self.reads.pop(key, None)
+            else:
+                self.reads[key] = set()
         try:
             return f()
         finally:
@@ -624,6 +642,8 @@ class Engine:
     # document / fallback): a failing root is reported at its own path and
     # left unset — its demanders are tainted, nothing else is
     def bind_root(self, name: str, raw: Any, rt: dict[str, Any], sc: Scope, via_expr: bool) -> None:
+        if self.round_roots is not None and name not in self.round_roots:
+            return
         try:
             v = self.step(
                 f"root:{name}",
@@ -812,6 +832,10 @@ class Engine:
 
     def deref(self, v: Any) -> Any:
         if isinstance(v, Ref):
+            if self.round_cache and (v.inverse or v.snap):
+                self.record("round:reference")
+                if v.inverse and not v.round_ref:
+                    self.record("round:nested")
             if v.snap is not None and not self.settled:
                 target = v.snap.muted(lambda: v.snap.resolve_segs(v.segs))
             else:
@@ -825,6 +849,7 @@ class Engine:
     # member counts as none — §7.5). Lenient about segment kinds: engine-built
     # paths are canonical by construction
     def resolve_segs(self, segs: list[Any]) -> Any:
+        self.record(f"root:{segs[0]}")
         cur = self.roots_map.get(segs[0], _UNDEF)
         for s0 in segs[1:]:
             if cur is _UNDEF:
@@ -849,6 +874,7 @@ class Engine:
     # bracketed otherwise, an array index numeric — any other spelling does
     # not resolve
     def resolve_canonical(self, segs: list[Any]) -> Any:
+        self.record(f"root:{segs[0]}")
         cur = self.roots_map.get(segs[0], _UNDEF)
         for s in segs[1:]:
             if cur is _UNDEF:
@@ -1122,7 +1148,11 @@ class Engine:
     def referrers(self, type_name: str, member: str, sc: Scope) -> Any:
         if self.phase < 2:
             raise DeferSig()
-        self.record(f"referrers:{type_name}")
+        self.record(
+            f"edge:{type_name}|{member}|{path_str(sc.inst.path)}"
+            if self.round_cache
+            else f"referrers:{type_name}"
+        )
         self_path = sc.inst.path
         key = f"{type_name}|{member}"
         inv = self.ref_index.get(key)
@@ -1144,7 +1174,7 @@ class Engine:
             self.ref_index[key] = inv
         out = list(inv.get(path_str(self_path), []))
         out.sort(key=_segs_key)
-        return ArrV([Ref(p, self.prev) for p in out], [])
+        return ArrV([Ref(p, self.prev, True) for p in out], [])
 
     def snap_edge(self, type_name: str, member: str) -> dict[str, Any]:
         """the edge `T|m` of the snapshot: computed from its instances on first demand"""
@@ -1233,7 +1263,9 @@ class Engine:
             self.env.muted -= 1
 
     @staticmethod
-    def evaluate(env: Env, bind: Callable[[Engine], None], track: bool = False) -> Engine:
+    def evaluate(
+        env: Env, bind: Callable[[Engine], None], track: bool = False, incremental: bool = False
+    ) -> Engine:
         """Evaluate a universe (§7.6, §9.3): `bind` binds every root on a fresh
         engine; the rounds repeat, each answering `$referrers` from the previous
         round, until the queried edges are stable — the settled engine is the
@@ -1245,14 +1277,21 @@ class Engine:
         # once, not after the full round budget; §7.6)
         seen: set[str] = set()
         round_ = 0
+        retained: Engine | None = None
+        incremental = incremental and RoundCache.needed(env)
+        cache = RoundCache() if incremental else None
         while True:
             round_ += 1
-            eng = Engine(env)
-            eng.track = track
+            reusing = retained is not None
+            eng = retained or Engine(env)
+            retained = None
+            eng.round_cache = cache
+            eng.track = track or (incremental and reusing)
             eng.prev = prev
             mark = len(env.diagnostics)
             bind(eng)
             eng.force_all_roots(False)
+            eng.track = eng.track or incremental
             r = eng.settle(edges)
             ekey = _edges_key(r["edges"])
             cycled = not r["stable"] and ekey in seen
@@ -1274,6 +1313,13 @@ class Engine:
                 eng.prev = None
                 return eng
             # the round is the next one's snapshot; the universe starts over
+            snapshot = cache.advance(eng, r["edges"]) if cache else None
+            if snapshot is not None:
+                seen.add(ekey)
+                prev, edges, retained = snapshot, r["edges"], eng
+                continue
+            cache = None
+            incremental = False
             eng.freeze()
             env.roots.clear()
             env.registry.clear()
@@ -1826,15 +1872,27 @@ class Engine:
 
     def force_slot(self, inst: RecInst, name: str) -> Any:
         owner = inst.eng
-        if owner is not None and owner is not self:  # a frozen round's
+        if owner is not None and owner is not self:
+            self.record(f"snapshot:{self.slot_key(inst, name)}")  # a frozen round's
+            if self.round_cache and owner is not self.prev:
+                self.record("round:nested")
             return owner.muted(lambda: owner.force_slot(inst, name))
         s = inst.slots.get(name)
         if s is None:
             raise EvalErr(f"no member {name}")
+        if self.snapshot_value is not None and s.state == "ok":
+            return self.snapshot_value(s.value)
+        if not self.track or not self.computing:
+            if s.state == "ok":
+                return self.round_cache.value(s.value, self.prev) if self.round_cache else s.value
+            if s.state == "absent":
+                return ABSENT
+            if s.state == "invalid":
+                raise Taint()
         key = Engine.slot_key(inst, name)
         self.record(key)
         if s.state == "ok":
-            return s.value
+            return self.round_cache.value(s.value, self.prev) if self.round_cache else s.value
         if s.state == "absent":
             return ABSENT
         if s.state == "invalid":
@@ -1893,24 +1951,29 @@ class Engine:
     def force_const_in(self, env: Env, name: str, root_name: str) -> Any:
         if env not in self.const_envs:
             self.const_envs.append(env)
+        key = f"const:{self.const_envs.index(env)}|{name}" if self.round_cache else None
+        if key:
+            self.record(key)
         c = env.consts[name]
         if c["state"] == "ok":
             return c["value"]
-        c["state"] = "ok"
-        sc = Scope(None, {}, root_name, env)
-        v = self.ev(c["expr"], sc)
-        if isinstance(v, (PreObj, PreArr, JObj)):
-            if c.get("type") is not None:
-                v = self.bind(v, env.resolve(c["type"]), [name], None, sc)
-            else:
-                v = self.materialize(v, [name], None, sc)
-        c["value"] = v
-        return v
+
+        def produce() -> Any:
+            c["state"] = "ok"
+            sc = Scope(None, {}, root_name, env)
+            v = self.ev(c["expr"], sc)
+            if isinstance(v, (PreObj, PreArr, JObj)):
+                if c.get("type") is not None:
+                    v = self.bind(v, env.resolve(c["type"]), [name], None, sc)
+                else:
+                    v = self.materialize(v, [name], None, sc)
+            c["value"] = v
+            return v
+
+        return self.step(key, produce) if key else produce()
 
     # ---------- driving ----------
-    # every root, in insertion order, the roots added while walking (an
-    # input demanded through its fallback) included — the reference walks
-    # its live Map, and a snapshot would skip them in this pass
+    # Every root in insertion order, including roots added while walking.
     def force_all_roots(self, deferred_too: bool) -> None:
         seen = 0
         while True:
@@ -1922,6 +1985,8 @@ class Engine:
 
     def force_all(self, v: Any, deferred_too: bool) -> None:
         if isinstance(v, RecInst):
+            if self.round_cache and v in self.round_cache.clean_records:
+                return
             for n, s in list(v.slots.items()):
                 self.force_slot_safe(v, n)
                 if s.state == "ok":

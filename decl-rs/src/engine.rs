@@ -3,6 +3,7 @@
 //! slots with cycle detection, taint / root-cause diagnostics,
 //! $referrers universe ordering, canonical JSON output.
 use crate::ast::*;
+use crate::qengine::rounds::RoundCache;
 use crate::semantics::*;
 use crate::subsume::subsumes;
 use num_traits::Signed;
@@ -23,7 +24,7 @@ pub struct Engine {
     /// slots whose forcing was deferred to phase 2 (a `$referrers` read, a reference not yet bound)
     pub deferred_slots: RefCell<Vec<(Inst, String)>>,
     no_reg: Cell<u32>,
-    phase: Cell<u8>,
+    pub(crate) phase: Cell<u8>,
     /// inputs whose fallback failed to bind: later demands are tainted, not re-reported
     pub failed_inputs: RefCell<HashSet<String>>,
     // ---- dependency tracking (Phase 6 foundations; docs/tooling/02_repl.md §6) ----
@@ -33,9 +34,8 @@ pub struct Engine {
     // (`referrers:Type`); diagnostics carry the step that produced them
     /// the dependency graph: the slot keys each computation read (the session's incremental step)
     pub reads: RefCell<HashMap<String, HashSet<String>>>,
-    /// dependency tracking is recorded only for a session; a one-shot
-    /// evaluate/validate never reads it, so it is off by default — avoiding a
-    /// per-slot allocation that dominates at scale (F21)
+    /// Sessions and retained reference rounds enable dependency recording.
+    /// Ordinary one-shot work avoids the per-slot graph allocation (F21).
     pub track: Cell<bool>,
     /// the slots being forced, innermost last: a key already here is a cycle (E5007)
     pub computing: RefCell<Vec<String>>,
@@ -51,35 +51,41 @@ pub struct Engine {
     /// the previous round, frozen
     pub prev: RefCell<Option<Rc<Engine>>>,
     /// this round's roots once frozen
-    frozen_roots: RefCell<Option<Vec<(String, Value)>>>,
+    pub(crate) frozen_roots: RefCell<Option<Vec<(String, Value)>>>,
     /// this round's instances once frozen
-    frozen_registry: RefCell<Option<Vec<Inst>>>,
+    pub(crate) frozen_registry: RefCell<Option<Vec<Inst>>>,
     /// the frozen instances by address: what `force_slot` delegates to this round
-    frozen_set: RefCell<FxHashSet<usize>>,
+    pub(crate) frozen_set: RefCell<FxHashSet<usize>>,
     /// the last round: a reference into the snapshot resolves live
     settled: Cell<bool>,
     /// the snapshot a round answers from
-    snap: RefCell<Option<Snap>>,
+    pub(crate) snap: RefCell<Option<Snap>>,
     /// the edges `T|m` queried so far
-    queried: RefCell<BTreeSet<String>>,
+    pub(crate) queried: RefCell<BTreeSet<String>>,
     /// an inverse index of each edge, `T|m` -> (target path -> its referrers'
     /// paths): built once from the edge so a `$referrers` query is a lookup,
     /// not a scan of every candidate's refs (§7.6). Fresh per round.
-    ref_index: RefCell<FxHashMap<String, Rc<FxHashMap<String, Vec<SegPath>>>>>,
+    pub(crate) ref_index: RefCell<FxHashMap<String, Rc<FxHashMap<String, Vec<SegPath>>>>>,
     /// the edges being computed: a query for one of them from inside its own
     /// computation is unanswerable in this round (the member is excluded)
-    computing_edges: RefCell<HashSet<String>>,
+    pub(crate) computing_edges: RefCell<HashSet<String>>,
     /// the depth of the forcing stack when each edge computation began: a
     /// slot forcing below that depth waits on the answer the edge serves
-    edge_bases: RefCell<Vec<usize>>,
+    pub(crate) edge_bases: RefCell<Vec<usize>>,
     /// the environments whose constants this engine forced
-    const_envs: RefCell<Vec<Rc<Env>>>,
+    pub(crate) const_envs: RefCell<Vec<Rc<Env>>>,
     /// the answers' references into the previous round, by identity
-    snap_refs: RefCell<FxHashMap<usize, (Rc<SegPath>, Rc<Engine>)>>,
+    pub(crate) snap_refs: RefCell<FxHashMap<usize, (Rc<SegPath>, Rc<Engine>)>>,
     /// an unmaterialized literal read as a value is materialized once (by identity; the literal is
     /// kept alive): its elements are pure, and a chain of spreads (a fold accumulating an array)
     /// would otherwise re-evaluate every level at every read
     mat_cache: RefCell<FxHashMap<usize, (Value, Value)>>,
+    /// Reference-round reuse state, enabled by the query evaluator.
+    pub round_cache: RefCell<Option<Rc<RoundCache>>>,
+    pub(crate) round_roots: RefCell<Option<HashSet<String>>>,
+    pub(crate) round_resets: RefCell<Vec<Rc<dyn Fn()>>>,
+    pub(crate) round_refs: RefCell<FxHashMap<usize, Rc<SegPath>>>,
+    pub(crate) inverse_refs: RefCell<FxHashMap<usize, Rc<SegPath>>>,
 }
 
 /// the values `std.array.sort` orders: one primitive kind per call (§13.2)
@@ -119,11 +125,11 @@ fn sort_keyed(keyed: &mut [(Value, Value)]) -> R<()> {
     }
 }
 /// one `$referrers` edge: every referrer's path (keyed by its text) with the places its member refers to
-type Edge = BTreeMap<String, (SegPath, Vec<SegPath>)>;
+pub(crate) type Edge = BTreeMap<String, (SegPath, Vec<SegPath>)>;
 /// the universe a round answers from
 pub struct Snap {
     insts: HashMap<String, Vec<Inst>>,
-    edges: HashMap<String, Edge>,
+    pub(crate) edges: HashMap<String, Edge>,
 }
 /// what one round found: whether the queried edges were stable, and what they are
 pub struct Settled {
@@ -399,6 +405,11 @@ impl Engine {
             const_envs: RefCell::new(vec![]),
             snap_refs: RefCell::new(FxHashMap::default()),
             mat_cache: RefCell::new(FxHashMap::default()),
+            round_cache: RefCell::new(None),
+            round_roots: RefCell::new(None),
+            round_resets: RefCell::new(Vec::new()),
+            round_refs: RefCell::new(FxHashMap::default()),
+            inverse_refs: RefCell::new(FxHashMap::default()),
         });
         let w = Rc::downgrade(&eng);
         *env.tagger.borrow_mut() = Some(Rc::new(move || {
@@ -442,9 +453,13 @@ impl Engine {
     pub fn step<T>(&self, key: &str, f: impl FnOnce() -> T) -> T {
         self.computing.borrow_mut().push(key.to_string());
         if self.track.get() {
-            self.reads
-                .borrow_mut()
-                .insert(key.to_string(), HashSet::new());
+            if self.round_cache.borrow().is_some() {
+                self.reads.borrow_mut().remove(key);
+            } else {
+                self.reads
+                    .borrow_mut()
+                    .insert(key.to_string(), HashSet::new());
+            }
         }
         let r = f();
         self.computing.borrow_mut().pop();
@@ -959,7 +974,18 @@ impl Engine {
     // document / fallback): a failing root is reported at its own path and
     // left unset — its demanders are tainted, nothing else is
     /// Bind a root — an output's expression or an input's document — to its declared type (§9.2).
+    /// Whether this root needs binding in the retained round.
+    pub fn should_bind_root(&self, name: &str) -> bool {
+        self.round_roots
+            .borrow()
+            .as_ref()
+            .is_none_or(|roots| roots.contains(name))
+    }
+    /// Bind a root, retaining its source when it must defer to phase two.
     pub fn bind_root(&self, name: &str, src: RootSrc, rt: &RT, sc: &Scope) {
+        if !self.should_bind_root(name) {
+            return;
+        }
         let keep = match &src {
             RootSrc::Expr(e) => OwnedRootSrc::Expr((*e).clone()),
             RootSrc::Doc(v) => OwnedRootSrc::Doc(v.clone()),
@@ -1279,9 +1305,48 @@ impl Engine {
         }
     }
 
+    // A frozen member may return references into an even older snapshot.
+    // Carry their owners into the caller before it navigates those values.
+    fn inherit_snapshot_refs(&self, value: &Value, owner: &Engine) {
+        match value {
+            Value::Ref(p) => {
+                let key = Rc::as_ptr(p) as usize;
+                if let Some(entry) = owner.snap_refs.borrow().get(&key) {
+                    self.snap_refs.borrow_mut().insert(key, entry.clone());
+                }
+                if let Some(path) = owner.inverse_refs.borrow().get(&key) {
+                    self.inverse_refs.borrow_mut().insert(key, path.clone());
+                }
+            }
+            Value::Arr(a) => {
+                for v in &a.borrow().items {
+                    self.inherit_snapshot_refs(v, owner);
+                }
+            }
+            Value::Map(m) => {
+                for (_, v) in m.borrow().entries.iter() {
+                    self.inherit_snapshot_refs(v, owner);
+                }
+            }
+            _ => {}
+        }
+    }
+
     /// Read through a reference to the value it names (§7.4).
     pub fn deref(&self, v: Value) -> R<Value> {
         if let Value::Ref(p) = &v {
+            let key = Rc::as_ptr(p) as usize;
+            if self.round_cache.borrow().is_some()
+                && (self.inverse_refs.borrow().contains_key(&key)
+                    || self.snap_refs.borrow().contains_key(&key))
+            {
+                self.record("round:reference".into());
+                if self.inverse_refs.borrow().contains_key(&key)
+                    && !self.round_refs.borrow().contains_key(&key)
+                {
+                    self.record("round:nested".into());
+                }
+            }
             let snap = if self.settled.get() {
                 None
             } else {
@@ -1307,6 +1372,9 @@ impl Engine {
     // paths are canonical by construction
     /// The value at a canonical path from a root (§7.2), forcing what the path crosses.
     pub fn resolve_segs(&self, segs: &[Seg]) -> R<Value> {
+        if let Some(Seg::Name(name)) = segs.first() {
+            self.record(format!("root:{name}"));
+        }
         let mut cur = match segs.first() {
             Some(Seg::Name(n)) => self.root(n).unwrap_or(Value::Undef),
             _ => Value::Undef,
@@ -1989,11 +2057,16 @@ impl Engine {
         if self.phase.get() < 2 {
             return Err(Fail::Defer);
         }
-        self.record(format!("referrers:{type_name}"));
+
         let Some(self_inst) = &sc.inst else {
             return err("$referrers outside a record");
         };
         let target = self_inst.borrow().path.clone();
+        self.record(if self.round_cache.borrow().is_some() {
+            format!("edge:{type_name}|{member}|{}", path_str(&target, None))
+        } else {
+            format!("referrers:{type_name}")
+        });
         let key = format!("{type_name}|{member}");
         let inv = {
             let cached = self.ref_index.borrow().get(&key).cloned();
@@ -2032,6 +2105,14 @@ impl Engine {
             .into_iter()
             .map(|p| {
                 let rc = Rc::new(p);
+                if self.round_cache.borrow().is_some() {
+                    self.round_refs
+                        .borrow_mut()
+                        .insert(Rc::as_ptr(&rc) as usize, rc.clone());
+                    self.inverse_refs
+                        .borrow_mut()
+                        .insert(Rc::as_ptr(&rc) as usize, rc.clone());
+                }
                 if let Some(e) = &prev {
                     self.snap_refs
                         .borrow_mut()
@@ -2170,7 +2251,7 @@ impl Engine {
         *self.frozen_registry.borrow_mut() = Some(registry);
     }
     /// the frozen round that owns an instance, if it is not this engine's
-    fn owner_of(&self, inst: &Inst) -> Option<Rc<Engine>> {
+    pub(crate) fn owner_of(&self, inst: &Inst) -> Option<Rc<Engine>> {
         let prev = self.prev.borrow().clone()?;
         if prev
             .frozen_set
@@ -2193,6 +2274,18 @@ impl Engine {
     /// round, until the queried edges are stable — the settled engine is the
     /// result. A universe still changing after `ROUNDS` rounds is E5009.
     pub fn evaluate(env: &Rc<Env>, bind: &dyn Fn(&Rc<Engine>), track: bool) -> Rc<Engine> {
+        Self::evaluate_rounds(env, bind, track, false)
+    }
+    /// Evaluate with retained member, structure and reference dependencies.
+    pub fn evaluate_query(env: &Rc<Env>, bind: &dyn Fn(&Rc<Engine>)) -> Rc<Engine> {
+        Self::evaluate_rounds(env, bind, false, true)
+    }
+    fn evaluate_rounds(
+        env: &Rc<Env>,
+        bind: &dyn Fn(&Rc<Engine>),
+        track: bool,
+        incremental: bool,
+    ) -> Rc<Engine> {
         let mut prev: Option<Rc<Engine>> = None;
         let mut edges: HashMap<String, Edge> = HashMap::new();
         // the queried edges each round have been seen before (rounds are
@@ -2200,14 +2293,20 @@ impl Engine {
         // once, not after the full round budget; §7.6)
         let mut seen: HashSet<String> = HashSet::new();
         let mut round = 0;
+        let mut retained: Option<Rc<Engine>> = None;
+        let mut incremental = incremental && RoundCache::needed(env);
+        let mut cache = incremental.then(|| Rc::new(RoundCache::default()));
         loop {
             round += 1;
-            let eng = Engine::new(env.clone());
-            eng.track.set(track);
+            let reusing = retained.is_some();
+            let eng = retained.take().unwrap_or_else(|| Engine::new(env.clone()));
+            *eng.round_cache.borrow_mut() = cache.clone();
+            eng.track.set(track || (incremental && reusing));
             *eng.prev.borrow_mut() = prev.clone();
             let mark = env.diag_len();
             bind(&eng);
             eng.force_roots(env);
+            eng.track.set(eng.track.get() || incremental);
             let r = eng.settle(env, edges);
             let ekey = edges_key(&r.edges);
             let cycled = !r.stable && seen.contains(&ekey);
@@ -2233,6 +2332,15 @@ impl Engine {
                 return eng;
             }
             // the round is the next one's snapshot; the universe starts over
+            if let Some(snapshot) = cache.as_ref().and_then(|c| c.advance(&eng, &r.edges)) {
+                seen.insert(ekey);
+                prev = Some(snapshot);
+                edges = r.edges;
+                retained = Some(eng);
+                continue;
+            }
+            cache = None;
+            incremental = false;
             eng.freeze();
             env.roots_clear();
             env.registry_clear();
@@ -3282,7 +3390,19 @@ impl Engine {
     /// dependency tracking (§9.3).
     pub fn force_slot(&self, inst: &Inst, name: &str) -> R<Value> {
         if let Some(owner) = self.owner_of(inst) {
-            return owner.muted(|| owner.force_slot(inst, name)); // a frozen round's
+            self.record(format!("snapshot:{}", Self::slot_key(inst, name)));
+            if self.round_cache.borrow().is_some()
+                && self
+                    .prev
+                    .borrow()
+                    .as_ref()
+                    .is_none_or(|p| !Rc::ptr_eq(p, &owner))
+            {
+                self.record("round:nested".into());
+            }
+            let value = owner.muted(|| owner.force_slot(inst, name))?;
+            self.inherit_snapshot_refs(&value, &owner);
+            return Ok(value);
         }
         let (state, compute) = {
             let b = inst.borrow();
@@ -3294,11 +3414,17 @@ impl Engine {
         // the slot key is a per-force string allocation; a one-shot evaluate
         // never reads the dependency graph, so build it only when tracking or
         // when the slot is actually forced (past the cached early returns) (F21)
-        if self.track.get() {
+        if self.track.get() && !self.computing.borrow().is_empty() {
             self.record(Engine::slot_key(inst, name));
         }
         match state {
-            SlotState::Ok => return Ok(inst.borrow().slot(name).unwrap().value.clone()),
+            SlotState::Ok => {
+                let v = inst.borrow().slot(name).unwrap().value.clone();
+                return Ok(match self.round_cache.borrow().as_ref() {
+                    Some(c) => c.value(&v, self),
+                    None => v,
+                });
+            }
             SlotState::Absent => return Ok(Value::Absent),
             SlotState::Invalid => return Err(Fail::Taint),
             _ => {}
@@ -3387,6 +3513,18 @@ impl Engine {
         if !self.const_envs.borrow().iter().any(|e| Rc::ptr_eq(e, env)) {
             self.const_envs.borrow_mut().push(env.clone());
         }
+        let key = self.round_cache.borrow().as_ref().map(|_| {
+            let index = self
+                .const_envs
+                .borrow()
+                .iter()
+                .position(|e| Rc::ptr_eq(e, env))
+                .unwrap();
+            format!("const:{index}|{name}")
+        });
+        if let Some(key) = &key {
+            self.record(key.clone());
+        }
         let c = env.consts.borrow().get(name).cloned();
         let Some(c) = c else {
             return err(format!("unknown constant {name}"));
@@ -3394,20 +3532,26 @@ impl Engine {
         if c.state.get() {
             return Ok(c.value.borrow().clone());
         }
-        c.state.set(true);
-        let sc = Scope::new(root_name, Some(env.clone()));
-        let mut v = self.ev(&c.expr, &sc)?;
-        if matches!(v, Value::PreObj(_) | Value::PreArr(_) | Value::JObj(_)) {
-            v = match &c.ty {
-                Some(t) => {
-                    let rt = env.resolve(t, None).or_else(err)?;
-                    self.bind(v, &rt, &[Seg::Name(Rc::from(name.to_string()))], None, &sc)?
-                }
-                None => self.materialize(v, &[Seg::Name(Rc::from(name.to_string()))])?,
-            };
+        let produce = || {
+            c.state.set(true);
+            let sc = Scope::new(root_name, Some(env.clone()));
+            let mut v = self.ev(&c.expr, &sc)?;
+            if matches!(v, Value::PreObj(_) | Value::PreArr(_) | Value::JObj(_)) {
+                v = match &c.ty {
+                    Some(t) => {
+                        let rt = env.resolve(t, None).or_else(err)?;
+                        self.bind(v, &rt, &[Seg::Name(Rc::from(name.to_string()))], None, &sc)?
+                    }
+                    None => self.materialize(v, &[Seg::Name(Rc::from(name.to_string()))])?,
+                };
+            }
+            *c.value.borrow_mut() = v.clone();
+            Ok(v)
+        };
+        match key {
+            Some(key) => self.step(&key, produce),
+            None => produce(),
         }
-        *c.value.borrow_mut() = v.clone();
-        Ok(v)
     }
 
     // ---------- driving ----------
@@ -3415,6 +3559,14 @@ impl Engine {
     pub fn force_all(&self, v: &Value) {
         match v {
             Value::Rec(r) => {
+                if self
+                    .round_cache
+                    .borrow()
+                    .as_ref()
+                    .is_some_and(|c| c.clean(r))
+                {
+                    return;
+                }
                 let names: Vec<String> = r.borrow().slots.iter().map(|(n, _)| n.clone()).collect();
                 for n in names {
                     self.force_slot_safe(r, &n);

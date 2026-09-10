@@ -710,6 +710,7 @@ fn compile(e: &Rc<Expr>, c: &CCtx) -> Result<Op, Unsupported> {
                 if nm == "std" {
                     return Ok(Value::Std(Rc::new(vec![])));
                 }
+                q.helper.record(format!("root:{nm}"));
                 if let Some(v) = q.helper.root(&nm) {
                     return Ok(v);
                 }
@@ -1066,9 +1067,12 @@ impl QEval {
                 let q = w.upgrade().expect("qeval alive");
                 let op = q.op_for(key)?;
                 let w2 = w.clone();
+                let key = key.to_string();
                 let compute: crate::qengine::db::Compute = Box::new(move |_db: &Db| {
                     let q = w2.upgrade().expect("qeval alive");
-                    op(&q, &Locals::default()).map_err(DbErr::Fail)
+                    q.helper
+                        .step(&key, || op(&q, &Locals::default()))
+                        .map_err(DbErr::Fail)
                 });
                 Some(compute)
             }));
@@ -1092,7 +1096,7 @@ impl QEval {
             // The value-layer slot already memoizes its value, detects cycles,
             // and handles deferral/taint. Invoke its compiled body directly:
             // a second string-keyed memo would store the same value twice and
-            // collect dependencies that this one-round evaluator never reuses.
+            // duplicate the dependency graph already held by the engine.
             let q = w.upgrade().expect("qeval alive");
             // Release the arena borrow before executing: binding a nested
             // record can append more bodies to the same arena.
@@ -1570,6 +1574,7 @@ impl QEval {
 
     /// read a query's value, translating the core's cycle into an E5007 error
     fn query(&self, key: &str) -> R<Value> {
+        self.helper.record(key.to_string());
         match self.db.query(key) {
             Ok(v) => Ok(v),
             Err(DbErr::Fail(f)) => Err(f),
@@ -1589,6 +1594,9 @@ impl QEval {
     /// unhandled form trips `unsupported`, so the caller falls back.
     fn bind_roots(self: &Rc<Self>, roots: &[RootSpec], unsupported: &Cell<bool>) {
         for (name, tyast, expr, menv) in roots {
+            if !self.helper.should_bind_root(name) {
+                continue;
+            }
             let rt = match menv.resolve(tyast, None) {
                 Ok(rt) => rt,
                 Err(_) => continue, // a type that does not resolve: the checker's domain
@@ -1604,7 +1612,10 @@ impl QEval {
                 };
                 let path = vec![Seg::Name(name.as_str().into())];
                 match self.bind_value(expr, &rt, path, None, &c) {
-                    Ok(op) => match op(self, &Locals::default()) {
+                    Ok(op) => match self
+                        .helper
+                        .step(&format!("root:{name}"), || op(self, &Locals::default()))
+                    {
                         Ok(v) => self.env.set_root(name, v),
                         Err(Fail::Eval(e)) if e.code.as_deref() == Some(QUNSUP) => {
                             unsupported.set(true)
@@ -1618,6 +1629,14 @@ impl QEval {
                             loc: None,
                             by: None,
                         }),
+                        Err(Fail::Defer) => self.helper.deferred_roots.borrow_mut().push(
+                            crate::engine::DeferredRoot {
+                                name: name.clone(),
+                                src: crate::engine::OwnedRootSrc::Expr(expr.clone()),
+                                rt: rt.clone(),
+                                sc: Scope::new(name, Some(menv.clone())),
+                            },
+                        ),
                         Err(_) => {} // Taint: the value layer already reported it
                     },
                     Err(_) => unsupported.set(true),
@@ -1726,6 +1745,12 @@ fn eval_rounds(
     let bind = |eng: &Rc<Engine>| {
         let ev = QEval::with_engine(entry.clone(), eng.clone());
         holder.borrow_mut().push(ev.clone());
+        let weak = Rc::downgrade(&ev);
+        eng.round_resets.borrow_mut().push(Rc::new(move || {
+            if let Some(ev) = weak.upgrade() {
+                ev.db.clear();
+            }
+        }));
         for m in hook_mods {
             eng.install_hooks(m, true);
         }
@@ -1742,7 +1767,7 @@ fn eval_rounds(
         }
         ev.bind_roots(roots, &unsupported);
     };
-    let eng = Engine::evaluate(entry, &bind, false);
+    let eng = Engine::evaluate_query(entry, &bind);
     eng.validate_all("");
     let diags = sort_diags(entry.diagnostics_vec()); // §6.7
     entry.diag_set(diags.clone());

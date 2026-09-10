@@ -61,6 +61,11 @@
   },
   {
     "module": "engine",
+    "name": "reference_round_reuse",
+    "check": "The shared reference-round cases (rounds.json) match fresh evaluation in outputs and diagnostics; structural additions/removals retain unchanged records across at least three transitions."
+  },
+  {
+    "module": "engine",
     "name": "values",
     "check": "`3km / 2s` under `dimension Speed = Length / Time`, `unit mps: Speed` evaluates to a quantity of dimension Length*Time^-1 and value 1500; a record's references serialize document-relative (`$.services[0]`) and `$referrers` lists the referring links (`$.links[0]`)"
   },

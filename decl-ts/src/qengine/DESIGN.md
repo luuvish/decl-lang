@@ -7,14 +7,62 @@ error instead of falling back. Differential tests explicitly select the tree
 walker as their oracle; using the default source pipeline on both sides would
 compare the query engine with itself.
 
-The current implementation is a compiled evaluation layer over the existing
-value model. Each `$referrers` round creates a fresh evaluator. `Db` implements
-revision-based memoization, but the language layer does **not** yet preserve
-that database across rounds or session edits. `Session` still uses `Engine`
-and its existing dependency tracking. The persistent edit model below is a
-design target, not a delivered execution path.
+The implementation compiles expressions over the existing value model and
+retains eligible universes across `$referrers` rounds. `RoundCache` and the
+Engine dependency graph use member slots as their single value cache. The
+standalone `Db` still memoizes constants; its revisions are **not** the mechanism
+that retains the language universe. Its context-dependent memo is cleared
+before a retained round advances. `Session` remains on its existing engine;
+retention across arbitrary edits is still a design target.
 
-The Rust batch path stores compiled bodies in a round-owned arena; a record
+## Delivered: retained reference rounds
+
+All three implementations share these rules:
+
+- A dependency records a member read (including cache hits and absent optionals),
+  a root read, a constant read, an inverse-reference answer for one target, or a
+  member read from the previous round's frozen universe.
+- At a round boundary, compare observed inverse-reference answers, including
+  empty answers. An unchanged target avoids invalidation even when another
+  target of the same relationship changes. Compare observed frozen member
+  values and container shapes with the next snapshot; ordinary scalar reads
+  survive when those inputs are unchanged. Track inverse-reference origin
+  independently of whether a reference can be rebased. A calculation that
+  forwards inverse references or frozen record views, or navigates a deeper
+  snapshot, must recompute on each transition even if its paths match. This
+  preserves nested snapshot depth without invalidating every reference reader.
+- A root or member owns the records it constructs beneath its canonical path.
+  Invalidating that producer removes its registered descendants and their
+  dependency entries before rebinding. Unaffected records and slot values stay
+  live. Clean record subtrees do not need another `forceAll` walk.
+- A frozen read observes the previous universe. A retained referrer value is
+  rebased to that universe before reuse. TypeScript and Python share frozen
+  slot maps and replace live slots with copy-on-write; container/record reads
+  resolve through the frozen owner. Rust copies owned snapshot slots, gives
+  frozen inverse references separate identities, and carries reference owners
+  from frozen member results into the caller. Snapshots do not build an unused
+  field-key index.
+- The initial materialization phase cannot successfully read a reference answer:
+  it must defer. Dependency capture starts at settlement, then covers both
+  phases of every reused round. Programs without reference queries skip it.
+  Dependency sets allocate only on the first read; cached field identities and
+  unobserved cache-hit paths avoid repeated key construction.
+- Diagnostics, unfinished slots, duplicate paths, context-bearing snapshot
+  values, invalidated constants, and a root replacement that would reorder
+  retained roots switch to fresh-round evaluation for all remaining rounds.
+  Final validation still runs over
+  the whole result. Incremental diagnostics and result-level early cutoff are
+  not delivered by this path.
+
+Rounds keep their existing language meaning and stability test. This removes
+reconstruction where reuse is proven; it does not remove the fixed-point check.
+`tests/internal/rounds.json` exercises additions, removals, computed roots,
+constant aliases, nested snapshot references, and unstable/cyclic references
+against fresh evaluation.
+The structural case also requires at least three reused transitions and
+retained records, so fallback cannot make that test pass by itself.
+
+The Rust batch path stores compiled bodies in an evaluator-owned arena; a record
 slot addresses its body by an integer handle and a weak evaluator reference.
 The slot already memoizes its value and handles cycles, deferral, and taint;
 it does not need a second string-keyed memo of the same value. The arena also
@@ -40,9 +88,9 @@ warms both paths, and reports medians. Parsing and static checking are excluded.
 
 ## Why
 
-The tree walker dispatches over the expression AST on every force. Each
-`$referrers` round then constructs a new universe and repeats pure work as well
-as reference-dependent work. The current query layer compiles literal record
+The tree walker dispatches over the expression AST on every force. Its fresh-round driver constructs a new universe and repeats pure work as
+well as reference-dependent work. The retained path removes that repetition
+for eligible rounds. The current query layer compiles literal record
 slots, but document binding and records produced by other expressions still
 use the value layer's evaluator. Compiling a closure per instance and attaching
 a second memo does not by itself remove either shared cost.
@@ -96,14 +144,14 @@ query(q):
 both the result (a recompute that yields the same value does not bump changedRev)
 and the verify (unchanged deps skip recompute).
 
-### 3. Rounds as revisions (§7.6)
+### 3. Fully derived rounds as revisions (§7.6; future extension)
 `$referrers` answers from the previous round's universe. Map "round" to a
 revision: round N answers `edge(T,m)` at revision N-1's values. The `edge` query
 depends on the `member` slot of every candidate; when those change, the edge's
 changedRev bumps, and dependents recompute — but only them (early cutoff keeps
 the pure majority). A universe still changing after ROUNDS is E5009, detected by
-the edge queries' changedRev never settling. This is the incremental round done
-right: the memo/revision is the mechanism, not a bolted-on reset+sweep.
+the edge queries' changedRev never settling. This would extend the delivered dependency invalidation with revision
+verification and result-level early cutoff.
 
 Structure that depends on referrers (a node/link exists only for a certain
 answer) is handled because the queries that *produce* structure (a container's
@@ -164,9 +212,10 @@ input at a new revision.
 ## Remaining structural work
 
 Compile schema programs once independently of record identity, and pass the
-instance and lexical frame at execution time. Then represent supplied values,
-container membership, and frozen reference edges as explicit inputs before
-retaining memo entries across revisions. A cached answer must account for
+instance and lexical frame at execution time. The delivered round cache uses
+producer ownership and dependency invalidation. Extending it to arbitrary
+edits requires independently versioned supplied values, container membership,
+and frozen reference edges, with result-level early cutoff. A cached answer must account for
 every input it reads, including validation and failed or absent reads; a stable
 path alone does not prove that the value at that path is unchanged.
 

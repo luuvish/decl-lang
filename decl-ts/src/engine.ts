@@ -30,6 +30,7 @@ import {
 import type { RecInst, RT, Seg, Slot, Value } from './semantics.ts';
 import type { Expr } from './ast.ts';
 import { subsumes } from './subsume.ts';
+import { RoundCache } from './qengine/rounds.ts';
 
 type Scope = { inst: RecInst | null; locals: Map<string, any>; rootName: string; menv?: Env };
 /** the values `std.array.sort` orders: one primitive kind per call (§13.2) */
@@ -131,25 +132,36 @@ export class Engine {
   // records what it read: slots, roots, and `$referrers` queries by type
   // (`referrers:Type`); diagnostics carry the step that produced them
   reads = new Map<string, Set<string>>();
-  // dependency tracking is recorded only for a session (incremental recompute,
-  // §6); a one-shot evaluate/validate never reads it, so it is off by default —
-  // avoiding a per-slot Set allocation that dominates GC at scale (F21)
+  // Sessions and retained reference rounds enable dependency recording.
+  // Ordinary one-shot work avoids the per-slot graph allocation (F21).
   track = false;
+  /** Incremental reference rounds share the value cache and dependency graph. */
+  roundCache: RoundCache | null = null;
+  roundRoots: Set<string> | null = null;
+  snapshotValue: ((v: Value) => Value) | null = null;
+  readonly roundResets: (() => void)[] = [];
   computing: string[] = [];
   slotsByKey = new Map<string, { inst: RecInst; name: string }>();
   static slotKey(inst: RecInst, name: string): string {
     // inst.path is immutable, so pathStr is computed once per instance (F21)
+    const slot = inst.slots.get(name);
+    if (slot?.key !== undefined) return slot.key;
     const ps = inst._ps ?? (inst._ps = pathStr(inst.path));
-    return `${ps}.${name}`;
+    const key = `${ps}.${name}`;
+    if (slot) slot.key = key;
+    return key;
   }
   record(read: string) {
     if (!this.track) return;
     const top = this.computing[this.computing.length - 1];
-    if (top) this.reads.get(top)?.add(read);
+    if (top) (this.reads.get(top) ?? this.reads.set(top, new Set()).get(top)!).add(read);
   }
   step<T>(key: string, f: () => T): T {
     this.computing.push(key);
-    if (this.track) this.reads.set(key, new Set());
+    if (this.track) {
+      if (this.roundCache) this.reads.delete(key);
+      else this.reads.set(key, new Set());
+    }
     try {
       return f();
     } finally {
@@ -588,6 +600,7 @@ export class Engine {
   // document / fallback): a failing root is reported at its own path and
   // left unset — its demanders are tainted, nothing else is
   bindRoot(name: string, raw: any, rt: RT, sc: Scope, viaExpr: boolean) {
+    if (this.roundRoots && !this.roundRoots.has(name)) return;
     try {
       const v = this.step(`root:${name}`, () =>
         viaExpr
@@ -774,6 +787,10 @@ export class Engine {
   }
   deref(v: any): any {
     if (isRef(v)) {
+      if (this.roundCache && (v.inverseRef || v.snap)) {
+        this.record('round:reference');
+        if (v.inverseRef && !v.roundRef) this.record('round:nested');
+      }
       const target =
         v.snap && !this.settled
           ? (v.snap as Engine).muted(() => (v.snap as Engine).resolveSegs(v.segs))
@@ -787,6 +804,7 @@ export class Engine {
   // member counts as none — §7.5). Lenient about segment kinds: engine-built
   // paths are canonical by construction
   resolveSegs(segs: Seg[]): any {
+    this.record(`root:${segText(segs[0])}`);
     let cur: any = this.rootsMap.get(segs[0] as string);
     for (let i = 1; i < segs.length && cur !== undefined; i++) {
       const s = segText(segs[i]);
@@ -805,6 +823,7 @@ export class Engine {
   // bracketed otherwise, an array index numeric — any other spelling does
   // not resolve
   resolveCanonical(segs: Seg[]): any {
+    this.record(`root:${segText(segs[0])}`);
     let cur: any = this.rootsMap.get(segs[0] as string);
     for (let i = 1; i < segs.length && cur !== undefined; i++) {
       const s = segs[i];
@@ -1081,7 +1100,11 @@ export class Engine {
   // ---------- referrers ----------
   referrers(typeName: string, member: string, sc: Scope): any {
     if (this.phase < 2) throw new DeferSig(); // universe not fully materialized yet
-    this.record(`referrers:${typeName}`);
+    this.record(
+      this.roundCache
+        ? `edge:${typeName}|${member}|${pathStr(sc.inst!.path)}`
+        : `referrers:${typeName}`,
+    );
     const self = sc.inst!;
     const key = `${typeName}|${member}`;
     let inv = this.refIndex.get(key);
@@ -1107,9 +1130,13 @@ export class Engine {
     }
     const out = (inv.get(pathStr(self.path)) ?? []).slice();
     out.sort(cmpPath);
-    const items = out.map((p) =>
-      this.prev ? { __ref: true, segs: p, snap: this.prev } : { __ref: true, segs: p },
-    );
+    const items = out.map((p) => ({
+      __ref: true,
+      segs: p,
+      snap: this.prev,
+      roundRef: true,
+      inverseRef: true,
+    }));
     return { __arr: true, items, path: [] };
   }
   /** the edge `T|m` of the snapshot: computed from its instances on first demand */
@@ -1206,6 +1233,7 @@ export class Engine {
     bind: (eng: Engine) => void,
     roots: () => Iterable<any>,
     track = false,
+    incremental = false,
   ): Engine {
     let prev: Engine | null = null;
     let edges = new Map<string, Edge>();
@@ -1213,13 +1241,23 @@ export class Engine {
     // deterministic, so a repeat is a cycle that never settles — report at
     // once, not after the full round budget; §7.6)
     const seen = new Map<string, number>();
+    let retained: Engine | null = null;
+    incremental &&= RoundCache.needed(env);
+    let cache = incremental ? new RoundCache() : null;
     for (let round = 1; ; round++) {
-      const eng = new Engine(env);
-      eng.track = track;
+      const reusing = retained !== null;
+      const eng: Engine = retained ?? new Engine(env);
+      retained = null;
+      eng.roundCache = cache;
+      // A successful initial phase cannot observe a reference answer: it
+      // would defer. Capture dependencies from the settle phase onward. A
+      // reused universe can read cached answers even during phase 1.
+      eng.track = track || (incremental && reusing);
       eng.prev = prev;
       const mark = env.diagnostics.length;
       bind(eng);
       for (const v of roots()) eng.forceAll(v, false);
+      eng.track ||= incremental;
       const r = eng.settle(roots, edges);
       const cycled = !r.stable && seen.has(edgesKey(r.edges));
       if (r.stable || cycled || round === Engine.ROUNDS) {
@@ -1239,6 +1277,15 @@ export class Engine {
       }
       // the round is the next one's snapshot; the universe starts over
       seen.set(edgesKey(r.edges), round);
+      const snapshot = cache?.advance(eng, r.edges);
+      if (snapshot) {
+        prev = snapshot;
+        edges = r.edges;
+        retained = eng;
+        continue;
+      }
+      cache = null;
+      incremental = false;
       eng.freeze();
       env.roots.clear();
       env.registry.splice(0);
@@ -1803,12 +1850,24 @@ export class Engine {
   }
   forceSlot(inst: RecInst, name: string): any {
     const owner: Engine = (inst as any).eng;
-    if (owner && owner !== this) return owner.muted(() => owner.forceSlot(inst, name)); // a frozen round's
+    if (owner && owner !== this) {
+      this.record(`snapshot:${Engine.slotKey(inst, name)}`);
+      if (this.roundCache && owner !== this.prev) this.record('round:nested');
+      return owner.muted(() => owner.forceSlot(inst, name));
+    } // a frozen round's
     const s = inst.slots.get(name);
     if (!s) throw new EvalErr(`no member ${name}`);
+    if (this.snapshotValue && s.state === 'ok') return this.snapshotValue(s.value);
+    if (!this.track || this.computing.length === 0) {
+      if (s.state === 'ok')
+        return this.roundCache ? this.roundCache.value(s.value, this.prev) : s.value;
+      if (s.state === 'absent') return ABSENT;
+      if (s.state === 'invalid') throw new Taint();
+    }
     const key = Engine.slotKey(inst, name);
     this.record(key);
-    if (s.state === 'ok') return s.value;
+    if (s.state === 'ok')
+      return this.roundCache ? this.roundCache.value(s.value, this.prev) : s.value;
     if (s.state === 'absent') return ABSENT;
     if (s.state === 'invalid') throw new Taint();
     if (s.state === 'deferred') {
@@ -1849,6 +1908,9 @@ export class Engine {
           message: e.message,
           path: pathStr([...inst.path, name]),
           code: (e as any).code,
+          ...((inst as any).__qeng && (e.code === 'E6002' || e.code === 'E4005')
+            ? { by: key }
+            : {}),
         });
         throw new Taint();
       }
@@ -1860,23 +1922,29 @@ export class Engine {
   }
   forceConstIn(env: Env, name: string, rootName: string): any {
     this.constEnvs.add(env);
+    const key = this.roundCache ? `const:${[...this.constEnvs].indexOf(env)}|${name}` : null;
+    if (key) this.record(key);
     const c = env.consts.get(name)!;
     if (c.state === 'ok') return c.value;
-    c.state = 'ok';
-    const sc = { inst: null, locals: new Map(), rootName, menv: env };
-    c.value = this.ev(c.expr, sc);
-    if (c.value && (c.value.__pre || c.value.__jobj)) {
-      // an annotated const binds against its declared type (sibling
-      // references inside the literal need the record scope chain)
-      if (c.type) c.value = this.bind(c.value, env.resolve(c.type), [name], null, sc);
-      else c.value = this.materialize(c.value, [name], null, sc);
-    }
-    return c.value;
+    const produce = () => {
+      c.state = 'ok';
+      const sc = { inst: null, locals: new Map(), rootName, menv: env };
+      c.value = this.ev(c.expr, sc);
+      if (c.value && (c.value.__pre || c.value.__jobj)) {
+        // an annotated const binds against its declared type (sibling
+        // references inside the literal need the record scope chain)
+        if (c.type) c.value = this.bind(c.value, env.resolve(c.type), [name], null, sc);
+        else c.value = this.materialize(c.value, [name], null, sc);
+      }
+      return c.value;
+    };
+    return key ? this.step(key, produce) : produce();
   }
 
   // ---------- driving ----------
   forceAll(v: any, _deferredToo: boolean) {
     if (isRec(v)) {
+      if (this.roundCache?.cleanRecords.has(v)) return;
       for (const [n, s] of v.slots) {
         this.forceSlotSafe(v, n);
         if (s.state === 'ok') this.forceAll(s.value, _deferredToo);

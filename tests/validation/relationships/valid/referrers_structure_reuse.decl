@@ -1,0 +1,28 @@
+// Reference rounds add two collections and then remove a third. The fixed
+// edge retains its target while its weight changes through another node.
+// A function-result output must defer and rebind along with these changes.
+type Node = {
+    incoming$ = $referrers(Edge, "target")
+    degree = std.array.count(incoming$)
+    weights = [edge.weight for edge in incoming$]
+}
+type Edge = {
+    $parent: ref<{ nodes: { [string]: Node }, ... }>
+    dest: string
+    target: ref<Node> = $parent.nodes[dest]
+    weight = ($parent.nodes["b"]?.degree ?? 0) + 1
+}
+type Item = { n: int, square = n * n }
+type Graph = {
+    nodes: { [string]: Node } = { a: {}, b: {}, c: {}, d: {} }
+    fixed: Edge[] = [{ dest: "a" }]
+    added: Edge[] = if (nodes["a"]?.degree ?? 0) > 0 then [{ dest: "b" }] else []
+    delayed: Edge[] = if (nodes["b"]?.degree ?? 0) > 0 then [{ dest: "c" }] else []
+    removed: Edge[] = if (nodes["c"]?.degree ?? 0) == 0 then [{ dest: "d" }] else []
+    unchanged: Item[] = [{ n: n } for n in 1..20]
+}
+func summarize(g: Graph): { degrees: int[] } = {
+    degrees: [node.degree for node in std.map.values(g.nodes)]
+}
+export output graph: Graph = {}
+export output summary: { degrees: int[] } = summarize(graph)

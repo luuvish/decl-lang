@@ -74,6 +74,12 @@ impl Db {
         }
     }
 
+    /// Drop memoized results when the owning value context advances.
+    pub fn clear(&self) {
+        self.memo.borrow_mut().clear();
+        self.rev.set(self.rev.get() + 1);
+    }
+
     /// the current revision (advances when an input changes)
     pub fn revision(&self) -> u64 {
         self.rev.get()

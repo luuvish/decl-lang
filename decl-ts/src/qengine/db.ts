@@ -62,6 +62,12 @@ export class Db {
     this.eq = opts.eq ?? Object.is;
   }
 
+  /** Drop cached results when the owning value context advances. */
+  clear(): void {
+    this.memo.clear();
+    this.rev++;
+  }
+
   /** the current revision (advances when an input changes) */
   get revision(): number {
     return this.rev;

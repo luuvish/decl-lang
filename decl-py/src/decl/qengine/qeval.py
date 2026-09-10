@@ -641,6 +641,7 @@ def _compile_name(nm: str, c: CCtx) -> Op:
             return bound
         if nm == "std":
             return StdRef([])
+        q.helper.record(f"root:{nm}")
         if nm in q.helper.roots_map:
             return q.helper.roots_map[nm]
         inp = q.helper.demand_input(menv, nm)
@@ -754,19 +755,21 @@ class QEval:
         self.const_ops: dict[str, Op] = {}
         self.slot_jobs: dict[str, Op] = {}
         self.db = Db(self._resolve)
+        self.helper.round_resets.append(self.db.clear)
 
     def _resolve(self, key: str) -> Callable[[Db], Any] | None:
         op = self._op_for(key)
         if op is None:
             return None
-        return lambda _db: op(self, NO_LOCALS)
+        return lambda _db: self.helper.step(key, lambda op=op: op(self, NO_LOCALS))
 
     def _bridge(self, key: str) -> Callable[[], Any]:
         """a thunk the value layer runs to force a query-graph slot"""
-        return lambda: self.query(key)
+        return lambda: self.slot_jobs[key](self, NO_LOCALS)
 
     def query(self, key: str) -> Any:
         """read a query's value, translating the core's cycle into an E5007 error"""
+        self.helper.record(key)
         try:
             return self.db.query(key)
         except QCycle as cyc:
@@ -1064,6 +1067,8 @@ class QEval:
         any other root binds through the value layer, which handles its own
         deferral across rounds. An unhandled form trips `unsupported`."""
         for name, ty_ast, expr, menv in roots:
+            if self.helper.round_roots is not None and name not in self.helper.round_roots:
+                continue
             try:
                 rt = menv.resolve(ty_ast)
             except Exception:
@@ -1078,7 +1083,7 @@ class QEval:
                     unsupported.append(True)
                     continue
                 try:
-                    v = op(self, NO_LOCALS)
+                    v = self.helper.step(f"root:{name}", lambda op=op: op(self, NO_LOCALS))
                     self.env.roots[name] = v
                 except EvalErr as ex:
                     if ex.code == QUNSUP:
@@ -1092,8 +1097,12 @@ class QEval:
                                 "code": ex.code,
                             }
                         )
-                except (Taint, DeferSig):
-                    pass  # reported / handled by the round
+                except DeferSig:
+                    self.helper.deferred_roots.append(
+                        (name, expr, rt, Scope(None, {}, name, menv), True)
+                    )
+                except Taint:
+                    pass  # the value layer already reported it
             else:
                 sc = Scope(None, {}, name, menv)
                 self.helper.bind_root(name, expr, rt, sc, True)
@@ -1146,7 +1155,7 @@ def _eval_rounds(
             eng.bind_root(b.name, b.raw, rt, sc, False)
         ev.bind_roots(roots, unsupported)
 
-    eng = Engine.evaluate(entry, bind)
+    eng = Engine.evaluate(entry, bind, incremental=True)
     eng.validate_all("")
     diags = sort_diags(list(entry.diagnostics))  # §6.7
     entry.diagnostics[:] = diags

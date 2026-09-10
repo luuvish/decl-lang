@@ -34,3 +34,8 @@ surface (the command line, the REPL's `:type` / `:trace` / `:time`, the
 server's syntax tree) cannot observe it, or when it names the module a
 corpus failure would otherwise not localize; everything else is a
 corpus entry.
+
+`rounds.json` selects the shared reference fixtures for
+`engine.reference_round_reuse`. Every case compares the query evaluator with
+fresh evaluation. Cases marked `reuse` also require multiple retained rounds
+and surviving records; matching output through fallback alone is insufficient.

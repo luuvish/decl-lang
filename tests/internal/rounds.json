@@ -1,0 +1,26 @@
+[
+  {
+    "file": "tests/validation/relationships/valid/referrers_structure_reuse.decl",
+    "reuse": true
+  },
+  {
+    "file": "tests/validation/relationships/valid/referrers_constant_context.decl",
+    "reuse": true
+  },
+  {
+    "file": "tests/validation/relationships/valid/referrers_rounds.decl",
+    "reuse": false
+  },
+  {
+    "file": "tests/validation/relationships/invalid/referrers_cycle.decl",
+    "reuse": false
+  },
+  {
+    "file": "tests/validation/relationships/invalid/referrers_unstable.decl",
+    "reuse": false
+  },
+  {
+    "file": "tests/validation/relationships/valid/referrers_nested_snapshots.decl",
+    "reuse": true
+  }
+]

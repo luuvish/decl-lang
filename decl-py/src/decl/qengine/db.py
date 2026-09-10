@@ -70,6 +70,11 @@ class Db:
         # capture and cycle detection
         self._stack: list[_Frame] = []
 
+    def clear(self) -> None:
+        """Drop results when the owning value context advances."""
+        self._memo.clear()
+        self._rev += 1
+
     def revision(self) -> int:
         """the current revision (advances when an input changes)"""
         return self._rev

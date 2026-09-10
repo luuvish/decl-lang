@@ -228,6 +228,9 @@ and the extensions' own tests (`npm test -w vscode-decl`,
 
 ### Performance measurements
 
+See [Performance and optimization](PERFORMANCE.md) for the optimization history,
+measured results, the query engine's current contribution, and remaining work.
+
 `mise exec -- cargo run --locked --release --example qbench` runs synthetic
 flat records, tagged unions, and reference graphs through both evaluators. Each
 sample loads the declarations, binds, evaluates, validates, and serializes every output;

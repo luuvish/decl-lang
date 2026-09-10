@@ -1,0 +1,43 @@
+// Nested inverse references keep the owner of each frozen member read.
+// Reference rounds add two collections and then remove a third. The fixed
+// edge retains its target while its weight changes through another node.
+// A function-result output must defer and rebind along with these changes.
+type Node = {
+    incoming$ = $referrers(Edge, "target")
+    degree = std.array.count(incoming$)
+    weights = [edge.weight for edge in incoming$]
+    marker_refs$ = [m for edge in incoming$ for m in edge.markers$]
+    observed = [m.weight for m in marker_refs$]
+    edge_details$ = [edge.detail for edge in incoming$]
+    detail_weights = [detail.amount for detail in edge_details$]
+    wrappers$ = [{ detail: edge.detail } for edge in incoming$]
+    wrapped_weights = [wrapper.detail.amount for wrapper in wrappers$]
+}
+type Marker = {
+    $parent: ref<{ fixed: Edge[], nodes: { [string]: Node }, ... }>
+    edge: ref<Edge> = $parent.fixed[0]
+    weight = ($parent.nodes["c"]?.degree ?? 0)
+}
+type Edge = {
+    detail = { amount: weight }
+    markers$ = $referrers(Marker, "edge")
+    $parent: ref<{ nodes: { [string]: Node }, ... }>
+    dest: string
+    target: ref<Node> = $parent.nodes[dest]
+    weight = ($parent.nodes["b"]?.degree ?? 0) + 1
+}
+type Item = { n: int, square = n * n }
+type Graph = {
+    nodes: { [string]: Node } = { a: {}, b: {}, c: {}, d: {} }
+    markers: Marker[] = [{}]
+    fixed: Edge[] = [{ dest: "a" }]
+    added: Edge[] = if (nodes["a"]?.degree ?? 0) > 0 then [{ dest: "b" }] else []
+    delayed: Edge[] = if (nodes["b"]?.degree ?? 0) > 0 then [{ dest: "c" }] else []
+    removed: Edge[] = if (nodes["c"]?.degree ?? 0) == 0 then [{ dest: "d" }] else []
+    unchanged: Item[] = [{ n: n } for n in 1..20]
+}
+func summarize(g: Graph): { degrees: int[] } = {
+    degrees: [node.degree for node in std.map.values(g.nodes)]
+}
+export output graph: Graph = {}
+export output summary: { degrees: int[] } = summarize(graph)
