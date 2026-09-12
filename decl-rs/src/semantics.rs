@@ -12,6 +12,9 @@ use std::fmt;
 use std::rc::Rc;
 use std::sync::LazyLock;
 
+pub(crate) mod lifetime;
+pub use lifetime::collect_cycles;
+
 /// an integer value (§4.5): a machine word when it fits, arbitrary precision
 /// otherwise. The reference and Python hold every integer as a big integer;
 /// here the common small values avoid a heap allocation and a deep copy on
@@ -601,6 +604,13 @@ pub struct RecInst {
     /// the module environment
     pub menv: Option<Rc<Env>>,
 }
+
+/// Allocate an instance and track its lifetime without retaining it.
+pub(crate) fn record_instance(record: RecInst) -> Rc<RefCell<RecInst>> {
+    let record = Rc::new(RefCell::new(record));
+    lifetime::track_record(&record);
+    record
+}
 impl RecInst {
     /// An extra member's value.
     pub fn extra(&self, n: &str) -> Option<&Value> {
@@ -849,11 +859,13 @@ pub struct Ty {
 }
 /// A resolved type of a kind.
 pub fn ty(k: RTk) -> RT {
-    Rc::new(Ty {
+    let rt = Rc::new(Ty {
         k,
         name: RefCell::new(None),
         tail: RefCell::new(None),
-    })
+    });
+    lifetime::track_type(&rt);
+    rt
 }
 
 /// the kinds of resolved types (§3)
@@ -1274,7 +1286,9 @@ impl Env {
             tagger: RefCell::new(None),
         };
         env.seed_units();
-        Rc::new(env)
+        let env = Rc::new(env);
+        lifetime::track_env(&env);
+        env
     }
 
     // std.units — the SI catalog generated from the §13.10 prefix rule (D15)
@@ -1571,6 +1585,21 @@ impl Env {
     pub fn registry_retain(&self, mut pred: impl FnMut(&Rc<RefCell<RecInst>>) -> bool) {
         let rc = self.registry.borrow().clone();
         rc.borrow_mut().retain(|i| pred(i));
+    }
+    /// Count registered instances without copying their shared handles.
+    pub(crate) fn registry_len(&self) -> usize {
+        self.registry.borrow().borrow().len()
+    }
+    /// Preserve the existing prefix and retain only the tail a predicate accepts.
+    pub(crate) fn registry_retain_from(
+        &self,
+        start: usize,
+        mut pred: impl FnMut(&Rc<RefCell<RecInst>>) -> bool,
+    ) {
+        let rc = self.registry.borrow().clone();
+        let mut registry = rc.borrow_mut();
+        let start = start.min(registry.len());
+        for _ in registry.extract_if(start.., |inst| !pred(inst)) {}
     }
     /// The diagnostics raised so far.
     pub fn diagnostics_vec(&self) -> Vec<Diag> {
@@ -3276,8 +3305,10 @@ pub fn read_json(src: &str) -> R<Value> {
                     *i += 4;
                     return Ok(Value::Null);
                 }
-                let re = Regex::new(r"^-?(?:0|[1-9][0-9]*)(\.[0-9]+)?([eE][-+]?[0-9]+)?").unwrap();
-                let m = re
+                static NUMBER: LazyLock<Regex> = LazyLock::new(|| {
+                    Regex::new(r"^-?(?:0|[1-9][0-9]*)(\.[0-9]+)?([eE][-+]?[0-9]+)?").unwrap()
+                });
+                let m = NUMBER
                     .captures(rest)
                     .ok_or(())
                     .or_else(|_| err(format!("bad JSON at {i}")))?;
@@ -3338,20 +3369,38 @@ pub fn js_num_str(x: f64) -> String {
 /// A string as JSON text, escaped.
 pub fn json_str(s: &str) -> String {
     let mut out = String::with_capacity(s.len() + 2);
-    out.push('"');
-    for c in s.chars() {
-        match c {
-            '"' => out.push_str("\\\""),
-            '\\' => out.push_str("\\\\"),
-            '\n' => out.push_str("\\n"),
-            '\r' => out.push_str("\\r"),
-            '\t' => out.push_str("\\t"),
-            '\u{8}' => out.push_str("\\b"),
-            '\u{c}' => out.push_str("\\f"),
-            c if (c as u32) < 0x20 => out.push_str(&format!("\\u{:04x}", c as u32)),
-            c => out.push(c),
-        }
-    }
-    out.push('"');
+    write_json_str(&mut out, s);
     out
+}
+
+/// Append JSON string text without allocating an intermediate quoted string.
+pub(crate) fn write_json_str(out: &mut String, s: &str) {
+    const HEX: &[u8; 16] = b"0123456789abcdef";
+    out.push('"');
+    let mut start = 0;
+    for (i, byte) in s.bytes().enumerate() {
+        if byte >= 0x20 && byte != b'"' && byte != b'\\' {
+            continue;
+        }
+        // Escapes occur only at ASCII bytes, hence at UTF-8 boundaries.
+        // Copy the intervening text as a slice, including non-ASCII scalars.
+        out.push_str(&s[start..i]);
+        match byte {
+            b'"' => out.push_str("\\\""),
+            b'\\' => out.push_str("\\\\"),
+            b'\n' => out.push_str("\\n"),
+            b'\r' => out.push_str("\\r"),
+            b'\t' => out.push_str("\\t"),
+            8 => out.push_str("\\b"),
+            12 => out.push_str("\\f"),
+            _ => {
+                out.push_str("\\u00");
+                out.push(HEX[(byte >> 4) as usize] as char);
+                out.push(HEX[(byte & 15) as usize] as char);
+            }
+        }
+        start = i + 1;
+    }
+    out.push_str(&s[start..]);
+    out.push('"');
 }

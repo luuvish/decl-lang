@@ -328,14 +328,17 @@ impl RoundCache {
             .map(|s| invert(&s.edges))
             .unwrap_or_default();
         let new_edges = invert(edges);
-        let mut reverse: FxHashMap<String, FxHashSet<String>> = FxHashMap::default();
-        let mut pending = Vec::new();
-        for (reader, deps) in eng.reads.borrow().iter() {
-            for dep in deps {
+        // Classification and invalidation only inspect the dependency graph.
+        // Its key text can serve the temporary reverse index without copies.
+        let reads = eng.reads.borrow();
+        let mut reverse: FxHashMap<&str, FxHashSet<&str>> = FxHashMap::default();
+        let mut pending: Vec<String> = Vec::new();
+        for (reader, deps) in reads.iter() {
+            for dep in deps.iter() {
                 reverse
-                    .entry(dep.clone())
+                    .entry(dep.as_str())
                     .or_default()
-                    .insert(reader.clone());
+                    .insert(reader.as_str());
                 if let Some(s) = dep.strip_prefix("edge:") {
                     let mut parts = s.splitn(3, '|');
                     let key = format!("{}|{}", parts.next()?, parts.next()?);
@@ -343,12 +346,12 @@ impl RoundCache {
                     let a = old_edges.get(&key).and_then(|i| i.get(target));
                     let b = new_edges.get(&key).and_then(|i| i.get(target));
                     if a.map(Vec::as_slice).unwrap_or(&[]) != b.map(Vec::as_slice).unwrap_or(&[]) {
-                        pending.push(dep.clone());
+                        pending.push(dep.as_str().to_owned());
                     }
-                } else if dep == "round:nested" {
-                    pending.push(dep.clone());
-                } else if dep == "round:reference" {
-                    let prefix = reader.strip_prefix("root:").unwrap_or(reader);
+                } else if dep.as_str() == "round:nested" {
+                    pending.push(dep.as_str().to_owned());
+                } else if dep.as_str() == "round:reference" {
+                    let prefix = reader.strip_prefix("root:").unwrap_or(reader.as_str());
                     let value = eng
                         .slots_by_key
                         .borrow()
@@ -360,10 +363,10 @@ impl RoundCache {
                             snapshot_result(v, eng, prefix, &mut FxHashSet::default())
                         })
                     {
-                        pending.push(reader.clone());
+                        pending.push(reader.as_str().to_owned());
                     }
                 } else if let Some(key) = dep.strip_prefix("snapshot:") {
-                    let current = eng.slots_by_key.borrow().get(key).cloned();
+                    let current = eng.query_slot(key);
                     let equal = current.is_some_and(|(r, n)| {
                         let r = r.borrow();
                         let Some(old) = prior_records.get(&path_str(&r.path, None)) else {
@@ -376,7 +379,7 @@ impl RoundCache {
                         }
                     });
                     if !equal {
-                        pending.push(dep.clone());
+                        pending.push(dep.as_str().to_owned());
                     }
                 }
             }
@@ -403,14 +406,14 @@ impl RoundCache {
             if key.starts_with("const:") {
                 return None;
             }
-            if let Some(readers) = reverse.get(&key) {
-                pending.extend(readers.iter().cloned());
+            if let Some(readers) = reverse.get(key.as_str()) {
+                pending.extend(readers.iter().map(|key| (*key).to_owned()));
             }
             let prefix = if let Some(name) = key.strip_prefix("root:") {
                 roots.insert(name.to_string());
                 Some(path_str(&[Seg::Name(name.into())], None))
             } else {
-                eng.slots_by_key.borrow().get(&key).map(|(inst, name)| {
+                eng.query_slot(&key).map(|(inst, name)| {
                     let mut current = Some(inst.clone());
                     while let Some(i) = current {
                         dirty.insert(address(&i));
@@ -431,6 +434,10 @@ impl RoundCache {
                 }
             }
         }
+        // Free the reverse index and release its source before freezing or
+        // replacing any dependencies for the next round.
+        drop(reverse);
+        drop(reads);
         let mut rebound = false;
         for (name, _) in eng.env.roots_vec() {
             rebound |= roots.contains(&name);
@@ -444,22 +451,22 @@ impl RoundCache {
             if dropped.contains(&address(inst)) {
                 for (n, _) in &inst.borrow().slots {
                     let key = Engine::slot_key(inst, n);
-                    eng.reads.borrow_mut().remove(&key);
-                    eng.slots_by_key.borrow_mut().remove(&key);
+                    eng.remove_query_reads(&key);
+                    eng.remove_query_slot(&key);
                 }
             }
         }
         for key in &invalid {
-            if let Some((inst, name)) = eng.slots_by_key.borrow().get(key) {
+            if let Some((inst, name)) = eng.query_slot(key) {
                 let mut i = inst.borrow_mut();
-                let s = i.slot_mut(name)?;
+                let s = i.slot_mut(&name)?;
                 if s.compute.is_some() {
                     s.state = SlotState::Unforced;
                     s.value = Value::Undef;
                     self.invalidated_slots.set(self.invalidated_slots.get() + 1);
                 }
             }
-            eng.reads.borrow_mut().remove(key);
+            eng.remove_query_reads(key);
         }
         eng.env.registry_retain(|r| !dropped.contains(&address(r)));
         *self.clean.borrow_mut() = registry
@@ -505,7 +512,7 @@ impl RoundCache {
 
     fn freeze(&self, eng: &Rc<Engine>) -> Option<Rc<Engine>> {
         let tagger = eng.env.tagger.borrow().clone();
-        let frozen = Engine::bare(eng.env.clone());
+        let frozen = Engine::bare_with_queries(eng.env.clone(), eng.query_pool());
         *eng.env.tagger.borrow_mut() = tagger;
         *frozen.programs.borrow_mut() = eng.programs.borrow().clone();
         *frozen.prev.borrow_mut() = eng.prev.borrow().clone();
@@ -554,7 +561,7 @@ impl RoundCache {
                     return Some(v);
                 }
                 let b = inst.borrow();
-                let r = Rc::new(RefCell::new(RecInst {
+                let r = record_instance(RecInst {
                     type_name: b.type_name.clone(),
                     rt: b.rt.clone(),
                     path: b.path.clone(),
@@ -564,7 +571,7 @@ impl RoundCache {
                     entry_order: b.entry_order.clone(),
                     extras: Vec::new(),
                     menv: b.menv.clone(),
-                }));
+                });
                 copies.insert((3, address(inst)), Value::Rec(r.clone()));
                 let parent = match &b.parent {
                     Some(p) => match self.copy(&Value::Rec(p.clone()), eng, frozen, copies)? {

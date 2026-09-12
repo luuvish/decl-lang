@@ -70,6 +70,9 @@ charter and chapters remains a defect to fix on sight (§1.4).
 | [05. Renderer](tooling/05_render.md) | `@render`, documents in YAML, `--format` / `--indent`, and the template dialect implemented three times: the form a module declares for its outputs, as tooling (delivered, Phase 10) |
 | [Development handbook](DEVELOPMENT.md) | How the repository is set up and worked on: layout and configuration files, toolchains and versions, getting started, building and testing, quality tools, CI, releases, editors, conventions |
 | [Performance and optimization](PERFORMANCE.md) | Which runtime optimizations remove work, measured historical improvements, the query engine's current contribution, and further optimization priorities |
+| [Runtime cost and ownership diagnosis](PERFORMANCE_DIAGNOSIS.md) | Disjoint stage measurements, edit preparation, Rust ownership, canonical query identities, and shared dependency storage |
+| [Rust query graph API migration](QUERY_GRAPH_MIGRATION.md) | Restricted Engine graph fields, replacement inspection methods, shared slot handles, and temporary identity maintenance |
+| [Reproducible performance comparisons](../tests/benchmarks/COMPARE.md) | Frozen experiment manifests, output contracts, serial paired measurements, failure handling, and efficient iteration records |
 | [Query optimization plan](OPTIMIZATION_PLAN.md) | Implementation scope, completion evidence, batch/edit measurement gates, and remaining performance boundaries |
 
 ### Validation cases (§0.5 desk-check artifacts)

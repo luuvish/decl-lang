@@ -1,18 +1,18 @@
 //! Revision verification over the Engine's existing slot cache. Previous values
 //! live here only while a slot awaits verification or recomputation.
 use crate::engine::Engine;
+use crate::qengine::graph::{QueryId, ReadSet};
 use crate::semantics::*;
 use rustc_hash::{FxHashMap, FxHashSet};
 use std::cell::{Cell, RefCell};
-use std::collections::HashSet;
 use std::rc::Rc;
 
 #[derive(Clone)]
 struct Pending {
     value: Value,
-    deps: HashSet<String>,
+    deps: ReadSet,
     changed: usize,
-    forced: bool,
+    forced: Cell<bool>,
     matches: Option<Matches>,
 }
 
@@ -74,8 +74,8 @@ pub struct Revisions {
     pub value_cutoffs: Cell<usize>,
     /// Pending slot programs actually recomputed.
     pub recomputed: Cell<usize>,
-    changed: RefCell<FxHashMap<String, usize>>,
-    pending: RefCell<FxHashMap<String, Pending>>,
+    changed: RefCell<FxHashMap<QueryId, usize>>,
+    pending: RefCell<FxHashMap<QueryId, Rc<Pending>>>,
     pub(crate) resolve: Cell<Option<Resolve>>,
 }
 
@@ -83,6 +83,15 @@ impl Revisions {
     /// Number of retained query change stamps (a diagnostic counter).
     pub fn tracked_queries(&self) -> usize {
         self.changed.borrow().len()
+    }
+
+    fn set_changed(&self, key: &QueryId, revision: usize) {
+        let mut changed = self.changed.borrow_mut();
+        if let Some(stamp) = changed.get_mut(key) {
+            *stamp = revision;
+        } else {
+            changed.insert(key.clone(), revision);
+        }
     }
 
     pub(crate) fn prune(&self, eng: &Engine) {
@@ -99,39 +108,42 @@ impl Revisions {
         invalid: &FxHashSet<String>,
         values: &FxHashMap<String, Value>,
         forced: &FxHashSet<String>,
-        capture: impl Fn(&Value) -> Matches,
+        mut capture: impl FnMut(&Value) -> Matches,
     ) {
         self.pending.borrow_mut().clear();
         self.revision.set(self.revision.get() + 1);
         for key in invalid {
+            let id = eng.query_id(key);
             if let Some(value) = values.get(key) {
                 self.pending.borrow_mut().insert(
-                    key.clone(),
-                    Pending {
+                    id.clone(),
+                    Rc::new(Pending {
                         value: value.clone(),
-                        deps: eng.reads.borrow().get(key).cloned().unwrap_or_default(),
-                        changed: self.changed.borrow().get(key).copied().unwrap_or(0),
-                        forced: forced.contains(key),
+                        deps: eng.query_reads_id(&id).unwrap_or_default(),
+                        changed: self.changed.borrow().get(&id).copied().unwrap_or(0),
+                        forced: Cell::new(forced.contains(key)),
                         matches: Some(capture(value)),
-                    },
+                    }),
                 );
             }
-            self.changed
-                .borrow_mut()
-                .insert(key.clone(), self.revision.get());
+            self.set_changed(&id, self.revision.get());
         }
     }
 
-    pub(crate) fn force(&self, key: &str) {
-        if let Some(prior) = self.pending.borrow_mut().get_mut(key) {
-            prior.forced = true;
+    pub(crate) fn force(&self, eng: &Engine, key: &str) {
+        let id = eng.query_id(key);
+        if let Some(prior) = self.pending.borrow().get(&id) {
+            prior.forced.set(true);
         }
-        self.changed
-            .borrow_mut()
-            .insert(key.into(), self.revision.get());
+        self.set_changed(&id, self.revision.get());
     }
 
     pub(crate) fn accept(&self, eng: &Engine, key: &str, value: &Value) {
+        let id = eng.query_id(key);
+        self.accept_id(eng, &id, value);
+    }
+
+    fn accept_id(&self, eng: &Engine, key: &QueryId, value: &Value) {
         let prior = self.pending.borrow_mut().remove(key);
         if let Some(prior) = prior {
             let matches = prior
@@ -140,7 +152,7 @@ impl Revisions {
                 .map(|m| m(value, eng))
                 .unwrap_or_else(|| comparable(value, eng) && equal(&prior.value, value));
             if matches {
-                self.changed.borrow_mut().insert(key.into(), prior.changed);
+                self.set_changed(key, prior.changed);
                 self.value_cutoffs.set(self.value_cutoffs.get() + 1);
             }
         }
@@ -160,44 +172,43 @@ impl Revisions {
         self.pending.borrow_mut().clear();
         self.revision.set(self.revision.get() + 1);
         for key in invalid {
-            if let Some((inst, name)) = eng.slots_by_key.borrow().get(key) {
+            let id = eng.query_id(key);
+            if let Some((inst, name)) = eng.query_slot_id(&id) {
                 let b = inst.borrow();
-                if let Some(slot) = b.slot(name) {
-                    if !dropped.contains(&(Rc::as_ptr(inst) as usize))
+                if let Some(slot) = b.slot(&name) {
+                    if !dropped.contains(&(Rc::as_ptr(&inst) as usize))
                         && slot.state == SlotState::Ok
                         && slot.compute.is_some()
                         && comparable(&slot.value, eng)
                     {
                         self.pending.borrow_mut().insert(
-                            key.clone(),
-                            Pending {
+                            id.clone(),
+                            Rc::new(Pending {
                                 value: slot.value.clone(),
-                                deps: eng.reads.borrow().get(key).cloned().unwrap_or_default(),
-                                changed: self.changed.borrow().get(key).copied().unwrap_or(0),
-                                forced: forced.contains(key),
+                                deps: eng.query_reads_id(&id).unwrap_or_default(),
+                                changed: self.changed.borrow().get(&id).copied().unwrap_or(0),
+                                forced: Cell::new(forced.contains(key)),
                                 matches: None,
-                            },
+                            }),
                         );
                     }
                 }
             }
-            self.changed
-                .borrow_mut()
-                .insert(key.clone(), self.revision.get());
+            self.set_changed(&id, self.revision.get());
         }
     }
 
-    pub(crate) fn compute(
+    pub(crate) fn compute_id(
         &self,
         eng: &Engine,
-        key: &str,
+        id: &QueryId,
         run: impl FnOnce() -> R<Value>,
     ) -> R<Value> {
-        let prior = self.pending.borrow().get(key).cloned();
+        let prior = self.pending.borrow().get(id).cloned();
         let Some(prior) = prior else {
             return run();
         };
-        let unchanged = !prior.forced
+        let unchanged = !prior.forced.get()
             && eng.verify_reads(|| -> R<bool> {
                 let mut deps: Vec<_> = prior.deps.iter().collect();
                 // Verify owners before their former contents; removed records
@@ -210,7 +221,7 @@ impl Revisions {
                                 return Ok(false);
                             }
                         } else {
-                            let found = eng.slots_by_key.borrow().get(dep).cloned();
+                            let found = eng.query_slot_id(dep);
                             let Some((inst, name)) = found else {
                                 return Ok(false);
                             };
@@ -224,15 +235,18 @@ impl Revisions {
                 Ok(true)
             })?;
         if unchanged {
-            eng.reads.borrow_mut().insert(key.into(), prior.deps);
-            self.changed.borrow_mut().insert(key.into(), prior.changed);
-            self.pending.borrow_mut().remove(key);
+            // Keep pending membership during recursive verification, then move
+            // the snapshot back without copying its dependency keys again.
+            self.pending.borrow_mut().remove(id);
+            let prior = Rc::unwrap_or_clone(prior);
+            eng.replace_query_reads_id(id, prior.deps);
+            self.set_changed(id, prior.changed);
             self.verified_cutoffs.set(self.verified_cutoffs.get() + 1);
             return Ok(prior.value);
         }
         let value = run()?;
         self.recomputed.set(self.recomputed.get() + 1);
-        self.accept(eng, key, &value);
+        self.accept_id(eng, id, &value);
         Ok(value)
     }
 }

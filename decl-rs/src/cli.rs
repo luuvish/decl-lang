@@ -645,6 +645,7 @@ pub fn file_tag(given: &str, entry: Option<&Path>, module: &Path) -> String {
 
 /// the command line: returns the process exit code
 pub fn main(args: Vec<String>) -> i32 {
+    let _lifetime = crate::semantics::lifetime::CommandGuard;
     let Some(cmd) = args.first().cloned() else {
         return usage();
     };

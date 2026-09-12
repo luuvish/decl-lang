@@ -1,10 +1,11 @@
 //! Replay Session root binding over retained records and member revisions.
 use crate::engine::{Engine, Inst, RootSrc};
+use crate::qengine::graph::{QueryId, ReadSet};
 use crate::qengine::revisions::{comparable, Matches, Revisions};
 use crate::semantics::*;
 use rustc_hash::{FxHashMap, FxHashSet};
 use std::cell::{Cell, RefCell};
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::rc::{Rc, Weak};
 
 fn same_rc<T>(a: &Option<Rc<T>>, b: &Option<Rc<T>>) -> bool {
@@ -56,7 +57,47 @@ fn same_raw(a: &Value, b: &Value) -> bool {
     }
 }
 
-fn capture(value: &Value, eng: &Engine) -> Matches {
+#[derive(Hash, PartialEq, Eq)]
+enum CaptureKey {
+    Record(usize),
+    Array(usize),
+    Map(usize),
+    Int(i64),
+    Float(u64),
+    String(Rc<str>),
+    Bool(bool),
+    Null,
+    Absent,
+    Undef,
+}
+fn capture(value: &Value, eng: &Engine, memo: &mut FxHashMap<CaptureKey, Matches>) -> Matches {
+    let key = match value {
+        Value::Rec(r) => Some(CaptureKey::Record(Rc::as_ptr(r) as usize)),
+        Value::Arr(a) => Some(CaptureKey::Array(Rc::as_ptr(a) as usize)),
+        Value::Map(m) => Some(CaptureKey::Map(Rc::as_ptr(m) as usize)),
+        Value::Int(Num::Small(n)) => Some(CaptureKey::Int(*n)),
+        Value::Float(n) => Some(CaptureKey::Float(n.to_bits())),
+        Value::Str(s) => Some(CaptureKey::String(s.clone())),
+        Value::Bool(b) => Some(CaptureKey::Bool(*b)),
+        Value::Null => Some(CaptureKey::Null),
+        Value::Absent => Some(CaptureKey::Absent),
+        Value::Undef => Some(CaptureKey::Undef),
+        _ => None,
+    };
+    if let Some(prior) = key.as_ref().and_then(|k| memo.get(k)) {
+        return prior.clone();
+    }
+    let matches = capture_shape(value, eng, memo);
+    if let Some(key) = key {
+        memo.insert(key, matches.clone());
+    }
+    matches
+}
+fn capture_shape(
+    value: &Value,
+    eng: &Engine,
+    memo: &mut FxHashMap<CaptureKey, Matches>,
+) -> Matches {
     match value {
         Value::Absent => Rc::new(|n, _| matches!(n, Value::Absent)),
         Value::Rec(inst) => {
@@ -72,7 +113,7 @@ fn capture(value: &Value, eng: &Engine) -> Matches {
             let extras: Vec<_> = b
                 .extras
                 .iter()
-                .map(|(k, v)| (k.clone(), capture(v, eng)))
+                .map(|(k, v)| (k.clone(), capture(v, eng, memo)))
                 .collect();
             Rc::new(move |next, eng| {
                 let Value::Rec(n) = next else {
@@ -99,7 +140,7 @@ fn capture(value: &Value, eng: &Engine) -> Matches {
         Value::Arr(a) => {
             let a = a.borrow();
             let path = a.path.clone();
-            let items: Vec<_> = a.items.iter().map(|v| capture(v, eng)).collect();
+            let items: Vec<_> = a.items.iter().map(|v| capture(v, eng, memo)).collect();
             Rc::new(move |n, eng| {
                 let Value::Arr(n) = n else {
                     return false;
@@ -116,7 +157,7 @@ fn capture(value: &Value, eng: &Engine) -> Matches {
             let entries: Vec<_> = m
                 .entries
                 .iter()
-                .map(|(k, v)| (k.clone(), capture(v, eng)))
+                .map(|(k, v)| (k.clone(), capture(v, eng, memo)))
                 .collect();
             Rc::new(move |n, eng| {
                 let Value::Map(n) = n else {
@@ -160,7 +201,7 @@ pub struct Edits {
     pub prepared_queries: Cell<usize>,
     invalid: RefCell<FxHashSet<String>>,
     root_values: RefCell<FxHashMap<String, Value>>,
-    root_reads: RefCell<FxHashMap<String, HashSet<String>>>,
+    root_reads: RefCell<FxHashMap<String, ReadSet>>,
     binding_reuse: Cell<bool>,
     inputs: RefCell<Inputs>,
     roots: RefCell<FxHashMap<String, RootInput>>,
@@ -192,7 +233,7 @@ impl Default for Edits {
 
 impl Edits {
     fn resolve(eng: &Engine, key: &str) -> R<bool> {
-        let slot = eng.slots_by_key.borrow().get(key).cloned();
+        let slot = eng.query_slot(key);
         if let Some((inst, name)) = slot {
             eng.force_slot(&inst, &name)?;
             return Ok(true);
@@ -253,29 +294,42 @@ impl Edits {
         }
     }
 
-    fn collect(eng: &Engine, value: &Value, into: &mut FxHashSet<String>) {
+    fn collect(
+        eng: &Engine,
+        value: &Value,
+        into: &mut FxHashSet<String>,
+        seen: &mut FxHashSet<(u8, usize)>,
+    ) {
+        let identity = match value {
+            Value::Rec(r) => (0, Rc::as_ptr(r) as usize),
+            Value::Arr(a) => (1, Rc::as_ptr(a) as usize),
+            Value::Map(m) => (2, Rc::as_ptr(m) as usize),
+            _ => return,
+        };
+        if !seen.insert(identity) {
+            return;
+        }
         match value {
             Value::Rec(inst) => {
                 let b = inst.borrow();
+                let path = path_str(&b.path, None);
                 for (name, slot) in &b.slots {
-                    let key = format!("{}.{name}", path_str(&b.path, None));
-                    eng.slots_by_key
-                        .borrow_mut()
-                        .insert(key.clone(), (inst.clone(), name.clone()));
+                    let key = format!("{path}.{name}");
+                    eng.register_query_slot(&key, inst.clone(), name.clone());
                     into.insert(key);
                     if slot.state == SlotState::Ok {
-                        Self::collect(eng, &slot.value, into);
+                        Self::collect(eng, &slot.value, into, seen);
                     }
                 }
             }
             Value::Arr(a) => {
                 for v in &a.borrow().items {
-                    Self::collect(eng, v, into);
+                    Self::collect(eng, v, into, seen);
                 }
             }
             Value::Map(m) => {
                 for v in m.borrow().entries.values() {
-                    Self::collect(eng, v, into);
+                    Self::collect(eng, v, into, seen);
                 }
             }
             _ => {}
@@ -310,9 +364,7 @@ impl Edits {
                     let bound = inst.borrow();
                     if let Some(slot) = bound.slot(name) {
                         let key = format!("{}.{name}", path_str(&bound.path, None));
-                        eng.slots_by_key
-                            .borrow_mut()
-                            .insert(key.clone(), (inst.clone(), name.clone()));
+                        eng.register_query_slot(&key, inst.clone(), name.clone());
                         Self::diff(
                             eng,
                             av.unwrap_or(&Value::Undef),
@@ -365,7 +417,7 @@ impl Edits {
                     );
                 }
             }
-            _ => Self::collect(eng, value, forced),
+            _ => Self::collect(eng, value, forced, &mut FxHashSet::default()),
         }
     }
 
@@ -394,7 +446,7 @@ impl Edits {
             .iter()
             .map(|n| {
                 let key = format!("root:{n}");
-                let deps = eng.reads.borrow().get(&key).cloned().unwrap_or_default();
+                let deps = eng.query_reads(&key).unwrap_or_default();
                 (key, deps)
             })
             .collect();
@@ -408,21 +460,22 @@ impl Edits {
             if let (Some(RootInput::Doc(before)), Some(next)) = (previous, documents.get(name)) {
                 Self::diff(eng, &before, next, &value, &key, &mut forced, &mut known);
             } else {
-                Self::collect(eng, &value, &mut forced);
+                Self::collect(eng, &value, &mut forced, &mut FxHashSet::default());
             }
         }
-        let mut readers: FxHashMap<String, Vec<String>> = FxHashMap::default();
-        let mut aggregate = false;
-        for (key, deps) in eng.reads.borrow().iter() {
-            for dep in deps {
-                readers.entry(dep.clone()).or_default().push(key.clone());
+        // Preparation only reads the dependency graph. Borrow its key text
+        // instead of copying a full reader key for every reverse edge.
+        let reads = eng.reads.borrow();
+        let mut readers: FxHashMap<&str, Vec<&str>> = FxHashMap::default();
+        for (key, deps) in reads.iter() {
+            for dep in deps.iter() {
+                readers.entry(dep.as_str()).or_default().push(key.as_str());
                 if ["edge:", "snapshot:", "round:", "value:"]
                     .iter()
                     .any(|p| dep.starts_with(p))
                 {
-                    forced.insert(key.clone());
+                    forced.insert(key.as_str().to_owned());
                 }
-                aggregate |= dep.starts_with("value:");
             }
         }
         for (name, value) in eng.env.roots_vec() {
@@ -430,8 +483,9 @@ impl Edits {
         }
         for inst in &records {
             let b = inst.borrow();
+            let path = path_str(&b.path, None);
             for (name, slot) in &b.slots {
-                let key = format!("{}.{name}", path_str(&b.path, None));
+                let key = format!("{path}.{name}");
                 if matches!(slot.state, SlotState::Ok | SlotState::Absent) {
                     values.insert(
                         key.clone(),
@@ -444,9 +498,7 @@ impl Edits {
                 }
                 if errors {
                     forced.insert(key.clone());
-                    eng.slots_by_key
-                        .borrow_mut()
-                        .insert(key, (inst.clone(), name.clone()));
+                    eng.register_query_slot(&key, inst.clone(), name.clone());
                 }
             }
         }
@@ -469,12 +521,25 @@ impl Edits {
             }
         }
         if errors {
-            forced.extend(eng.reads.borrow().keys().cloned());
+            forced.extend(reads.keys().map(|key| key.as_str().to_owned()));
         }
         let mut invalid = FxHashSet::default();
         let mut queue: Vec<_> = forced.iter().cloned().collect();
-        if aggregate {
-            queue.extend(values.keys().cloned());
+        let mut walked = FxHashSet::default();
+        for dep in readers.keys() {
+            let Some(path) = dep.strip_prefix("value:") else {
+                continue;
+            };
+            let record = self.pool.borrow().get(path).cloned();
+            if let Some(record) = record {
+                let mut descendants = FxHashSet::default();
+                Self::collect(eng, &Value::Rec(record), &mut descendants, &mut walked);
+                queue.extend(descendants);
+            } else {
+                // Unknown/frozen owners retain the conservative fallback.
+                queue.extend(values.keys().cloned());
+                break;
+            }
         }
         while let Some(key) = queue.pop() {
             if !invalid.insert(key.clone()) {
@@ -483,20 +548,27 @@ impl Edits {
             if !known.contains(&key) {
                 if let Some(value) = values.get(&key) {
                     let mut descendants = FxHashSet::default();
-                    Self::collect(eng, value, &mut descendants);
+                    Self::collect(eng, value, &mut descendants, &mut walked);
                     queue.extend(descendants.into_iter().filter(|k| !invalid.contains(k)));
                 }
             }
-            if let Some(next) = readers.get(&key) {
-                queue.extend(next.iter().cloned());
+            if let Some(next) = readers.get(key.as_str()) {
+                queue.extend(next.iter().map(|key| (*key).to_owned()));
             }
         }
+        // No borrowed keys survive into revision preparation or execution.
+        drop(readers);
+        drop(reads);
         self.prepared_queries.set(invalid.len());
+        let mut captured = FxHashMap::default();
         self.revisions
-            .begin_queries(eng, &invalid, &values, &forced, |v| capture(v, eng));
+            .begin_queries(eng, &invalid, &values, &forced, |v| {
+                capture(v, eng, &mut captured)
+            });
+        drop(captured);
         for key in &invalid {
-            if let Some((inst, name)) = eng.slots_by_key.borrow().get(key) {
-                if let Some(slot) = inst.borrow_mut().slot_mut(name) {
+            if let Some((inst, name)) = eng.query_slot(key) {
+                if let Some(slot) = inst.borrow_mut().slot_mut(&name) {
                     if slot.compute.is_some() {
                         slot.state = SlotState::Unforced;
                         slot.value = Value::Undef;
@@ -553,13 +625,13 @@ impl Edits {
         };
         let key = format!("root:{name}");
         if !same {
-            self.revisions.force(&key);
+            self.revisions.force(eng, &key);
         }
         if !self.invalid.borrow().contains(&key) {
             let value = self.root_values.borrow().get(name).cloned();
             if let Some(value) = value {
-                eng.reads.borrow_mut().insert(
-                    key.clone(),
+                eng.replace_query_reads(
+                    &key,
                     self.root_reads
                         .borrow()
                         .get(&key)
@@ -641,13 +713,11 @@ impl Edits {
                 let old_slot = old.remove(&name);
                 let kind = inst.borrow().slot(&name).unwrap().kind;
                 if before.is_none() || !same || old_slot.as_ref().is_none_or(|s| s.kind != kind) {
-                    self.revisions.force(&key);
+                    self.revisions.force(eng, &key);
                 } else if let Some(slot) = old_slot {
                     *inst.borrow_mut().slot_mut(&name).unwrap() = slot;
                 }
-                eng.slots_by_key
-                    .borrow_mut()
-                    .insert(key, (inst.clone(), name));
+                eng.register_query_slot(&key, inst.clone(), name);
             }
         }
         self.inputs
@@ -715,7 +785,17 @@ impl Edits {
         key: &str,
         run: impl FnOnce() -> R<Value>,
     ) -> R<Value> {
-        let value = self.revisions.compute(eng, key, run)?;
+        let id = eng.query_id(key);
+        self.compute_id(eng, &id, run)
+    }
+
+    pub(crate) fn compute_id(
+        &self,
+        eng: &Engine,
+        id: &QueryId,
+        run: impl FnOnce() -> R<Value>,
+    ) -> R<Value> {
+        let value = self.revisions.compute_id(eng, id, run)?;
         self.activate(eng, &value);
         Ok(value)
     }
@@ -774,5 +854,6 @@ impl Edits {
         self.root_values.borrow_mut().clear();
         self.root_reads.borrow_mut().clear();
         self.active.set(false);
+        eng.sweep_query_ids();
     }
 }

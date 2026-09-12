@@ -755,7 +755,16 @@ class Engine:
 
     def equal_values(self, a: Any, b: Any) -> bool:
         # Observe cached record contents without changing their forcing order.
-        if self.edits and self.track and self.computing:
+        if (
+            self.edits
+            and self.track
+            and self.computing
+            and (
+                (isinstance(a, RecInst) and isinstance(b, RecInst))
+                or (isinstance(a, ArrV) and isinstance(b, ArrV))
+                or (isinstance(a, MapV) and isinstance(b, MapV))
+            )
+        ):
 
             def observe(v: Any) -> None:
                 if isinstance(v, RecInst):

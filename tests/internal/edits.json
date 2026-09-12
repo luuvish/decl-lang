@@ -328,5 +328,293 @@
         }
       }
     ]
+  },
+  {
+    "name": "aggregate_null_scope",
+    "source": "type Item = { n: int, bucket = if n > 0 then 1 else 0, answer = bucket * 7 }\ntype Batch = { items: Item[], total = std.array.sum([x.answer for x in items]) }\ninput batch: Batch\noutput unrelated: Item = { n: 1 }\nexport output total: int = batch.total\nexport output probe: bool = unrelated != null\n",
+    "initial": [
+      {
+        "op": "bind",
+        "name": "batch",
+        "src": {
+          "kind": "inline",
+          "text": "{\"items\":[{\"n\":1},{\"n\":1},{\"n\":1},{\"n\":1},{\"n\":1},{\"n\":1},{\"n\":1},{\"n\":1},{\"n\":1},{\"n\":1},{\"n\":1},{\"n\":1},{\"n\":1},{\"n\":1},{\"n\":1},{\"n\":1},{\"n\":1},{\"n\":1},{\"n\":1},{\"n\":1},{\"n\":1},{\"n\":1},{\"n\":1},{\"n\":1},{\"n\":1},{\"n\":1},{\"n\":1},{\"n\":1},{\"n\":1},{\"n\":1},{\"n\":1},{\"n\":1},{\"n\":1},{\"n\":1},{\"n\":1},{\"n\":1},{\"n\":1},{\"n\":1},{\"n\":1},{\"n\":1},{\"n\":1},{\"n\":1},{\"n\":1},{\"n\":1},{\"n\":1},{\"n\":1},{\"n\":1},{\"n\":1},{\"n\":1},{\"n\":1},{\"n\":1},{\"n\":1},{\"n\":1},{\"n\":1},{\"n\":1},{\"n\":1},{\"n\":1},{\"n\":1},{\"n\":1},{\"n\":1},{\"n\":1},{\"n\":1},{\"n\":1},{\"n\":1},{\"n\":1},{\"n\":1},{\"n\":1},{\"n\":1},{\"n\":1},{\"n\":1},{\"n\":1},{\"n\":1},{\"n\":1},{\"n\":1},{\"n\":1},{\"n\":1},{\"n\":1},{\"n\":1},{\"n\":1},{\"n\":1},{\"n\":1},{\"n\":1},{\"n\":1},{\"n\":1},{\"n\":1},{\"n\":1},{\"n\":1},{\"n\":1},{\"n\":1},{\"n\":1},{\"n\":1},{\"n\":1},{\"n\":1},{\"n\":1},{\"n\":1},{\"n\":1},{\"n\":1},{\"n\":1},{\"n\":1},{\"n\":1}]}"
+        }
+      }
+    ],
+    "steps": [
+      {
+        "action": {
+          "op": "edit",
+          "kind": "update",
+          "path": "batch.items[0].n",
+          "expr": "-1"
+        },
+        "max_prepared": 7
+      },
+      {
+        "action": {
+          "op": "edit",
+          "kind": "update",
+          "path": "batch.items[0].n",
+          "expr": "1"
+        },
+        "max_prepared": 7
+      },
+      {
+        "action": {
+          "op": "edit",
+          "kind": "update",
+          "path": "batch.items[0].n",
+          "expr": "2"
+        },
+        "max_prepared": 7
+      }
+    ]
+  },
+  {
+    "name": "aggregate_self_scope",
+    "source": "type Item = { n: int, bucket = if n > 0 then 1 else 0, answer = bucket * 7 }\ntype Batch = { items: Item[], total = std.array.sum([x.answer for x in items]) }\ninput batch: Batch\noutput unrelated: Item = { n: 1 }\nexport output total: int = batch.total\nexport output probe: bool = unrelated == unrelated\n",
+    "initial": [
+      {
+        "op": "bind",
+        "name": "batch",
+        "src": {
+          "kind": "inline",
+          "text": "{\"items\":[{\"n\":1},{\"n\":1},{\"n\":1},{\"n\":1},{\"n\":1},{\"n\":1},{\"n\":1},{\"n\":1},{\"n\":1},{\"n\":1},{\"n\":1},{\"n\":1},{\"n\":1},{\"n\":1},{\"n\":1},{\"n\":1},{\"n\":1},{\"n\":1},{\"n\":1},{\"n\":1},{\"n\":1},{\"n\":1},{\"n\":1},{\"n\":1},{\"n\":1},{\"n\":1},{\"n\":1},{\"n\":1},{\"n\":1},{\"n\":1},{\"n\":1},{\"n\":1},{\"n\":1},{\"n\":1},{\"n\":1},{\"n\":1},{\"n\":1},{\"n\":1},{\"n\":1},{\"n\":1},{\"n\":1},{\"n\":1},{\"n\":1},{\"n\":1},{\"n\":1},{\"n\":1},{\"n\":1},{\"n\":1},{\"n\":1},{\"n\":1},{\"n\":1},{\"n\":1},{\"n\":1},{\"n\":1},{\"n\":1},{\"n\":1},{\"n\":1},{\"n\":1},{\"n\":1},{\"n\":1},{\"n\":1},{\"n\":1},{\"n\":1},{\"n\":1},{\"n\":1},{\"n\":1},{\"n\":1},{\"n\":1},{\"n\":1},{\"n\":1},{\"n\":1},{\"n\":1},{\"n\":1},{\"n\":1},{\"n\":1},{\"n\":1},{\"n\":1},{\"n\":1},{\"n\":1},{\"n\":1},{\"n\":1},{\"n\":1},{\"n\":1},{\"n\":1},{\"n\":1},{\"n\":1},{\"n\":1},{\"n\":1},{\"n\":1},{\"n\":1},{\"n\":1},{\"n\":1},{\"n\":1},{\"n\":1},{\"n\":1},{\"n\":1},{\"n\":1},{\"n\":1},{\"n\":1},{\"n\":1}]}"
+        }
+      }
+    ],
+    "steps": [
+      {
+        "action": {
+          "op": "edit",
+          "kind": "update",
+          "path": "batch.items[0].n",
+          "expr": "-1"
+        },
+        "max_prepared": 12
+      },
+      {
+        "action": {
+          "op": "edit",
+          "kind": "update",
+          "path": "batch.items[0].n",
+          "expr": "1"
+        },
+        "max_prepared": 12
+      },
+      {
+        "action": {
+          "op": "edit",
+          "kind": "update",
+          "path": "batch.items[0].n",
+          "expr": "2"
+        },
+        "max_prepared": 12
+      }
+    ]
+  },
+  {
+    "name": "aggregate_nested_and_replaced_records",
+    "source": "type Item = { n: int, extra?: int, derived = n * 2 }\ntype Batch = { items: Item[] }\ninput batch: Batch\noutput left: Item = batch.items[0]\noutput right: Item = batch.items[1]\nexport output equal: bool = left == right\nexport output nested: bool = [{ key: left }] == [{ key: right }]\nexport output distinct: bool = std.array.all_distinct(batch.items)\n",
+    "initial": [
+      {
+        "op": "bind",
+        "name": "batch",
+        "src": {
+          "kind": "inline",
+          "text": "{\"items\":[{\"n\":1},{\"n\":1},{\"n\":2}]}"
+        }
+      }
+    ],
+    "steps": [
+      {
+        "action": {
+          "op": "edit",
+          "kind": "update",
+          "path": "batch.items[0].n",
+          "expr": "2"
+        }
+      },
+      {
+        "action": {
+          "op": "edit",
+          "kind": "create",
+          "path": "batch.items[1].extra",
+          "expr": "3"
+        }
+      },
+      {
+        "action": {
+          "op": "edit",
+          "kind": "remove",
+          "path": "batch.items[1].extra"
+        }
+      },
+      {
+        "action": {
+          "op": "edit",
+          "kind": "update",
+          "path": "batch.items[1]",
+          "expr": "{ n: 2 }"
+        }
+      },
+      {
+        "action": {
+          "op": "edit",
+          "kind": "remove",
+          "path": "batch.items[0]"
+        }
+      },
+      {
+        "action": {
+          "op": "undo"
+        }
+      },
+      {
+        "action": {
+          "op": "redo"
+        }
+      }
+    ]
+  },
+  {
+    "name": "aggregate_with_reference_rounds",
+    "source": "type Node = { incoming$ = $referrers(Link, \"target\"), count = std.array.count(incoming$), active = count > 0, answer = if active then 11 else 0 }\ntype Link = { $parent: ref<{ nodes: map<string, Node>, ... }>, dest: string, target: ref<Node> = $parent.nodes[dest] }\ntype Graph = {\n    start: string\n    nodes: map<string, Node> = { a: {}, b: {}, c: {} }\n    initial: Link[] = [{ dest: start }]\n    first: Link[] = if (nodes[\"a\"]?.count ?? 0) > 0 then [{ dest: \"b\" }] else []\n    second: Link[] = if (nodes[\"b\"]?.count ?? 0) > 0 then [{ dest: \"c\" }] else []\n}\ninput graph: Graph\nexport output answers: int[] = [n.answer for n in std.map.values(graph.nodes)]\nexport output same: bool = std.map.values(graph.nodes) == std.map.values(graph.nodes)\n",
+    "initial": [
+      {
+        "op": "bind",
+        "name": "graph",
+        "src": {
+          "kind": "inline",
+          "text": "{\"start\":\"a\"}"
+        }
+      }
+    ],
+    "steps": [
+      {
+        "action": {
+          "op": "edit",
+          "kind": "update",
+          "path": "graph.start",
+          "expr": "\"b\""
+        }
+      },
+      {
+        "action": {
+          "op": "edit",
+          "kind": "update",
+          "path": "graph.start",
+          "expr": "\"a\""
+        }
+      },
+      {
+        "action": {
+          "op": "undo"
+        }
+      },
+      {
+        "action": {
+          "op": "redo"
+        }
+      }
+    ]
+  },
+  {
+    "name": "equal_result_dependency_switch",
+    "source": "type Selection = { pick: bool, a: int, b: int, chosen = if pick then a else b }\ninput choice: Selection\nexport output answer: int = choice.chosen * 7\n",
+    "initial": [
+      {
+        "op": "bind",
+        "name": "choice",
+        "src": {
+          "kind": "inline",
+          "text": "{\"pick\":true,\"a\":1,\"b\":1}"
+        }
+      }
+    ],
+    "steps": [
+      {
+        "action": {
+          "op": "edit",
+          "kind": "update",
+          "path": "choice.pick",
+          "expr": "false"
+        }
+      },
+      {
+        "action": {
+          "op": "edit",
+          "kind": "update",
+          "path": "choice.a",
+          "expr": "2"
+        }
+      },
+      {
+        "action": {
+          "op": "edit",
+          "kind": "update",
+          "path": "choice.b",
+          "expr": "3"
+        }
+      },
+      {
+        "action": {
+          "op": "edit",
+          "kind": "update",
+          "path": "choice.b",
+          "expr": "1"
+        }
+      },
+      {
+        "action": {
+          "op": "edit",
+          "kind": "update",
+          "path": "choice.a",
+          "expr": "1"
+        }
+      },
+      {
+        "action": {
+          "op": "edit",
+          "kind": "update",
+          "path": "choice.pick",
+          "expr": "true"
+        }
+      },
+      {
+        "action": {
+          "op": "edit",
+          "kind": "update",
+          "path": "choice.b",
+          "expr": "7"
+        }
+      },
+      {
+        "action": {
+          "op": "edit",
+          "kind": "update",
+          "path": "choice.a",
+          "expr": "4"
+        }
+      },
+      {
+        "action": {
+          "op": "edit",
+          "kind": "update",
+          "path": "choice.a",
+          "expr": "1"
+        }
+      },
+      {
+        "action": {
+          "op": "edit",
+          "kind": "update",
+          "path": "choice.b",
+          "expr": "1"
+        }
+      }
+    ]
   }
 ]

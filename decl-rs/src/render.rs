@@ -1281,10 +1281,22 @@ fn fan_out_path(
 pub fn emit_root(e: &Emission) -> RR<Emitted> {
     let yaml = e.yaml.unwrap_or(e.form.yaml);
     let indent = e.indent.or(e.form.indent);
-    let raw = |v: &Value| -> Value {
-        read_json(&e.eng.serialize(v, &e.root_name, false))
-            .ok()
-            .expect("canonical JSON")
+    let structured = |v: &Value| -> String {
+        let mut text = e.eng.serialize(v, &e.root_name, false);
+        // Serialization already produces canonical compact JSON. Reuse its
+        // bytes instead of allocating a second document and encoding it again.
+        // An unsupported public Value can serialize to empty text; preserve
+        // the existing canonical-JSON failure for that case below.
+        if !yaml && indent.unwrap_or(0) == 0 && !text.is_empty() {
+            text.push('\n');
+            text
+        } else {
+            layout(
+                &read_json(&text).ok().expect("canonical JSON"),
+                yaml,
+                indent,
+            )
+        }
     };
     let delimiters = e.form.delimiters.clone().unwrap_or_default();
     let tpl = match &e.template {
@@ -1303,7 +1315,7 @@ pub fn emit_root(e: &Emission) -> RR<Emitted> {
     let Some(each) = &e.form.each else {
         return Ok(Emitted::One(match &tpl {
             Some(t) => render_template(t, &cx(None))?,
-            None => layout(&raw(&e.value), yaml, indent),
+            None => structured(&e.value),
         }));
     };
     // fan-out: every element of the array or map to its own file
@@ -1349,7 +1361,7 @@ pub fn emit_root(e: &Emission) -> RR<Emitted> {
     for (i, (v, k, _)) in elems.into_iter().enumerate() {
         let text = match &tpl {
             Some(t) => render_template(t, &cx(Some((v, k))))?,
-            None => layout(&raw(&v), yaml, indent),
+            None => structured(&v),
         };
         files.push((paths[i].clone(), text));
     }

@@ -718,7 +718,12 @@ export class Engine {
   equalValues(a: Value, b: Value): boolean {
     // Structural equality observes cached record contents without forcing
     // members. Track this aggregate read without changing evaluation order.
-    if (this.edits && this.track && this.computing.length) {
+    if (
+      this.edits &&
+      this.track &&
+      this.computing.length &&
+      ((isRec(a) && isRec(b)) || (isArr(a) && isArr(b)) || (isMap(a) && isMap(b)))
+    ) {
       const observe = (v: Value): void => {
         if (isRec(v)) this.record(`value:${pathStr(v.path)}`);
         else if (isArr(v)) v.items.forEach(observe);

@@ -4,6 +4,7 @@
 //! $referrers universe ordering, canonical JSON output.
 use crate::ast::*;
 use crate::qengine::edits::Edits;
+use crate::qengine::graph::{QueryId, QueryPool, ReadSet};
 use crate::qengine::programs::Programs;
 use crate::qengine::revisions::Revisions;
 use crate::qengine::rounds::RoundCache;
@@ -18,6 +19,10 @@ use std::rc::{Rc, Weak};
 
 /// a record instance, shared: the engine's unit of binding and forcing
 pub type Inst = Rc<RefCell<RecInst>>;
+
+#[cfg(test)]
+#[path = "../tests/private/query_record_test.rs"]
+mod query_record_tests;
 
 /// the evaluator (§9): binds documents and expressions to types, forces slots
 /// lazily with dependency tracking, validates, serializes
@@ -36,14 +41,15 @@ pub struct Engine {
     // records what it read: slots, roots, and `$referrers` queries by type
     // (`referrers:Type`); diagnostics carry the step that produced them
     /// the dependency graph: the slot keys each computation read (the session's incremental step)
-    pub reads: RefCell<HashMap<String, HashSet<String>>>,
+    pub(crate) reads: RefCell<FxHashMap<QueryId, ReadSet>>,
     /// Sessions and retained reference rounds enable dependency recording.
     /// Ordinary one-shot work avoids the per-slot graph allocation (F21).
     pub track: Cell<bool>,
     /// the slots being forced, innermost last: a key already here is a cycle (E5007)
-    pub computing: RefCell<Vec<String>>,
+    pub(crate) computing: RefCell<Vec<QueryId>>,
     /// every slot by its key, for the dependency graph
-    pub slots_by_key: RefCell<HashMap<String, (Inst, String)>>,
+    pub(crate) slots_by_key: RefCell<FxHashMap<QueryId, (Inst, String)>>,
+    query_keys: Rc<QueryPool>,
     /// roots whose binding deferred through `$referrers` in phase 1: bound again after the deferred slots
     pub deferred_roots: RefCell<Vec<DeferredRoot>>,
     // ---- `$referrers` is answered in rounds (§7.6) ----
@@ -96,6 +102,8 @@ pub struct Engine {
     pub(crate) round_resets: RefCell<Vec<Rc<dyn Fn()>>>,
     pub(crate) round_refs: RefCell<FxHashMap<usize, Rc<SegPath>>>,
     pub(crate) inverse_refs: RefCell<FxHashMap<usize, Rc<SegPath>>>,
+    // Must drop after every Engine field and every frozen Engine.
+    _lifetime: lifetime::EngineGuard,
 }
 
 /// the values `std.array.sort` orders: one primitive kind per call (§13.2)
@@ -427,16 +435,21 @@ impl Engine {
     pub const ROUNDS: u32 = 8;
     /// an engine without registering itself as the environment's evaluator
     pub fn bare(env: Rc<Env>) -> Rc<Engine> {
+        Self::bare_with_queries(env, Rc::new(QueryPool::default()))
+    }
+    pub(crate) fn bare_with_queries(env: Rc<Env>, query_keys: Rc<QueryPool>) -> Rc<Engine> {
         let eng = Rc::new(Engine {
+            _lifetime: lifetime::EngineGuard::new(),
             env: env.clone(),
             deferred_slots: RefCell::new(vec![]),
             no_reg: Cell::new(0),
             phase: Cell::new(1),
             failed_inputs: RefCell::new(HashSet::new()),
-            reads: RefCell::new(HashMap::new()),
+            reads: RefCell::new(FxHashMap::default()),
             track: Cell::new(false),
             computing: RefCell::new(vec![]),
-            slots_by_key: RefCell::new(HashMap::new()),
+            slots_by_key: RefCell::new(FxHashMap::default()),
+            query_keys,
             deferred_roots: RefCell::new(vec![]),
             prev: RefCell::new(None),
             frozen_roots: RefCell::new(None),
@@ -464,9 +477,197 @@ impl Engine {
         let w = Rc::downgrade(&eng);
         *env.tagger.borrow_mut() = Some(Rc::new(move || {
             w.upgrade()
-                .and_then(|e| e.computing.borrow().last().cloned())
+                .and_then(|e| e.computing.borrow().last().map(ToString::to_string))
         }));
         eng
+    }
+    pub(crate) fn query_pool(&self) -> Rc<QueryPool> {
+        self.query_keys.clone()
+    }
+    pub(crate) fn query_id(&self, key: &str) -> QueryId {
+        self.query_keys.intern(key)
+    }
+    /// Find an indexed member by its textual query key.
+    ///
+    /// The returned instance is a shared live handle, not a copied record.
+    /// Retaining it retains that value; the query index itself is not exposed.
+    pub fn query_slot(&self, key: &str) -> Option<(Inst, String)> {
+        let id = self.query_keys.lookup(key)?;
+        self.query_slot_id(&id)
+    }
+    pub(crate) fn query_slot_id(&self, key: &QueryId) -> Option<(Inst, String)> {
+        self.slots_by_key.borrow().get(key).cloned()
+    }
+    pub(crate) fn register_query_slot(&self, key: &str, inst: Inst, member: String) {
+        self.register_query_slot_id(self.query_id(key), inst, member);
+    }
+    pub(crate) fn register_query_slot_id(&self, key: QueryId, inst: Inst, member: String) {
+        self.slots_by_key.borrow_mut().insert(key, (inst, member));
+    }
+    pub(crate) fn remove_query_slot(&self, key: &str) {
+        if let Some(id) = self.query_keys.lookup(key) {
+            self.slots_by_key.borrow_mut().remove(&id);
+        }
+    }
+    pub(crate) fn query_reads(&self, key: &str) -> Option<ReadSet> {
+        let id = self.query_keys.lookup(key)?;
+        self.query_reads_id(&id)
+    }
+    pub(crate) fn query_reads_id(&self, key: &QueryId) -> Option<ReadSet> {
+        self.reads.borrow().get(key).cloned()
+    }
+    pub(crate) fn replace_query_reads(&self, key: &str, reads: ReadSet) {
+        let id = self.query_id(key);
+        self.replace_query_reads_id(&id, reads);
+    }
+    // Writers pass an identity obtained from this Engine's evaluation lineage.
+    pub(crate) fn replace_query_reads_id(&self, key: &QueryId, reads: ReadSet) {
+        self.reads.borrow_mut().insert(key.clone(), reads);
+    }
+    pub(crate) fn remove_query_reads(&self, key: &str) {
+        if let Some(id) = self.query_keys.lookup(key) {
+            self.reads.borrow_mut().remove(&id);
+        }
+    }
+    pub(crate) fn sweep_query_ids(&self) {
+        self.query_keys.sweep();
+    }
+    pub(crate) fn maintain_query_ids(&self) {
+        self.query_keys.maintain_transient();
+    }
+    /// Number of computations with a retained read set, including empty sets.
+    pub fn dependency_queries(&self) -> usize {
+        self.reads.borrow().len()
+    }
+    /// Number of registered member slots in the query index.
+    pub fn indexed_slots(&self) -> usize {
+        self.slots_by_key.borrow().len()
+    }
+    /// Export one computation's sorted dependencies without copying other owners.
+    ///
+    /// An absent owner returns `None`; a retained empty read set returns
+    /// `Some(Vec::new())`. Changing the owned result does not change the graph.
+    pub fn query_dependencies_for(&self, key: &str) -> Option<Vec<String>> {
+        let deps = self.query_reads(key)?;
+        let mut dependencies: Vec<_> = deps.iter().map(ToString::to_string).collect();
+        dependencies.sort();
+        Some(dependencies)
+    }
+    /// Export active computation keys, outermost first and innermost last.
+    ///
+    /// The owned snapshot preserves order and does not retain the live stack.
+    pub fn query_stack(&self) -> Vec<String> {
+        self.computing
+            .borrow()
+            .iter()
+            .map(ToString::to_string)
+            .collect()
+    }
+    /// Export a sorted textual dependency graph for explicit inspection.
+    ///
+    /// The returned owned snapshot does not mutate or retain the live graph.
+    /// An owner with an empty list is distinct from an absent owner.
+    pub fn query_dependencies(&self) -> Vec<(String, Vec<String>)> {
+        let mut rows: Vec<_> = self
+            .reads
+            .borrow()
+            .iter()
+            .map(|(owner, deps)| {
+                let mut dependencies: Vec<_> = deps.iter().map(ToString::to_string).collect();
+                dependencies.sort();
+                (owner.to_string(), dependencies)
+            })
+            .collect();
+        rows.sort_by(|a, b| a.0.cmp(&b.0));
+        rows
+    }
+    /// Export the sorted logical keys of registered slots for inspection.
+    pub fn query_slot_keys(&self) -> Vec<String> {
+        let mut keys: Vec<_> = self
+            .slots_by_key
+            .borrow()
+            .keys()
+            .map(ToString::to_string)
+            .collect();
+        keys.sort();
+        keys
+    }
+    /// Inspect query representation storage without copying graph text.
+    ///
+    /// Pool counts cover the shared evaluation lineage, including identities
+    /// held by old runs or snapshots. Read-set and index counts cover this
+    /// engine. Capacities are usable entries and payload sizes exclude allocator
+    /// metadata; these counters are not process RSS. This method does not prune.
+    pub fn query_storage(&self) -> BTreeMap<&'static str, usize> {
+        let pool = self.query_keys.census();
+        let reads = self.reads.borrow();
+        let slots = self.slots_by_key.borrow();
+        let mut bodies = FxHashSet::default();
+        let mut unique_edges = 0;
+        let mut unique_capacity = 0;
+        let mut shared_bodies = 0;
+        let mut retained_handles = 0;
+        for deps in reads.values() {
+            if let Some(body) = deps.storage() {
+                if bodies.insert(body.identity) {
+                    unique_edges += body.len;
+                    unique_capacity += body.capacity;
+                    shared_bodies += usize::from(body.strong_count > 1);
+                    retained_handles += body.strong_count;
+                }
+            }
+        }
+        BTreeMap::from([
+            ("pool_entries", pool.entries),
+            ("pool_live", pool.live),
+            ("pool_dead", pool.dead),
+            ("pool_text_bytes", pool.text_bytes),
+            ("pool_live_text_bytes", pool.live_text_bytes),
+            ("pool_dead_text_bytes", pool.dead_text_bytes),
+            ("pool_capacity", pool.capacity),
+            ("scratch_index_entries", pool.scratch_index_entries),
+            ("scratch_index_capacity", pool.scratch_index_capacity),
+            ("scratch_index_entry_bytes", pool.scratch_index_entry_bytes),
+            ("query_id_bytes", pool.query_id_bytes),
+            ("query_key_bytes", pool.query_key_bytes),
+            ("text_handle_bytes", pool.text_handle_bytes),
+            ("weak_key_bytes", pool.weak_key_bytes),
+            ("pool_entry_bytes", pool.interner_entry_bytes),
+            ("read_set_bytes", pool.read_set_bytes),
+            ("dependency_set_bytes", pool.dependency_set_bytes),
+            ("rc_header_bytes", pool.rc_header_bytes),
+            ("read_queries", reads.len()),
+            ("read_capacity", reads.capacity()),
+            (
+                "read_entry_bytes",
+                std::mem::size_of::<(QueryId, ReadSet)>(),
+            ),
+            (
+                "read_empty",
+                reads.values().filter(|deps| deps.is_empty()).count(),
+            ),
+            ("read_logical_edges", reads.values().map(ReadSet::len).sum()),
+            (
+                "read_logical_text_bytes",
+                reads
+                    .values()
+                    .flat_map(|deps| deps.iter())
+                    .map(|id| id.len())
+                    .sum(),
+            ),
+            ("read_unique_bodies", bodies.len()),
+            ("read_unique_edges", unique_edges),
+            ("read_unique_capacity", unique_capacity),
+            ("read_shared_bodies", shared_bodies),
+            ("read_body_strong_handles", retained_handles),
+            ("indexed_slots", slots.len()),
+            ("slot_index_capacity", slots.capacity()),
+            (
+                "slot_index_entry_bytes",
+                std::mem::size_of::<(QueryId, (Inst, String))>(),
+            ),
+            ("computing_depth", self.computing.borrow().len()),
+        ])
     }
     /// The root's value as this engine's expressions read it: its own universe once frozen.
     pub fn root(&self, name: &str) -> Option<Value> {
@@ -499,10 +700,36 @@ impl Engine {
         {
             return;
         }
-        let top = self.computing.borrow().last().cloned();
-        if let Some(top) = top {
-            self.reads.borrow_mut().entry(top).or_default().insert(read);
+        let computing = self.computing.borrow();
+        if let Some(top) = computing.last() {
+            let dependency = self.query_id(&read);
+            self.reads
+                .borrow_mut()
+                .entry(top.clone())
+                .or_default()
+                .insert(dependency);
         }
+    }
+    // An actual tracked force can pass its parent's recorded identity on to
+    // producer setup. Cached reads keep record's move-only insertion path.
+    fn record_query(&self, read: &str) -> Option<QueryId> {
+        if !self.track.get()
+            || self
+                .verifying_depth
+                .get()
+                .is_some_and(|d| self.computing.borrow().len() <= d)
+        {
+            return None;
+        }
+        let computing = self.computing.borrow();
+        let top = computing.last()?;
+        let dependency = self.query_id(read);
+        self.reads
+            .borrow_mut()
+            .entry(top.clone())
+            .or_default()
+            .insert(dependency.clone());
+        Some(dependency)
     }
     pub(crate) fn verify_reads<T>(&self, f: impl FnOnce() -> T) -> T {
         let previous = self
@@ -514,14 +741,15 @@ impl Engine {
     }
     /// Run a computation as a step of the dependency graph, its reads recorded under `key`.
     pub fn step<T>(&self, key: &str, f: impl FnOnce() -> T) -> T {
-        self.computing.borrow_mut().push(key.to_string());
+        self.step_id(self.query_id(key), f)
+    }
+    pub(crate) fn step_id<T>(&self, id: QueryId, f: impl FnOnce() -> T) -> T {
+        self.computing.borrow_mut().push(id.clone());
         if self.track.get() {
             if self.round_cache.borrow().is_some() {
-                self.reads.borrow_mut().remove(key);
+                self.reads.borrow_mut().remove(&id);
             } else {
-                self.reads
-                    .borrow_mut()
-                    .insert(key.to_string(), HashSet::new());
+                self.reads.borrow_mut().insert(id, ReadSet::default());
             }
         }
         let r = f();
@@ -1267,7 +1495,15 @@ impl Engine {
                 _ => {}
             }
         }
-        if self.edits.borrow().is_some() && self.track.get() && !self.computing.borrow().is_empty()
+        if self.edits.borrow().is_some()
+            && self.track.get()
+            && !self.computing.borrow().is_empty()
+            && matches!(
+                (a, b),
+                (Value::Rec(_), Value::Rec(_))
+                    | (Value::Arr(_), Value::Arr(_))
+                    | (Value::Map(_), Value::Map(_))
+            )
         {
             observe(self, a);
             observe(self, b);
@@ -2423,13 +2659,21 @@ impl Engine {
             .as_ref()
             .and_then(|e| e.programs.borrow().clone())
             .or_else(|| incremental.then(|| Rc::new(Programs::default())));
+        let query_keys = initial
+            .as_ref()
+            .map(|eng| eng.query_pool())
+            .unwrap_or_default();
         let mut retained = initial;
         let mut incremental = incremental && RoundCache::needed(env);
         let mut cache = incremental.then(|| Rc::new(RoundCache::default()));
         loop {
             round += 1;
             let reusing = retained.is_some();
-            let eng = retained.take().unwrap_or_else(|| Engine::new(env.clone()));
+            let eng = retained.take().unwrap_or_else(|| {
+                let eng = Self::bare_with_queries(env.clone(), query_keys.clone());
+                eng.install_hooks(env, false);
+                eng
+            });
             *eng.programs.borrow_mut() = programs.clone();
             *eng.round_cache.borrow_mut() = cache.clone();
             *eng.revisions.borrow_mut() = cache
@@ -2467,6 +2711,8 @@ impl Engine {
                 }
                 eng.settled.set(true);
                 *eng.prev.borrow_mut() = None;
+                drop(prev);
+                eng.sweep_query_ids();
                 return eng;
             }
             // the round is the next one's snapshot; the universe starts over
@@ -3100,7 +3346,7 @@ impl Engine {
             .map(|i| std::mem::take(&mut i.borrow_mut().slots))
             .unwrap_or_default();
         let inst = previous.unwrap_or_else(|| {
-            Rc::new(RefCell::new(RecInst {
+            record_instance(RecInst {
                 ps: RefCell::new(None),
                 type_name: rt.name.borrow().clone(),
                 rt: rt.clone(),
@@ -3110,11 +3356,14 @@ impl Engine {
                 entry_order: vec![],
                 extras: vec![],
                 menv: sc.menv.clone(),
-            }))
+            })
         });
         {
             let mut b = inst.borrow_mut();
             b.slots.clear();
+            // Every schema member contributes one slot, including absent and
+            // invalid members. Rebinding took the old vector for Edits::bound.
+            b.slots.reserve_exact(members.len());
             b.extras.clear();
             b.entry_order = entries.iter().map(|(k, _)| k.clone()).collect();
             b.menv = sc.menv.clone();
@@ -3581,7 +3830,7 @@ impl Engine {
     /// the re-entered one and now, each shown by its member, closing the loop
     fn cycle_path(&self, key: &str) -> String {
         let c = self.computing.borrow();
-        let from = c.iter().position(|k| k == key).unwrap_or(0);
+        let from = c.iter().position(|k| k.as_str() == key).unwrap_or(0);
         let mut chain: Vec<String> = c[from..].iter().map(|k| member_of_key(k)).collect();
         chain.push(member_of_key(key));
         chain.join(" -> ")
@@ -3604,18 +3853,25 @@ impl Engine {
             self.inherit_snapshot_refs(&value, &owner);
             return Ok(value);
         }
-        let (state, compute) = {
+        let state = {
             let b = inst.borrow();
             let Some(s) = b.slot(name) else {
                 return err(format!("no member {name}"));
             };
-            (s.state, s.compute.clone())
+            s.state
         };
         // the slot key is a per-force string allocation; a one-shot evaluate
         // never reads the dependency graph, so build it only when tracking or
         // when the slot is actually forced (past the cached early returns) (F21)
+        let mut recorded = None;
         if self.track.get() && !self.computing.borrow().is_empty() {
-            self.record(Engine::slot_key(inst, name));
+            let key = Engine::slot_key(inst, name);
+            if state == SlotState::Unforced {
+                let id = self.record_query(&key);
+                recorded = Some((key, id));
+            } else {
+                self.record(key);
+            }
         }
         match state {
             SlotState::Ok => {
@@ -3636,7 +3892,7 @@ impl Engine {
             SlotState::Invalid => return Err(Fail::Taint),
             _ => {}
         }
-        let key = Engine::slot_key(inst, name);
+        let (key, recorded_id) = recorded.unwrap_or_else(|| (Engine::slot_key(inst, name), None));
         let mut mp = inst.borrow().path.to_vec();
         mp.push(Seg::Name(Rc::from(name)));
         if state == SlotState::Deferred {
@@ -3649,7 +3905,11 @@ impl Engine {
             // re-entered from inside an edge computation it was waiting on: the
             // candidate reading it is unanswerable in this round, not a cycle
             if let Some(&base) = self.edge_bases.borrow().last() {
-                let at = self.computing.borrow().iter().position(|k| *k == key);
+                let at = self
+                    .computing
+                    .borrow()
+                    .iter()
+                    .position(|k| k.as_str() == key);
                 if at.is_none_or(|i| i < base) {
                     return Err(Fail::Defer);
                 }
@@ -3662,12 +3922,19 @@ impl Engine {
             inst.borrow_mut().slot_mut(name).unwrap().state = SlotState::Invalid;
             return Err(Fail::Taint);
         }
-        inst.borrow_mut().slot_mut(name).unwrap().state = SlotState::Forcing;
-        self.slots_by_key
-            .borrow_mut()
-            .insert(key.clone(), (inst.clone(), name.to_string()));
+        // Cached, deferred and cyclic reads do not execute the descriptor.
+        // Clone its owned names and supplied value only for actual forcing.
+        let compute = {
+            let mut b = inst.borrow_mut();
+            let s = b.slot_mut(name).unwrap();
+            let compute = s.compute.clone();
+            s.state = SlotState::Forcing;
+            compute
+        };
+        let id = recorded_id.unwrap_or_else(|| self.query_id(&key));
+        self.register_query_slot_id(id.clone(), inst.clone(), name.to_string());
         let res = match &compute {
-            Some(c) => self.step(&key, || {
+            Some(c) => self.step_id(id.clone(), || {
                 let edits = self.edits.borrow().clone();
                 let produce = || {
                     if let Some(edits) = &edits {
@@ -3676,11 +3943,11 @@ impl Engine {
                     self.run_compute(inst, c)
                 };
                 if let Some(edits) = edits.as_ref().filter(|e| e.active.get()) {
-                    return edits.compute(self, &key, produce);
+                    return edits.compute_id(self, &id, produce);
                 }
                 let revisions = self.revisions.borrow().clone();
                 match revisions {
-                    Some(revisions) => revisions.compute(self, &key, produce),
+                    Some(revisions) => revisions.compute_id(self, &id, produce),
                     None => produce(),
                 }
             }),
@@ -3869,12 +4136,26 @@ impl Engine {
             RTk::Rec(r) => r.asserts.borrow().clone(),
             _ => vec![],
         };
+        // An empty body cannot read anything or report a diagnostic. Preserve
+        // step's graph reset semantics without creating a temporary query or
+        // constructing an assertion scope for every assertion-free record.
+        if asserts.is_empty() && !self.track.get() {
+            return;
+        }
         let key = format!("assert:{}", path_str(&inst.borrow().path, None));
+        if asserts.is_empty() {
+            if self.round_cache.borrow().is_some() {
+                self.remove_query_reads(&key);
+            } else {
+                self.replace_query_reads(&key, ReadSet::default());
+            }
+            return;
+        }
         self.step(&key, || self.run_asserts(inst, &asserts, root_name));
     }
     /// reset a computed slot so that it is computed again (dependency tracking)
     pub fn reset_slot(&self, key: &str) -> bool {
-        let entry = self.slots_by_key.borrow().get(key).cloned();
+        let entry = self.query_slot(key);
         let Some((inst, name)) = entry else {
             return false;
         };
@@ -4072,23 +4353,23 @@ impl Engine {
     /// settable projection (required, optional, defaulted members) that a
     /// document for the same type would carry
     pub fn serialize(&self, v: &Value, root_name: &str, settable_only: bool) -> String {
-        self.go(v, root_name, settable_only).unwrap_or_default()
+        let mut out = String::new();
+        self.go(v, root_name, settable_only, &mut out);
+        out
     }
 
-    fn go(&self, x: &Value, root: &str, settable_only: bool) -> Option<String> {
-        Some(match x {
-            Value::Absent | Value::Undef => return None,
-            Value::Null => "null".into(),
-            Value::Bool(b) => {
-                if *b {
-                    "true".into()
-                } else {
-                    "false".into()
-                }
-            }
-            Value::Int(i) => i.to_string(),
-            Value::Float(f) => fmt_f(*f),
-            Value::Str(s) => json_str(s),
+    // Append one typed value. An unsupported/absent value appends nothing and
+    // returns false, allowing its container to omit the member or array item.
+    fn go(&self, x: &Value, root: &str, settable_only: bool, out: &mut String) -> bool {
+        use std::fmt::Write;
+
+        match x {
+            Value::Absent | Value::Undef => return false,
+            Value::Null => out.push_str("null"),
+            Value::Bool(b) => out.push_str(if *b { "true" } else { "false" }),
+            Value::Int(i) => write!(out, "{i}").expect("writing to String"),
+            Value::Float(f) => out.push_str(&fmt_f(*f)),
+            Value::Str(s) => write_json_str(out, s),
             Value::Q { dim, value } => {
                 let unit = self
                     .env
@@ -4097,41 +4378,62 @@ impl Engine {
                     .get(dim)
                     .cloned()
                     .unwrap_or_else(|| dim.clone());
-                format!(
-                    "{{\"value\":{},\"unit\":{}}}",
-                    fmt_f(*value),
-                    json_str(&unit)
-                )
+                out.push_str("{\"value\":");
+                out.push_str(&fmt_f(*value));
+                out.push_str(",\"unit\":");
+                write_json_str(out, &unit);
+                out.push('}');
             }
-            Value::Ref(p) => json_str(&path_str(p, Some(root))),
-            Value::Arr(a) => format!(
-                "[{}]",
-                a.borrow()
-                    .items
-                    .iter()
-                    .filter_map(|i| self.go(i, root, settable_only))
-                    .collect::<Vec<_>>()
-                    .join(",")
-            ),
-            Value::Map(m) => format!(
-                "{{{}}}",
-                m.borrow()
-                    .entries
-                    .iter()
-                    .filter_map(|(k, v)| self
-                        .go(v, root, settable_only)
-                        .map(|g| format!("{}:{g}", json_str(k))))
-                    .collect::<Vec<_>>()
-                    .join(",")
-            ),
+            Value::Ref(p) => write_json_str(out, &path_str(p, Some(root))),
+            Value::Arr(a) => {
+                out.push('[');
+                let mut comma = false;
+                for item in &a.borrow().items {
+                    let start = out.len();
+                    if comma {
+                        out.push(',');
+                    }
+                    if self.go(item, root, settable_only, out) {
+                        comma = true;
+                    } else {
+                        out.truncate(start);
+                    }
+                }
+                out.push(']');
+            }
+            Value::Map(m) => {
+                out.push('{');
+                let mut comma = false;
+                for (key, value) in &m.borrow().entries {
+                    let start = out.len();
+                    if comma {
+                        out.push(',');
+                    }
+                    write_json_str(out, key);
+                    out.push(':');
+                    if self.go(value, root, settable_only, out) {
+                        comma = true;
+                    } else {
+                        out.truncate(start);
+                    }
+                }
+                out.push('}');
+            }
             Value::Rec(r) => {
                 let b = r.borrow();
-                let mut parts = vec![];
-                let mut done: HashSet<String> = HashSet::new();
+                out.push('{');
+                let mut comma = false;
+                let mut done: HashSet<&str> = HashSet::new();
                 for n in &b.entry_order {
-                    done.insert(n.clone());
+                    done.insert(n);
                     if let Some(v) = b.extra(n) {
-                        parts.push(format!("{}:{}", json_str(n), self.raw_json(v, root)));
+                        if comma {
+                            out.push(',');
+                        }
+                        write_json_str(out, n);
+                        out.push(':');
+                        self.raw_json(v, root, out);
+                        comma = true;
                         continue;
                     }
                     let Some(s) = b.slot(n) else { continue };
@@ -4140,12 +4442,20 @@ impl Engine {
                     {
                         continue;
                     }
-                    if let Some(g) = self.go(&s.value, root, settable_only) {
-                        parts.push(format!("{}:{g}", json_str(n)));
+                    let start = out.len();
+                    if comma {
+                        out.push(',');
+                    }
+                    write_json_str(out, n);
+                    out.push(':');
+                    if self.go(&s.value, root, settable_only, out) {
+                        comma = true;
+                    } else {
+                        out.truncate(start);
                     }
                 }
                 for m in rec_members(&b.rt).iter() {
-                    if done.contains(&m.name) && m.kind != MKind::Der {
+                    if done.contains(m.name.as_str()) && m.kind != MKind::Der {
                         continue;
                     }
                     if settable_only && m.kind == MKind::Der {
@@ -4163,50 +4473,65 @@ impl Engine {
                     {
                         continue;
                     }
-                    if let Some(g) = self.go(&s.value, root, settable_only) {
-                        parts.push(format!("{}:{g}", json_str(&m.name)));
+                    let start = out.len();
+                    if comma {
+                        out.push(',');
+                    }
+                    write_json_str(out, &m.name);
+                    out.push(':');
+                    if self.go(&s.value, root, settable_only, out) {
+                        comma = true;
+                    } else {
+                        out.truncate(start);
                     }
                 }
-                format!("{{{}}}", parts.join(","))
+                out.push('}');
             }
-            Value::JObj(_) | Value::JArr(_) => self.raw_json(x, root),
-            _ => return None,
-        })
+            Value::JObj(_) | Value::JArr(_) => self.raw_json(x, root, out),
+            _ => return false,
+        }
+        true
     }
 
-    fn raw_json(&self, v: &Value, root: &str) -> String {
+    // Raw documents retain every position. Non-document values and failed or
+    // unsupported PreVal results become null, unlike omitted typed children.
+    fn raw_json(&self, v: &Value, root: &str, out: &mut String) {
         match v {
-            Value::Null => "null".into(),
-            Value::Bool(b) => {
-                if *b {
-                    "true".into()
-                } else {
-                    "false".into()
+            Value::JArr(items) => {
+                out.push('[');
+                for (index, item) in items.iter().enumerate() {
+                    if index != 0 {
+                        out.push(',');
+                    }
+                    self.raw_json(item, root, out);
+                }
+                out.push(']');
+            }
+            Value::JObj(entries) => {
+                out.push('{');
+                for (index, (key, value)) in entries.iter().enumerate() {
+                    if index != 0 {
+                        out.push(',');
+                    }
+                    write_json_str(out, key);
+                    out.push(':');
+                    self.raw_json(value, root, out);
+                }
+                out.push('}');
+            }
+            Value::PreVal(pv) => match self.ev(&pv.expr, &pv.scope) {
+                Ok(v) => {
+                    if !self.go(&v, root, false, out) {
+                        out.push_str("null");
+                    }
+                }
+                Err(_) => out.push_str("null"),
+            },
+            other => {
+                if !self.go(other, root, false, out) {
+                    out.push_str("null");
                 }
             }
-            Value::Int(i) => i.to_string(),
-            Value::Float(f) => fmt_f(*f),
-            Value::Str(s) => json_str(s),
-            Value::JArr(items) => format!(
-                "[{}]",
-                items
-                    .iter()
-                    .map(|x| self.raw_json(x, root))
-                    .collect::<Vec<_>>()
-                    .join(",")
-            ),
-            Value::JObj(es) => format!(
-                "{{{}}}",
-                es.iter()
-                    .map(|(k, x)| format!("{}:{}", json_str(k), self.raw_json(x, root)))
-                    .collect::<Vec<_>>()
-                    .join(",")
-            ),
-            Value::PreVal(pv) => match self.ev(&pv.expr, &pv.scope) {
-                Ok(v) => self.go(&v, root, false).unwrap_or_else(|| "null".into()),
-                Err(_) => "null".into(),
-            },
-            other => self.go(other, root, false).unwrap_or_else(|| "null".into()),
         }
     }
 }

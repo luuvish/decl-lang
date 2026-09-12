@@ -550,7 +550,9 @@ struct Last {
 }
 
 fn under(path: &str, root: &str) -> bool {
-    path == root || path.starts_with(&format!("{root}.")) || path.starts_with(&format!("{root}["))
+    path.strip_prefix(root).is_some_and(|suffix| {
+        suffix.is_empty() || suffix.starts_with('.') || suffix.starts_with('[')
+    })
 }
 
 impl Session {
@@ -1098,7 +1100,7 @@ impl Session {
             evaluate: elapsed,
             total: elapsed,
             recomputed: Some(recomputed),
-            slots: Some(current.slots_by_key.borrow().len()),
+            slots: Some(current.indexed_slots()),
         };
         let run = Run {
             eng: Some(current),
@@ -1335,22 +1337,26 @@ impl Session {
     fn scratch<T>(&self, r: &Run, f: impl FnOnce(&Rc<Engine>, &Rc<Env>) -> T) -> T {
         let (eng, env) = (r.eng.clone().unwrap(), r.entry.clone().unwrap().env.clone());
         let n = env.diag_len();
-        let reg = env.registry_snapshot().len();
+        let reg = env.registry_len();
         let roots: HashSet<String> = env.root_names().into_iter().collect();
-        let slots: Vec<_> = eng
-            .slots_by_key
-            .borrow()
-            .iter()
-            .filter(|(k, _)| under(k, "_"))
-            .map(|(k, v)| (k.clone(), v.clone()))
-            .collect();
-        let reads: Vec<_> = eng
-            .reads
-            .borrow()
-            .iter()
-            .filter(|(k, _)| under(k.strip_prefix("assert:").unwrap_or(k), "_"))
-            .map(|(k, v)| (k.clone(), v.clone()))
-            .collect();
+        let (slots, reads) = {
+            let candidates = eng.query_pool().scratch_ids();
+            let current_slots = eng.slots_by_key.borrow();
+            let current_reads = eng.reads.borrow();
+            let mut slots = Vec::new();
+            let mut reads = Vec::new();
+            for key in candidates {
+                if under(&key, "_") {
+                    if let Some(slot) = current_slots.get(&key) {
+                        slots.push((key.clone(), slot.clone()));
+                    }
+                }
+                if let Some(deps) = current_reads.get(&key) {
+                    reads.push((key, deps.clone()));
+                }
+            }
+            (slots, reads)
+        };
         let out = eng.transient(|| f(&eng, &env));
         // an input demanded through its fallback by the expression alone is not a root of the run
         let demanded: Vec<String> = env
@@ -1362,42 +1368,71 @@ impl Session {
         for k in &demanded {
             env.remove_root(k);
             eng.failed_inputs.borrow_mut().remove(k);
-            eng.reads.borrow_mut().remove(&format!("root:{k}"));
+            eng.remove_query_reads(&format!("root:{k}"));
         }
-        let keys: Vec<String> = eng.reads.borrow().keys().cloned().collect();
-        for k in keys {
-            if under_demanded(k.strip_prefix("assert:").unwrap_or(&k))
-                || under(k.strip_prefix("assert:").unwrap_or(&k), "_")
-            {
-                eng.reads.borrow_mut().remove(&k);
+        if demanded.is_empty() {
+            // The pool can also contain keys held by old Runs. Membership in
+            // these current maps, rather than pool liveness, decides cleanup.
+            let candidates = eng.query_pool().scratch_ids();
+            for key in &candidates {
+                eng.reads.borrow_mut().remove(key);
             }
-        }
-        let skeys: Vec<String> = eng.slots_by_key.borrow().keys().cloned().collect();
-        for k in skeys {
-            if under_demanded(&k) || under(&k, "_") {
-                eng.slots_by_key.borrow_mut().remove(&k);
+            // Drop all temporary reads before any slot, with the same per-key
+            // borrow scope as before: releasing an Inst can drop a public
+            // Bridge callback's user-provided captures.
+            for key in candidates {
+                if under(&key, "_") {
+                    eng.slots_by_key.borrow_mut().remove(&key);
+                }
+            }
+        } else {
+            // Arbitrary fallback-root names still need the complete scan.
+            // Preserve its key snapshots and per-removal borrowing/drop order.
+            let keys: Vec<_> = eng.reads.borrow().keys().cloned().collect();
+            for key in keys {
+                let path = key.strip_prefix("assert:").unwrap_or(&key);
+                if under_demanded(path) || under(path, "_") {
+                    eng.reads.borrow_mut().remove(&key);
+                }
+            }
+            let keys: Vec<_> = eng.slots_by_key.borrow().keys().cloned().collect();
+            for key in keys {
+                if under_demanded(&key) || under(&key, "_") {
+                    eng.slots_by_key.borrow_mut().remove(&key);
+                }
             }
         }
         eng.slots_by_key.borrow_mut().extend(slots);
         eng.reads.borrow_mut().extend(reads);
         env.diag_truncate(n);
-        let mut i = 0usize;
-        env.registry_retain(|inst| {
-            let idx = i;
-            i += 1;
-            let p = path_str(&inst.borrow().path, None);
-            let scratch_root =
-                matches!(inst.borrow().path.first(), Some(Seg::Name(n)) if &**n == "_");
-            if idx < reg {
-                !under_demanded(&p)
-            } else {
-                !scratch_root && !under_demanded(&p)
-            }
-        });
+        if demanded.is_empty() {
+            // The existing prefix is unchanged by the old predicate even if
+            // a caller publicly changed an instance's path. Only the appended
+            // tail can contain new scratch instances; no path text is needed.
+            env.registry_retain_from(
+                reg,
+                |inst| !matches!(inst.borrow().path.first(), Some(Seg::Name(n)) if &**n == "_"),
+            );
+        } else {
+            let mut i = 0usize;
+            env.registry_retain(|inst| {
+                let idx = i;
+                i += 1;
+                let p = path_str(&inst.borrow().path, None);
+                let scratch_root =
+                    matches!(inst.borrow().path.first(), Some(Seg::Name(n)) if &**n == "_");
+                if idx < reg {
+                    !under_demanded(&p)
+                } else {
+                    !scratch_root && !under_demanded(&p)
+                }
+            });
+        }
         eng.computing.borrow_mut().clear();
         if let Some(edits) = eng.edits.borrow().as_ref() {
             edits.prune(&eng);
         }
+        eng.maintain_query_ids();
         out
     }
 
@@ -2997,3 +3032,8 @@ fn line_diff(a: &[String], b: &[String]) -> Vec<String> {
     }
     out
 }
+
+// Rust-only representation, ownership and bounded-work checks.
+#[cfg(test)]
+#[path = "../tests/private/session_scratch_test.rs"]
+mod tests;

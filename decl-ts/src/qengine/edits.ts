@@ -46,7 +46,17 @@ function sameRaw(a: Value, b: Value): boolean {
 /** Snapshot the observable shape before records receive their next slot maps.
  * A record's values are separate member queries; whole-value consumers record
  * an aggregate observation, which is conservatively invalidated on edits. */
-function capture(v: Value): (next: Value) => boolean {
+type Matches = (next: Value) => boolean;
+
+function capture(v: Value, memo: Map<Value, Matches>): Matches {
+  const prior = memo.get(v);
+  if (prior) return prior;
+  const matches = captureShape(v, (value) => capture(value, memo));
+  memo.set(v, matches);
+  return matches;
+}
+
+function captureShape(v: Value, capture: (value: Value) => Matches): Matches {
   if (isRec(v)) {
     const rt = v.rt,
       owner = (v as any).eng,
@@ -143,16 +153,20 @@ export class Edits {
       [...eng.env.roots.keys()].map((n) => [`root:${n}`, new Set(eng.reads.get(`root:${n}`))]),
     );
     const knownInputs = new Set<string>();
-    const collect = (v: Value, into: Set<string>): void => {
-      if (isRec(v))
+    const collect = (v: Value, into: Set<string>, seen = new Set<Value>()): void => {
+      if (!isRec(v) && !isArr(v) && !isMap(v)) return;
+      if (seen.has(v)) return;
+      seen.add(v);
+      if (isRec(v)) {
+        const path = pathStr(v.path);
         for (const [n, slot] of v.slots) {
-          const key = `${pathStr(v.path)}.${n}`;
+          const key = `${path}.${n}`;
           eng.slotsByKey.set(key, { inst: v, name: n });
           into.add(key);
-          if (slot.state === 'ok') collect(slot.value, into);
+          if (slot.state === 'ok') collect(slot.value, into, seen);
         }
-      else if (isArr(v)) v.items.forEach((x: Value) => collect(x, into));
-      else if (isMap(v)) [...v.entries.values()].forEach((x) => collect(x, into));
+      } else if (isArr(v)) v.items.forEach((x: Value) => collect(x, into, seen));
+      else if (isMap(v)) [...v.entries.values()].forEach((x) => collect(x, into, seen));
     };
     const diff = (before: Value, next: Value, value: Value, producer: string): void => {
       if (sameRaw(before, next)) return;
@@ -199,9 +213,10 @@ export class Edits {
           forced.add(key);
       }
     for (const [name, value] of eng.env.roots) values.set(`root:${name}`, value);
-    for (const inst of eng.env.registry)
+    for (const inst of eng.env.registry) {
+      const path = pathStr(inst.path);
       for (const [name, slot] of inst.slots) {
-        const key = `${pathStr(inst.path)}.${name}`;
+        const key = `${path}.${name}`;
         if (slot.state === 'ok' || slot.state === 'absent')
           values.set(key, slot.state === 'absent' ? ABSENT : slot.value);
         if (errors) {
@@ -209,6 +224,7 @@ export class Edits {
           eng.slotsByKey.set(key, { inst, name });
         }
       }
+    }
     for (const [index, env] of [...eng.constEnvs].entries())
       for (const [name, con] of env.consts) {
         const key = `const:${index}|${name}`;
@@ -242,12 +258,25 @@ export class Edits {
     };
     if (eng.queried.size) for (const [key, value] of values) if (!retain(value)) forced.add(key);
     if (errors) for (const key of eng.reads.keys()) forced.add(key);
-    const aggregate = [...eng.reads.values()].some((deps) =>
-      [...deps].some((d) => d.startsWith('value:')),
-    );
     const invalid = new Set<string>(),
       queue = [...forced];
-    if (aggregate) queue.push(...values.keys());
+    // Equality reads cached contents in these records. Reset that observed
+    // region, including nested members, without touching unrelated values.
+    const walked = new Set<Value>();
+    for (const dep of readers.keys()) {
+      if (!dep.startsWith('value:')) continue;
+      const record = this.pool.get(dep.slice(6));
+      if (record) {
+        const descendants = new Set<string>();
+        collect(record, descendants, walked);
+        queue.push(...descendants);
+      } else {
+        // An observation outside the live registry (e.g. a frozen owner)
+        // retains the conservative fallback until its producer is known.
+        queue.push(...values.keys());
+        break;
+      }
+    }
     while (queue.length) {
       const key = queue.pop()!;
       if (invalid.has(key)) continue;
@@ -256,14 +285,17 @@ export class Edits {
       // Direct document changes were already diffed down to supplied members.
       if (!knownInputs.has(key) && values.has(key)) {
         const descendants = new Set<string>();
-        collect(values.get(key), descendants);
+        collect(values.get(key), descendants, walked);
         for (const child of descendants) if (!invalid.has(child)) queue.push(child);
       }
       queue.push(...(readers.get(key) ?? []));
     }
     this.invalid = invalid;
     this.preparedQueries = invalid.size;
-    this.revisions.beginQueries(eng, invalid, values, forced, capture);
+    // All snapshots precede slot mutation. Shared subvalues need one snapshot
+    // per revision; release the temporary index as soon as preparation ends.
+    const captured = new Map<Value, Matches>();
+    this.revisions.beginQueries(eng, invalid, values, forced, (value) => capture(value, captured));
     const copied = new Set<RecInst>();
     for (const key of invalid) {
       const found = eng.slotsByKey.get(key);

@@ -84,6 +84,13 @@ fan-out root) with `RenderOptions` as the overrides, `to_json` and
 (`decl.evaluate`, …) offer the same functions with the same semantics;
 the modules the functions are built from are public as well.
 
+The low-level Rust query graph API has changed: `Engine.reads`,
+`Engine.slots_by_key`, and `Engine.computing` are now crate-private. Use the
+count, owned-text inspection, slot lookup, and storage methods documented in
+the [query graph migration guide](../docs/QUERY_GRAPH_MIGRATION.md). This is a
+Rust source compatibility change; the high-level functions above and CLI
+formats retain their contracts.
+
 ## Library layout
 
 The crate is the same modules as the reference implementation, one

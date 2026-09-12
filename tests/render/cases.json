@@ -765,5 +765,28 @@
       "bad.txt": null,
       "good.txt": null
     }
+  },
+  {
+    "name": "compact JSON: explicit zero indent and no-template fan-out preserve numeric and string boundaries",
+    "files": {
+      "m.decl": "type Doc = {\n    huge: int\n    floats: float[]\n    text: string\n    nil: int?\n    empty: int[]\n    delay: quantity<Time>\n    omitted?: string\n    derived = huge + 1\n    hidden$ = true\n}\n@render({ indent: 4 })\nexport output doc: Doc = {\n    huge: 123456789012345678901234567890,\n    floats: [-0.0, 1.0, 1e-6, 1e-7, 1e20, 1e21, 5e-324, 1.7976931348623157e308],\n    text: \"quote\\\" slash\\\\ line\\n \\u0000 \\u001f 한글😀\",\n    nil: null, empty: [], delay: 250ms,\n}\n@render({ each: \"$key\" })\nexport output files: { [string]: Doc } = { \"a.json\": doc, \"b.json\": doc }\n"
+    },
+    "args": [
+      "evaluate",
+      "<dir>/m.decl",
+      "--output",
+      "doc",
+      "--output",
+      "files=<dir>/out",
+      "--indent",
+      "0"
+    ],
+    "exit": 0,
+    "stdout": "{\"huge\":123456789012345678901234567890,\"floats\":[0.0,1.0,0.000001,1e-7,100000000000000000000.0,1e+21,5e-324,1.7976931348623157e+308],\"text\":\"quote\\\" slash\\\\ line\\n \\u0000 \\u001f 한글😀\",\"nil\":null,\"empty\":[],\"delay\":{\"value\":0.25,\"unit\":\"s\"},\"derived\":123456789012345678901234567891}\n",
+    "stderr": "",
+    "after": {
+      "out/a.json": "{\"huge\":123456789012345678901234567890,\"floats\":[0.0,1.0,0.000001,1e-7,100000000000000000000.0,1e+21,5e-324,1.7976931348623157e+308],\"text\":\"quote\\\" slash\\\\ line\\n \\u0000 \\u001f 한글😀\",\"nil\":null,\"empty\":[],\"delay\":{\"value\":0.25,\"unit\":\"s\"},\"derived\":123456789012345678901234567891}\n",
+      "out/b.json": "{\"huge\":123456789012345678901234567890,\"floats\":[0.0,1.0,0.000001,1e-7,100000000000000000000.0,1e+21,5e-324,1.7976931348623157e+308],\"text\":\"quote\\\" slash\\\\ line\\n \\u0000 \\u001f 한글😀\",\"nil\":null,\"empty\":[],\"delay\":{\"value\":0.25,\"unit\":\"s\"},\"derived\":123456789012345678901234567891}\n"
+    }
   }
 ]

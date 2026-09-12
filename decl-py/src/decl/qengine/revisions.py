@@ -15,7 +15,7 @@ if TYPE_CHECKING:
     from decl.engine import Engine
 
 
-@dataclass
+@dataclass(slots=True)
 class Pending:
     value: Any
     deps: set[str]

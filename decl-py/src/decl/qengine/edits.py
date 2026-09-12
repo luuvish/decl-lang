@@ -51,7 +51,17 @@ def same_raw(a: Any, b: Any) -> bool:
     return False
 
 
-def capture(v: Any) -> Callable[[Any], bool]:
+def capture(v: Any, memo: dict[Any, tuple[Any, Callable[[Any], bool]]]) -> Callable[[Any], bool]:
+    key = (type(v), v) if v is None or type(v) in (int, float, str, bool) else id(v)
+    prior = memo.get(key)
+    if prior is not None:
+        return prior[1]
+    matches = capture_shape(v, lambda value: capture(value, memo))
+    memo[key] = (v, matches)
+    return matches
+
+
+def capture_shape(v: Any, capture: Callable[[Any], Callable[[Any], bool]]) -> Callable[[Any], bool]:
     if isinstance(v, RecInst):
         rt, owner, path, order = v.rt, v.eng, list(v.path), list(v.entry_order)
         members = [(n, s.kind, s.hidden) for n, s in v.slots.items()]
@@ -173,20 +183,28 @@ class Edits:
         self.root_reads = {f"root:{n}": set(eng.reads.get(f"root:{n}", ())) for n in eng.env.roots}
         known_inputs: set[str] = set()
 
-        def collect(v: Any, into: set[str]) -> None:
+        def collect(v: Any, into: set[str], seen: set[int] | None = None) -> None:
+            if not isinstance(v, (RecInst, ArrV, MapV)):
+                return
+            if seen is None:
+                seen = set()
+            if id(v) in seen:
+                return
+            seen.add(id(v))
             if isinstance(v, RecInst):
+                path = path_str(v.path)
                 for n, slot in v.slots.items():
-                    key = f"{path_str(v.path)}.{n}"
+                    key = f"{path}.{n}"
                     eng.slots_by_key[key] = (v, n)
                     into.add(key)
                     if slot.state == "ok":
-                        collect(slot.value, into)
+                        collect(slot.value, into, seen)
             elif isinstance(v, ArrV):
                 for x in v.items:
-                    collect(x, into)
+                    collect(x, into, seen)
             elif isinstance(v, MapV):
                 for x in v.entries.values():
-                    collect(x, into)
+                    collect(x, into, seen)
 
         def diff(before: Any, next_: Any, value: Any, producer: str) -> None:
             if same_raw(before, next_):
@@ -236,8 +254,9 @@ class Edits:
         for name, value in eng.env.roots.items():
             values[f"root:{name}"] = value
         for inst in eng.env.registry:
+            path = path_str(inst.path)
             for name, slot in inst.slots.items():
-                key = f"{path_str(inst.path)}.{name}"
+                key = f"{path}.{name}"
                 if slot.state in ("ok", "absent"):
                     values[key] = ABSENT if slot.state == "absent" else slot.value
                 if errors:
@@ -258,8 +277,18 @@ class Edits:
             forced.update(eng.reads)
         invalid: set[str] = set()
         queue = list(forced)
-        if any(d.startswith("value:") for deps in eng.reads.values() for d in deps):
-            queue.extend(values)
+        walked: set[int] = set()
+        for dep in readers:
+            if not dep.startswith("value:"):
+                continue
+            record = self.pool.get(dep[6:])
+            if record is None:
+                # Unknown/frozen owners retain the conservative fallback.
+                queue.extend(values)
+                break
+            observed: set[str] = set()
+            collect(record, observed, walked)
+            queue.extend(observed)
         while queue:
             key = queue.pop()
             if key in invalid:
@@ -267,12 +296,16 @@ class Edits:
             invalid.add(key)
             if key not in known_inputs and key in values:
                 descendants: set[str] = set()
-                collect(values[key], descendants)
+                collect(values[key], descendants, walked)
                 queue.extend(descendants - invalid)
             queue.extend(readers.get(key, ()))
         self.invalid = invalid
         self.prepared_queries = len(invalid)
-        self.revisions.begin_queries(eng, invalid, values, forced, capture)
+        captured: dict[Any, tuple[Any, Callable[[Any], bool]]] = {}
+        self.revisions.begin_queries(
+            eng, invalid, values, forced, lambda value: capture(value, captured)
+        )
+        captured.clear()
         copied: set[RecInst] = set()
         for key in invalid:
             found = eng.slots_by_key.get(key)

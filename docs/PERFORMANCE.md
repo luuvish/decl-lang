@@ -152,10 +152,12 @@ This sampled range shows the effect of removing superlinear lookup and copy
 costs, not a complexity guarantee for arbitrary Decl programs.
 
 For new measurements, use the [development handbook's measurement
-procedure](DEVELOPMENT.md#performance-measurements). When comparing historical
-builds, clean the package or isolate build directories and verify the binary's
-commit identity. The accepted measurements above used package cleans and
-embedded commit identities to exclude stale artifacts.
+procedure](DEVELOPMENT.md#performance-measurements) and the
+[comparison build procedure](../tests/benchmarks/COMPARE.md#freeze-builds-and-protocols).
+Use a fresh dedicated Cargo target directory for each frozen Rust variant and
+record the executable emitted by Cargo with its source and artifact hashes.
+The accepted historical measurements above used package cleans and embedded
+commit identities; the stronger procedure applies to new comparisons.
 
 ## 3. Query-engine contribution at `03d7a97`
 
@@ -346,3 +348,75 @@ may rebuild the universe.
 These are candidates for further optimization, with new correctness and work
 criteria required before changing them. The current change preserves the
 specification's reference rounds and final validation.
+
+The [2026-09-12 diagnosis](PERFORMANCE_DIAGNOSIS.md) separates overlapping
+invalidation walks from aggregate-observation granularity, identifies strong
+ownership cycles beyond auxiliary caches, and records the invariant numeric
+JSON regex compiled repeatedly in Rust. Its follow-up section records the
+implemented regex cache, Rust cycle collection, scoped aggregate preparation,
+deduplicated edit walks, and per-revision comparison snapshots, together with
+the remaining granularity and representation limits.
+
+The subsequent Rust follow-up defers descriptor cloning past cached slot returns
+and reserves known record-member capacity. The diagnosis distinguishes these
+bounded changes from remaining query-key, slot-layout and lifetime redesigns.
+The [reproducible comparison runner](../tests/benchmarks/COMPARE.md) freezes
+commands and inputs, validates every result, alternates process order, preserves
+failure status and resumes completed observations without rerunning them.
+
+The first query-storage follow-up borrowed temporary Rust reverse-graph text,
+shared Pending during verification, and avoided replacing occupied owner/stamp
+keys. Python's fixed-field Pending uses slotted storage. The subsequent Rust
+migration stores the authoritative graph by canonical shared query IDs and
+shares dependency-set bodies during preparation and verification. Revision
+methods reuse IDs internally, and temporary Session requests coalesce identity-pool
+cleanup while preserving a completion sweep after in-flight maintenance.
+Scratch still scans the slot/read graph to save and restore temporary state.
+Its Rust prefix-boundary predicate now checks a borrowed suffix instead of
+constructing temporary prefix Strings for each visited key. This removes
+per-check allocation without reducing the number of visited entries.
+
+This migration restricts three formerly public Rust Engine fields and supplies
+explicit inspection methods; see the [API migration guide](QUERY_GRAPH_MIGRATION.md).
+It preserves query granularity and language behavior. The
+[diagnosis](PERFORMANCE_DIAGNOSIS.md#10-canonical-query-identities-and-shared-read-sets)
+records source-level work changes and storage/lifetime tradeoffs. These
+mechanisms do not by themselves establish a new end-to-end speedup: distinguish
+request latency, cumulative work, storage census, and whole-process peak RSS,
+and attribute combined changes only at the scope actually measured.
+
+The cold-execution follow-up removes work from two Rust paths: validation of
+records with no assertions, and repeated interning within an actual member
+computation. Empty validation keeps the existing absent/empty read-owner
+semantics without constructing an execution scope. Member registration, step
+entry, and revision computation pass one identity internally. Public APIs,
+parent dependency recording, cached returns, and assertion error handling keep
+their previous contracts. Compare the repair against both the original
+pre-migration baseline and the migrated version; being faster than a regressed
+version alone is insufficient evidence that the regression is resolved.
+
+The interner follow-up stores one thin canonical ID per table entry and uses
+its cached text hash during resizing. Normal lookup/insertion needs one text
+hash and one entry probe. Pool-only entries can be reused without allocation;
+borrowed ownership checks distinguish them from externally live identities.
+The maintenance policy and logical graph contracts are unchanged, while the
+pool element payload is smaller. The
+[diagnosis](PERFORMANCE_DIAGNOSIS.md#10-canonical-query-identities-and-shared-read-sets)
+details the ownership boundary and the remaining per-key allocations.
+
+Selected-root compact JSON emission now reuses the engine's canonical text
+and adds its trailing newline directly. This removes a full JSON decode and
+re-encode from the plain output path; indented, YAML, template, and aggregate
+output have separate processing. The
+[emission diagnosis](PERFORMANCE_DIAGNOSIS.md#11-compact-output-emission)
+explains the output boundary and the distinct evaluation costs that remain.
+
+The engine's Rust serializer now writes each fresh result into one String,
+removing intermediate subtree strings and container join buffers. It keeps
+mutable public values fresh and preserves raw PreVal evaluation and diagnostic
+order. A Session result cache would require a mutation/invalidation contract
+that the current public ownership API does not provide. The
+[serialization diagnosis](PERFORMANCE_DIAGNOSIS.md#12-streaming-canonical-serialization)
+records the safety boundary, shared regression coverage, and measurement
+procedure. Lower output allocation churn does not by itself reduce the retained
+evaluation working set or establish an end-to-end latency improvement.

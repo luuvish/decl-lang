@@ -3,6 +3,7 @@
 //! incremental core; `qeval` drives the shared programs and retained slot graph.
 pub mod db;
 pub mod edits;
+pub(crate) mod graph;
 pub mod programs;
 pub mod qeval;
 
