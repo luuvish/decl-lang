@@ -285,3 +285,39 @@ pub fn snapshot() -> Value {
         "units":{"array_lengths":"Value elements at successful constructor completion; may refer to shared child values","value_size_bytes":std::mem::size_of::<crate::semantics::Value>(),"counter_saturation":"u64 saturating counts"},
         "limitations":["constructor traffic is not unique retained ownership, allocation counts or bytes freed","failed std-library construction before final ArrV factory is outside factory counts","no destructor/live PreVal or LocalFrame census; external callers can construct public PreValV/ArrV without hooks","no graph walk, callback invocation, force, cache mutation or Rc owner held by counters","reset only at a quiescent evaluation-thread boundary; counters include any Engines executed after reset","diagnostic TLS/branch overhead is real; plain primary builds must exclude this feature"]})
 }
+
+/// Allocation-free copies of existing cumulative traffic counters.
+/// Array indices use the same site order as [`snapshot`]. Counts describe
+/// constructor traffic, not unique live owners or bytes. No graph is traversed.
+#[derive(Clone, Copy, serde::Serialize)]
+pub struct TrafficSnapshot {
+    /// Started constructors by array site.
+    pub array_attempts: [u64; 15],
+    /// Elements in completed constructors by array site.
+    pub array_items: [u64; 15],
+    /// Materialization cache calls, in PreArr/PreObj order.
+    pub materialization_calls: [u64; 2],
+    /// Materialization cache hits, in PreArr/PreObj order.
+    pub materialization_hits: [u64; 2],
+    /// Materialization cache misses, in PreArr/PreObj order.
+    pub materialization_misses: [u64; 2],
+    /// Constructed lazy values, in the same order as [`snapshot`].
+    pub preval: [u64; 6],
+    /// Constructed scope-local frames.
+    pub local_frames: u64,
+}
+/// Sample fixed scalar counters without allocating or retaining runtime owners.
+pub fn traffic_snapshot() -> TrafficSnapshot {
+    COUNTERS.with(|s| {
+        let s = s.borrow();
+        TrafficSnapshot {
+            array_attempts: std::array::from_fn(|i| s.arrays[i].attempts),
+            array_items: std::array::from_fn(|i| s.arrays[i].items),
+            materialization_calls: s.cache.calls,
+            materialization_hits: s.cache.hits,
+            materialization_misses: s.cache.misses,
+            preval: s.preval,
+            local_frames: s.local_frames,
+        }
+    })
+}

@@ -17,6 +17,19 @@ const POOL_ENTRY_LIMIT: usize = 4096;
 #[derive(Clone, Copy, Debug, Default)]
 #[cfg_attr(feature = "runtime-diagnostics", derive(serde::Serialize))]
 pub struct PrefixPathDiagnostics {
+    /// Calls to the engine pool, including empty and deep paths.
+    pub retain_calls: u64,
+    /// Total input segments passed to the engine pool.
+    pub input_segments: u64,
+    /// Bounded nonempty inputs for which a previous weak cursor was available.
+    /// Includes attempts whose weak tail had already expired.
+    pub cursor_attempts: u64,
+    /// Cursor attempts that reused at least one canonical prefix segment.
+    pub cursor_hits: u64,
+    /// Prefix segments reused without a hash-table lookup.
+    pub reused_prefix_segments: u64,
+    /// Inputs beyond the inline cursor depth; these use the original full lookup.
+    pub cursor_deep_fallbacks: u64,
     /// Retained path bodies constructed, including non-Rc public values.
     pub handles_created: u64,
     /// Retained path bodies whose destructor has not run.
@@ -402,11 +415,22 @@ impl<'a> IntoIterator for &'a PrefixPath {
 #[derive(Default)]
 pub struct PrefixPathPool {
     entries: FxHashMap<(usize, Seg), Weak<PathNode>>,
+    // Never keep an outer path or a strong node owner in this accelerator.
+    cursor_tail: Weak<PathNode>,
+    cursor_len: usize,
 }
 
 /// Explicit bounded-pool occupancy and weak-storage diagnostic.
 #[derive(Clone, Copy, Debug)]
 pub struct PrefixPathPoolStats {
+    /// Zero or one additional weak node references held by the ancestry cursor.
+    /// This can refer to the same allocation as a hash-table entry.
+    pub cursor_weak_entries: usize,
+    /// Cursor weak references whose node body has died. Not an additional unique
+    /// allocation count: the hash table can also hold the same dead allocation.
+    pub cursor_dead_entries: usize,
+    /// Cached path depth, zero when empty and never greater than 16.
+    pub cursor_depth: usize,
     /// Weak entries currently retained by this pool.
     pub entries: usize,
     /// HashMap usable capacity, not allocator bytes or physical bucket count.
@@ -420,8 +444,46 @@ pub struct PrefixPathPoolStats {
 impl PrefixPathPool {
     /// Retain a distinct outer path handle with any locally shared prefixes.
     pub fn retain(&mut self, segments: &[Seg]) -> Rc<PrefixPath> {
+        count!(|c| {
+            c.retain_calls += 1;
+            c.input_segments += segments.len() as u64;
+        });
         let mut parent: Option<Rc<PathNode>> = None;
-        for segment in segments {
+        let mut reused = 0;
+        if segments.len() > INLINE_ITER_DEPTH {
+            count!(|c| c.cursor_deep_fallbacks += 1);
+        } else if !segments.is_empty() && self.cursor_len != 0 {
+            count!(|c| c.cursor_attempts += 1);
+            if let Some(tail) = self.cursor_tail.upgrade() {
+                // The temporary tail owner keeps these borrowed Rc references
+                // valid. No flattened Seg vector or persistent strong owner.
+                let mut ancestors: [Option<&Rc<PathNode>>; INLINE_ITER_DEPTH] =
+                    [None; INLINE_ITER_DEPTH];
+                let mut node = Some(&tail);
+                let mut index = self.cursor_len;
+                while let Some(current) = node {
+                    index -= 1;
+                    ancestors[index] = Some(current);
+                    node = current.parent.as_ref();
+                }
+                for (segment, ancestor) in segments.iter().zip(&ancestors[..self.cursor_len]) {
+                    if segment != &ancestor.expect("complete cursor ancestry").segment {
+                        break;
+                    }
+                    reused += 1;
+                }
+                if reused != 0 {
+                    parent = Some(Rc::clone(
+                        ancestors[reused - 1].expect("matched cursor prefix"),
+                    ));
+                    count!(|c| {
+                        c.cursor_hits += 1;
+                        c.reused_prefix_segments += reused as u64;
+                    });
+                }
+            }
+        }
+        for segment in &segments[reused..] {
             let parent_id = parent.as_ref().map_or(0, |node| Rc::as_ptr(node) as usize);
             let key = (parent_id, segment.clone());
             let node = match self.entries.get(&key).and_then(Weak::upgrade) {
@@ -444,6 +506,13 @@ impl PrefixPathPool {
             };
             parent = Some(node);
         }
+        if !segments.is_empty() && segments.len() <= INLINE_ITER_DEPTH {
+            self.cursor_tail = Rc::downgrade(parent.as_ref().expect("nonempty retained path"));
+            self.cursor_len = segments.len();
+        } else {
+            self.cursor_tail = Weak::new();
+            self.cursor_len = 0;
+        }
         // Never intern the outer Rc: snapshot reference identity is a separate
         // concern even if the representation is later adopted for references.
         Rc::new(PrefixPath::from_tail(parent, segments.len()))
@@ -452,6 +521,11 @@ impl PrefixPathPool {
     /// O(entry count), explicitly requested diagnostics; absent from binding.
     pub fn stats(&self) -> PrefixPathPoolStats {
         PrefixPathPoolStats {
+            cursor_weak_entries: usize::from(self.cursor_len != 0),
+            cursor_dead_entries: usize::from(
+                self.cursor_len != 0 && self.cursor_tail.strong_count() == 0,
+            ),
+            cursor_depth: self.cursor_len,
             entries: self.entries.len(),
             usable_capacity: self.entries.capacity(),
             entry_limit: POOL_ENTRY_LIMIT,

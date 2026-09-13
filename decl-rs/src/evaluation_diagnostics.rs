@@ -27,6 +27,10 @@ pub struct Stamp {
     pub sampled_until_ns: u64,
     /// Cumulative ledger read after `sampled_until_ns`; not a phase-local peak.
     pub allocation: crate::allocation_diagnostics::Snapshot,
+    /// Thread-local prefix traffic sampled after the clock and allocation reads.
+    pub prefix_paths: crate::semantics::PrefixPathDiagnostics,
+    /// Existing constructor/cache counters, copied without allocating.
+    pub traffic: crate::retention_diagnostics::TrafficSnapshot,
 }
 fn clock_ns(id: libc::clockid_t) -> u64 {
     let mut ts = libc::timespec {
@@ -47,6 +51,8 @@ impl Stamp {
             cpu_ns,
             sampled_until_ns,
             allocation: crate::allocation_diagnostics::snapshot(),
+            prefix_paths: crate::semantics::prefix_path_diagnostics(),
+            traffic: crate::retention_diagnostics::traffic_snapshot(),
         }
     }
 }

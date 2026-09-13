@@ -12,6 +12,7 @@ use crate::semantics::*;
 use crate::subsume::subsumes;
 use num_traits::Signed;
 use rustc_hash::{FxHashMap, FxHashSet};
+use std::borrow::Cow;
 use std::cell::{Cell, RefCell};
 use std::cmp::Ordering::{self, Equal, Greater, Less};
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
@@ -27,6 +28,42 @@ mod query_record_tests;
 #[cfg(test)]
 #[path = "../tests/private/materialized_cache_test.rs"]
 mod materialized_cache_tests;
+
+#[cfg(test)]
+#[path = "../tests/private/binding_path_test.rs"]
+mod binding_path_tests;
+
+#[cfg(test)]
+#[path = "../tests/private/binding_input_test.rs"]
+mod binding_input_tests;
+
+// Immutable JSON containers remain owned by `raw` throughout binding. Clone
+// only the item being visited; mutable and expanded inputs keep their eager
+// snapshots and move each item out without an additional clone.
+enum BindingInput<'a, T> {
+    Borrowed(std::slice::Iter<'a, T>),
+    Owned(std::vec::IntoIter<T>),
+}
+
+impl<T: Clone> Iterator for BindingInput<'_, T> {
+    type Item = T;
+
+    fn next(&mut self) -> Option<T> {
+        match self {
+            Self::Borrowed(items) => items.next().cloned(),
+            Self::Owned(items) => items.next(),
+        }
+    }
+
+    fn size_hint(&self) -> (usize, Option<usize>) {
+        match self {
+            Self::Borrowed(items) => items.size_hint(),
+            Self::Owned(items) => items.size_hint(),
+        }
+    }
+}
+
+impl<T: Clone> ExactSizeIterator for BindingInput<'_, T> {}
 
 /// the evaluator (§9): binds documents and expressions to types, forces slots
 /// lazily with dependency tracking, validates, serializes
@@ -1331,7 +1368,7 @@ impl Engine {
         let produce = || -> R<Value> {
             let v = self.ev(&fallback, &sc)?;
             let rt = menv.resolve(&ty_ast, None).or_else(err)?;
-            self.bind(v, &rt, &[Seg::Name(Rc::from(name.to_string()))], None, &sc)
+            self.bind(v, &rt, &[Seg::Name(Rc::from(name))], None, &sc)
         };
         let bound = self.step(&format!("root:{name}"), || {
             match self.edits.borrow().as_ref() {
@@ -1377,7 +1414,7 @@ impl Engine {
                 RootSrc::Expr(e) => self.ev(e, sc)?,
                 RootSrc::Doc(v) => v.clone(),
             };
-            self.bind(raw, rt, &[Seg::Name(Rc::from(name.to_string()))], None, sc)
+            self.bind(raw, rt, &[Seg::Name(Rc::from(name))], None, sc)
         };
         let bound = self.step(&format!("root:{name}"), || {
             match self.edits.borrow().as_ref() {
@@ -3084,7 +3121,7 @@ impl Engine {
                 _ => Err(fail("expected reference path".into(), None)),
             },
             RTk::Arr { elem, lo, hi } => {
-                let items: Vec<Value> = match &raw {
+                let items = match &raw {
                     Value::PreArr(pa) => {
                         let mut items = vec![];
                         for (spread, v) in pa.iter() {
@@ -3100,10 +3137,10 @@ impl Engine {
                                 items.push(v.clone());
                             }
                         }
-                        items
+                        BindingInput::Owned(items.into_iter())
                     }
-                    Value::JArr(a) => (**a).clone(),
-                    Value::Arr(a) => a.borrow().items.clone(),
+                    Value::JArr(a) => BindingInput::Borrowed(a.iter()),
+                    Value::Arr(a) => BindingInput::Owned(a.borrow().items.clone().into_iter()),
                     _ => return Err(fail("expected array".into(), None)),
                 };
                 if let Some(lo) = lo {
@@ -3122,10 +3159,19 @@ impl Engine {
                     items: Vec::with_capacity(items.len()),
                     path: self.retained_path(path),
                 }));
-                for (i, it) in items.into_iter().enumerate() {
-                    let mut p = path.to_vec();
+                // Bound containers own their paths. Reuse only this call's
+                // temporary flat buffer, allocating it at the first child.
+                let mut child_path = None;
+                for (i, it) in items.enumerate() {
+                    let p = child_path.get_or_insert_with(|| {
+                        let mut p = Vec::with_capacity(path.len() + 1);
+                        p.extend_from_slice(path);
+                        p
+                    });
                     p.push(Seg::Idx(i));
-                    match self.bind(it, elem, &p, parent, sc) {
+                    let bound = self.bind(it, elem, p, parent, sc);
+                    p.pop();
+                    match bound {
                         Ok(v) => arr.borrow_mut().items.push(v),
                         Err(Fail::Taint) => arr.borrow_mut().items.push(Value::Absent),
                         Err(e) => return Err(e),
@@ -3139,32 +3185,45 @@ impl Engine {
                 Ok(Value::Arr(arr))
             }
             RTk::Map { key, val } => {
-                let es: Vec<(String, Value)> = match &raw {
-                    Value::JObj(e) => (**e).clone(),
-                    Value::PreObj(e) => self.entries_of(e)?,
-                    Value::Map(m) => m
-                        .borrow()
-                        .entries
-                        .iter()
-                        .map(|(k, v)| (k.clone(), v.clone()))
-                        .collect(),
+                let es = match &raw {
+                    Value::JObj(e) => BindingInput::Borrowed(e.iter()),
+                    Value::PreObj(e) => BindingInput::Owned(self.entries_of(e)?.into_iter()),
+                    Value::Map(m) => BindingInput::Owned(
+                        m.borrow()
+                            .entries
+                            .iter()
+                            .map(|(k, v)| (k.clone(), v.clone()))
+                            .collect::<Vec<_>>()
+                            .into_iter(),
+                    ),
                     // a record binds to a map as its value entries (§3.18)
-                    Value::Rec(_) => self.spread_entries(raw.clone())?,
+                    Value::Rec(_) => {
+                        BindingInput::Owned(self.spread_entries(raw.clone())?.into_iter())
+                    }
                     _ => return Err(fail("expected map".into(), None)),
                 };
                 let m = Rc::new(RefCell::new(MapV {
                     entries: OrderedMap::default(),
                     path: self.retained_path(path),
                 }));
+                let mut child_path = None;
                 for (k, v) in es {
-                    match self.bind(Value::Str(k.clone().into()), key, path, parent, sc) {
+                    match self.bind(Value::Str(Rc::from(k.as_str())), key, path, parent, sc) {
                         Ok(_) => {}
                         Err(Fail::Taint) => continue,
                         Err(e) => return Err(e),
                     }
-                    let mut p = path.to_vec();
-                    p.push(Seg::Key(Rc::from(k.clone())));
-                    match self.bind(v, val, &p, parent, sc) {
+                    // Rejected keys need no child path. Remove each accepted
+                    // key before validating the next one, including on taint.
+                    let p = child_path.get_or_insert_with(|| {
+                        let mut p = Vec::with_capacity(path.len() + 1);
+                        p.extend_from_slice(path);
+                        p
+                    });
+                    p.push(Seg::Key(Rc::from(k.as_str())));
+                    let bound = self.bind(v, val, p, parent, sc);
+                    p.pop();
+                    match bound {
                         Ok(bv) => m.borrow_mut().set(k, bv),
                         Err(Fail::Taint) => {}
                         Err(e) => return Err(e),
@@ -3378,7 +3437,7 @@ impl Engine {
                 let x0 = self.ev_nav(x, sc)?;
                 if let Value::Segs(p) = &x0 {
                     let mut p = (**p).clone();
-                    p.push(Seg::Name(Rc::from(name.clone())));
+                    p.push(Seg::Name(Rc::from(name.as_str())));
                     return Ok(Value::Segs(Rc::new(p)));
                 }
                 let x = self.deref(x0)?;
@@ -3386,7 +3445,7 @@ impl Engine {
                 if v.is_absent() {
                     if let Value::Rec(r) = &x {
                         let mut p = r.borrow().path.to_vec();
-                        p.push(Seg::Name(Rc::from(name.clone())));
+                        p.push(Seg::Name(Rc::from(name.as_str())));
                         return Ok(Value::Segs(Rc::new(p)));
                     }
                 }
@@ -3463,16 +3522,20 @@ impl Engine {
         let RTk::Rec(rec) = &rt.k else {
             return err("bind_record on non-record type");
         };
-        let entries: Vec<(String, Value)> = match &raw {
-            Value::JObj(e) => (**e).clone(),
-            Value::PreObj(e) => self.entries_of(e)?,
+        // Record binding revisits this ordered sequence for reuse, slots and
+        // extras. Immutable input stays owned by `raw`; other inputs retain
+        // their eager snapshots across diagnostic callbacks and reentry.
+        let entries: Cow<'_, [(String, Value)]> = match &raw {
+            Value::JObj(e) => Cow::Borrowed(e.as_slice()),
+            Value::PreObj(e) => Cow::Owned(self.entries_of(e)?),
             // a literal no record type claimed became a map; its entries bind like a document's
-            Value::Map(m) => m
-                .borrow()
-                .entries
-                .iter()
-                .map(|(k, v)| (k.clone(), v.clone()))
-                .collect(),
+            Value::Map(m) => Cow::Owned(
+                m.borrow()
+                    .entries
+                    .iter()
+                    .map(|(k, v)| (k.clone(), v.clone()))
+                    .collect(),
+            ),
             Value::Rec(r) => {
                 let (order, extras, ders) = {
                     let b = r.borrow();
@@ -3498,7 +3561,7 @@ impl Engine {
                         out.push((n, v));
                     }
                 }
-                out
+                Cow::Owned(out)
             }
             _ => {
                 self.env.report(Diag::error(
@@ -3555,10 +3618,17 @@ impl Engine {
                 self.env.registry_push(inst.clone());
             }
         }
-        let mut supplied: HashMap<String, Value> = HashMap::new();
-        for (k, v) in &entries {
-            supplied.insert(k.clone(), v.clone());
-        }
+        // With at most one input or member, direct lookup needs at most
+        // entries.len() + members.len() comparisons and no temporary table.
+        // Keep incremental growth for larger inputs: entry count can greatly
+        // exceed distinct keys when a native caller supplies duplicates.
+        let supplied = (entries.len() > 1 && members.len() > 1).then(|| {
+            let mut supplied: HashMap<&str, &Value> = HashMap::new();
+            for (k, v) in entries.iter() {
+                supplied.insert(k.as_str(), v);
+            }
+            supplied
+        });
         let schema = self.programs.borrow().as_ref().map(|p| p.schema(rt));
         for (index, m) in members.iter().enumerate() {
             let plan = schema.as_ref().map(|s| &s.members[index]);
@@ -3572,13 +3642,21 @@ impl Engine {
             });
             let menv = m.menv.clone().or_else(|| sc.menv.clone());
             let root_name = sc.root_name.clone();
-            let has = supplied.get(&name).cloned();
+            let has = match &supplied {
+                Some(supplied) => supplied.get(name.as_str()).copied(),
+                // Last supplied value wins, including duplicate native keys.
+                None => entries
+                    .iter()
+                    .rev()
+                    .find_map(|(k, v)| (k == &name).then_some(v)),
+            }
+            .cloned();
             let mut push_deferred = false;
             // a hidden member (D34) is never part of the value: a document or
             // literal that supplies it is in error — there is nothing to restate
             if m.kind == MKind::Der && m.hidden && has.is_some() {
                 let mut p = path.to_vec();
-                p.push(Seg::Name(Rc::from(name.clone())));
+                p.push(Seg::Name(Rc::from(name.as_str())));
                 self.env.report(Diag::error(
                     format!("hidden member {name} supplied"),
                     path_str(&p, None),
@@ -3664,7 +3742,7 @@ impl Engine {
                 },
                 (MKind::Req, None) => {
                     let mut p = path.to_vec();
-                    p.push(Seg::Name(Rc::from(name.clone())));
+                    p.push(Seg::Name(Rc::from(name.as_str())));
                     self.env.report(Diag::error(
                         format!("required member {name} missing"),
                         path_str(&p, None),
@@ -3684,7 +3762,7 @@ impl Engine {
                 self.deferred_slots.borrow_mut().push((inst.clone(), name));
             }
         }
-        for (k, v) in &entries {
+        for (k, v) in entries.iter() {
             if schema
                 .as_ref()
                 .map(|s| s.names.contains(k))
@@ -3702,7 +3780,7 @@ impl Engine {
                     .map(|n| format!(" {n}"))
                     .unwrap_or_default();
                 let mut p = path.to_vec();
-                p.push(Seg::Name(Rc::from(k.clone())));
+                p.push(Seg::Name(Rc::from(k.as_str())));
                 self.env.report(Diag::error(
                     format!("undeclared member {k} on closed record{nm}"),
                     path_str(&p, None),
@@ -3728,7 +3806,7 @@ impl Engine {
         };
         let member_path = |name: &str| {
             let mut p = path.to_vec();
-            p.push(Seg::Name(Rc::from(name.to_string())));
+            p.push(Seg::Name(Rc::from(name)));
             p
         };
         match c {
@@ -3912,7 +3990,7 @@ impl Engine {
                         other => other.clone(),
                     };
                     let mut p = path.to_vec();
-                    p.push(Seg::Key(Rc::from(k.clone())));
+                    p.push(Seg::Key(Rc::from(k.as_str())));
                     let mv = self.materialize(x, &p)?;
                     m.borrow_mut().set(k.clone(), mv);
                 }
@@ -4091,8 +4169,16 @@ impl Engine {
             _ => {}
         }
         let (key, recorded_id) = recorded.unwrap_or_else(|| (Engine::slot_key(inst, name), None));
-        let mut mp = inst.borrow().path.to_vec();
-        mp.push(Seg::Name(Rc::from(name)));
+        // Only failures need a diagnostic path. Retain its pre-force value:
+        // a native computation may replace or mutate the instance's path.
+        let path = inst.borrow().path.clone();
+        let diagnostic_path = || {
+            path_str_iter(
+                path.iter()
+                    .chain(std::iter::once(&Seg::Name(Rc::from(name)))),
+                None,
+            )
+        };
         if state == SlotState::Deferred {
             if self.phase.get() < 2 {
                 return Err(Fail::Defer); // known to wait for phase 2: not attempted again
@@ -4114,7 +4200,7 @@ impl Engine {
             }
             self.env.report(Diag::error(
                 format!("dependency cycle: {}", self.cycle_path(&key)),
-                path_str(&mp, None),
+                diagnostic_path(),
                 Some("E5007"),
             ));
             inst.borrow_mut().slot_mut(name).unwrap().state = SlotState::Invalid;
@@ -4179,7 +4265,7 @@ impl Engine {
                     severity: "error".into(),
                     id: None,
                     message: e.msg,
-                    path: path_str(&mp, None),
+                    path: diagnostic_path(),
                     code: e.code,
                     loc: None,
                     by: None,
@@ -4233,9 +4319,9 @@ impl Engine {
                 v = match &c.ty {
                     Some(t) => {
                         let rt = env.resolve(t, None).or_else(err)?;
-                        self.bind(v, &rt, &[Seg::Name(Rc::from(name.to_string()))], None, &sc)?
+                        self.bind(v, &rt, &[Seg::Name(Rc::from(name))], None, &sc)?
                     }
-                    None => self.materialize(v, &[Seg::Name(Rc::from(name.to_string()))])?,
+                    None => self.materialize(v, &[Seg::Name(Rc::from(name))])?,
                 };
             }
             *c.value.borrow_mut() = v.clone();

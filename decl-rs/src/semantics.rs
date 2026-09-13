@@ -3183,9 +3183,11 @@ pub fn cmp_path(a: &[Seg], b: &[Seg]) -> std::cmp::Ordering {
 
 /// Structural equality of two values (§4.5).
 pub fn value_eq(a: &Value, b: &Value) -> bool {
-    let (pa, pb) = (a.place(), b.place());
-    if let (Some(pa), Some(pb)) = (&pa, &pb) {
-        if matches!(a, Value::Ref(_)) || matches!(b, Value::Ref(_)) {
+    // Only reference equality uses places. Structural comparisons must not
+    // export retained container paths that they will immediately discard.
+    if matches!(a, Value::Ref(_)) || matches!(b, Value::Ref(_)) {
+        let (pa, pb) = (a.place(), b.place());
+        if let (Some(pa), Some(pb)) = (&pa, &pb) {
             return cmp_path(pa, pb) == std::cmp::Ordering::Equal;
         }
     }

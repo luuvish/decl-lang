@@ -1,10 +1,15 @@
 # Runtime cost and ownership diagnosis
 
 Source baseline: `1a76e625` (2026-09-12). Sections 1–6 record the original
-investigation and its private experiments. Sections 7–10 record subsequent
+investigation and its private experiments. Sections 7–18 record subsequent
 implementation steps. Observable behavior and the frozen specification are unchanged.
 External models, profiles, and engine comparison reports remain
 outside this repository, as required by [the measurement policy](DEVELOPMENT.md#performance-measurements).
+
+For the latest implementation step, see
+[record lookup construction](#28-record-lookup-construction-2026-09-13). The preceding
+[progress checkpoint](#19-progress-checkpoint-2026-09-13) records the measurement
+blocker and the larger-workload evidence still outstanding.
 
 The current engine already shares Programs, retains eligible reference rounds,
 and cuts off propagation when results are equal. The remaining costs include
@@ -965,3 +970,722 @@ previously the unconditional C-file rewrite masked that dependency gap. This is 
 build-workflow improvement, not a change to Decl evaluation speed. Check actual
 Cargo freshness and the native output files' bytes/mtimes in addition to the small
 filesystem and header-dependency checks when assessing its effect.
+
+## 18. Deferred path construction: candidate and native control limits
+
+The follow-up to initial Session attribution isolates a bounded weak ancestry
+cursor for retained container paths. `PrefixPathPool::retain` previously hashed
+all segments on every call, including already shared ancestors. The candidate
+keeps one weak tail and its depth, compares at most 16 borrowed ancestors, and
+starts the ordinary pool lookup at the unmatched suffix. Empty/deep paths reset
+the cursor; expired weak tails use the existing lookup path. Every call still
+returns a new outer `Rc`, and the cursor owns no runtime value or strong path node.
+The weak cursor can reserve one additional dead node allocation; its diagnostic
+counts are separate from the bounded hash table and are not unique-byte totals.
+
+Matched optional phase endpoints now copy cumulative prefix and constructor/cache
+counters without allocating or walking a graph. Compare these counts at equal
+path inputs, public query work and complete outputs to identify the operations
+removed. Constructor traffic is not a census of live owners; gross requested
+allocation bytes are not RSS or footprint. A global requested peak is not a
+phase-local peak.
+
+Instrumentation matters: skipping a lookup also skips its diagnostic counter
+update. Equal counter schemas do not guarantee equal instrumentation cost.
+Changes in a stage that performs no prefix work cannot be assigned directly to
+lookup removal. Keep diagnostic timing separate from feature-empty native results,
+and leave host variation, ordinary reference release and indirect memory effects
+unresolved unless a separate experiment distinguishes them.
+
+The next candidate additionally removes intermediate `String` allocations at 12
+Engine path-segment construction sites. Borrowed names/keys are copied directly
+into a fresh `Rc<str>`; this preserves segment ownership, canonical Name/Key kinds,
+callback boundaries and descriptor lifetimes. Its diagnostic comparison observes
+less allocation traffic at equal public work. Small differences in weak-pool
+history mean the net allocator change is not an exact temporary-String census.
+
+Native experiments first run discarded warmups and same-binary A/A control pairs,
+then independent initial A/B pairs, followed by descriptive five-request Session
+and CLI pairs. The initial helper preserves the existing `Session.run(Full)` wall
+interval and adds a process-CPU envelope immediately outside it. Whole-process
+time, including ordinary teardown, is recorded separately. Freeze the source,
+actual build features/artifacts, output oracle, schedule, resource/observer limits
+and adoption criteria before execution. Validate each fresh complete output once;
+subsequent reviews can use the bound small receipts. Run builds, tests and model
+measurements sequentially.
+
+The cursor-only campaign passes execution and A/A control, but misses its fixed
+native improvement screen despite consistently favorable pair directions. The
+combined candidate's separate campaign fails A/A control, so its A/B and supporting
+cells are not launched. Neither warmups, earlier samples nor diagnostic timings
+can supply that missing comparison. These engineering screens are not significance
+tests or proof of equivalence.
+
+The implementation in this working tree is a reviewable, uncommitted candidate;
+performance adoption remains pending. Do not change the threshold after observing
+results or retry the consumed schedule until it passes. A justified future
+measurement must declare its conditions and decision rules before execution.
+Original-baseline100 and final200 evidence remains separately incomplete.
+
+In accordance with the [measurement policy](DEVELOPMENT.md#performance-measurements),
+the detailed external-model results, schedules, failures, source/build/oracle
+bindings and supporting analyses remain under
+`../decl-analysis/2026-09-13/runtime-reduction/deferred-cost/` (`report.md`).
+The two native campaigns are `measurement/` and `measurement-c/`; the latter
+explicitly maps its analytical B label to the combined source candidate C.
+
+A subsequent follow-up (`measurement-c-settled/`) addresses a concrete gap in
+competitor detection: a known workload classifier can miss unrelated Node test
+runners and their individual test-file workers. Extend the predicate on the
+existing cached process table, preserving owned-descendant exclusions and exact
+supervisor identity checks. Test both recognition and ordinary editor/LSP cases;
+do not exclude every Node process or infer past interference from newly observed
+work. Apply the same predicate before and during each measured child.
+
+That follow-up adds one fixed prelude after external test work ends, with all
+observation offsets and rejection rules declared in advance. A bounded scheduling
+deadline is not a hard timeout on an inherited process-table call; reject late
+observations even when they report no competitors. Fixed snapshots establish
+only what was observed at those times. The strengthened guard and prelude pass,
+but the same-binary Full control still rejects the campaign, leaving candidate
+adoption pending. Whole-process percentages use a different denominator and must
+not substitute for the failed Full-specific control. Preserve the outcome and
+improve the next measurement design before launching another comparison.
+
+The subsequent interleaved design (`measurement-c-interleaved/`) places controls
+early, in the middle and late. A timing-only control miss sets an irreversible
+adoption veto while the remaining fixed comparisons continue; hard integrity,
+resource and observer-cost failures still stop the queue. Report complete valid
+data separately from passing all adoption requirements. Opposite-order blocks
+can describe sensitivity to ordering, but must not replace the declared raw
+paired statistic or remove a failed control.
+
+External work can start after launch checks pass. An interrupted comparison
+therefore retains its successful unpaired observation and marks the remaining
+specs unexecuted; it must not borrow a counterpart from an older run. Missing
+late controls and supporting measurements are incomplete evidence, not observed
+regressions. Coordinate a non-overlapping host-use window before a separately
+declared future measurement; a classifier cannot reserve the host against
+another session starting work.
+
+The coordinated follow-up (`measurement-c-coordinated/`) keeps the execution
+code, order and thresholds unchanged after the user-specified pause. Its fixed
+prelude passes, but the first warmup encounters non-NORMAL kernel memory pressure
+and stops before any complete output or treatment pair. Preserve this resource
+failure separately from the preceding competitor interruption. A completed pause
+and absence of classified work do not establish enough host memory capacity.
+
+Inspect prelaunch and during-child host observations separately: compression
+already increasing before the child starts limits attribution to the candidate.
+Sampled process footprint is neither the terminal peak nor all host memory.
+Post-stop process RSS can describe later residents, but excludes compressed
+footprint and cannot identify the owner of earlier pressure. Reclaiming host
+capacity is an external-state change; changing timing or pressure thresholds to
+make this consumed campaign pass is not validation.
+
+## 19. Progress checkpoint (2026-09-13)
+
+This checkpoint precedes the implementation follow-up in section 20.
+
+The combined Rust candidate C is implemented and reviewable, but remains
+uncommitted and is not adopted on performance grounds. It combines the bounded
+weak prefix cursor with direct `Rc<str>` construction described in section 18.
+Its native benefit is still unconfirmed. The latest resource interruption does
+not establish a speed or memory regression.
+
+| Work | Current status | Evidence still needed |
+|---|---|---|
+| Prefix cursor, direct string construction and diagnostic API guidance | Implemented; candidate retained for review | A valid native comparison before performance adoption |
+| Language behavior and repository quality | Earlier verify, lint and unchanged-format gates passed; measured runtime sources and tests remain unchanged | Check the final source binding and run applicable gates before a commit; documentation updates are not a new full gate run |
+| Measurement procedure | Fixed interleaved controls, exact output checks, resource stops and receipt-based review implemented | A complete campaign under eligible host conditions |
+| Current native comparison | Incomplete; the latest campaign stopped during its first warmup on host memory pressure | New complete controls, treatment pairs and Session/CLI supports; preserve earlier partial and failed campaigns separately |
+| Larger-workload validation and overall comparison | Incomplete | Original-baseline comparison, capacity and complete-output evidence, followed by an updated three-language/toolkit-engine/Salsa report outside this repository |
+
+### Next actions and dependencies
+
+1. **Proceed with independent source analysis.** Separate deferred binding,
+   deferred forcing and snapshot advance. Identify the work attributable to
+   allocation, ordinary reference release, `Compute` creation and locality.
+   Define one narrow intervention and the observations needed to distinguish
+   its effect before changing the runtime. This work does not require a large
+   model run or additional host memory.
+2. **Restore measurement capacity on the current host.** Reduce unneeded
+   application/VM memory occupancy and confirm the host state. A pause and an
+   empty classified-competitor list do not establish sufficient memory capacity.
+   No particular application's responsibility for the earlier pressure has
+   been established.
+3. **Complete a fresh candidate comparison once capacity changes.** Preserve
+   the existing schedule, timing boundaries, output contract and decision rules.
+   Keep every campaign separate; missing partners cannot be supplied from old
+   observations. Use Full wall/CPU, memory and the supporting requests together
+   to decide whether C meets the declared adoption requirements.
+4. **Resolve the candidate and finish broader validation.** Review which
+   changes to retain, revise or remove using the evidence. Complete larger-case
+   baseline/capacity/output checks and update the external comparison report.
+   Validate the final source and documentation before committing an accepted
+   change. Neither performance adoption nor a commit is completed by this
+   progress checkpoint.
+
+The detailed dated handoff is
+`../decl-analysis/2026-09-13/runtime-reduction/deferred-cost/progress-2026-09-13.md`.
+It links the immutable campaign reports and records the remaining model sizes,
+counts and decision criteria. This checkpoint changes documentation only;
+it does not launch another benchmark or change the language specification.
+
+## 20. Lazy diagnostic paths (2026-09-13)
+
+The next source analysis separates deferred-slot forcing, deferred-root binding
+and snapshot advance. Their costs have different causes: deferred forcing
+constructs expression values and local frames, deferred binding exports paths
+and creates bound containers, and advance builds graph indices and copies a
+snapshot. Snapshot copying does not itself construct new `Compute` descriptors.
+Existing aggregate counters do not separate ordinary release from copying time
+or establish a memory-locality cause.
+
+One redundant operation is explicit in Rust `Engine::force_slot`: before a
+deferred/cyclic check or actual computation, it copied the instance path into a
+vector and appended an owned member-name segment. Only cycle and evaluation-error
+diagnostics used that vector. Successful forces and phase-one deferrals paid for
+it too, while `run_compute` independently built the path needed for binding.
+TypeScript and Python already construct these diagnostic paths in error branches.
+
+Candidate D adds one change to the preserved candidate C: retain the existing
+record-path `Rc` at force entry and format borrowed segments plus the member only
+when an error is reported. The path snapshot must precede revision verification,
+because a dependency resolver can call native code before the producer runs.
+Replacing it with a lookup after failure would report the wrong path if that
+callback changed the instance. No `RefCell` borrow crosses a callback, and the
+temporary handle is released on return. The canonical path formatter is retained;
+query-key text is not interchangeable with diagnostic paths.
+
+The new capture changes temporary `Rc` ownership visible to native callbacks.
+In particular, unique-access checks can now fail during dependency verification.
+The [migration guidance](RUNTIME_MEMORY_MIGRATION.md#temporary-record-path-capture-during-forcing)
+documents that boundary, copy-on-write and the caller's existing invalidation
+responsibilities. The language, CLI and public field types are unchanged.
+
+Small Rust API tests cover canonical cycle paths, non-dot-spellable member names,
+Bridge callbacks that replace or mutate a path on success/defer/error, a revision
+resolver that fails before the producer executes, and release of old path owners.
+A separate fixed synthetic comparison uses the same small Check, Bridge, cached
+and Deferred cases in C and D with the existing counting allocator. It confirms
+less temporary allocation traffic at equal outputs and exposed work, with no
+change in cached-read allocation or measured net-live growth. These observations
+do not establish whole-process peak memory, native latency or large-model benefit.
+
+This step leaves C's native adoption decision and larger-workload validation open.
+C's archived source and binaries remain separate from D; neither interrupted
+campaign is resumed or pooled. Further independent candidates include avoiding
+redundant deferred-binding path exports, shortening advance scratch lifetimes,
+reusing its registry snapshot, and allocating rebase result containers only when
+they change. The existing rebase counter counts changed arrays, so it cannot
+quantify all temporary containers discarded after an unchanged comparison.
+
+Source analysis, the fixed small-probe plan, isolated C/D source/build bindings,
+allocation results and verification receipts are recorded under
+`../decl-analysis/2026-09-13/runtime-reduction/deferred-cost/lazy-diagnostic-path/`.
+The final report distinguishes newly executed focused checks from the earlier
+full repository gate; no native performance adoption or commit is implied.
+
+## 21. Structural comparison paths (2026-09-13)
+
+Tracing deferred-root binding found an allocation boundary in `value_eq`, not a
+reason to skip rebinding. Rust acquired both operand places before deciding
+whether either value was a reference. `Value::place()` exports an owned flat path:
+arrays and maps flatten their retained prefixes, and records/references clone
+their flat paths. Structural comparisons and container-versus-null checks never
+use those paths. TypeScript and Python use the same broad comparison structure,
+but their place helpers return existing path arrays/lists without making copies.
+
+Candidate E adds one conditional to D: acquire places only when at least one
+operand is `Ref`. The existing `cmp_path` and all structural branches remain
+unchanged. In particular, reference equality can compare Name and Key segments
+with the same text as equal; substituting `PrefixPath::PartialEq` would change
+that rule. No binding, query observation, restatement check or reference
+construction is skipped, and no cache, public field or API signature is added.
+The explicit public `Value::place()` export remains available.
+
+The external OAD model supplies a concrete route: its `Json` union starts with
+null, so testing an already-bound array/map against that literal arm reaches
+`kind_matches -> value_eq(container, null)`. The projection also filters values
+against null. This source route explains how unused exports can occur during
+deferred-root binding. The prior stage counters do not identify each export's
+call site, so they do not establish that all 589,070 exports across two rounds
+are removable or supply a native timing improvement.
+
+The fixed small comparison separates direct equality from actual null-first
+union binding. It includes empty, five-segment and seventeen-segment paths,
+nested array/map contents, mismatches and unchanged reference controls. Full
+result vectors and bound output contents are checked; retained output paths
+remain distinct and are released after their owners are dropped. Allocation
+traffic, net-live growth and retained path counts are separate measurements.
+
+The 37 small cases contain 9,472 comparisons/binds per arm. All complete semantic
+results and covered work agree. The measured intervals remove 18,944 explicit
+prefix exports, 12,800 allocation/free calls and 3,305,472 gross requested/freed
+bytes; reallocations and net-live growth are unchanged. Empty-path exports
+require no backing allocation, so removed exports and removed allocations differ.
+At depth 5, 256 null-first array binds reduce allocation calls from 1,799 to
+1,543, and map binds from 4,103 to 3,847. Each binding case requests 30,720 fewer
+bytes while retaining the same output paths. All seven reference controls and
+the scalar control are unchanged. These are synthetic operation counts, not
+whole-workload speed or peak-memory improvements.
+
+A fresh full `make verify` passes for E: 1,278 identical CLI parity comparisons
+and zero differences, alongside all three implementation suites. The experiment
+report records diagnostic-feature tests and final lint/format evidence separately.
+
+The source analysis, model-source identity, prospective plan, isolated D/E
+builds, raw small results and validation receipts are kept in
+`../decl-analysis/2026-09-13/runtime-reduction/deferred-cost/structural-equality-paths/`.
+Native adoption and the outstanding large-model comparisons remain separate.
+
+## 22. Local child binding paths (2026-09-13)
+
+Candidate F adds a function-local path buffer to E's Rust array/map binding.
+Previously, every accepted child copied the parent flat path and then appended
+its index or key. A nonempty path copy had no spare slot, so the append also
+requested growth. Siblings repeated the same parent-segment Rc copies and
+backing allocations. These slice copies are distinct from the unused
+PrefixPath exports removed by E.
+
+Each collection bind now initializes its own buffer at the first actual child,
+with room for the parent plus one segment. The loop pushes a child, binds it,
+pops the child, then performs the original success or error handling. Map keys
+are still checked at the parent path, and rejected keys never initialize the
+buffer. Empty containers acquire no scratch allocation. Reentrant and nested
+binds use separate local buffers; returned record/container paths own their
+storage and cannot borrow the scratch slice.
+
+Array Taint still inserts Absent, map Taint still omits that entry, and Defer/Eval
+still return early. The new Rust-native checks exercise those transitions,
+canonical mixed paths, nested siblings, native reentry, empty/rejected cases and
+scratch-owner release. The [migration note](RUNTIME_MEMORY_MIGRATION.md#temporary-child-paths-during-collection-binding)
+records the observable temporary Rc boundary: parent-segment owners remain
+between siblings and later key callbacks, while the current child suffix is
+removed before insertion and the next key check. No public type or signature
+changes, and no Engine cache holds the buffer.
+
+A fixed small E/F comparison separates lengths zero, one and thirty-two at
+multiple path depths, then checks nested outputs and rejected/tainted children.
+It compares exact outputs, diagnostics, path ownership, constructor traffic and
+requested allocations. Actual item/entry copying, child type checking, retained
+prefix construction and map key allocation remain. Any native timing or
+large-model benefit requires a separate whole-workload measurement.
+
+The 29 small cases execute 928 binds per arm with identical full outputs, 704
+diagnostics, measured constructor/prefix traffic and checked owner release.
+Across those binding intervals, F removes 6,784 allocation/free calls, 5,504
+reallocations and 4,379,136 gross requested/freed bytes (4.176 MiB). Net-live
+growth is unchanged. All nine empty/all-key-rejected controls are unchanged.
+Singletons retain their allocation count but can avoid append growth; at depth
+5, a 32-bind singleton array case removes 32 reallocations.
+
+For 32 children at depth 5, 32 array binds reduce allocations from 1,159 to 167
+and reallocations from 1,024 to zero. Maps reduce allocations from 5,415 to 4,423
+and reallocations from 1,152 to 128. Each case requests 364,032 fewer bytes.
+The depth-5 nested-record cases reduce allocation calls by only 2.3–2.5%:
+record/slot construction and input/output storage still dominate those cases.
+These percentages describe synthetic allocation calls, not native speed.
+
+A fresh full `make verify` passes, including 1,278 identical CLI comparisons and
+zero differences. The report distinguishes diagnostic-feature tests and final
+lint/format checks. No large model, native timing campaign or commit is part of F.
+The next source candidate is avoiding the full temporary vector for immutable
+JArr/JObj inputs while preserving mutable-container snapshots and moving owned
+items without cloning them again; it is not implemented or measured here.
+
+The prospective plan, preserved source/build identities, small raw results,
+verification receipts and analysis live in
+`../decl-analysis/2026-09-13/runtime-reduction/deferred-cost/child-binding-paths/`.
+
+## 23. Immutable collection binding inputs (2026-09-13)
+
+Candidate G adds a Rust-only input iterator to F's array/map binding. F cloned
+all immutable JArr items or JObj entries into a temporary vector even though the
+original Rc vector remained alive throughout bind. G borrows that immutable
+slice and clones only the item being visited. Exact iterator length preserves
+array bounds checks, diagnostics and output reservation. The original raw is
+not consumed early; nested and reentrant calls use their own iterators.
+
+Mutable Arr/Map still snapshot before any child callback. PreArr spread
+expansion, PreObj entries_of and record-to-map spread_entries retain their eager
+ordering and owned vectors. The owned iterator moves each snapshotted item, so
+those paths do not gain an additional clone. No RefCell borrow spans child
+binding. Map key checks, insertion/duplicate replacement order, array Taint to
+Absent, map Taint omission and Defer/Eval exits keep their existing control flow.
+
+The [migration note](RUNTIME_MEMORY_MIGRATION.md#immutable-collection-inputs-during-binding)
+records the native ownership change: future immutable entries no longer acquire
+duplicate temporary owners before the first callback. An external Rc::make_mut
+changes a separate outer vector while the running bind keeps its original input.
+Visited entries still clone once; keys are String and some Value variants also
+allocate on clone. This removes redundant input storage, not output storage,
+child checking, retained prefixes or record/slot construction.
+
+The source analysis, prospective small F/G plan, preserved builds and validation
+receipts are recorded outside this repository in
+`../decl-analysis/2026-09-13/runtime-reduction/deferred-cost/immutable-binding-inputs/`.
+The fixed small comparison is separate from native timing and the outstanding
+large-model capacity and complete-output evidence.
+
+The fixed F/G comparison completes 1,120 binds per arm: 1,056 complete successful
+outputs, 64 expected size-Taint returns and 480 diagnostics. All semantic,
+constructor/prefix and checked release results agree. G removes 608 allocation/
+free calls and 294,400 gross requested/freed bytes (287.5 KiB), with unchanged
+reallocations and net-live growth. All nineteen empty/snapshot controls are
+unchanged. This 35-case aggregate must not be added to the preceding differently
+composed 29-case aggregate.
+
+For 32 depth-5 children bound 32 times, arrays reduce allocations from 167 to 135
+and requested bytes from 73,708 to 40,940 (44.5%). Maps reduce allocations from
+4,423 to 4,391 and requested bytes from 380,012 to 322,668 (15.1%). The much smaller
+map allocation-call improvement (0.7%) exposes the remaining visited-key and
+output-map costs. Nested-record cases reduce calls by only 1.2–2.0%; record entry
+copies and slot construction remain. Retained net-live growth is unchanged, and
+no native speed or peak-footprint improvement follows from these small intervals.
+
+Six new native checks and a fresh full make verify pass, including 1,278 identical
+CLI comparisons and zero differences. Diagnostic-feature tests and final quality
+receipts are recorded in the external report. The next narrow candidate is the
+temporary String used to construct the map-key validation Rc; record entries and
+supplied lookup ownership require a separate broader review. No new large-model
+measurement, native adoption or commit is part of G.
+
+## 24. Direct map-key validation strings (2026-09-13)
+
+Candidate H changes one Rust map-binding expression in G. The owned insertion
+key k was cloned into a temporary String before becoming a fresh Rc<str> for key
+validation. H constructs that Rc directly from k.as_str(), retaining the original
+insertion key and the independently created child-path key. The temporary borrow
+ends before recursive binding or native callbacks. The removed String was also
+consumed before callbacks in G, so this change introduces no new callback-visible
+Rc ownership boundary or public API migration.
+
+All visited map keys use the conversion, including rejected keys and keys from
+mutable/expanded snapshots. Those snapshot policies and key/value ordering stay
+unchanged. Empty String clones do not allocate backing storage, making empty keys
+a useful control. Arrays without descendant map binding are also controls;
+record binding itself is a separate branch. The preceding G experiment's nonempty
+snapshot-map cases become H treatment cases, so reusing its old control labels
+would give a misleading comparison.
+
+A fixed small G/H comparison reuses the prior full-output and diagnostic oracles,
+adds empty and long ASCII/Unicode keys, and independently checks native callback
+retention/reentry and distinct validation/path Rc identities before allocator
+intervals. Plans, frozen source/build identities, raw results, checks and analysis
+are recorded in
+`../decl-analysis/2026-09-13/runtime-reduction/deferred-cost/map-key-conversion/`.
+The large-model timing and capacity evidence remain a separate open comparison.
+
+The 39-case G/H comparison completes 1,248 binds per arm, with 1,184 full successful
+outputs, 64 expected size-Taint returns and 480 diagnostics. The separate native
+oracle confirms four key callbacks, four same-Engine reentries, distinct
+validation/path Rc identities and independent release. Its extra diagnostic and
+binding work are outside the allocation intervals. All 23 allocation controls
+and the full semantic, constructor/prefix and release checks agree.
+
+H removes 6,848 allocation/free calls and 58,016 gross requested/freed bytes
+(56.656 KiB), with unchanged reallocations and net-live growth. The result matches
+one avoided allocation per visited nonempty key and its UTF-8 byte length. For
+32 depth-5 map keys bound 32 times, calls fall from 4,391 to 3,367 (23.3%), but
+requested bytes fall from 322,668 to 319,596 (0.95%): these keys are only three
+bytes. The two 576-byte singleton-key cases each request 91,500 → 73,068 bytes
+(20.14%), identically for ASCII and Unicode. Empty-key and array controls are
+unchanged. This is temporary allocation traffic, not retained memory or native
+speed; it is not pooled with the earlier differently composed G/F aggregate.
+
+A fresh full make verify passes with 1,278 identical CLI comparisons and zero
+differences. Diagnostic-feature tests and final quality/source receipts are in
+the external report. The next source boundary is borrowing immutable record
+entries through a multi-pass slice while preserving duplicate order, Edits
+reuse and diagnostic-callback reentry. Record supplied lookup copies remain a
+separate candidate. H adds no new large-model evidence or native acceptance and
+is not committed in this step.
+
+## 25. Immutable record binding entries (2026-09-13)
+
+Candidate I borrows immutable JObj entries in Rust record binding through a Cow
+slice. H cloned the entire ordered vector, including String keys and Values,
+before checking record reuse or constructing slots. The original raw Rc vector
+already remains alive throughout bind. PreObj expansion, mutable Map snapshots
+and record-to-record spreading still produce their existing owned vectors.
+
+Unlike collection binding, record binding revisits entries for Edits::unchanged,
+entry_order, supplied, extras and Edits::bound. All of those passes, later clone
+sites and reuse positions remain. The ordered sequence preserves duplicates:
+supplied's last-value lookup and Edits' existing first-match searches are not
+merged. Lazy Compute values, extras and Edits' retained input snapshots continue
+to own the values they need after the temporary slice and raw input are gone.
+
+Diagnostic reporting can invoke a native Env::tagger that changes an external
+input handle and reenters binding. The original immutable raw stays alive, so
+external Rc::make_mut separates its vector from the running bind's input. Native
+callbacks can observe fewer duplicate transient Value/Rc owners. The
+[migration note](RUNTIME_MEMORY_MIGRATION.md#immutable-record-inputs-during-binding)
+records this ownership boundary; public signatures and language behavior stay
+unchanged. Mutable snapshots retain their membership/order semantics without
+becoming recursive freezes of nested mutable values.
+
+The focused H/I comparison and its source/build/validation evidence live in
+`../decl-analysis/2026-09-13/runtime-reduction/deferred-cost/record-binding-inputs/`.
+Cold binding allocation work is measured separately from post-bind lazy forcing,
+Edits reuse correctness and the outstanding native/large-model comparison.
+
+The fixed 22-case comparison (32 binds each) records **2,880 fewer allocation/free
+calls and 150,720 fewer gross requested/freed bytes**. All 704 complete returned
+records and 64 bind diagnostics per arm agree. The missing-required case returns
+a record; its 32 Invalid-slot Taint outcomes occur only during post-interval
+forcing. All twelve controls, measured PrefixPath/scalar work and owner-release
+checks agree. Reallocations and net-live growth are unchanged.
+
+| Depth-5 case, 32 binds | Allocations H → I | Requested bytes H → I | Byte reduction |
+| --- | ---: | ---: | ---: |
+| Immutable record, 32 entries | 10,593 → 9,537 | 603,488 → 543,072 | 10.01% |
+| Immutable record, 1 entry | 545 → 481 | 30,432 → 28,544 | 6.20% |
+| Nested record, 2 outer entries | 865 → 769 | 42,784 → 38,848 | 9.20% |
+| Open record with extras, 3 entries | 833 → 705 | 42,592 → 37,120 | 12.85% |
+| Mutable Map input, 32 entries | 10,593 → 10,593 | 603,488 → 603,488 | 0.00% |
+
+For 32 scalar entries, each bind avoids one 1,792-byte entries vector and 96 key
+bytes, totaling 1,888 bytes and 33 allocations. Depth 0 and depth 5 save the same
+absolute amount. Nested child record/array binding happens during later lazy
+forcing, so the nested result measures only its outer input copy. PreObj, Map,
+record and empty-input controls retain their work. Freed bytes match requested
+bytes: this removes temporary traffic without reducing retained record size.
+The 22-case aggregate must not be pooled with H's earlier 39-case map-key suite.
+
+Five new native tests cover tagger COW/reentry, forcing after original input
+release, duplicate/diagnostic order, mutable snapshots and unchanged/changed
+Edits ownership/reuse. The fresh full gate passes TS 28 reported tests, Rust 149
+library/integration tests plus one doctest, Python 366, and 1,278 identical CLI
+comparisons with zero differences. Diagnostic-feature library tests pass 75.
+The failed first helper compilation (ambiguous fixture key type) is preserved;
+an explicit Vec<(String, Value)> annotation fixes only the helper, before any
+probe execution. Final quality and evidence bindings are recorded in the external
+report and completion receipt.
+
+The next narrow candidate is borrowing supplied lookup keys while retaining
+owned Values, the existing hasher and capacity policy. This would remove another
+String copy and shrink temporary key storage without changing callback Value/Rc
+owner counts. Edits' early unchanged return precedes supplied construction and
+cannot benefit from that next change. Removing supplied Value copies is a
+separate later candidate. No native latency, peak RSS, Session reuse performance,
+new OAD run or whole-workload adoption follows from I's cold allocation results.
+
+## 26. Borrowed record lookup keys (2026-09-13)
+
+Candidate J changes the local supplied lookup in Rust record binding from
+HashMap<String, Value> to HashMap<&str, Value>. It borrows keys from the existing
+entries slice, inserts the same cloned Values and clones each selected Value
+into the same slot descriptor. The standard hasher, capacity growth, insertion
+order and duplicate last-value selection remain. This is a three-line runtime
+change; no public type, signature or language rule changes.
+
+I removed the initial immutable entries vector copy. The next pass still copied
+every String key into supplied, including entries whose values become extras or
+diagnostics. J removes those copies for immutable and owned input paths alike.
+It also makes each temporary table key smaller. Empty input creates no table;
+an empty-string key can still benefit from table storage even though its empty
+String clone needs no buffer. Requested table bytes include allocations during
+growth, not just the table's final capacity.
+
+All Value owners remain at the original points, including duplicate replacement,
+native tagger callbacks and slot captures. Keys stay within the local lookup;
+JObj's raw vector or the owned PreObj/Map/Rec entries snapshot outlives it.
+Mutable membership snapshots still finish before diagnostic callbacks. Edits'
+early unchanged return precedes supplied and cannot benefit from J. Its later
+ordered entries snapshot, first-match searches and retained slot ownership are
+unchanged. The migration guide records the local lookup ownership boundary.
+
+The fixed I/J evidence is recorded outside the repository under
+`../decl-analysis/2026-09-13/runtime-reduction/deferred-cost/record-lookup-keys/`.
+The comparison measures cold binding allocations; lazy forcing, inspection,
+Engine teardown and Edits reuse correctness are separate from those intervals.
+
+The 25-case comparison (32 binds each) records **5,792 fewer allocation/free calls
+and 226,784 fewer gross requested/freed bytes**. All 800 returned records and 64
+bind diagnostics per arm agree. Six empty-input controls remain unchanged; the
+six nonempty owned-input cases now receive the lookup improvement. Reallocations,
+net-live growth and measured PrefixPath/scalar work are unchanged.
+
+| Depth-5 case, 32 binds | Allocations I → J | Requested bytes I → J | Byte reduction |
+| --- | ---: | ---: | ---: |
+| Immutable record, 32 entries | 9,537 → 8,513 | 543,072 → 508,256 | 6.41% |
+| Mutable Map input, 32 entries | 10,593 → 9,569 | 603,488 → 568,672 | 5.77% |
+| Record input, 32 entries | 10,625 → 9,601 | 678,240 → 643,424 | 5.13% |
+| Empty-key singleton | 321 → 321 | 28,064 → 27,040 | 3.65% |
+| 576-byte ASCII key | 481 → 449 | 120,224 → 100,768 | 16.18% |
+| 576-byte Unicode key | 481 → 449 | 120,224 → 100,768 | 16.18% |
+
+The removed String buffers explain 53,728 bytes. Both arms separately report
+(String, Value) and (&str, Value) pair sizes of 56 and 48 bytes. The residual
+173,056 bytes (76.31% of savings) are attributed to narrower temporary tables;
+this is an inference from the isolated change, layouts and empty-key contrast.
+The premeasurement bucket-growth hypothesis matches every observed delta, but
+bucket capacities were not directly exported by the probe. A 32-key case saves
+3,072 key bytes and 31,744 table bytes across 32 binds; counting only the final
+entries would miss gross traffic during growth. The empty key isolates table
+bytes, while equal-byte ASCII/Unicode keys produce identical allocation results.
+
+The existing 11 native input tests remain unchanged and pass. The fresh full
+gate passes TS 28 reported tests, Rust 149 library/integration tests plus one
+doctest, Python 366, and 1,278 identical CLI comparisons with zero differences.
+Diagnostic-feature tests pass 75. All 800 binds return records; 32 Invalid-slot
+Taint outcomes arise only during post-interval forcing. Output/Engine release
+checks retain the fixture raw baseline; nested forcing and automatic teardown
+collection remain outside the measured intervals.
+
+This is a temporary-allocation improvement, without reduced retained output
+bytes or a measured native speed/RSS benefit. The 25-case aggregate must remain
+separate from I's preceding 22-case suite. The next candidate is supplied Value
+copy removal, which requires separate native callback/uniqueness and descriptor
+lifetime analysis. No new OAD run, whole-workload adoption or commit is introduced.
+
+## 27. Borrowed record lookup values (2026-09-13)
+
+Candidate K changes the temporary supplied lookup from HashMap<&str, Value> to
+HashMap<&str, &Value>. It inserts references to existing entries and uses
+get(...).copied().cloned() to produce the same owned Value at slot construction.
+The first clone of every supplied Value disappears; selected lazy descriptors,
+extras and Edits snapshots keep their existing ownership. Hashing, table growth,
+duplicate last-value lookup and the earlier unchanged-record return remain.
+
+The entries slice outlives lookup. Immutable raw owns its JObj vector; expanded,
+mutable Map and record inputs keep their eagerly completed owned snapshots.
+No RefCell borrow crosses diagnostic callbacks. A native tagger can observe one
+fewer transient Rc owner before a selected slot is created. This change is
+explicitly recorded in the [ownership guide](RUNTIME_MEMORY_MIGRATION.md#immutable-record-inputs-during-binding).
+Safe callback access and cycle collection must preserve values rooted through
+raw or snapshots. No public signature, frozen language rule or CLI behavior changes.
+
+Two added native tests exercise explicit callback-triggered cycle collection with
+raw/snapshot-only roots and duplicate PreVal ownership before/after selected slot
+construction. The earlier COW/reentry test now checks one raw owner instead of
+raw plus supplied; its post-input-release lazy/extra checks are retained. This
+updates an intentional native count observation without weakening language parity.
+
+The fixed external J/K comparison is under
+`../decl-analysis/2026-09-13/runtime-reduction/deferred-cost/record-lookup-values/`.
+It keeps the previous 25 full oracles and adds native Any-member Pattern,
+Quantity and Range values to separate allocating Value clones from table storage.
+The first 25 scalar/Rc input cases can save table bytes without removing allocator
+calls. Pattern/quantity strings and range endpoint boxes additionally allocate
+when cloned. These native payloads are not JSON-parser or OAD fixture claims.
+
+The 28-case pair (32 binds each) records **128 fewer allocation/free calls and
+567,296 fewer gross requested/freed bytes**. All 896 returned records and 64 bind
+diagnostics per arm agree, with six unchanged empty-input controls. Reallocations,
+net-live growth and measured prefix/scalar work are unchanged.
+
+| Depth-5 case, 32 binds | Allocations J → K | Requested bytes J → K | Byte reduction |
+| --- | ---: | ---: | ---: |
+| Immutable record, 32 entries | 8,513 → 8,513 | 508,256 → 413,024 | 18.74% |
+| Mutable Map input, 32 entries | 9,569 → 9,569 | 568,672 → 473,440 | 16.75% |
+| Record input, 32 entries | 9,601 → 9,601 | 643,424 → 548,192 | 14.80% |
+| Native Pattern singleton | 513 → 481 | 64,544 → 43,040 | 33.32% |
+| Native Quantity singleton | 513 → 481 | 64,544 → 43,040 | 33.32% |
+| Native Range singleton | 577 → 513 | 31,776 → 26,656 | 16.11% |
+
+Both arms report lookup pair sizes of 48 bytes with owned Values and 24 bytes
+with borrowed Values. The 528,384-byte table component (93.14% of total savings)
+is attributed from the isolated change, observed layouts and case contrasts.
+The prior bucket-growth hypothesis matches every observed residual, but bucket
+capacities were not directly exported. A 32-entry record saves 95,232 bytes across
+32 binds from that table shrink while keeping the same allocation-call count.
+All first 25 scalar/Rc cases retain their call counts; allocating Value clones
+are removed only in the three added native payload cases.
+
+Pattern and Quantity each remove 18,432 String-buffer bytes and 32 allocations,
+plus 3,072 table bytes. Range removes 64 endpoint-box allocations; its 2,048-byte
+clone residual matches the prior 32-byte Value-box assumption, with 3,072 table
+bytes saved as well. These allocation-site attributions are inferred rather than
+per-site traces. Empty, short and 576-byte singleton keys all save the same table
+bytes because key copying was already removed by J. Native Any payload cases do
+not establish JSON/OAD behavior or workload prevalence.
+
+The 13 native input tests pass, including the changed owner-count observation and
+two new tests. The fresh full gate passes TS 28, Rust 151 library/integration
+tests plus one doctest, Python 366, and 1,278 identical CLI comparisons with zero
+differences; diagnostic-feature tests pass 77. Each measured bind returns a
+record; 32 Invalid-slot Taint outcomes occur only during later force. Helper raw
+owners stay live through inspection and release checks. Native callback GC and
+force-after-source-release are separate test evidence; J/K native owner counts
+are intentionally not claimed identical.
+
+Retained record bytes are unchanged, and no native latency/RSS improvement,
+new OAD run or whole-workload adoption is claimed. Keep this 28-case aggregate
+separate from J's earlier 25-case suite. The next boundary is lookup construction
+and capacity, preserving duplicate behavior and avoiding small-input or duplicate
+capacity regressions; it requires its own comparison.
+
+## 28. Record lookup construction (2026-09-13)
+
+Candidate L builds the temporary supplied HashMap only when both input entry
+count n and schema member count m exceed one. Otherwise it selects the last
+matching entry by reverse search and clones the selected Value at the original
+point. With n <= 1 or m <= 1, direct member selection performs at most n*m <= n+m
+String equality checks. This is a comparison-count bound, not a bound on examined
+UTF-8 bytes or execution time, and uses no tuned small-record threshold.
+
+A zero-member record still runs schema creation, extras and Edits bookkeeping.
+Raw/Cow snapshots, selected Value owners, hidden-member clone position, duplicate
+last-value selection, diagnostics and Edits unchanged/bound positions remain.
+There is no additional native owner-count or public API change from K. The
+many-to-many HashMap path retains its prior hasher, insertion order and incremental
+growth. A miss in that table does not trigger a reverse search.
+
+Preallocating raw entry count was not selected: a native input can contain 128
+entries but only one or two distinct keys. Reserving all 128 would overallocate
+for such inputs. The structural bypass avoids that problem without modifying the
+many-to-many capacity policy. Existing native input/GC/COW/duplicate/Edits tests
+cover both paths; no representation-mirroring repository test was added.
+
+The fixed external K/L pair is under
+`../decl-analysis/2026-09-13/runtime-reduction/deferred-cost/record-lookup-construction/`.
+It extends the previous 28 full oracles with eight boundary cases and runs each
+of 36 cases for 32 binds. Both arms return 1,152 complete records and emit 128 bind
+diagnostics; 96 Invalid-slot Taints occur only during later forcing. All semantic,
+measured work and release checks agree. The 15 unchanged controls comprise six
+empty inputs and nine many-to-many cases, including the 32-field records.
+
+Across this fixed suite, L removes **1,056 allocations/frees and 363,648 gross
+requested/freed bytes (355.125 KiB)**. Reallocations and net-live growth are
+unchanged; no case increases measured allocation calls or bytes.
+
+| Depth-5 case, 32 binds | Allocations K → L | Requested bytes K → L | Byte reduction |
+| --- | ---: | ---: | ---: |
+| One-field immutable record | 449 → 417 | 24,352 → 20,896 | 14.19% |
+| One-field mutable Map input | 513 → 481 | 31,616 → 28,160 | 10.93% |
+| One member, 128 duplicate entries | 4,513 → 4,481 | 125,696 → 122,240 | 2.75% |
+| One member first among 32 open entries | 2,593 → 2,433 | 258,656 → 158,176 | 38.85% |
+| Zero members, 32 open entries | 2,369 → 2,209 | 250,208 → 149,728 | 40.16% |
+| Missing member, 32 unknown open entries | 2,818 → 2,658 | 281,728 → 181,248 | 35.67% |
+| Two members, 128 alternating duplicates (control) | 4,737 → 4,737 | 134,048 → 134,048 | 0% |
+| 32-field immutable record (control) | 8,513 → 8,513 | 413,024 → 413,024 | 0% |
+
+The 18 nonempty small-distinct-key treatments each remove one allocation and
+108 requested bytes per bind. Three 32-distinct-key treatments each remove five
+allocations and 3,140 requested bytes per bind. All 36 rows match the prospective
+model. The observed pair size is 24 bytes; the inferred table model uses one
+control byte per bucket and eight trailing control bytes, with hypothesized
+bucket counts 4 or 4+8+16+32+64. These capacities/control layouts are not exported
+traces or numerical acceptance criteria. No Value clone or retained slot-size
+reduction is attributed to L. Empty, short and 576-byte singleton keys save the
+same 108 bytes per bind; their retained name bytes still differ.
+
+A fresh full gate passes TS 28, Rust 151 library/integration tests plus one
+doctest, Python 366, and 1,278 identical CLI comparisons with zero differences.
+All 13 focused native input tests and 77 diagnostic-feature library tests pass.
+The pair succeeds on its first attempts with complete bounded outputs. Source,
+build, raw output, quality and independent reviews are bound in its completion
+record. The completion binder now checks all four review hash sets, including
+source and preflight, before recording closure.
+
+These are cold binding allocation measurements with retained raw input. Setup,
+forcing, full output inspection and teardown are outside each interval. Nested
+child binding may also benefit later, but is outside the measured parent interval.
+No latency/RSS, Session reuse performance or OAD improvement is established. Keep
+this 36-case aggregate separate from K's earlier 28-case suite. Next, assess
+remaining many-to-many lookup and per-slot construction costs in separate
+comparisons, including the compiled-schema path and duplicate-heavy inputs.
