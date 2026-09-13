@@ -19,5 +19,10 @@ fn main() {
     build.compile("tree-sitter-decl");
     println!("cargo:rerun-if-changed={}", dir.join("parser.c").display());
     println!("cargo:rerun-if-changed={}", dir.join("scanner.c").display());
+    // Watch header contents and membership without touching unchanged C sources.
+    println!(
+        "cargo:rerun-if-changed={}",
+        dir.join("tree_sitter").display()
+    );
     println!("cargo:rerun-if-changed=build.rs");
 }

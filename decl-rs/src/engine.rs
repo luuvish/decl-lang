@@ -24,6 +24,10 @@ pub type Inst = Rc<RefCell<RecInst>>;
 #[path = "../tests/private/query_record_test.rs"]
 mod query_record_tests;
 
+#[cfg(test)]
+#[path = "../tests/private/materialized_cache_test.rs"]
+mod materialized_cache_tests;
+
 /// the evaluator (§9): binds documents and expressions to types, forces slots
 /// lazily with dependency tracking, validates, serializes
 pub struct Engine {
@@ -85,10 +89,12 @@ pub struct Engine {
     pub(crate) const_envs: RefCell<Vec<Rc<Env>>>,
     /// the answers' references into the previous round, by identity
     pub(crate) snap_refs: RefCell<FxHashMap<usize, (Rc<SegPath>, Rc<Engine>)>>,
-    /// an unmaterialized literal read as a value is materialized once (by identity; the literal is
-    /// kept alive): its elements are pure, and a chain of spreads (a fold accumulating an array)
-    /// would otherwise re-evaluate every level at every read
-    mat_cache: RefCell<FxHashMap<usize, (Value, Value)>>,
+    /// An unmaterialized literal is materialized once by allocation identity.
+    /// Weak raw owners pin that identity without retaining discarded captures;
+    /// results stay strong, so live raw literals still reuse the same result.
+    mat_cache: RefCell<MaterializedCache>,
+    /// Bounded weak sharing for typed-container paths; it owns no runtime values.
+    path_pool: RefCell<PrefixPathPool>,
     /// Shared executable programs, enabled by the query evaluator.
     pub programs: RefCell<Option<Rc<Programs>>>,
     /// Revision stamps for retained queries.
@@ -104,6 +110,33 @@ pub struct Engine {
     pub(crate) inverse_refs: RefCell<FxHashMap<usize, Rc<SegPath>>>,
     // Must drop after every Engine field and every frozen Engine.
     _lifetime: lifetime::EngineGuard,
+}
+
+// Keep the Rc allocation identity pinned without retaining the raw literal's
+// Vec contents and their captured scopes. Cached materialized values remain
+// strong until the same clear/transient/Engine lifetime boundary as before.
+// A Weak keeps its allocation address unavailable for reuse even after the
+// last raw strong owner drops; array/object variants retain the correct type.
+enum MaterializedLiteral {
+    Array(Weak<Vec<(bool, Value)>>),
+    Object(Weak<Vec<(String, Value)>>),
+}
+type MaterializedCache = FxHashMap<usize, (MaterializedLiteral, Value)>;
+impl MaterializedLiteral {
+    fn matches(&self, raw: &Value) -> bool {
+        match (self, raw) {
+            (Self::Array(owner), Value::PreArr(v)) => owner.as_ptr() == Rc::as_ptr(v),
+            (Self::Object(owner), Value::PreObj(v)) => owner.as_ptr() == Rc::as_ptr(v),
+            _ => false,
+        }
+    }
+    fn of(raw: &Value) -> Self {
+        match raw {
+            Value::PreArr(v) => Self::Array(Rc::downgrade(v)),
+            Value::PreObj(v) => Self::Object(Rc::downgrade(v)),
+            _ => unreachable!("materialization cache only stores unbound literals"),
+        }
+    }
 }
 
 /// the values `std.array.sort` orders: one primitive kind per call (§13.2)
@@ -400,9 +433,26 @@ impl Engine {
         self.mat_cache.borrow().len()
     }
 
+    /// Diagnostic cache table/root-handle counts; no entry or reachable-graph scan.
+    #[cfg(feature = "runtime-diagnostics")]
+    pub fn materialization_diagnostics(&self) -> serde_json::Value {
+        let cache = self.mat_cache.borrow();
+        serde_json::json!({
+            "entries": cache.len(), "capacity_entries": cache.capacity(),
+            "raw_identity_strength": "weak; allocation address pinned, raw Vec contents not retained by this owner",
+            "strong_raw_root_handles": 0,
+            "weak_raw_identity_handles": cache.len(),
+            "strong_result_root_handles": cache.len(),
+            "unique_raw_or_result_nodes": null,
+            "meaning": "table-owned handles, not distinct retained nodes/heap bytes; no force, scan, callback or owner clone"
+        })
+    }
+
     /// Unbound literals may close over replaced records. Keep their auxiliary
     /// materializations within an edit; retained member values live in slots.
     pub(crate) fn clear_materialized(&self) {
+        #[cfg(feature = "runtime-diagnostics")]
+        crate::retention_diagnostics::cache_clear(self.mat_cache.borrow().len());
         self.mat_cache.borrow_mut().clear();
     }
 
@@ -411,11 +461,16 @@ impl Engine {
         struct Restore<'a> {
             engine: &'a Engine,
             programs: Option<Rc<Programs>>,
-            materialized: FxHashMap<usize, (Value, Value)>,
+            materialized: MaterializedCache,
         }
         impl Drop for Restore<'_> {
             fn drop(&mut self) {
                 *self.engine.programs.borrow_mut() = self.programs.take();
+                #[cfg(feature = "runtime-diagnostics")]
+                crate::retention_diagnostics::cache_restore(
+                    self.engine.mat_cache.borrow().len(),
+                    self.materialized.len(),
+                );
                 *self.engine.mat_cache.borrow_mut() = std::mem::take(&mut self.materialized);
             }
         }
@@ -423,6 +478,8 @@ impl Engine {
         if programs.is_some() {
             *self.programs.borrow_mut() = Some(Rc::new(Programs::default()));
         }
+        #[cfg(feature = "runtime-diagnostics")]
+        crate::retention_diagnostics::cache_suspend(self.mat_cache.borrow().len());
         let _restore = Restore {
             engine: self,
             programs,
@@ -464,6 +521,7 @@ impl Engine {
             const_envs: RefCell::new(vec![]),
             snap_refs: RefCell::new(FxHashMap::default()),
             mat_cache: RefCell::new(FxHashMap::default()),
+            path_pool: RefCell::new(PrefixPathPool::default()),
             programs: RefCell::new(None),
             revisions: RefCell::new(None),
             edits: RefCell::new(None),
@@ -480,6 +538,15 @@ impl Engine {
                 .and_then(|e| e.computing.borrow().last().map(ToString::to_string))
         }));
         eng
+    }
+    /// Retain an immutable container path, sharing prefixes within this engine.
+    /// The returned outer Rc is new even when its full prefix chain is shared.
+    pub fn retained_path(&self, segments: &[Seg]) -> Rc<PrefixPath> {
+        self.path_pool.borrow_mut().retain(segments)
+    }
+    /// Explicit diagnostic scan of the bounded path pool, outside hot binding.
+    pub fn retained_path_pool_stats(&self) -> PrefixPathPoolStats {
+        self.path_pool.borrow().stats()
     }
     pub(crate) fn query_pool(&self) -> Rc<QueryPool> {
         self.query_keys.clone()
@@ -824,7 +891,11 @@ impl Engine {
                         (
                             k.clone(),
                             Value::PreVal(Rc::new(PreValV {
-                                expr: v.clone(),
+                                expr: {
+                                    #[cfg(feature = "runtime-diagnostics")]
+                                    crate::retention_diagnostics::preval(0);
+                                    v.clone()
+                                },
                                 scope: sc.clone(),
                             })),
                         )
@@ -838,7 +909,11 @@ impl Engine {
                         (
                             *sp,
                             Value::PreVal(Rc::new(PreValV {
-                                expr: v.clone(),
+                                expr: {
+                                    #[cfg(feature = "runtime-diagnostics")]
+                                    crate::retention_diagnostics::preval(1);
+                                    v.clone()
+                                },
                                 scope: sc.clone(),
                             })),
                         )
@@ -1070,7 +1145,11 @@ impl Engine {
             out.push((
                 false,
                 Value::PreVal(Rc::new(PreValV {
-                    expr: head.clone(),
+                    expr: {
+                        #[cfg(feature = "runtime-diagnostics")]
+                        crate::retention_diagnostics::preval(2);
+                        head.clone()
+                    },
                     scope: sc.with_locals(locals),
                 })),
             ));
@@ -1879,9 +1958,11 @@ impl Engine {
             })
         };
         let arr = |path: Vec<Value>| {
+            #[cfg(feature = "runtime-diagnostics")]
+            crate::retention_diagnostics::standard_array(name, path.len(), path.capacity());
             Value::Arr(Rc::new(RefCell::new(ArrV {
                 items: path,
-                path: Rc::new(vec![]),
+                path: self.retained_path(&[]),
             })))
         };
         let s = |v: &Value| -> R<String> {
@@ -2256,11 +2337,33 @@ impl Engine {
             Value::PreObj(rc) => Rc::as_ptr(rc) as usize,
             _ => return self.materialize(d, &[]),
         };
-        if let Some((_, m)) = self.mat_cache.borrow().get(&key) {
+        #[cfg(feature = "runtime-diagnostics")]
+        let diagnostic_cache =
+            crate::retention_diagnostics::CacheAttempt::start(if matches!(d, Value::PreArr(_)) {
+                0
+            } else {
+                1
+            });
+        if let Some((identity, m)) = self.mat_cache.borrow().get(&key) {
+            debug_assert!(identity.matches(&d), "cached literal allocation identity");
+            #[cfg(feature = "runtime-diagnostics")]
+            diagnostic_cache.hit();
             return Ok(m.clone());
         }
+        #[cfg(feature = "runtime-diagnostics")]
+        diagnostic_cache.miss();
+        let identity = MaterializedLiteral::of(&d);
         let m = self.materialize(d.clone(), &[])?;
-        self.mat_cache.borrow_mut().insert(key, (d, m.clone()));
+        #[cfg(feature = "runtime-diagnostics")]
+        let diagnostic_before = self.mat_cache.borrow().len();
+        self.mat_cache
+            .borrow_mut()
+            .insert(key, (identity, m.clone()));
+        #[cfg(feature = "runtime-diagnostics")]
+        {
+            let cache = self.mat_cache.borrow();
+            diagnostic_cache.inserted(diagnostic_before, cache.len(), cache.capacity());
+        }
         Ok(m)
     }
     /// The entries of an unbound object literal with its spreads (§4.2)
@@ -2394,7 +2497,7 @@ impl Engine {
             Value::Map(m) => Ok(m),
             // a record reads as the map of its value entries (§3.17)
             Value::Rec(r) => {
-                let path = r.borrow().path.clone();
+                let path = self.retained_path(&r.borrow().path);
                 let entries = self.spread_entries(Value::Rec(r))?;
                 Ok(Rc::new(RefCell::new(MapV {
                     entries: entries.into_iter().collect(),
@@ -2454,7 +2557,7 @@ impl Engine {
             .unwrap_or_default();
         out.sort_by(|a, b| path_key_cmp(a, b));
         let prev = self.prev.borrow().clone();
-        let items = out
+        let items: Vec<Value> = out
             .into_iter()
             .map(|p| {
                 let rc = Rc::new(p);
@@ -2474,9 +2577,15 @@ impl Engine {
                 Value::Ref(rc)
             })
             .collect();
+        #[cfg(feature = "runtime-diagnostics")]
+        crate::retention_diagnostics::array(
+            crate::retention_diagnostics::ArraySite::Referrers,
+            items.len(),
+            items.capacity(),
+        );
         Ok(Value::Arr(Rc::new(RefCell::new(ArrV {
             items,
-            path: Rc::new(vec![]),
+            path: self.retained_path(&[]),
         }))))
     }
     /// the edge `T|m` of the snapshot: computed from its instances on first demand
@@ -2572,15 +2681,31 @@ impl Engine {
     }
     /// Phase 2, one round: the deferred slots and roots, then everything; stable when the queried edges did not change.
     pub fn settle(&self, env: &Env, edges: HashMap<String, Edge>) -> Settled {
+        #[cfg(feature = "runtime-diagnostics")]
+        let mut timings = crate::evaluation_diagnostics::Span::new("settle", 0);
         self.phase.set(2);
         self.take_snapshot(edges);
+        #[cfg(feature = "runtime-diagnostics")]
+        timings.mark("take_snapshot");
         let deferred: Vec<(Inst, String)> = self.deferred_slots.borrow_mut().drain(..).collect();
+
+        #[cfg(feature = "runtime-diagnostics")]
+        timings.mark("deferred_snapshot");
         for (inst, name) in &deferred {
             self.force_slot_safe(inst, name);
         }
+
+        #[cfg(feature = "runtime-diagnostics")]
+        timings.mark("force_deferred_slots");
         self.bind_deferred_roots();
+        #[cfg(feature = "runtime-diagnostics")]
+        timings.mark("bind_deferred_roots");
         self.force_roots(env);
+        #[cfg(feature = "runtime-diagnostics")]
+        timings.mark("force_roots");
         let live = self.live_edges();
+        #[cfg(feature = "runtime-diagnostics")]
+        timings.mark("live_edges");
         let snap = self.snap.borrow();
         let snap_edges = &snap.as_ref().unwrap().edges;
         let mut changed: Vec<String> = live
@@ -2590,6 +2715,10 @@ impl Engine {
             .collect();
         changed.sort();
         drop(snap);
+        #[cfg(feature = "runtime-diagnostics")]
+        timings.mark("compare_edges");
+        #[cfg(feature = "runtime-diagnostics")]
+        timings.finish();
         Settled {
             stable: changed.is_empty(),
             edges: live,
@@ -2648,6 +2777,8 @@ impl Engine {
         incremental: bool,
         initial: Option<Rc<Engine>>,
     ) -> Rc<Engine> {
+        #[cfg(feature = "runtime-diagnostics")]
+        let mut timings = crate::evaluation_diagnostics::Span::new("evaluate_setup", 0);
         let mut prev: Option<Rc<Engine>> = None;
         let mut edges: HashMap<String, Edge> = HashMap::new();
         // the queried edges each round have been seen before (rounds are
@@ -2666,8 +2797,15 @@ impl Engine {
         let mut retained = initial;
         let mut incremental = incremental && RoundCache::needed(env);
         let mut cache = incremental.then(|| Rc::new(RoundCache::default()));
+
+        #[cfg(feature = "runtime-diagnostics")]
+        timings.mark("setup");
+        #[cfg(feature = "runtime-diagnostics")]
+        timings.finish();
         loop {
             round += 1;
+            #[cfg(feature = "runtime-diagnostics")]
+            let mut timings = crate::evaluation_diagnostics::Span::new("round", round as usize);
             let reusing = retained.is_some();
             let eng = retained.take().unwrap_or_else(|| {
                 let eng = Self::bare_with_queries(env.clone(), query_keys.clone());
@@ -2683,15 +2821,30 @@ impl Engine {
             eng.track.set(track || (incremental && reusing));
             *eng.prev.borrow_mut() = prev.clone();
             let mark = env.diag_len();
+
+            #[cfg(feature = "runtime-diagnostics")]
+            timings.mark("engine_setup");
             bind(&eng);
+            #[cfg(feature = "runtime-diagnostics")]
+            timings.mark("bind");
             eng.force_roots(env);
+            #[cfg(feature = "runtime-diagnostics")]
+            timings.mark("force_roots_initial");
             eng.track.set(eng.track.get() || incremental);
             let r = eng.settle(env, edges);
+            #[cfg(feature = "runtime-diagnostics")]
+            timings.mark("settle");
             if let Some(edits) = eng.edits.borrow().as_ref() {
                 edits.finish(&eng);
             }
+
+            #[cfg(feature = "runtime-diagnostics")]
+            timings.mark("edits_finish");
             let ekey = edges_key(&r.edges);
             let cycled = !r.stable && seen.contains(&ekey);
+
+            #[cfg(feature = "runtime-diagnostics")]
+            timings.mark("edge_key_and_cycle");
             if r.stable || cycled || round == Engine::ROUNDS {
                 if !r.stable {
                     let snap = eng.snap.borrow();
@@ -2713,14 +2866,27 @@ impl Engine {
                 *eng.prev.borrow_mut() = None;
                 drop(prev);
                 eng.sweep_query_ids();
+
+                #[cfg(feature = "runtime-diagnostics")]
+                timings.mark("complete_drop_previous_and_identity_sweep");
+                #[cfg(feature = "runtime-diagnostics")]
+                timings.finish();
                 return eng;
             }
             // the round is the next one's snapshot; the universe starts over
-            if let Some(snapshot) = cache.as_ref().and_then(|c| c.advance(&eng, &r.edges)) {
+            let snapshot = cache.as_ref().and_then(|c| c.advance(&eng, &r.edges));
+            #[cfg(feature = "runtime-diagnostics")]
+            timings.mark("advance");
+            if let Some(snapshot) = snapshot {
                 seen.insert(ekey);
                 prev = Some(snapshot);
                 edges = r.edges;
                 retained = Some(eng);
+
+                #[cfg(feature = "runtime-diagnostics")]
+                timings.mark("retained_round_transfer");
+                #[cfg(feature = "runtime-diagnostics")]
+                timings.finish();
                 continue;
             }
             cache = None;
@@ -2738,6 +2904,10 @@ impl Engine {
             seen.insert(ekey);
             prev = Some(eng);
             edges = r.edges;
+            #[cfg(feature = "runtime-diagnostics")]
+            timings.mark("fallback_freeze_reset");
+            #[cfg(feature = "runtime-diagnostics")]
+            timings.finish();
         }
     }
 
@@ -2943,9 +3113,14 @@ impl Engine {
                         return Err(fail(format!("array size {n} outside {lo}..{h}"), None));
                     }
                 }
+                #[cfg(feature = "runtime-diagnostics")]
+                let diagnostic_array = crate::retention_diagnostics::ArrayAttempt::start(
+                    crate::retention_diagnostics::ArraySite::Bind,
+                    Some(items.len()),
+                );
                 let arr = Rc::new(RefCell::new(ArrV {
-                    items: vec![],
-                    path: Rc::new(path.to_vec()),
+                    items: Vec::with_capacity(items.len()),
+                    path: self.retained_path(path),
                 }));
                 for (i, it) in items.into_iter().enumerate() {
                     let mut p = path.to_vec();
@@ -2955,6 +3130,11 @@ impl Engine {
                         Err(Fail::Taint) => arr.borrow_mut().items.push(Value::Absent),
                         Err(e) => return Err(e),
                     }
+                }
+                #[cfg(feature = "runtime-diagnostics")]
+                {
+                    let a = arr.borrow();
+                    diagnostic_array.finish(a.items.len(), a.items.capacity());
                 }
                 Ok(Value::Arr(arr))
             }
@@ -2974,7 +3154,7 @@ impl Engine {
                 };
                 let m = Rc::new(RefCell::new(MapV {
                     entries: OrderedMap::default(),
-                    path: Rc::new(path.to_vec()),
+                    path: self.retained_path(path),
                 }));
                 for (k, v) in es {
                     match self.bind(Value::Str(k.clone().into()), key, path, parent, sc) {
@@ -3431,7 +3611,7 @@ impl Engine {
                         hidden: m.hidden,
                         state: SlotState::Unforced,
                         value: Value::Undef,
-                        compute: Some(Compute::Derived {
+                        compute: Some(Rc::new(Compute::Derived {
                             expr,
                             op: plan.and_then(|p| p.expression.clone()),
                             ty: m.ty.clone(),
@@ -3439,7 +3619,7 @@ impl Engine {
                             name: name.clone(),
                             root_name,
                             menv,
-                        }),
+                        })),
                     }
                 }
                 (kind, Some(raw_v)) => Slot {
@@ -3447,13 +3627,13 @@ impl Engine {
                     hidden: false,
                     state: SlotState::Unforced,
                     value: Value::Undef,
-                    compute: Some(Compute::Check {
+                    compute: Some(Rc::new(Compute::Check {
                         raw: raw_v,
                         types,
                         name: name.clone(),
                         root_name,
                         menv,
-                    }),
+                    })),
                 },
                 (MKind::Dflt, None) => {
                     let expr = m
@@ -3465,14 +3645,14 @@ impl Engine {
                         hidden: false,
                         state: SlotState::Unforced,
                         value: Value::Undef,
-                        compute: Some(Compute::Default {
+                        compute: Some(Rc::new(Compute::Default {
                             expr,
                             op: plan.and_then(|p| p.fallback.clone()),
                             types,
                             name: name.clone(),
                             root_name,
                             menv,
-                        }),
+                        })),
                     }
                 }
                 (MKind::Opt, None) => Slot {
@@ -3579,7 +3759,11 @@ impl Engine {
                 let mp = member_path(name);
                 if types.len() == 1 && matches!(types[0].k, RTk::Ref(_)) {
                     let pv = Value::PreVal(Rc::new(PreValV {
-                        expr: expr.clone(),
+                        expr: {
+                            #[cfg(feature = "runtime-diagnostics")]
+                            crate::retention_diagnostics::preval(3);
+                            expr.clone()
+                        },
                         scope: isc.clone(),
                     }));
                     return self.bind(pv, &types[0], &mp, Some(inst), &isc);
@@ -3610,7 +3794,11 @@ impl Engine {
                 let mut v = match t {
                     Some(t) if matches!(t.k, RTk::Ref(_)) => {
                         let pv = Value::PreVal(Rc::new(PreValV {
-                            expr: expr.clone(),
+                            expr: {
+                                #[cfg(feature = "runtime-diagnostics")]
+                                crate::retention_diagnostics::preval(4);
+                                expr.clone()
+                            },
                             scope: isc.clone(),
                         }));
                         self.bind(pv, t, &mp, Some(inst), &isc)?
@@ -3691,9 +3879,14 @@ impl Engine {
                         raw.push(x);
                     }
                 }
+                #[cfg(feature = "runtime-diagnostics")]
+                let diagnostic_array = crate::retention_diagnostics::ArrayAttempt::start(
+                    crate::retention_diagnostics::ArraySite::Materialize,
+                    Some(raw.len()),
+                );
                 let arr = Rc::new(RefCell::new(ArrV {
-                    items: vec![],
-                    path: Rc::new(path.to_vec()),
+                    items: Vec::with_capacity(raw.len()),
+                    path: self.retained_path(path),
                 }));
                 for (i, y) in raw.into_iter().enumerate() {
                     let mut p = path.to_vec();
@@ -3701,12 +3894,17 @@ impl Engine {
                     let m = self.materialize(y, &p)?;
                     arr.borrow_mut().items.push(m);
                 }
+                #[cfg(feature = "runtime-diagnostics")]
+                {
+                    let a = arr.borrow();
+                    diagnostic_array.finish(a.items.len(), a.items.capacity());
+                }
                 Ok(Value::Arr(arr))
             }
             Value::PreObj(entries) => {
                 let m = Rc::new(RefCell::new(MapV {
                     entries: OrderedMap::default(),
-                    path: Rc::new(path.to_vec()),
+                    path: self.retained_path(path),
                 }));
                 for (k, pv) in self.entries_of(&entries)?.iter() {
                     let x = match pv {
@@ -3923,7 +4121,8 @@ impl Engine {
             return Err(Fail::Taint);
         }
         // Cached, deferred and cyclic reads do not execute the descriptor.
-        // Clone its owned names and supplied value only for actual forcing.
+        // Retain immutable binding-time metadata across the force without
+        // cloning its names, supplied value, or captured owner handles.
         let compute = {
             let mut b = inst.borrow_mut();
             let s = b.slot_mut(name).unwrap();

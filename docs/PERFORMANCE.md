@@ -420,3 +420,34 @@ that the current public ownership API does not provide. The
 records the safety boundary, shared regression coverage, and measurement
 procedure. Lower output allocation churn does not by itself reduce the retained
 evaluation working set or establish an end-to-end latency improvement.
+
+An isolated Rust snapshot-copy experiment reserved the known slot count before
+filling its local vector. It reduced geometric capacity slack while retaining
+the same initialized slots, captures and public APIs. The candidate was withdrawn
+at that stage after large latency increases recurred in individual confirmation
+pairs. The
+[retained snapshot diagnosis](PERFORMANCE_DIAGNOSIS.md#14-retained-snapshot-slot-capacity)
+describes how to distinguish that capacity effect from descriptor layout,
+reachable-owner counts, allocator churn and process RSS. Earlier allocation
+can affect failed-copy peaks, so retained bytes and end-to-end timing remain
+separate acceptance measurements.
+
+The subsequent [timing-control procedure](PERFORMANCE_DIAGNOSIS.md#15-timing-variation-and-complete-command-teardown)
+uses a fixed same-binary comparison before reconsidering the capacity candidate.
+It records child CPU and passive memory-pressure observations and extends cold
+phase attribution through output-buffer release, runtime-owner release and the
+final command sweep. These supporting intervals expose work omitted by an
+emission-only helper; native CLI timings remain the end-to-end evidence.
+
+The later [runtime-work diagnosis](PERFORMANCE_DIAGNOSIS.md#16-separating-evaluation-allocation-and-collector-work)
+splits reference rounds, snapshot advance and nested collector passes, and records
+array construction and materialization-cache traffic. Isolated GC, capacity,
+capture, slot and path experiments retain separate correctness and adoption gates.
+The combined implementation retains exact array and snapshot-slot capacities,
+weak raw cache identities, shared computation descriptors, flat collector adjacency
+and shared container-path prefixes under a prospective memory/correctness decision.
+The earlier timing-control outcomes remain unchanged, and native speedup remains
+unresolved. Rust embedding code should follow the
+[runtime memory migration guide](RUNTIME_MEMORY_MIGRATION.md).
+Reduced allocation work or smaller type layouts do not alone establish lower
+command latency or a smaller peak working set.

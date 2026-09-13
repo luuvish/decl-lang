@@ -72,6 +72,7 @@ charter and chapters remains a defect to fix on sight (§1.4).
 | [Performance and optimization](PERFORMANCE.md) | Which runtime optimizations remove work, measured historical improvements, the query engine's current contribution, and further optimization priorities |
 | [Runtime cost and ownership diagnosis](PERFORMANCE_DIAGNOSIS.md) | Disjoint stage measurements, edit preparation, Rust ownership, canonical query identities, and shared dependency storage |
 | [Rust query graph API migration](QUERY_GRAPH_MIGRATION.md) | Restricted Engine graph fields, replacement inspection methods, shared slot handles, and temporary identity maintenance |
+| [Rust runtime memory API migration](RUNTIME_MEMORY_MIGRATION.md) | Shared computation descriptors, retained container paths, raw-literal cache lifetimes, and optional runtime diagnostics |
 | [Reproducible performance comparisons](../tests/benchmarks/COMPARE.md) | Frozen experiment manifests, output contracts, serial paired measurements, failure handling, and efficient iteration records |
 | [Query optimization plan](OPTIMIZATION_PLAN.md) | Implementation scope, completion evidence, batch/edit measurement gates, and remaining performance boundaries |
 

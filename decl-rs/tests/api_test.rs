@@ -147,11 +147,11 @@ mod serialization {
                 Value::Null,
                 Value::Pat("x".into()),
             ],
-            path: Rc::new(vec![]),
+            path: Rc::new(vec![].into()),
         }));
         let entries = Rc::new(RefCell::new(MapV {
             entries: Default::default(),
-            path: Rc::new(vec![]),
+            path: Rc::new(vec![].into()),
         }));
         {
             let mut map = entries.borrow_mut();
@@ -254,7 +254,7 @@ mod serialization {
         assert!(eng.serialize(&first, "output", false).is_empty());
         let typed = Value::Arr(Rc::new(RefCell::new(ArrV {
             items: vec![first],
-            path: Rc::new(vec![]),
+            path: Rc::new(vec![].into()),
         })));
         assert_eq!(eng.serialize(&typed, "output", false), "[]");
         assert_eq!(*calls.borrow(), expected);
@@ -749,5 +749,123 @@ mod lifetime {
         drop(run);
         collect_cycles();
         assert!(envs.iter().all(|e| e.upgrade().is_none()));
+    }
+}
+
+// Rust's public representation API: shared immutable computation snapshots and
+// container paths must remain usable independently of their original Engine.
+mod representation {
+    use decl_lang::engine::Engine;
+    #[cfg(feature = "runtime-diagnostics")]
+    use decl_lang::semantics::prefix_path_diagnostics;
+    use decl_lang::semantics::{
+        ty, ArrV, Compute, Env, MKind, MapV, Num, PrefixPath, RTk, RecInst, Seg, Slot, SlotState,
+        Value,
+    };
+    use std::cell::RefCell;
+    use std::rc::Rc;
+
+    #[test]
+    fn public_mutation_preserves_snapshots_and_requires_explicit_state_reset() {
+        let engine = Engine::bare(Env::new());
+        let record = Rc::new(RefCell::new(RecInst {
+            type_name: None,
+            rt: ty(RTk::Any),
+            path: Rc::new(vec![Seg::Name("output".into())]),
+            ps: RefCell::new(None),
+            parent: None,
+            slots: vec![(
+                "n".into(),
+                Slot {
+                    kind: MKind::Der,
+                    hidden: false,
+                    state: SlotState::Unforced,
+                    value: Value::Undef,
+                    compute: Some(Rc::new(Compute::Bridge(Rc::new(|| {
+                        Ok(Value::Int(Num::from(7)))
+                    })))),
+                },
+            )],
+            entry_order: Vec::new(),
+            extras: Vec::new(),
+            menv: None,
+        }));
+        assert!(
+            matches!(engine.force_slot(&record, "n"), Ok(Value::Int(n)) if n.to_i64() == Some(7))
+        );
+        let snapshot = record
+            .borrow()
+            .slot("n")
+            .unwrap()
+            .computation_snapshot()
+            .unwrap();
+        {
+            let mut borrowed = record.borrow_mut();
+            let slot = borrowed.slot_mut("n").unwrap();
+            *slot.computation_mut().unwrap() =
+                Compute::Bridge(Rc::new(|| Ok(Value::Int(Num::from(9)))));
+        }
+        let Compute::Bridge(old) = &*snapshot else {
+            panic!("binding snapshot remains a Bridge");
+        };
+        assert!(matches!(old(), Ok(Value::Int(n)) if n.to_i64() == Some(7)));
+        assert!(
+            matches!(engine.force_slot(&record, "n"), Ok(Value::Int(n)) if n.to_i64() == Some(7))
+        );
+        {
+            let mut borrowed = record.borrow_mut();
+            let slot = borrowed.slot_mut("n").unwrap();
+            slot.state = SlotState::Unforced;
+            slot.value = Value::Undef;
+        }
+        assert!(
+            matches!(engine.force_slot(&record, "n"), Ok(Value::Int(n)) if n.to_i64() == Some(9))
+        );
+    }
+
+    #[test]
+    fn public_container_path_api_preserves_place_snapshot_and_engine_lifetime() {
+        let engine = Engine::bare(Env::new());
+        let segments = vec![Seg::Name("output".into()), Seg::Name("items".into())];
+        let array = Rc::new(RefCell::new(ArrV {
+            items: vec![Value::Int(Num::from(1))],
+            path: engine.retained_path(&segments),
+        }));
+        let value = Value::Arr(array.clone());
+        let snapshot = array.borrow().path.clone();
+        #[cfg(feature = "runtime-diagnostics")]
+        let before = prefix_path_diagnostics();
+        assert_eq!(snapshot.format(Some("output")), "$.items");
+        assert_eq!(snapshot.iter().cloned().collect::<Vec<_>>(), segments);
+        #[cfg(feature = "runtime-diagnostics")]
+        assert_eq!(prefix_path_diagnostics().flat_exports, before.flat_exports);
+        assert_eq!(value.place().unwrap(), segments);
+        #[cfg(feature = "runtime-diagnostics")]
+        assert_eq!(
+            prefix_path_diagnostics().flat_exports,
+            before.flat_exports + 1
+        );
+        Rc::make_mut(&mut array.borrow_mut().path).push(Seg::Idx(3));
+        assert_eq!(snapshot.len(), 2);
+        assert_eq!(value.place().unwrap().last(), Some(&Seg::Idx(3)));
+        drop(engine);
+        assert_eq!(snapshot.format(None), "output.items");
+        assert_eq!(array.borrow().path.format(None), "output.items[3]");
+    }
+
+    #[test]
+    fn map_direct_construction_and_reference_path_api_remain_usable() {
+        let flat = vec![Seg::Name("output".into()), Seg::Key("a.b".into())];
+        let map = Value::Map(Rc::new(RefCell::new(MapV {
+            entries: Default::default(),
+            path: Rc::new(PrefixPath::from(flat.clone())),
+        })));
+        assert_eq!(map.place().unwrap(), flat);
+        let reference = Value::Ref(Rc::new(flat.clone()));
+        assert_eq!(reference.place().unwrap(), flat);
+        let Value::Map(map) = map else {
+            panic!("map");
+        };
+        assert_eq!(map.borrow().path.format(Some("output")), "$[\"a.b\"]");
     }
 }

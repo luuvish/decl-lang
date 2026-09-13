@@ -5,6 +5,11 @@ use super::*;
 use rustc_hash::{FxHashMap, FxHashSet};
 use std::rc::Weak;
 
+#[cfg(feature = "runtime-diagnostics")]
+mod diagnostics;
+#[cfg(feature = "runtime-diagnostics")]
+pub use diagnostics::{take_gc_diagnostics, GcDiagnostics, GcTrigger};
+
 #[derive(Default)]
 struct Tracked {
     envs: Vec<Weak<Env>>,
@@ -45,6 +50,8 @@ impl Drop for EngineGuard {
             })
             .unwrap_or(false);
         if last {
+            #[cfg(feature = "runtime-diagnostics")]
+            diagnostics::set_next_trigger(diagnostics::GcTrigger::LastEngine);
             collect_cycles();
         }
     }
@@ -53,6 +60,8 @@ impl Drop for EngineGuard {
 pub(crate) struct CommandGuard;
 impl Drop for CommandGuard {
     fn drop(&mut self) {
+        #[cfg(feature = "runtime-diagnostics")]
+        diagnostics::set_next_trigger(diagnostics::GcTrigger::Command);
         collect_cycles();
     }
 }
@@ -77,6 +86,7 @@ enum Node {
     Constant(Rc<ConstEntry>),
     Namespace(Rc<NsRefV>),
     Exports(Rc<RefCell<HashMap<String, Export>>>),
+    Compute(Weak<Compute>),
 }
 impl Node {
     fn key_count(&self) -> ((u8, usize), usize) {
@@ -104,7 +114,14 @@ impl Node {
             Self::Constant(x) => key!(15, x),
             Self::Namespace(x) => key!(16, x),
             Self::Exports(x) => key!(17, x),
+            Self::Compute(x) => ((18, x.as_ptr() as usize), x.strong_count()),
         }
+    }
+    // Descriptor slots are already held by Graph::Rec. Keeping another strong
+    // descriptor owner here would postpone opaque capture destructors until
+    // Graph drop instead of the original record-clear phase.
+    fn graph_strong_owners(&self) -> usize {
+        usize::from(!matches!(self, Self::Compute(_)))
     }
     // A failed borrow makes this node an external root. It also leaves its
     // unenumerated outgoing references in the children's external counts.
@@ -142,7 +159,9 @@ impl Node {
                 for (_, s) in &r.slots {
                     value(&s.value, out);
                     if let Some(c) = &s.compute {
-                        compute(c, out);
+                        // One edge per slot handle, then trace the shared
+                        // descriptor's captured edges once at its own node.
+                        out(Self::Compute(Rc::downgrade(c)));
                     }
                 }
                 for (_, v) in &r.extras {
@@ -264,6 +283,10 @@ impl Node {
                     out(Self::Env(e.env.clone()));
                 }
             }
+            Self::Compute(c) => {
+                let captured = c.upgrade()?;
+                compute(&captured, out);
+            }
         }
         Some(())
     }
@@ -371,61 +394,218 @@ fn compute(c: &Compute, out: &mut impl FnMut(Node)) {
 struct Graph {
     nodes: Vec<Node>,
     ids: FxHashMap<(u8, usize), usize>,
-    edges: Vec<Vec<usize>>,
+    edges: Vec<usize>,
+    edge_offsets: Vec<usize>,
     incoming: Vec<usize>,
     borrowed: FxHashSet<usize>,
+    #[cfg(feature = "runtime-diagnostics")]
+    work: diagnostics::Work,
 }
 impl Graph {
     fn add(&mut self, n: Node) -> usize {
         let key = n.key_count().0;
+        #[cfg(feature = "runtime-diagnostics")]
+        {
+            self.work.add_attempts += 1;
+        }
         if let Some(i) = self.ids.get(&key) {
+            #[cfg(feature = "runtime-diagnostics")]
+            {
+                self.work.duplicate_node_hits += 1;
+            }
             return *i;
         }
+        #[cfg(feature = "runtime-diagnostics")]
+        let before = [
+            self.nodes.capacity(),
+            self.ids.capacity(),
+            self.edges.capacity(),
+            self.incoming.capacity(),
+        ];
         let i = self.nodes.len();
         self.ids.insert(key, i);
         self.nodes.push(n);
-        self.edges.push(vec![]);
         self.incoming.push(0);
+        #[cfg(feature = "runtime-diagnostics")]
+        {
+            self.work.node_kinds[key.0 as usize] += 1;
+            let after = [
+                self.nodes.capacity(),
+                self.ids.capacity(),
+                self.edges.capacity(),
+                self.incoming.capacity(),
+            ];
+            for (slot, b, a) in [0, 1, 2, 4]
+                .into_iter()
+                .zip(before)
+                .zip(after)
+                .map(|((s, b), a)| (s, b, a))
+            {
+                self.work.capacity_growth_events[slot] += usize::from(a > b);
+            }
+        }
         i
     }
-    fn collect(mut self) -> usize {
+    fn collect(
+        mut self,
+        #[cfg(feature = "runtime-diagnostics")] pass: &mut diagnostics::Pass,
+    ) -> usize {
         let mut i = 0;
         while i < self.nodes.len() {
+            #[cfg(feature = "runtime-diagnostics")]
+            let offset_cap = self.edge_offsets.capacity();
+            self.edge_offsets.push(self.edges.len());
+            #[cfg(feature = "runtime-diagnostics")]
+            {
+                self.work.capacity_growth_events[3] +=
+                    usize::from(self.edge_offsets.capacity() > offset_cap);
+            }
             let node = self.nodes[i].clone();
             if node
                 .trace(&mut |n| {
                     let j = self.add(n);
-                    self.edges[i].push(j);
+                    #[cfg(feature = "runtime-diagnostics")]
+                    let before = self.edges.capacity();
+                    self.edges.push(j);
+                    #[cfg(feature = "runtime-diagnostics")]
+                    {
+                        self.work.capacity_growth_events[2] +=
+                            usize::from(self.edges.capacity() > before);
+                        let degree = self.edges.len() - self.edge_offsets[i];
+                        self.work.nonempty_adjacencies += usize::from(degree == 1);
+                        self.work.maximum_out_degree = self.work.maximum_out_degree.max(degree);
+                        self.work.strong_edge_occurrences += 1;
+                    }
                     self.incoming[j] += 1;
                 })
                 .is_none()
             {
+                #[cfg(feature = "runtime-diagnostics")]
+                let before = self.borrowed.capacity();
                 self.borrowed.insert(i);
+                #[cfg(feature = "runtime-diagnostics")]
+                {
+                    self.work.borrowed_nodes += 1;
+                    self.work.capacity_growth_events[5] +=
+                        usize::from(self.borrowed.capacity() > before);
+                }
+            }
+            #[cfg(feature = "runtime-diagnostics")]
+            {
+                self.work.traced_nodes += 1;
             }
             i += 1;
         }
+        #[cfg(feature = "runtime-diagnostics")]
+        let offset_cap = self.edge_offsets.capacity();
+        self.edge_offsets.push(self.edges.len());
+        #[cfg(feature = "runtime-diagnostics")]
+        {
+            self.work.capacity_growth_events[3] +=
+                usize::from(self.edge_offsets.capacity() > offset_cap);
+        }
+        #[cfg(feature = "runtime-diagnostics")]
+        pass.end(1);
         let mut live = vec![false; self.nodes.len()];
         let mut queue = Vec::new();
         for (i, n) in self.nodes.iter().enumerate() {
-            // Exactly one strong reference belongs to this Graph. Every other
-            // reference not enumerated above belongs to an external owner.
-            if n.key_count().1 > self.incoming[i] + 1 || self.borrowed.contains(&i) {
+            // All ordinary nodes have one Graph strong owner; Compute nodes
+            // are weak and have none. Unenumerated strong owners are external.
+            let external = n.key_count().1 > self.incoming[i] + n.graph_strong_owners();
+            if external || self.borrowed.contains(&i) {
+                #[cfg(feature = "runtime-diagnostics")]
+                {
+                    self.work.roots += 1;
+                    self.work.external_roots += usize::from(external);
+                    self.work.borrow_only_roots += usize::from(!external);
+                }
+                #[cfg(feature = "runtime-diagnostics")]
+                let before = queue.capacity();
                 queue.push(i);
+                #[cfg(feature = "runtime-diagnostics")]
+                {
+                    self.work
+                        .queue_added(1, queue.len(), before, queue.capacity());
+                }
             }
         }
+        #[cfg(feature = "runtime-diagnostics")]
+        pass.end(2);
         while let Some(i) = queue.pop() {
+            #[cfg(feature = "runtime-diagnostics")]
+            {
+                self.work.queue_pops += 1;
+            }
             if live[i] {
+                #[cfg(feature = "runtime-diagnostics")]
+                {
+                    self.work.duplicate_queue_pops += 1;
+                }
                 continue;
             }
             live[i] = true;
-            queue.extend(self.edges[i].iter().copied());
+            #[cfg(feature = "runtime-diagnostics")]
+            {
+                self.work.live_nodes += 1;
+            }
+            #[cfg(feature = "runtime-diagnostics")]
+            let before = queue.capacity();
+            queue.extend(
+                self.edges[self.edge_offsets[i]..self.edge_offsets[i + 1]]
+                    .iter()
+                    .copied(),
+            );
+            #[cfg(feature = "runtime-diagnostics")]
+            {
+                self.work.mark_edge_examinations +=
+                    self.edges[self.edge_offsets[i]..self.edge_offsets[i + 1]].len();
+                self.work.queue_added(
+                    self.edges[self.edge_offsets[i]..self.edge_offsets[i + 1]].len(),
+                    queue.len(),
+                    before,
+                    queue.capacity(),
+                );
+            }
         }
+        #[cfg(feature = "runtime-diagnostics")]
+        pass.end(3);
         let mut cleared = 0;
         for (i, n) in self.nodes.iter().enumerate() {
             if !live[i] {
                 n.clear();
                 cleared += 1;
             }
+        }
+        #[cfg(feature = "runtime-diagnostics")]
+        {
+            self.work.visited_garbage_nodes = cleared;
+            pass.work = self.work;
+            pass.capacities = diagnostics::Capacities {
+                nodes: self.nodes.capacity(),
+                ids: self.ids.capacity(),
+                edges: self.edges.capacity(),
+                edge_offsets: self.edge_offsets.capacity(),
+                incoming: self.incoming.capacity(),
+                borrowed: self.borrowed.capacity(),
+                nested_edge_elements: self.work.nested_edge_capacity,
+                live: live.capacity(),
+                queue: queue.capacity(),
+                vector_payload_capacity_bytes: self.nodes.capacity() * std::mem::size_of::<Node>()
+                    + self.edges.capacity() * std::mem::size_of::<usize>()
+                    + (self.edge_offsets.capacity()
+                        + self.incoming.capacity()
+                        + self.work.nested_edge_capacity
+                        + queue.capacity())
+                        * std::mem::size_of::<usize>()
+                    + live.capacity() * std::mem::size_of::<bool>(),
+                node_size_bytes: std::mem::size_of::<Node>(),
+                edge_element_size_bytes: std::mem::size_of::<usize>(),
+            };
+            pass.end(4);
+            drop(queue);
+            drop(live);
+            drop(self);
+            pass.end(5);
         }
         cleared
     }
@@ -438,9 +618,15 @@ impl Graph {
 /// Engine may also sweep after releasing those values. Returns visited garbage
 /// nodes (not bytes). No evaluation or user callback is executed by tracing.
 pub fn collect_cycles() -> usize {
+    #[cfg(feature = "runtime-diagnostics")]
+    let trigger = diagnostics::take_trigger();
     if COLLECTING.try_with(|b| b.replace(true)).unwrap_or(true) {
+        #[cfg(feature = "runtime-diagnostics")]
+        diagnostics::suppressed(trigger);
         return 0;
     }
+    #[cfg(feature = "runtime-diagnostics")]
+    let mut observation = diagnostics::Call::new(trigger);
     struct Reset;
     impl Drop for Reset {
         fn drop(&mut self) {
@@ -450,10 +636,19 @@ pub fn collect_cycles() -> usize {
     let _reset = Reset;
     let mut total = 0;
     loop {
+        #[cfg(feature = "runtime-diagnostics")]
+        let mut pass = diagnostics::Pass::new(observation.passes.len());
         let mut graph = Graph::default();
         let ok = TRACKED
             .try_with(|t| {
                 let mut t = t.borrow_mut();
+                #[cfg(feature = "runtime-diagnostics")]
+                {
+                    pass.tracked_tls_available = true;
+                    pass.tracked_weak_before = [t.envs.len(), t.records.len(), t.types.len()];
+                    pass.tracked_weak_capacity_before =
+                        [t.envs.capacity(), t.records.capacity(), t.types.capacity()];
+                }
                 t.envs.retain(|w| {
                     if let Some(e) = w.upgrade() {
                         graph.add(Node::Env(e));
@@ -478,16 +673,49 @@ pub fn collect_cycles() -> usize {
                         false
                     }
                 });
+                #[cfg(feature = "runtime-diagnostics")]
+                {
+                    pass.tracked_weak_after = [t.envs.len(), t.records.len(), t.types.len()];
+                    pass.tracked_weak_capacity_after =
+                        [t.envs.capacity(), t.records.capacity(), t.types.capacity()];
+                }
             })
             .is_ok();
+        #[cfg(feature = "runtime-diagnostics")]
+        {
+            graph.work.seed_nodes = graph.nodes.len();
+            pass.end(0);
+        }
         if !ok {
+            #[cfg(feature = "runtime-diagnostics")]
+            {
+                drop(graph);
+                pass.end(5);
+                observation.termination = "tracked_tls_unavailable";
+                observation.passes.push(pass);
+            }
             break;
         }
+        #[cfg(feature = "runtime-diagnostics")]
+        let count = graph.collect(&mut pass);
+        #[cfg(not(feature = "runtime-diagnostics"))]
         let count = graph.collect();
+        #[cfg(feature = "runtime-diagnostics")]
+        observation.passes.push(pass);
         total += count;
         if count == 0 {
+            #[cfg(feature = "runtime-diagnostics")]
+            {
+                observation.termination = "zero_garbage_pass";
+            }
             break;
         }
     }
+    #[cfg(feature = "runtime-diagnostics")]
+    diagnostics::finish(observation, total);
     total
 }
+
+#[cfg(test)]
+#[path = "../../tests/private/lifetime_test.rs"]
+mod lifetime_tests;

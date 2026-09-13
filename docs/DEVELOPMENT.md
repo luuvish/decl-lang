@@ -194,6 +194,15 @@ CI runs beside it.
 The tree-sitter CLI comes with `npm ci` (`npx tree-sitter`); the
 Python venv, its tools, and the compiled grammar are made by `make`.
 
+The TypeScript build synchronizes `parser.c`, `scanner.c`, and the
+`tree_sitter` headers into the native Rust and Python packages. Identical
+files retain their modification times, so rebuilding the TypeScript
+bundles does not itself invalidate the native grammar objects. Missing or
+changed files are copied, and stale entries are removed from these generated
+directories. Rust watches the header directory, and Python declares both
+the directory and its header files as build dependencies, so header edits,
+additions, and removals still invalidate the native grammar build.
+
 ## 4. Building and testing
 
 `make` at the root drives everything; the targets, from `Makefile`:

@@ -15,6 +15,14 @@ use std::sync::LazyLock;
 pub(crate) mod lifetime;
 pub use lifetime::collect_cycles;
 
+mod prefix_path;
+#[cfg(feature = "runtime-diagnostics")]
+pub use lifetime::{take_gc_diagnostics, GcDiagnostics, GcTrigger};
+pub use prefix_path::{
+    prefix_path_diagnostics, prefix_path_layouts, PrefixPath, PrefixPathDiagnostics,
+    PrefixPathIter, PrefixPathLayouts, PrefixPathPool, PrefixPathPoolStats,
+};
+
 /// an integer value (§4.5): a machine word when it fits, arbitrary precision
 /// otherwise. The reference and Python hold every integer as a big integer;
 /// here the common small values avoid a heap allocation and a deep copy on
@@ -267,7 +275,7 @@ static PATTERN_IDENT: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"^[A-Za-z_][A-Za-z0-9_.]*$").unwrap());
 
 // ---------------- paths ----------------
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
 /// a segment of a canonical path (§7.2)
 pub enum Seg {
     /// a record member by name: dotted when the dot can spell it (§7.2)
@@ -456,7 +464,7 @@ pub struct ArrV {
     /// the items
     pub items: Vec<Value>,
     /// its canonical path
-    pub path: Rc<SegPath>,
+    pub path: Rc<PrefixPath>,
 }
 /// An insertion-ordered table with indexed lookup. Iteration retains language
 /// order while reference navigation and member access avoid linear scans.
@@ -467,7 +475,7 @@ pub struct MapV {
     /// the entries, in order
     pub entries: OrderedMap<Value>,
     /// its canonical path
-    pub path: Rc<SegPath>,
+    pub path: Rc<PrefixPath>,
 }
 impl MapV {
     /// The value at a key.
@@ -578,8 +586,33 @@ pub struct Slot {
     pub state: SlotState,
     /// its value, once forced
     pub value: Value,
-    /// how it computes
-    pub compute: Option<Compute>,
+    /// Binding-time computation metadata. Shared snapshots are immutable;
+    /// use `computation_mut` for an isolated copy-on-write mutation.
+    pub compute: Option<Rc<Compute>>,
+}
+
+impl Slot {
+    /// Inspect the descriptor captured when this slot was bound.
+    pub fn computation(&self) -> Option<&Compute> {
+        self.compute.as_deref()
+    }
+
+    /// Retain an immutable descriptor snapshot, including its captured owners.
+    pub fn computation_snapshot(&self) -> Option<Rc<Compute>> {
+        self.compute.clone()
+    }
+
+    /// Mutate this slot's descriptor without changing an outstanding snapshot.
+    /// As with direct field replacement, this does not reset the slot state or
+    /// invalidate retained queries; the caller still owns that policy.
+    pub fn computation_mut(&mut self) -> Option<&mut Compute> {
+        self.compute.as_mut().map(Rc::make_mut)
+    }
+
+    /// Replace or remove captured metadata. This does not change state/value.
+    pub fn set_computation(&mut self, compute: Option<Compute>) {
+        self.compute = compute.map(Rc::new);
+    }
 }
 
 /// a record instance: its type, its path, its slots
@@ -670,6 +703,8 @@ impl Locals {
     }
     /// The scope with one more binding, shadowing any earlier one of the name.
     pub fn with(&self, name: Rc<str>, value: Value) -> Locals {
+        #[cfg(feature = "runtime-diagnostics")]
+        crate::retention_diagnostics::local_frame();
         Locals(Some(Rc::new(LocalFrame {
             name,
             value,
@@ -3025,9 +3060,17 @@ pub fn compile_pattern(src: &str) -> Result<Regex, String> {
 
 /// A canonical path's text, relative to `rel_root` (`$.…`) when given.
 pub fn path_str(segs: &[Seg], rel_root: Option<&str>) -> String {
+    path_str_iter(segs.iter(), rel_root)
+}
+
+/// Format borrowed canonical segments without requiring a contiguous vector.
+pub fn path_str_iter<'a>(
+    segs: impl IntoIterator<Item = &'a Seg>,
+    rel_root: Option<&str>,
+) -> String {
     use std::fmt::Write;
     let mut out = String::new();
-    for (i, s) in segs.iter().enumerate() {
+    for (i, s) in segs.into_iter().enumerate() {
         // the root segment is bare; the rest are `.name`, `["key"]`, or `[n]`.
         // written straight into `out` (name/key push their `Rc<str>`, brackets
         // via `write!`) so no temporary String is allocated per segment (F21)
@@ -3404,3 +3447,7 @@ pub(crate) fn write_json_str(out: &mut String, s: &str) {
     out.push_str(&s[start..]);
     out.push('"');
 }
+
+#[cfg(test)]
+#[path = "../tests/private/slot_compute_test.rs"]
+mod slot_compute_tests;

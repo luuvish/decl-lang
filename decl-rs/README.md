@@ -91,6 +91,12 @@ the [query graph migration guide](../docs/QUERY_GRAPH_MIGRATION.md). This is a
 Rust source compatibility change; the high-level functions above and CLI
 formats retain their contracts.
 
+The [runtime memory migration guide](../docs/RUNTIME_MEMORY_MIGRATION.md) covers
+`Slot.compute` and its copy-on-write accessors, `PrefixPath` for array/map paths,
+the materialization cache's weak raw-literal ownership, and the optional
+`runtime-diagnostics` Cargo feature. Code that constructs or mutates these
+low-level Rust values should follow that guide.
+
 ## Library layout
 
 The crate is the same modules as the reference implementation, one

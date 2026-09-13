@@ -21,6 +21,8 @@ if not (_src / "parser.c").exists() and (_grammar / "parser.c").exists():
     for f in (_grammar / "tree_sitter").iterdir():
         shutil.copy(f, _src / "tree_sitter" / f.name)
 
+_headers = _src / "tree_sitter"
+
 setup(
     ext_modules=[
         Extension(
@@ -31,6 +33,12 @@ setup(
                 "src/decl/_tree_sitter/src/scanner.c",
             ],
             include_dirs=["src/decl/_tree_sitter/src"],
+            # The directory catches additions/removals; files catch in-place edits.
+            # Its absolute path keeps the directory out of the source manifest.
+            depends=[
+                str(_headers),
+                *(str(path.relative_to(_here)) for path in sorted(_headers.glob("*"))),
+            ],
             extra_compile_args=["-std=c11"],
         )
     ]

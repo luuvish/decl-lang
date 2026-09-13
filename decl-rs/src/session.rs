@@ -961,12 +961,22 @@ impl Session {
         self.run_state(&self.state, mode)
     }
     fn run_state(&self, st: &State, mode: Mode) -> Run {
+        #[cfg(feature = "runtime-diagnostics")]
+        let mut timings = crate::evaluation_diagnostics::Span::new("session_run", 0);
         if mode == Mode::Full && !self.full_recompute && !full_recompute() {
             if let Some(r) = self.step_from(st) {
+                #[cfg(feature = "runtime-diagnostics")]
+                timings.mark("reuse");
+                #[cfg(feature = "runtime-diagnostics")]
+                timings.finish();
                 return r;
             }
         }
+        #[cfg(feature = "runtime-diagnostics")]
+        timings.mark("try_reuse");
         let r = self.run_fresh(st, mode);
+        #[cfg(feature = "runtime-diagnostics")]
+        timings.mark("fresh_run");
         if mode == Mode::Full {
             *self.last.borrow_mut() = if r.eng.is_some() {
                 Some(Last {
@@ -978,6 +988,10 @@ impl Session {
                 None
             };
         }
+        #[cfg(feature = "runtime-diagnostics")]
+        timings.mark("cache_last");
+        #[cfg(feature = "runtime-diagnostics")]
+        timings.finish();
         r
     }
     fn universe_key(&self, st: &State) -> String {
@@ -1117,8 +1131,12 @@ impl Session {
         Some(run)
     }
     fn run_fresh(&self, st: &State, mode: Mode) -> Run {
+        #[cfg(feature = "runtime-diagnostics")]
+        let mut timings = crate::evaluation_diagnostics::Span::new("session_fresh", 0);
         let t0 = Instant::now();
         let (modules, entry, load_diags) = self.build(st);
+        #[cfg(feature = "runtime-diagnostics")]
+        timings.mark("load");
         let load = ms(t0);
         let mut out = Run {
             modules,
@@ -1145,6 +1163,10 @@ impl Session {
             out
         };
         if !out.load_diags.is_empty() || out.entry.is_none() {
+            #[cfg(feature = "runtime-diagnostics")]
+            timings.mark("load_error_return");
+            #[cfg(feature = "runtime-diagnostics")]
+            timings.finish();
             return finish(out);
         }
         let entry = out.entry.clone().unwrap();
@@ -1246,12 +1268,18 @@ impl Session {
             session_roots.push((name.clone(), expr, rt));
         }
         out.timing.check = ms(t1);
+        #[cfg(feature = "runtime-diagnostics")]
+        timings.mark("check");
         // a static error in a module stops full evaluation as it stops `decl
         // evaluate`; a session output that does not check is left out, and a
         // bare expression (lazy) evaluates over what loaded regardless
         if mode == Mode::Check
             || (mode == Mode::Full && out.checks.iter().any(|(_, d)| d.severity == "error"))
         {
+            #[cfg(feature = "runtime-diagnostics")]
+            timings.mark("check_return");
+            #[cfg(feature = "runtime-diagnostics")]
+            timings.finish();
             return finish(out);
         }
 
@@ -1303,19 +1331,35 @@ impl Session {
             out.timing.bind = ms(t2);
             eng.set_phase(2);
             out.diags = entry.env.diagnostics_vec();
+            #[cfg(feature = "runtime-diagnostics")]
+            timings.mark("lazy_bind");
+            #[cfg(feature = "runtime-diagnostics")]
+            timings.finish();
             return finish(out);
         }
+        #[cfg(feature = "runtime-diagnostics")]
+        timings.mark("prepare_bind");
         let t3 = Instant::now();
         let eng = Engine::evaluate_session(&entry.env, &bind, None);
+        #[cfg(feature = "runtime-diagnostics")]
+        timings.mark("evaluate");
         out.session_roots = session_roots;
         out.eng = Some(eng.clone());
         out.timing.bind = t3.duration_since(t2).as_secs_f64() * 1000.0; // between two instants: never negative
+        #[cfg(feature = "runtime-diagnostics")]
+        timings.mark("retain_result");
         eng.validate_all("");
+        #[cfg(feature = "runtime-diagnostics")]
+        timings.mark("validate");
         out.diags = entry.env.diagnostics_vec(); // sorted by drive's caller? no: sorted here (§6.7)
         let sorted = sort_diags(out.diags.clone());
         entry.env.diag_set(sorted.clone());
         out.diags = sorted;
         out.timing.evaluate = ms(t3);
+        #[cfg(feature = "runtime-diagnostics")]
+        timings.mark("diagnostics_and_timing");
+        #[cfg(feature = "runtime-diagnostics")]
+        timings.finish();
         finish(out)
     }
 

@@ -663,3 +663,305 @@ and allocation counters in a separately instrumented diagnostic build, then use
 the uninstrumented release binary for the fixed before/after timing schedule.
 Every diagnostic and primary output must match an independent exact oracle;
 unchanged graph populations alone cannot prove identical cleanup work.
+
+## 14. Retained snapshot slot capacity
+
+Current record construction reserves its known member count, but copied records
+in `RoundCache::copy` grow their slot vectors from an empty vector.
+The copied slots have no computation descriptor, yet each vector element still
+contains the complete inline Slot representation. Geometric growth therefore
+could retain unused, full-sized slot positions in successful snapshots. A
+count of live records or query IDs alone misses this capacity cost. The inline
+region occupied by `compute: None` overlaps the slot payload; it is not another
+heap allocation and must not be added to that payload as potential savings.
+
+A Rust candidate reserved `b.slots.len()` in the local copy buffer. The same loop checks
+slot state, copies each value and preserves member order. The placeholder enters
+the copy map before recursion, and the completed vector is assigned at the same
+point as before. Capture ownership, descriptor layout, fallback behavior and
+public APIs were unchanged. This was a Rust representation experiment; the
+three implementations retained the same observable behavior.
+
+The candidate reduced the targeted retained capacity and passed correctness
+checks, but repeated large latency and CPU increases in individual confirmation
+pairs failed its declared performance screen. Other pairs improved; this does
+not establish a consistent slowdown or its cause. The candidate was withdrawn
+and the runtime keeps the original copy buffer. Preserve the positive memory
+evidence and adverse timing observations together, and resolve measurement
+variability before promoting the change. Host-specific results remain external.
+
+Upfront reservation can allocate more before a copy fails, and can overlap
+recursive child allocations earlier. A successful final retained-byte reduction
+does not prove a lower transient peak for every failed or deeply recursive
+freeze. Keep existing reference-round, cyclic, fallback and Session coverage,
+and measure requested peaks alongside retained bytes on the accepted workload.
+
+### Establishing the retained cause
+
+Inspect a quiescent diagnostic Engine after validating its complete output and
+releasing the output buffer. Deduplicate reachable Rc bodies by pointer and
+type, including current and snapshot Engines, their captures and materialized
+values. Report direct registry/snapshot membership separately from transitive
+root reachability: a shared environment can lead back into another Engine,
+so reachability masks do not establish exclusive ownership. Neither category
+alone proves which constructor allocated a body.
+
+Compare vector length, capacity and element layout within those categories.
+An isolated before/after change should preserve initialized slots, owner and
+query populations while eliminating the targeted unused capacity. Corroborate
+the capacity difference against allocator-requested live bytes at matching
+phase boundaries. Account separately for probe startup offsets, traversal
+metadata and the compact diagnostic report retained after traversal. Gross
+requested/freed bytes and reallocations explain allocation work; they are not
+elapsed-time shares or physical RSS.
+
+A census must declare its coverage. Opaque callbacks, AST bodies, external
+callers, unreachable cycles, allocator metadata and unmeasured numeric storage
+prevent treating the covered graph as an exhaustive heap census. Budget or
+borrow failures make it incomplete. Preserve partial attempts and prospective
+budget revisions instead of pooling their populations with completed runs.
+Per-type visited tables and batched root traversal can reduce diagnostic
+metadata without changing production data structures; verify their partitions
+and small-graph equivalence before reusing that diagnostic version.
+
+### Repeating the experiment
+
+Freeze source, compiler, dependency, allocator, helper and executable bindings
+before each series. Use a complete small-case census to choose one intervention
+and to estimate diagnostic overhead before increasing workload size. Compare
+baseline and candidate with the same diagnostic implementation and coverage
+budget. Run uninstrumented alternating CLI pairs separately, validate every
+full output, and preserve warmups, individual samples, adverse results and
+the known-competitor guard log. Session initial, unchanged, equal-edit,
+changed-edit and restore requests need their own output and work comparison;
+a single Session process per variant establishes equivalence, not a reliable
+speedup. Keep the complete parity, lint and unchanged-format gates tied to
+the final source. Host-specific results and attempt receipts remain external.
+
+The next capacity candidate is array construction whose output length is
+already known after flattening or binding. Verify each constructor's successful
+length and early-return semantics before reserving. Broader changes to captured
+scopes, descriptor sharing or retained materialization need separate lifetime
+and mutation evidence; capacity slack does not establish that a live captured
+value can be released.
+
+## 15. Timing variation and complete command teardown
+
+Before interpreting a small candidate timing difference, run a fixed same-binary
+control through the same comparison harness. Freeze the executable hash, equal
+label shapes, alternating order, output oracle, observer cadence, and continuation
+criteria before collecting new results. Preserve warmups and every measured pair.
+A nonquiet control prevents promoting a candidate from that campaign; it does not
+identify the cause of earlier adverse pairs. A quiet control permits a bounded
+comparison but proves neither equivalence nor absence of observer overhead.
+
+Record terminal child user/system CPU and resource counters separately from
+sampled live process and host counters. Bind live samples to PID, parent and
+kernel start identity. Verify native field layouts and CPU units with an owned
+small process before interpreting model observations. Clock names alone do not
+establish a shared epoch: use explicit matching clock domains when joining
+in-process phase boundaries to an external sampler. Keep sampling windows,
+interior gaps and observer CPU cost visible. Machine-wide compression and swap
+changes are associations, not memory traffic attributable to the measured child.
+A sampled RSS maximum is a lower bound on the process peak, and physical footprint
+is a different measure from retained requested allocation bytes.
+
+The complete selected-file CLI lifecycle includes output-buffer release,
+runtime-owner release and final command cleanup. `cli::evaluate` writes and
+consumes the output body while the Engine and modules remain alive. Releasing the
+last Engine can invoke cycle collection; the `CommandGuard` in `cli::main` also
+collects after command locals have been released. A helper that ends at emission
+omits this work. Measure evaluation, validation, emission, file writing, buffer
+release, runtime-owner release and final command sweep as separate contiguous
+wall/CPU intervals. Let only scalar facts escape the runtime-owner scope before
+measuring the final sweep. Do not add a graph census to that timing interval.
+
+Such a helper provides supporting attribution. Dispatch, binary layout, output
+wrappers, instrumentation and process-exit boundaries still differ from the
+production CLI. Do not substitute helper totals for native CLI timings or compare
+teardown-inclusive totals with an earlier teardown-excluding helper as a speedup.
+The collector's returned visited-garbage-node count describes its existing work;
+it is neither freed bytes nor an exhaustive allocation count.
+
+Keep repeated analysis economical: reuse immutable build/oracle receipts, build
+only the diagnostic variant required by the prospective decision, and validate
+each fresh full output once. Subsequent audits can authenticate the small receipt
+and check the retained file length instead of rereading every large output.
+Separate experiment decisions, primary observations, supporting phases and
+source hypotheses. Preserve failed instrumentation assumptions and withdrawn
+candidates so the next iteration begins from established evidence.
+
+The completed control found large differences between identical-binary runs, so
+its declared decision kept the capacity candidate withdrawn. The separately
+measured baseline phases identify evaluation and runtime-owner release as the
+main remaining costs; the owner-release interval combines ordinary destruction
+with automatic collection. Split collector calls and passes before attributing
+that entire interval to GC or changing when a sweep runs. Queue deduplication
+and flatter adjacency storage are bounded representation candidates, subject to
+preserving edge multiplicity, external-owner accounting and conservative borrow
+or opaque-callback handling. Per-phase host telemetry cannot resolve intervals
+shorter than its sampling cadence. Exact results and host-specific timings remain
+in the external campaign report.
+
+## 16. Separating evaluation, allocation and collector work
+
+The next diagnostic separates each evaluation round into binding, initial forcing,
+reference settling, edit completion, edge comparison and snapshot advance. Settling
+has its own nested intervals for deferred forcing, deferred-root binding, final
+forcing and edge comparison. These intervals explain the parent round; adding them
+again to the round or command total would double-count work. Snapshot advance must
+remain visible even when the following round reuses most computed values.
+
+Collector calls are classified by their actual trigger. Each pass partitions seed,
+trace, root classification, marking, clearing and scratch/Graph destruction. The
+last interval includes the existing queue, live bitmap and Graph drop order, not
+just deallocation of the Graph header. Calls nested inside runtime-owner release
+can be subtracted from that interval to expose time outside collector call clocks.
+That residual includes ordinary destruction and small boundary overhead; it is not
+a separately sampled pure-destructor timer. A helper's final public collection has
+an explicit trigger even though it occupies the native CLI's command-sweep boundary.
+
+The bounded first workload confirms that duplicate mark-queue pops are numerous,
+but tracing takes much more collector time than marking. Flat adjacency removes
+many per-node vector allocations while preserving edge occurrences and node order.
+Its first diagnostic preserves the graph populations and exact output, but does
+not establish an end-to-end speedup or a smaller whole-process requested peak:
+the peak can occur during evaluation, before collector scratch is allocated.
+Keep allocation-call reduction, collector latency and command latency as separate
+results. Lifetime tests and a declared adoption criterion are required; memory
+acceptance does not establish native latency acceptance.
+
+Array counters distinguish typed binding, literal materialization and snapshot
+copying. Record successful length/capacity, known expected length, failed attempts
+and construction traffic at each site. Summed unused tails are a traffic measure;
+shared arrays and superseded snapshots prevent interpreting that sum as uniquely
+retained bytes. Known-length reservation can remove growth reallocations, but an
+early failed copy may allocate its full reservation before returning. Validate both
+successful output and failure/Session behavior before promotion.
+
+Materialization counters distinguish hits, misses, failed attempts, insertions and
+cache suspension/restoration. The baseline cache owns both a raw literal handle and
+its result. A typed weak raw handle can pin the allocation identity without keeping
+the raw body and captures alive; the result remains strongly owned. This addresses
+ownership duration, not cache lookup count. Test repeated materialization, callback
+evaluation, failed retries, raw-address reuse, public copy-on-write and returned
+closures. Earlier destruction of deep raw/capture chains is an additional stack
+and lifetime boundary. A high miss count alone does not prove safe reclamation or
+exclusive ownership of every reachable capture.
+
+Smaller slots and prefix-sharing paths need equally explicit accounting. Moving a
+Compute descriptor behind Rc reduces unused inline slot space while introducing
+descriptor allocations and traced graph nodes. Trace each shared descriptor's
+captures once, preserve binding-time metadata and expose copy-on-write access for
+public mutation. A strong collector-owned descriptor can also delay an opaque
+capture's destructor until Graph destruction, changing its observations of other
+unreachable owners. The corrected experimental collector node holds a Weak and
+counts no graph-owned strong reference for that kind. It upgrades only while
+tracing; externally retained descriptors still root their captures. Test both
+external liveness and destruction timing instead of treating either as sufficient
+proof of the other. More descriptor nodes still increase tracing and root scans;
+flat adjacency removes per-node allocation overhead, not that additional work.
+
+Prefix paths must count outer handles, strong and weak-only nodes,
+pool metadata and explicit flattening. A stored flat cache can duplicate the very
+segment buffers the change intends to remove. Neither layout arithmetic nor a
+combined path census establishes the savings of a selected array/map-only change.
+Compare the requested global peak separately from live bytes after emission: a
+candidate can move its peak to an earlier evaluation interval. Account for the
+bounded weak pool and temporary exports, and verify that path counters and their
+thread-local storage are absent from the feature-empty production build.
+
+The campaign first measures these candidates independently. Immutable source copies,
+failed-build receipts, a small allocation-ledger self-test, exact output receipts
+and scalar interval validators make subsequent comparisons reproducible without a
+full heap census on every run. The current host remains the authorized execution
+environment; bounded supporting diagnostics can proceed while primary timing
+quietness remains unresolved. A prospective memory adoption decision may require a
+minimum incremental reduction over a simpler combined candidate, complete output
+and allocation validation, explained collector work, lifetime/API tests, and the
+final parity/lint/format gates. Keep the unresolved native timing question explicit
+when using that decision. Isolated memory savings must not be added to predict the
+combined result.
+
+The retained implementation combines exact array and snapshot-slot reservations,
+weak raw cache identities, shared Compute descriptors, flat collector adjacency
+and prefix-sharing array/map paths. Its Rust ownership and source API changes are
+documented in the [runtime memory migration guide](RUNTIME_MEMORY_MIGRATION.md).
+Sharing descriptors increases the number of traced nodes even when flat adjacency
+removes most tracing allocations. Compare the total command, each collector phase,
+and the final live-owner counts before proposing another collector change. A lower
+whole-process peak can coexist with a larger collector scratch peak or a longer
+final sweep. Single instrumented observations identify work to investigate, not a
+reliable speedup or regression percentage.
+
+On macOS, distinguish raw `HOST_VM_INFO64` counters from the columns displayed by
+`vm_stat`: raw `free_count` already includes `speculative_count`. Adding them
+double-counts speculative pages. Neither that free queue nor a reported memory
+free percentage establishes how many bytes a new workload can use without paging.
+A cache-heavy machine can have few free pages while reporting normal memory
+pressure. Record the kernel pressure status, allocation footprint and paging
+traffic together. A monitored footprint limit and owned-process cleanup bound a
+supporting experiment only approximately; sampling and termination can overshoot.
+Changing a resource-readiness policy requires a new prospective decision, with the
+old rejected attempt preserved. It cannot turn missing native samples into an
+accepted timing comparison.
+
+## 17. Initial Session attribution and repeated build cost
+
+The accepted three-pair native Session measurements showed an initial Full-run
+increase of 113.589 ms on average. The existing inner timer accounts for
+113.659 ms of that change; the outer-minus-inner residual changes by -0.070 ms.
+That residual includes retained-run preparation and entry/return work, so it does
+not implicate document-key serialization as the source of the increase.
+
+A separate fixed diagnostic pair runs only the initial OAD50 Session request,
+final then baseline, with matching optional hooks and a counting allocator. Both
+processes complete under the same monitored resource contract. Their compact OID
+outputs are byte-identical to the independent Session oracle (20,658,167 bytes),
+and each performs 1,459,137 slot computations. These single observations explain
+instrumented work; they are not pooled with native timings or treated as a
+statistically confirmed regression.
+
+| Interval | Baseline wall ms | Final wall ms | Change ms |
+| --- | ---: | ---: | ---: |
+| Initial Full request | 6389.164 | 6532.209 | +143.045 |
+| Fresh-run checking | 100.144 | 102.409 | +2.265 |
+| Fresh-run evaluation | 6246.160 | 6386.979 | +140.819 |
+| Fresh-run validation | 40.592 | 40.793 | +0.201 |
+| Retained-run preparation after fresh return | 1.877 | 1.630 | -0.247 |
+
+The Full row contains the later rows; it must not be added to them. Within
+evaluation, first-round deferred-slot forcing adds 131.090 ms, and deferred-root
+binding adds 76.162 ms and 40.178 ms in the two rounds. Snapshot advance saves
+89.150 ms. These competing costs explain why fewer allocations and a smaller
+retained graph do not guarantee a faster initial request. Full requested-live
+bytes at its end fall from 3049.858 MiB to 1942.364 MiB; the process-global
+requested peak observed there falls from 3055.529 MiB to 2027.624 MiB. Neither is
+RSS, and the global peak is not a phase-local peak.
+
+Both automatic collector calls within the Full request occur during checking,
+totaling approximately 0.325 ms. No collection overlaps evaluation. Final Session
+release is a separate interval: 1344.276 ms becomes 754.663 ms, including collector
+time of 516.895 ms and 455.099 ms respectively. Teardown cannot explain an initial
+request timer that excludes it. Investigate deferred forcing and binding next;
+the current observations do not distinguish Compute allocation, prefix-pool work,
+materialization, ordinary reference release or memory locality within those phases.
+
+The optional [`session-initial` example](../decl-rs/examples/session_initial.rs)
+and the [migration guide](RUNTIME_MEMORY_MIGRATION.md#initial-session-attribution)
+make these boundaries reusable. Scalar Session spans are nested around the existing
+Engine spans; all hooks are absent from feature-empty builds. The archived campaign
+under `../decl-analysis/2026-09-13/runtime-reduction/session-initial-attribution/`
+contains the fixed protocol, source/build bindings, exact-output validators and
+phase/GC analysis. Missing original-baseline100 and final200 evidence remains
+separate; this OAD50 diagnostic does not close either requirement.
+
+Repeated verification also exposed unnecessary native recompilation: the
+TypeScript build deleted and recopied identical Rust/Python grammar sources.
+Content-aware synchronization now preserves unchanged file modification times
+while still copying changed/missing files and removing stale entries. Explicit
+header dependencies preserve rebuilds on header edits, additions and removals;
+previously the unconditional C-file rewrite masked that dependency gap. This is a
+build-workflow improvement, not a change to Decl evaluation speed. Check actual
+Cargo freshness and the native output files' bytes/mtimes in addition to the small
+filesystem and header-dependency checks when assessing its effect.

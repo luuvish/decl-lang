@@ -6,9 +6,10 @@
 // LICENSE into the package root; and copy the grammar sources into the
 // sibling Python and Rust packages, which compile them natively.
 import { build } from 'esbuild';
-import { mkdirSync, copyFileSync, existsSync, rmSync, readdirSync } from 'node:fs';
+import { mkdirSync, copyFileSync, existsSync, rmSync } from 'node:fs';
 import { join, dirname, basename, resolve } from 'node:path';
 import { createRequire } from 'node:module';
+import { syncGrammar } from './sync-grammar.mjs';
 
 const require = createRequire(import.meta.url);
 const REPO = resolve('..');
@@ -86,22 +87,14 @@ if (existsSync(join(REPO, 'LICENSE'))) copyFileSync(join(REPO, 'LICENSE'), 'LICE
 // the sibling packages (decl-py, decl-rs)
 if (existsSync('../decl-py/src/decl')) {
   copyFileSync(join(REPO, 'LICENSE'), '../decl-py/LICENSE');
-  // the grammar C sources for the native Python parser extension
+  // Preserve unchanged grammar mtimes so native builds can reuse their objects.
   const gsrc = join(GRAMMAR, 'src'),
     gdst = '../decl-py/src/decl/_tree_sitter/src';
-  rmSync(gdst, { recursive: true, force: true });
-  mkdirSync(join(gdst, 'tree_sitter'), { recursive: true });
-  for (const f of ['parser.c', 'scanner.c']) copyFileSync(join(gsrc, f), join(gdst, f));
-  for (const f of readdirSync(join(gsrc, 'tree_sitter')))
-    copyFileSync(join(gsrc, 'tree_sitter', f), join(gdst, 'tree_sitter', f));
+  syncGrammar(gsrc, gdst);
   // ... and for the Rust crate (cargo publish needs them inside the package)
   const rdst = '../decl-rs/grammar';
   if (existsSync('../decl-rs')) {
-    rmSync(rdst, { recursive: true, force: true });
-    mkdirSync(join(rdst, 'tree_sitter'), { recursive: true });
-    for (const f of ['parser.c', 'scanner.c']) copyFileSync(join(gsrc, f), join(rdst, f));
-    for (const f of readdirSync(join(gsrc, 'tree_sitter')))
-      copyFileSync(join(gsrc, 'tree_sitter', f), join(rdst, 'tree_sitter', f));
+    syncGrammar(gsrc, rdst);
     copyFileSync(join(REPO, 'LICENSE'), '../decl-rs/LICENSE');
   }
 }

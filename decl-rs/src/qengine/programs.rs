@@ -500,7 +500,11 @@ impl Programs {
 
 fn pre(expr: &Rc<Expr>, scope: &Scope) -> Value {
     Value::PreVal(Rc::new(PreValV {
-        expr: expr.clone(),
+        expr: {
+            #[cfg(feature = "runtime-diagnostics")]
+            crate::retention_diagnostics::preval(5);
+            expr.clone()
+        },
         scope: scope.clone(),
     }))
 }

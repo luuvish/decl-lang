@@ -73,10 +73,10 @@ fn temporary_slot_drop_observes_all_read_owners_already_removed() {
                     hidden: false,
                     state: SlotState::Unforced,
                     value: Value::Undef,
-                    compute: Some(Compute::Bridge(Rc::new(move || {
+                    compute: Some(Rc::new(Compute::Bridge(Rc::new(move || {
                         let _ = &observer;
                         Ok(Value::Null)
-                    }))),
+                    })))),
                 },
             ));
             // The query index becomes the instance's last strong owner. Its

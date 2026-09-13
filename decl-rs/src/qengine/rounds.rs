@@ -234,6 +234,12 @@ impl RoundCache {
                 if items.iter().zip(&a.items).all(|(a, b)| identical(a, b)) {
                     v.clone()
                 } else {
+                    #[cfg(feature = "runtime-diagnostics")]
+                    crate::retention_diagnostics::array(
+                        crate::retention_diagnostics::ArraySite::Rebased,
+                        items.len(),
+                        items.capacity(),
+                    );
                     Value::Arr(Rc::new(RefCell::new(ArrV {
                         items,
                         path: a.path.clone(),
@@ -580,7 +586,7 @@ impl RoundCache {
                     },
                     None => None,
                 };
-                let mut slots = Vec::new();
+                let mut slots = Vec::with_capacity(b.slots.len());
                 for (name, s) in &b.slots {
                     if !matches!(s.state, SlotState::Ok | SlotState::Absent) {
                         return None;
@@ -611,17 +617,26 @@ impl RoundCache {
             }
             Value::Arr(a) => {
                 let b = a.borrow();
+                #[cfg(feature = "runtime-diagnostics")]
+                let diagnostic_array = crate::retention_diagnostics::ArrayAttempt::start(
+                    crate::retention_diagnostics::ArraySite::SnapshotCopy,
+                    Some(b.items.len()),
+                );
                 let r = Rc::new(RefCell::new(ArrV {
                     items: vec![],
                     path: b.path.clone(),
                 }));
                 copies.insert((1, Rc::as_ptr(a) as usize), Value::Arr(r.clone()));
-                let items: Option<Vec<_>> = b
-                    .items
-                    .iter()
-                    .map(|v| self.copy(v, eng, frozen, copies))
-                    .collect();
-                r.borrow_mut().items = items?;
+                let mut items = Vec::with_capacity(b.items.len());
+                for value in &b.items {
+                    items.push(self.copy(value, eng, frozen, copies)?);
+                }
+                r.borrow_mut().items = items;
+                #[cfg(feature = "runtime-diagnostics")]
+                {
+                    let a = r.borrow();
+                    diagnostic_array.finish(a.items.len(), a.items.capacity());
+                }
                 Value::Arr(r)
             }
             Value::Map(m) => {

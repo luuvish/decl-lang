@@ -19,6 +19,8 @@ pub mod pipeline;
 pub mod qengine;
 pub mod render;
 pub mod repl;
+#[cfg(feature = "runtime-diagnostics")]
+pub mod retention_diagnostics;
 pub mod semantics;
 pub mod session;
 pub mod subsume;
@@ -29,3 +31,9 @@ pub use api::{
     check, evaluate, evaluate_source, format_source, render, to_json, to_yaml, validate, DeclError,
     Diagnostic, Document, EvaluateOptions, RenderOptions, Rendered, Report, TemplateSource,
 };
+
+#[cfg(feature = "runtime-diagnostics")]
+pub mod evaluation_diagnostics;
+
+#[cfg(feature = "runtime-diagnostics")]
+pub mod allocation_diagnostics;
