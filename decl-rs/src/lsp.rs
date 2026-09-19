@@ -3357,7 +3357,8 @@ impl<'a> HintWalk<'a> {
                 let inst = inst.borrow();
                 let mut parts: Vec<String> = vec![];
                 for mem in rec_members(&inst.rt).iter() {
-                    let Some((_, s)) = inst.slots.iter().find(|(n, _)| *n == mem.name) else {
+                    let Some((_, s)) = inst.slots.iter().find(|(n, _)| n.as_ref() == mem.name)
+                    else {
                         continue;
                     };
                     if mem.kind != MKind::Der || s.hidden || s.state != SlotState::Ok {
@@ -3385,7 +3386,7 @@ impl<'a> HintWalk<'a> {
                     .filter_map(|(k, val)| {
                         inst.slots
                             .iter()
-                            .find(|(n, _)| n == k)
+                            .find(|(n, _)| n.as_ref() == k)
                             .filter(|(_, s)| s.state == SlotState::Ok)
                             .map(|(_, s)| (s.value.clone(), val.clone()))
                     })

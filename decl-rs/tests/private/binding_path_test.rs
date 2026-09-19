@@ -25,7 +25,7 @@ fn object(entries: Vec<(&str, Value)>) -> Value {
 fn callback(run: impl Fn() -> R<Value> + 'static) -> Value {
     Value::PreVal(Rc::new(PreValV {
         expr: Rc::new(Expr::Call {
-            fun: Rc::new(Expr::Lit(Value::Nat(Rc::new(move |_| run())))),
+            fun: Rc::new(Expr::Lit(Value::native(move |_| run()))),
             args: vec![],
         }),
         scope: Scope::new("root", None),
@@ -263,10 +263,10 @@ fn empty_and_rejected_maps_delay_scratch_ownership_until_an_accepted_key() {
         let callback_root = weak_root.clone();
         let key = ty(RTk::Pred {
             base: ty(RTk::Prim("string".into())),
-            preds: vec![Rc::new(Expr::Lit(Value::Nat(Rc::new(move |_| {
+            preds: vec![Rc::new(Expr::Lit(Value::native(move |_| {
                 observations.borrow_mut().push(callback_root.strong_count());
                 Ok(Value::Bool(accept))
-            }))))],
+            })))],
         });
         let rt = ty(RTk::Map {
             key,

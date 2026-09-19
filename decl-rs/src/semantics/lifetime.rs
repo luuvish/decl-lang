@@ -339,9 +339,9 @@ fn value(v: &Value, out: &mut impl FnMut(Node)) {
         Value::PreArr(vs) => out(Node::PreArray(vs.clone())),
         Value::JArr(vs) => out(Node::JsonArray(vs.clone())),
         Value::PreVal(p) => out(Node::PreValue(p.clone())),
-        Value::Range { lo, hi, .. } => {
-            value(lo, out);
-            value(hi, out);
+        Value::Range(range) => {
+            value(&range.lo, out);
+            value(&range.hi, out);
         }
         _ => {}
     }
@@ -393,7 +393,12 @@ fn compute(c: &Compute, out: &mut impl FnMut(Node)) {
 #[derive(Default)]
 struct Graph {
     nodes: Vec<Node>,
-    ids: FxHashMap<(u8, usize), usize>,
+    // Each Node keeps its allocation reserved with Rc or Weak until the pass
+    // releases its nodes. An address cannot be reused during this pass. Node
+    // variants have distinct concrete pointee types; aliases with the same
+    // type (PreObj/JObj) must normalize to one variant in value(). The kind
+    // tag is needed for dispatch and diagnostics, but not allocation identity.
+    ids: FxHashMap<usize, usize>,
     edges: Vec<usize>,
     edge_offsets: Vec<usize>,
     incoming: Vec<usize>,
@@ -402,13 +407,29 @@ struct Graph {
     work: diagnostics::Work,
 }
 impl Graph {
+    // Only empty storage crosses a pass boundary. Drop every Rc/Weak before
+    // seeding again: an old graph owner would change the next root counts, and
+    // an old address could identify an unrelated allocation after destruction.
+    fn reset(&mut self) {
+        self.nodes.clear();
+        self.ids.clear();
+        self.edges.clear();
+        self.edge_offsets.clear();
+        self.incoming.clear();
+        self.borrowed.clear();
+        #[cfg(feature = "runtime-diagnostics")]
+        {
+            self.work = diagnostics::Work::default();
+        }
+    }
+
     fn add(&mut self, n: Node) -> usize {
         let key = n.key_count().0;
         #[cfg(feature = "runtime-diagnostics")]
         {
             self.work.add_attempts += 1;
         }
-        if let Some(i) = self.ids.get(&key) {
+        if let Some(i) = self.ids.get(&key.1) {
             #[cfg(feature = "runtime-diagnostics")]
             {
                 self.work.duplicate_node_hits += 1;
@@ -423,12 +444,31 @@ impl Graph {
             self.incoming.capacity(),
         ];
         let i = self.nodes.len();
-        self.ids.insert(key, i);
+        self.ids.insert(key.1, i);
         self.nodes.push(n);
         self.incoming.push(0);
         #[cfg(feature = "runtime-diagnostics")]
         {
             self.work.node_kinds[key.0 as usize] += 1;
+            if let Node::Compute(weak) = &self.nodes[i] {
+                // The graph retains descriptors weakly. This temporary inspection
+                // neither persists an owner nor changes the graph's edge counts.
+                let work = &mut self.work.compute;
+                work.body_size_bytes = std::mem::size_of::<Compute>();
+                match weak.upgrade().as_deref() {
+                    Some(Compute::Check { raw, .. }) => {
+                        work.check += 1;
+                        work.check_raw.record(raw);
+                    }
+                    Some(Compute::Default { .. }) => work.default += 1,
+                    Some(Compute::Derived { supplied, .. }) => {
+                        work.derived += 1;
+                        work.derived_supplied += usize::from(supplied.is_some());
+                    }
+                    Some(Compute::Bridge(_)) => work.bridge += 1,
+                    None => work.expired += 1,
+                }
+            }
             let after = [
                 self.nodes.capacity(),
                 self.ids.capacity(),
@@ -447,7 +487,7 @@ impl Graph {
         i
     }
     fn collect(
-        mut self,
+        &mut self,
         #[cfg(feature = "runtime-diagnostics")] pass: &mut diagnostics::Pass,
     ) -> usize {
         let mut i = 0;
@@ -602,11 +642,11 @@ impl Graph {
                 edge_element_size_bytes: std::mem::size_of::<usize>(),
             };
             pass.end(4);
-            drop(queue);
-            drop(live);
-            drop(self);
-            pass.end(5);
         }
+        // Keep these pass-local, including their drop before Node owners.
+        // collect_cycles resets or drops the graph after this method returns.
+        drop(queue);
+        drop(live);
         cleared
     }
 }
@@ -635,10 +675,12 @@ pub fn collect_cycles() -> usize {
     }
     let _reset = Reset;
     let mut total = 0;
+    // Reuse capacity only while this collection is active; never keep a large
+    // graph buffer in TLS or across last-Engine/outer-command boundaries.
+    let mut graph = Graph::default();
     loop {
         #[cfg(feature = "runtime-diagnostics")]
         let mut pass = diagnostics::Pass::new(observation.passes.len());
-        let mut graph = Graph::default();
         let ok = TRACKED
             .try_with(|t| {
                 let mut t = t.borrow_mut();
@@ -687,9 +729,9 @@ pub fn collect_cycles() -> usize {
             pass.end(0);
         }
         if !ok {
+            drop(graph);
             #[cfg(feature = "runtime-diagnostics")]
             {
-                drop(graph);
                 pass.end(5);
                 observation.termination = "tracked_tls_unavailable";
                 observation.passes.push(pass);
@@ -700,15 +742,28 @@ pub fn collect_cycles() -> usize {
         let count = graph.collect(&mut pass);
         #[cfg(not(feature = "runtime-diagnostics"))]
         let count = graph.collect();
-        #[cfg(feature = "runtime-diagnostics")]
-        observation.passes.push(pass);
         total += count;
         if count == 0 {
+            // Include all terminal storage release in the last pass and call.
+            drop(graph);
             #[cfg(feature = "runtime-diagnostics")]
             {
+                pass.end(5);
+                observation.passes.push(pass);
                 observation.termination = "zero_garbage_pass";
             }
             break;
+        }
+        graph.reset();
+        #[cfg(feature = "runtime-diagnostics")]
+        {
+            // The existing scratch_and_graph_drop phase now releases every
+            // runtime owner but retains empty graph capacity on nonterminal
+            // passes. Terminal passes still release all scratch. Its endpoint
+            // is not an owner-only live-byte metric; capacity growth may be 0
+            // even when the next pass traces the same number of nodes/edges.
+            pass.end(5);
+            observation.passes.push(pass);
         }
     }
     #[cfg(feature = "runtime-diagnostics")]

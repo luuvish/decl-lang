@@ -13,6 +13,48 @@
 use serde::Serialize;
 use std::cell::RefCell;
 
+macro_rules! event_stages {
+    ($($variant:ident = $id:literal => $label:literal),+ $(,)?) => {
+        /// Explicit operation entry IDs for the optional bounded event stream.
+        #[derive(Clone, Copy)]
+        #[repr(u32)]
+        pub enum EventStage {
+            $(#[doc = $label] $variant = $id,)+
+        }
+        /// Dictionary for this build's event IDs; save it with the binary stream.
+        pub const EVENT_STAGES: &[(u32, &str)] = &[$(($id, $label),)+];
+    };
+}
+event_stages! {
+    EvaluateSetup = 100 => "evaluate.setup",
+    RoundEngineSetup = 200 => "round.engine_setup",
+    RoundBind = 201 => "round.bind",
+    RoundForceRootsInitial = 202 => "round.force_roots_initial",
+    RoundSettle = 203 => "round.settle",
+    RoundEditsFinish = 204 => "round.edits_finish",
+    RoundEdgeKeyAndCycle = 205 => "round.edge_key_and_cycle",
+    RoundAdvance = 206 => "round.advance",
+    RoundRetainedTransfer = 207 => "round.retained_round_transfer",
+    RoundCompleteDropPrevious = 208 => "round.complete_drop_previous_and_identity_sweep",
+    RoundFallbackFreezeReset = 209 => "round.fallback_freeze_reset",
+    SettleTakeSnapshot = 300 => "settle.take_snapshot",
+    SettleDeferredSnapshot = 301 => "settle.deferred_snapshot",
+    SettleForceDeferredSlots = 302 => "settle.force_deferred_slots",
+    SettleBindDeferredRoots = 303 => "settle.bind_deferred_roots",
+    SettleForceRoots = 304 => "settle.force_roots",
+    SettleLiveEdges = 305 => "settle.live_edges",
+    SettleCompareEdges = 306 => "settle.compare_edges",
+    AdvanceClassify = 400 => "advance.classify",
+    AdvanceFreeze = 401 => "advance.freeze",
+    AdvanceRevisionReset = 402 => "advance.revision_reset",
+    RootDispatch = 500 => "root.dispatch",
+    RootSourceEval = 501 => "root.source_eval",
+    RootTypeBind = 502 => "root.recursive_bind",
+    RootDispatchReturn = 503 => "root.dispatch_return",
+    RootPublishOrDefer = 504 => "root.publish_or_handle",
+    RootScopeRelease = 505 => "root.scope_release",
+}
+
 /// Ordered clock reads followed by a process-wide requested-allocation snapshot.
 ///
 /// The two monotonic reads bracket the CPU read only. The allocation ledger is
@@ -88,6 +130,8 @@ pub struct Span {
     /// Intervals recorded in mark order; a span may contain no marks.
     pub stages: Vec<Stage>,
     previous: Stamp,
+    #[serde(skip)]
+    event_scope: Option<crate::phase_events::EventScope>,
 }
 thread_local! { static SPANS: RefCell<Vec<Span>> = const { RefCell::new(Vec::new()) }; }
 impl Span {
@@ -103,6 +147,22 @@ impl Span {
             start,
             stages: Vec::new(),
             previous: start,
+            event_scope: None,
+        }
+    }
+    /// Publish entry before the named operation. Marks instead label completed
+    /// intervals and must never be interpreted as an operation's start.
+    /// An installed sink adds bounded diagnostic I/O; without one this is inert.
+    pub fn enter(&mut self, stage: EventStage) {
+        match &self.event_scope {
+            Some(scope) => scope.transition(stage as u32),
+            None => {
+                self.event_scope = Some(crate::phase_events::EventScope::begin(
+                    stage as u32,
+                    self.ordinal as u64,
+                    crate::phase_events::RootIdentity::NONE,
+                ));
+            }
         }
     }
     /// Capture a boundary and append the interval since the preceding boundary.
@@ -126,9 +186,68 @@ impl Span {
     /// This may grow the buffer but takes no final sample. Work after the last
     /// mark, including submission, has no additional interval in this span.
     pub fn finish(self) {
+        if let Some(scope) = &self.event_scope {
+            use crate::phase_events::Outcome;
+            scope.finish(match self.kind {
+                "advance_rejected" => Outcome::Rejected,
+                "advance_unwound" => Outcome::Unwound,
+                _ => Outcome::Ok,
+            });
+        }
         SPANS.with(|s| s.borrow_mut().push(self));
     }
 }
+
+/// Advance-only partition, submitted after the advance function's runtime
+/// locals have dropped. It owns scalar diagnostics, never an Engine or Value.
+/// Early returns and unwinding retain a partial prefix without claiming reuse.
+pub(crate) struct AdvanceSpan {
+    span: Option<Span>,
+    active: &'static str,
+    accepted: bool,
+}
+impl AdvanceSpan {
+    pub(crate) fn new(ordinal: usize) -> Self {
+        let mut span = Span::new("advance_rejected", ordinal);
+        span.enter(EventStage::AdvanceClassify);
+        Self {
+            span: Some(span),
+            active: "classify",
+            accepted: false,
+        }
+    }
+    pub(crate) fn classified(&mut self) {
+        self.span.as_mut().unwrap().mark("classify");
+        self.span.as_mut().unwrap().enter(EventStage::AdvanceFreeze);
+        self.active = "freeze";
+    }
+    pub(crate) fn frozen(&mut self) {
+        self.span.as_mut().unwrap().mark("freeze");
+        self.span
+            .as_mut()
+            .unwrap()
+            .enter(EventStage::AdvanceRevisionReset);
+        self.active = "revision_reset";
+    }
+    pub(crate) fn accepted(&mut self) {
+        self.accepted = true;
+    }
+}
+impl Drop for AdvanceSpan {
+    fn drop(&mut self) {
+        let mut span = self.span.take().unwrap();
+        span.kind = if std::thread::panicking() {
+            "advance_unwound"
+        } else if self.accepted {
+            "advance"
+        } else {
+            "advance_rejected"
+        };
+        span.mark(self.active);
+        span.finish();
+    }
+}
+
 /// Drain completed spans from the calling thread in their submission order.
 ///
 /// Other threads' buffers and unfinished spans are unaffected. Reports own

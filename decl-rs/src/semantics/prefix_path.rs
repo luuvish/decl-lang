@@ -444,6 +444,12 @@ pub struct PrefixPathPoolStats {
 impl PrefixPathPool {
     /// Retain a distinct outer path handle with any locally shared prefixes.
     pub fn retain(&mut self, segments: &[Seg]) -> Rc<PrefixPath> {
+        Rc::new(self.retain_value(segments))
+    }
+
+    /// Retain a path value with shared prefixes, without an outer allocation.
+    /// Cloning or mutating the returned handle leaves other handles independent.
+    pub fn retain_value(&mut self, segments: &[Seg]) -> PrefixPath {
         count!(|c| {
             c.retain_calls += 1;
             c.input_segments += segments.len() as u64;
@@ -515,7 +521,7 @@ impl PrefixPathPool {
         }
         // Never intern the outer Rc: snapshot reference identity is a separate
         // concern even if the representation is later adopted for references.
-        Rc::new(PrefixPath::from_tail(parent, segments.len()))
+        PrefixPath::from_tail(parent, segments.len())
     }
 
     /// O(entry count), explicitly requested diagnostics; absent from binding.

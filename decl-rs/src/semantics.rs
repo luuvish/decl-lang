@@ -15,6 +15,16 @@ use std::sync::LazyLock;
 pub(crate) mod lifetime;
 pub use lifetime::collect_cycles;
 
+mod shared_text;
+pub use shared_text::SharedText;
+
+mod map_entries;
+pub(crate) use map_entries::MapShapePool;
+pub use map_entries::{
+    MapEntries, MapEntriesIntoIter, MapEntriesIter, MapEntriesIterMut, MapEntriesKeys,
+    MapEntriesValues, MapEntriesValuesMut,
+};
+
 mod prefix_path;
 #[cfg(feature = "runtime-diagnostics")]
 pub use lifetime::{take_gc_diagnostics, GcDiagnostics, GcTrigger};
@@ -312,7 +322,7 @@ pub enum Value {
     /// a float
     Float(f64),
     /// a string
-    Str(Rc<str>),
+    Str(SharedText),
     /// a boolean
     Bool(bool),
     /// null
@@ -322,12 +332,7 @@ pub enum Value {
     /// not yet computed
     Undef,
     /// a quantity
-    Q {
-        /// its dimension key
-        dim: String,
-        /// its value in the base unit
-        value: f64,
-    },
+    Q(Box<QuantityValue>),
     /// a reference, by canonical path
     Ref(Rc<SegPath>),
     /// a record instance
@@ -337,14 +342,7 @@ pub enum Value {
     /// a map
     Map(Rc<RefCell<MapV>>),
     /// a range value
-    Range {
-        /// the lower bound
-        lo: Box<Value>,
-        /// the upper bound
-        hi: Box<Value>,
-        /// whether the upper bound is excluded
-        excl: bool,
-    },
+    Range(Box<RangeValue>),
     /// a closure
     Clo(Rc<Closure>),
     /// a native function
@@ -354,7 +352,7 @@ pub enum Value {
     /// a namespace
     NsRef(Rc<NsRefV>),
     /// a pattern
-    Pat(String),
+    Pat(SharedText),
     /// a record literal not yet bound
     PreObj(Rc<Vec<(String, Value)>>),
     /// an array literal not yet bound: (spread, item)
@@ -369,6 +367,28 @@ pub enum Value {
     Segs(Rc<SegPath>),
 }
 
+/// A uniquely owned quantity magnitude and its shared dimension key.
+/// Cloning preserves independent magnitude mutation and dimension copy-on-write.
+#[derive(Clone)]
+pub struct QuantityValue {
+    /// The shared dimension key; use quantity_dimension_mut for copy-on-write.
+    pub dim: Rc<String>,
+    /// The magnitude in the base unit.
+    pub value: f64,
+}
+
+/// Uniquely owned range endpoints. Cloning a range clones its endpoint Values;
+/// sharing the payload would change native mutation and collector edge counts.
+#[derive(Clone)]
+pub struct RangeValue {
+    /// The lower bound.
+    pub lo: Value,
+    /// The upper bound.
+    pub hi: Value,
+    /// Whether the upper bound is excluded.
+    pub excl: bool,
+}
+
 impl fmt::Debug for Value {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
@@ -379,13 +399,80 @@ impl fmt::Debug for Value {
             Value::Null => write!(f, "null"),
             Value::Absent => write!(f, "ABSENT"),
             Value::Undef => write!(f, "UNDEF"),
-            Value::Q { dim, value } => write!(f, "{value}<{dim}>"),
+            Value::Q(q) => write!(f, "{}<{}>", q.value, q.dim),
             other => write!(f, "<{}>", other.tag()),
         }
     }
 }
 
 impl Value {
+    /// Construct a quantity with a base-unit magnitude and a dimension key.
+    /// Display units remain properties of the environment, not this value.
+    pub fn quantity(dim: impl Into<String>, value: f64) -> Self {
+        Self::Q(Box::new(QuantityValue {
+            dim: Rc::new(dim.into()),
+            value,
+        }))
+    }
+    /// Borrow the dimension and read the independently stored magnitude.
+    pub fn as_quantity(&self) -> Option<(&str, f64)> {
+        match self {
+            Self::Q(q) => Some((q.dim.as_str(), q.value)),
+            _ => None,
+        }
+    }
+    /// Mutate a dimension without changing a retained clone's dimension.
+    pub fn quantity_dimension_mut(&mut self) -> Option<&mut String> {
+        match self {
+            Self::Q(q) => Some(Rc::make_mut(&mut q.dim)),
+            _ => None,
+        }
+    }
+    /// Mutate this quantity's independently owned magnitude or dimension owner.
+    pub fn as_quantity_mut(&mut self) -> Option<&mut QuantityValue> {
+        match self {
+            Self::Q(q) => Some(q),
+            _ => None,
+        }
+    }
+    /// Construct a range without evaluating or restricting its endpoints.
+    /// Iteration and membership retain their existing validation boundaries.
+    pub fn range(lo: Value, hi: Value, excl: bool) -> Self {
+        Self::Range(Box::new(RangeValue { lo, hi, excl }))
+    }
+    /// Borrow a range's uniquely owned endpoints and exclusion flag.
+    pub fn as_range(&self) -> Option<&RangeValue> {
+        match self {
+            Self::Range(range) => Some(range),
+            _ => None,
+        }
+    }
+    /// Mutate this range's endpoints; ordinary Value clone rules still apply
+    /// to containers or native captures stored inside those endpoints.
+    pub fn as_range_mut(&mut self) -> Option<&mut RangeValue> {
+        match self {
+            Self::Range(range) => Some(range),
+            _ => None,
+        }
+    }
+    /// Construct pattern text. Pattern equality remains non-reflexive.
+    pub fn pattern(src: impl Into<Rc<str>>) -> Self {
+        Self::Pat(SharedText::from_rc(src.into()))
+    }
+    /// Borrow pattern text without exposing its shared storage.
+    pub fn as_pattern(&self) -> Option<&str> {
+        match self {
+            Self::Pat(src) => Some(src),
+            _ => None,
+        }
+    }
+    /// Share one native callable and its captures across Value clones.
+    pub fn native<F>(f: F) -> Self
+    where
+        F: Fn(&[Value]) -> R<Value> + 'static,
+    {
+        Self::Nat(Rc::new(Box::new(f)))
+    }
     /// The value's kind, as a word.
     pub fn tag(&self) -> &'static str {
         match self {
@@ -396,12 +483,12 @@ impl Value {
             Value::Null => "null",
             Value::Absent => "absent",
             Value::Undef => "undef",
-            Value::Q { .. } => "quantity",
+            Value::Q(_) => "quantity",
             Value::Ref(_) => "ref",
             Value::Rec(_) => "record",
             Value::Arr(_) => "array",
             Value::Map(_) => "map",
-            Value::Range { .. } => "range",
+            Value::Range(_) => "range",
             Value::Clo(_) => "closure",
             Value::Nat(_) => "native",
             Value::Std(_) => "std",
@@ -436,7 +523,7 @@ impl Value {
 }
 
 /// a native function
-pub type NatFn = Rc<dyn Fn(&[Value]) -> R<Value>>;
+pub type NatFn = Rc<Box<dyn Fn(&[Value]) -> R<Value>>>;
 
 /// a function value: its parameters, its body, the scope it closed over
 pub struct Closure {
@@ -464,7 +551,7 @@ pub struct ArrV {
     /// the items
     pub items: Vec<Value>,
     /// its canonical path
-    pub path: Rc<PrefixPath>,
+    pub path: PrefixPath,
 }
 /// An insertion-ordered table with indexed lookup. Iteration retains language
 /// order while reference navigation and member access avoid linear scans.
@@ -473,9 +560,9 @@ pub type OrderedMap<T> = IndexMap<String, T, FxBuildHasher>;
 /// a map value
 pub struct MapV {
     /// the entries, in order
-    pub entries: OrderedMap<Value>,
+    pub entries: MapEntries,
     /// its canonical path
-    pub path: Rc<PrefixPath>,
+    pub path: PrefixPath,
 }
 impl MapV {
     /// The value at a key.
@@ -532,9 +619,9 @@ pub enum Compute {
         /// the types to check against
         types: Rc<Vec<RT>>,
         /// the member
-        name: String,
+        name: Rc<str>,
         /// the root
-        root_name: String,
+        root_name: Rc<str>,
         /// the module environment
         menv: Option<Rc<Env>>,
     },
@@ -547,9 +634,9 @@ pub enum Compute {
         /// the types to check against
         types: Rc<Vec<RT>>,
         /// the member
-        name: String,
+        name: Rc<str>,
         /// the root
-        root_name: String,
+        root_name: Rc<str>,
         /// the module environment
         menv: Option<Rc<Env>>,
     },
@@ -564,9 +651,9 @@ pub enum Compute {
         /// the value the document supplied, to compare (§10.5)
         supplied: Option<Value>,
         /// the member
-        name: String,
+        name: Rc<str>,
         /// the root
-        root_name: String,
+        root_name: Rc<str>,
         /// the module environment
         menv: Option<Rc<Env>>,
     },
@@ -629,9 +716,9 @@ pub struct RecInst {
     pub parent: Option<Rc<RefCell<RecInst>>>,
     // declaration order matters (forcing order drives diagnostic order)
     /// the slots, in declaration order
-    pub slots: Vec<(String, Slot)>,
+    pub slots: Vec<(Rc<str>, Slot)>,
     /// the order the document supplied the members
-    pub entry_order: Vec<String>,
+    pub entry_order: Rc<Vec<String>>,
     /// members of an open record beyond its type
     pub extras: Vec<(String, Value)>,
     /// the module environment
@@ -645,6 +732,18 @@ pub(crate) fn record_instance(record: RecInst) -> Rc<RefCell<RecInst>> {
     record
 }
 impl RecInst {
+    /// Borrow the member order captured from the input document.
+    pub fn entry_order(&self) -> &[String] {
+        &self.entry_order
+    }
+    /// Retain the current order independently of later record mutation.
+    pub fn entry_order_snapshot(&self) -> Rc<Vec<String>> {
+        self.entry_order.clone()
+    }
+    /// Edit this record's order without changing other records or snapshots.
+    pub fn entry_order_mut(&mut self) -> &mut Vec<String> {
+        Rc::make_mut(&mut self.entry_order)
+    }
     /// An extra member's value.
     pub fn extra(&self, n: &str) -> Option<&Value> {
         self.extras.iter().find(|(k, _)| k == n).map(|(_, v)| v)
@@ -659,15 +758,21 @@ impl RecInst {
     }
     /// A slot by name.
     pub fn slot(&self, n: &str) -> Option<&Slot> {
-        self.slots.iter().find(|(k, _)| k == n).map(|(_, s)| s)
+        self.slots
+            .iter()
+            .find(|(k, _)| k.as_ref() == n)
+            .map(|(_, s)| s)
     }
     /// A slot by name, mutably.
     pub fn slot_mut(&mut self, n: &str) -> Option<&mut Slot> {
-        self.slots.iter_mut().find(|(k, _)| k == n).map(|(_, s)| s)
+        self.slots
+            .iter_mut()
+            .find(|(k, _)| k.as_ref() == n)
+            .map(|(_, s)| s)
     }
     /// Whether the slot exists.
     pub fn has_slot(&self, n: &str) -> bool {
-        self.slots.iter().any(|(k, _)| k == n)
+        self.slots.iter().any(|(k, _)| k.as_ref() == n)
     }
 }
 
@@ -740,7 +845,7 @@ pub struct Scope {
     /// the local variables
     pub locals: Locals,
     /// the root
-    pub root_name: String,
+    pub root_name: Rc<str>,
     /// the module environment
     pub menv: Option<Rc<Env>>,
 }
@@ -750,7 +855,7 @@ impl Scope {
         Scope {
             inst: None,
             locals: Locals::new(),
-            root_name: root_name.to_string(),
+            root_name: Rc::from(root_name),
             menv,
         }
     }
@@ -3068,49 +3173,64 @@ pub fn path_str_iter<'a>(
     segs: impl IntoIterator<Item = &'a Seg>,
     rel_root: Option<&str>,
 ) -> String {
-    use std::fmt::Write;
     let mut out = String::new();
     for (i, s) in segs.into_iter().enumerate() {
-        // the root segment is bare; the rest are `.name`, `["key"]`, or `[n]`.
-        // written straight into `out` (name/key push their `Rc<str>`, brackets
-        // via `write!`) so no temporary String is allocated per segment (F21)
-        if i == 0 {
-            match s {
-                Seg::Name(n) | Seg::Key(n) => {
-                    if rel_root == Some(&**n) {
-                        out.push('$');
-                    } else {
-                        out.push_str(n);
-                    }
-                }
-                Seg::Idx(k) => {
-                    let t = k.to_string();
-                    if rel_root == Some(t.as_str()) {
-                        out.push('$');
-                    } else {
-                        out.push_str(&t);
-                    }
-                }
-            }
-            continue;
-        }
-        match s {
-            Seg::Idx(k) => {
-                let _ = write!(out, "[{k}]");
-            }
-            Seg::Key(n) => {
-                let _ = write!(out, "[{}]", json_str(n));
-            }
-            Seg::Name(n) if dot_spellable(n) => {
-                out.push('.');
-                out.push_str(n);
-            }
-            Seg::Name(n) => {
-                let _ = write!(out, "[{}]", json_str(n));
-            }
-        }
+        write_path_segment(&mut out, s, i == 0, rel_root);
     }
     out
+}
+
+/// Format once and retain UTF-8 byte boundaries for each complete path prefix.
+/// Offsets follow segments, including roots whose bare text contains delimiters.
+pub(crate) fn path_str_prefixes(segs: &[Seg]) -> (String, Vec<usize>) {
+    let mut out = String::new();
+    let mut ends = Vec::with_capacity(segs.len());
+    for (i, s) in segs.iter().enumerate() {
+        write_path_segment(&mut out, s, i == 0, None);
+        ends.push(out.len());
+    }
+    (out, ends)
+}
+
+fn write_path_segment(out: &mut String, s: &Seg, first: bool, rel_root: Option<&str>) {
+    use std::fmt::Write;
+    // The root segment is bare; later segments use canonical member/bracket
+    // spelling. Both ordinary formatting and prefix indexing share this writer.
+    if first {
+        match s {
+            Seg::Name(n) | Seg::Key(n) => {
+                if rel_root == Some(&**n) {
+                    out.push('$');
+                } else {
+                    out.push_str(n);
+                }
+            }
+            Seg::Idx(k) => {
+                let t = k.to_string();
+                if rel_root == Some(t.as_str()) {
+                    out.push('$');
+                } else {
+                    out.push_str(&t);
+                }
+            }
+        }
+        return;
+    }
+    match s {
+        Seg::Idx(k) => {
+            let _ = write!(out, "[{k}]");
+        }
+        Seg::Key(n) => {
+            let _ = write!(out, "[{}]", json_str(n));
+        }
+        Seg::Name(n) if dot_spellable(n) => {
+            out.push('.');
+            out.push_str(n);
+        }
+        Seg::Name(n) => {
+            let _ = write!(out, "[{}]", json_str(n));
+        }
+    }
 }
 
 /// A path string from a document: `.name` is a member, `["…"]` a bracketed
@@ -3199,7 +3319,7 @@ pub fn value_eq(a: &Value, b: &Value) -> bool {
         (Value::Null, Value::Null) => true,
         // two unforced slots compare equal, as in the reference (undefined === undefined)
         (Value::Undef, Value::Undef) => true,
-        (Value::Q { dim: d1, value: v1 }, Value::Q { dim: d2, value: v2 }) => d1 == d2 && v1 == v2,
+        (Value::Q(a), Value::Q(b)) => a.dim == b.dim && a.value == b.value,
         (Value::Arr(x), Value::Arr(y)) => {
             let (x, y) = (x.borrow(), y.borrow());
             x.items.len() == y.items.len()
@@ -3451,5 +3571,13 @@ pub(crate) fn write_json_str(out: &mut String, s: &str) {
 }
 
 #[cfg(test)]
+#[path = "../tests/private/path_format_test.rs"]
+mod path_format_tests;
+
+#[cfg(test)]
 #[path = "../tests/private/slot_compute_test.rs"]
 mod slot_compute_tests;
+
+#[cfg(test)]
+#[path = "../tests/private/value_storage_test.rs"]
+mod value_storage_tests;

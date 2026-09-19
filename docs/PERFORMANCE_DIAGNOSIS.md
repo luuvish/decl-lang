@@ -1,13 +1,13 @@
 # Runtime cost and ownership diagnosis
 
 Source baseline: `1a76e625` (2026-09-12). Sections 1–6 record the original
-investigation and its private experiments. Sections 7–18 record subsequent
+investigation and its private experiments. Sections 7–34 record subsequent
 implementation steps. Observable behavior and the frozen specification are unchanged.
 External models, profiles, and engine comparison reports remain
 outside this repository, as required by [the measurement policy](DEVELOPMENT.md#performance-measurements).
 
 For the latest implementation step, see
-[record lookup construction](#28-record-lookup-construction-2026-09-13). The preceding
+[thin scalar payloads](#34-thin-scalar-payloads-experimental-2026-09-15). The preceding
 [progress checkpoint](#19-progress-checkpoint-2026-09-13) records the measurement
 blocker and the larger-workload evidence still outstanding.
 
@@ -1689,3 +1689,511 @@ No latency/RSS, Session reuse performance or OAD improvement is established. Kee
 this 36-case aggregate separate from K's earlier 28-case suite. Next, assess
 remaining many-to-many lookup and per-slot construction costs in separate
 comparisons, including the compiled-schema path and duplicate-heavy inputs.
+
+
+## 29. Root and phase attribution (2026-09-14)
+
+The Rust diagnostic feature now records individual root attempts separately
+from the existing evaluation-span report. A root's source expression can return
+an inexpensive lazy object whose member expressions are forced during recursive
+binding. Keep those boundaries explicit: a small source-evaluation interval does
+not establish an inexpensive projection, and recursive binding includes more
+than type checking.
+
+Root attempts record dispatch, source evaluation, recursive binding, publication
+and local release, with explicit skip, defer, taint, evaluation-error and unwind
+outcomes. The final boundary includes later local destruction, excluding function
+arguments and report submission. Parent/child intervals overlap; subtract only
+outermost contained roots when computing a parent residual. No counter attributes
+all outstanding allocations to a unique reachable owner.
+
+A caller-owned optional file sink emits bounded fixed-size phase events on actual
+stage entry. It uses CLOCK_MONOTONIC, nested scope identifiers, root attempt
+ordinals and a scalar root-label fingerprint. No event retains an Engine, Value,
+path or root text. Write, clock, ordering and capacity failures disable telemetry
+without changing evaluation. The normal CLI exposes no new diagnostic mode.
+
+A killed process may retain an event prefix while losing the final allocation
+ledger and metrics. Decode the prefix after process cleanup, validate complete
+records without resynchronizing around a malformed record, and preserve open
+scopes or a short tail. Match resource samples using the same clock domain and
+stable kernel process identity. Report the last recorded phase and its gap from
+the sample, rather than an exact kill instruction. Missing terminal evidence
+cannot exclude an unreported telemetry failure or subsequent missing transition.
+A useful partial diagnostic remains distinct from completed language output and
+completed latency or memory peaks.
+
+The source and native tests cover separate report drains, deferred/skipped paths,
+UTF-8 name bounds, nested scope ordering, unwind and reentrant destruction. The
+source-bound external investigation and progress ledger are under
+`../decl-analysis/2026-09-14/root-attribution/`. Its source, helper, validation,
+process and cleanup receipts are separate from later runtime candidates. Reusing
+a validated small output for an offline shape census can identify repeated key
+metadata without rerunning evaluation; serialized occurrences still do not prove
+distinct live objects or achieved memory savings.
+
+## 30. Direct map construction and repeated view scans (2026-09-14)
+
+Shared map keys reduce the retained representation, but first building an
+ordinary IndexMap and then moving values into dense storage adds temporary
+allocation. Engine-created maps now begin with a private small ordered entry
+vector. Duplicate keys replace values at their original position; the ninth
+distinct key promotes to ordinary indexed storage. Successful small maps seal
+directly into the bounded shared shape pool. Public map constructors retain
+their existing owned representation, and each binding/materialization loop keeps
+its original publication, borrow and error/drop boundaries.
+
+Measure this temporary allocation change independently from a model rewrite.
+Nested comprehensions can rebuild a full `std.map.entries` array and create a
+scope for each rejected item even when a matching key is already known. A
+model-level direct lookup needs a presence proof, the same sorted key order and
+unchanged predicate/lazy demand order. Name equality is not generally key
+equality. Preserve the old frozen model and compare a separate source candidate
+in all three implementations before measuring its large inputs.
+
+The next retained-owner question uses additive scalar `work.compute` counts in
+existing collector passes. Count each descriptor allocation once per pass,
+including an explicit expired weak-node category, without retaining captures.
+The compiled inline layout excludes captured values and must not be multiplied
+by counts from several passes as though they were distinct live allocations.
+Use these measurements to select the next structural reduction; constructor
+traffic, post-Engine garbage and peak live memory are different quantities.
+
+The source-bound model/runtime comparisons and current progress are recorded
+externally under `../decl-analysis/2026-09-14/direct-maps/`. Complete outputs,
+changed implementation work, source identity, primary timings and resource
+censors have separate records. A censored 200×200 run leaves its complete
+comparison unresolved.
+
+The isolated direct-lookup model passed six static checks and 72 tiny
+evaluations across all three implementations, followed by a complete 50x50
+diagnostic with byte-identical output. First deferred-slot forcing allocated
+3.327% fewer bytes and made 5.914% fewer allocation calls. Requested retained
+and peak bytes at binding-owner release changed by only about 0.008%. The
+separate initial small-map builder reduced aggregate deferred-root binding
+bytes by 0.965% and calls by 2.899%, missing its predeclared 3% selection rule;
+retained memory was essentially unchanged. These are allocation observations,
+not ordinary speed claims. Preserve both intermediate results in
+`../decl-analysis/2026-09-14/direct-maps/REPORT.md`.
+
+## 31. Reusing computation metadata across records (2026-09-14)
+
+The new descriptor census measured a 96-byte inline Compute layout. The first
+post-Engine pass encountered 434,053 Check, 213,454 Default and 597,412 Derived
+nodes, with 1,325 supplied/restated Derived nodes. Thus 809,541 of the 1,244,919
+nodes were Default or unsupplied Derived. These contain no instance-specific
+raw or supplied Value. This is a teardown graph census; it does not establish
+descriptor counts or savings at peak memory.
+
+Each compiled member plan now keeps one recent weak descriptor and reuses it
+only for the same declaration and captured root/environment allocation
+identities. Slot state, forced values and per-instance navigation remain
+separate. Supplied values and bindings without compiled programs retain their
+existing independent descriptors. The current weak collector node handles
+sharing directly, without adding a second metadata ownership graph. Native
+copy-on-write, context identity, source replacement and capture lifetime tests
+cover the changed representation; the migration guide records weak-reference
+effects on direct Rc mutation.
+
+This fresh candidate is recorded under
+`../decl-analysis/2026-09-14/descriptor-reuse/`. Compare it with the frozen
+shared-map baseline and retain the intermediate direct-builder observation.
+Full source quality, diagnostic evidence, ordinary CLI/Session comparisons
+and a completed 200x200 typed-output comparison remain separate requirements.
+
+The descriptor candidate passed 180 diagnostic-feature library tests, full lint,
+unchanged formatting and `make verify` (1,278 identical comparisons, zero
+differences). Its isolated 50x50 diagnostic preserved output and existing work
+counters. Against shared-map, requested live after binding-owner release fell
+from 1,244,296,766 to 1,154,269,351 bytes (7.235%); cumulative requested peak at
+that endpoint fell 7.011%. Deferred-root binding allocation calls fell 3.036%,
+passing the unchanged 3% selection rule for ordinary verification.
+
+Relative to the intermediate direct builder, the first post-Engine collection
+traced 804,540 fewer unique Compute allocations, with every other node-kind count
+unchanged. Default plus unsupplied Derived descriptors fell from 809,541 to
+5,001. The separately measured retained endpoint fell 90,021,560 bytes. This
+distinguishes a reduction of retained metadata from the builder's earlier
+temporary-allocation reduction. The census occurs during teardown; it is not a
+peak-memory census. All 14 disjoint allocator stages and the marginal versus
+combined source effects are recorded in
+`../decl-analysis/2026-09-14/descriptor-reuse/analysis-v1/report.md`.
+
+The first combined ordinary CLI campaign stopped when an external
+oic-design-suite test began: 13 children completed successfully, the next was
+rejected by the competitor guard, and four later cells were skipped. This is an
+incomplete dataset, not an ordinary speed or memory acceptance result. Preserve
+it and use a separately declared environment-recovery campaign with the same
+source, model, guards and complete schedule; do not pool its timings with the
+interrupted campaign. The ordinary Session and completed200 requirements remain
+open.
+
+The independent recovery campaign subsequently completed all 18 CLI children
+and all six Session processes with 30 exact request outputs. Against S with the
+original model, the combined E runtime and rewritten model reduced CLI median
+paired wall time by 3.329%, CPU by 3.270% and peak RSS by 7.216%. Its same-binary
+controls and original speed/memory screens passed. Session peak RSS fell
+10.368%, but process wall time rose 1.129% and CPU rose 0.369%; Session latency
+did not improve. The hot request increased by 1.087 ms (3.010%), changed by
+34.125 ms (0.412%) and restore by 134.337 ms (1.603%), using median paired
+differences. Three Session pairs do not establish a stable general regression
+or improvement. Keep request components and whole-process results separate.
+
+The guarded 100x100 pair also completed with matching output: wall time was
+17.462848 versus 16.852064 seconds (3.498% lower), CPU 3.570% lower, and peak RSS
+4,368,121,856 versus 4,049,207,296 bytes (7.301% lower). This is one pair, not a
+repeated large-model speed estimate. The following candidate 200x200 run stopped
+on non-NORMAL kernel memory pressure before producing validated output; the
+conditional baseline 200x200 run was skipped. No competitor was observed in its
+55 recorded scans. The memory improvement is supported at 50x50 and 100x100,
+while completed200 remains unresolved. The ordinary profile has no phase-event
+stream, so its resource prefix alone cannot identify the stopped evaluation
+phase. Use the existing instrumented binary in a separately declared diagnostic
+to locate that phase before selecting the next structural reduction.
+
+These results are recorded in
+`../decl-analysis/2026-09-14/descriptor-reuse/ordinary-report-v2.md` and the
+source-bound `direct-maps/large-work-v2/campaign-v2` records. Ordinary timing is
+the combined model/runtime effect; it must not be attributed solely to the
+descriptor cache or added to the isolated model allocation reduction.
+
+Model-proof reproducibility also requires durable runtime artifacts. Full
+verification can replace the working Rust CLI and Python grammar extension.
+Archive the CLI and the reference source/parser files, run the unchanged tiny
+proof against those paths, and bind the resulting outputs to the same model
+identity. A rebuilt native grammar has a new binary identity even if the
+language source is unchanged. Retain prior accepted proof records and record an
+explicit renewal; never silently rehash an old binary pin at its new contents.
+
+## 32. Locating the remaining 200x200 memory boundary (2026-09-15)
+
+One separate diagnostic reused the accepted E instrumented binary and the
+selected nine-file rewritten model, with unchanged 8 GiB footprint, NORMAL
+kernel-pressure and 180-second limits. It launched exactly one model process.
+The diagnostic stopped on memory pressure; it did not complete the model or
+produce validated output. Source/model checks and owned-process cleanup passed.
+
+The saved event prefix contains 40 complete records, with four ended and four
+open spans. The first `settle.force_deferred_slots` interval completed in
+53.778023 seconds. Deferred binding of `oid` then entered
+`root.recursive_bind` at 58.155717 seconds from the recorded native start. That
+was the last confirmed phase at the first WARN sample, whose clock bracket was
+65.933882–65.933914 seconds. The 7.778165–7.778197-second gap from the last event
+is an open observation interval, not a completed recursive-binding duration or
+proof of the instruction executing at termination.
+
+At that WARN sample, physical footprint was 8,011,012,192 bytes and RSS was
+4,281,253,888 bytes. These are sampled process observations, not a completed
+peak or requested-allocation ledger. All 257 process samples had validated
+identity; the supervisor used 0.746% of the sampled child CPU denominator.
+The binary event format contains no allocation counters, so this prefix cannot
+quantify which allocations caused the pressure. Nor does it retrospectively
+identify the phase of the earlier uninstrumented run. The independent evidence
+is under `../decl-analysis/2026-09-14/descriptor-reuse/censor200-work/campaign-v1/`.
+
+This narrows the next attribution to the retained population entering deferred
+output binding and the work it adds. The two remaining name-based `clocks$`
+comprehensions need selected-expression counters and allocation intervals;
+eager indexing is not yet justified because it can change lazy demands and
+diagnostic order. A new diagnostic-only Check raw-value census partitions each
+unique inspected descriptor into 25 disjoint variants without forcing or
+retaining its raw value. Its sum must equal the existing Check count; expired
+weak nodes are excluded. This identifies scalar sharing candidates, not a
+measured cache-hit rate. The diagnostic source subsequently passed full lint,
+unchanged formatting, `make verify` (1,278 identical comparisons) and 187 native
+diagnostic library tests. Its separate metadata validator passed 56 cases.
+
+The new 50x50 observation completed with exact output and unchanged high-level
+work. Both selected scans were observed: one attempt at the first site and two
+at the second, all compiled, successful and non-nested. Each inspected 274 x 274
+inner items. Together their intervals took 22.354 ms and requested 36,332,388
+gross bytes, 0.508% of evaluation wall and 0.418% of evaluation gross requests.
+Later lazy-head forcing is outside these expression-return intervals. The small
+observed contribution deprioritizes an eager name index as the next memory
+treatment; it does not predict their cost at 200x200.
+
+The first post-Engine graph contains 434,053 Check nodes: 199,385 small integers,
+119,637 lazy PreVal values, 111,121 strings, 2,829 booleans and 1,081 other values.
+All Check bodies inventory 41,669,088 bytes at the observed 96-byte layout,
+excluding headers and referents and including graph garbage. This is not an
+achievable saving or a decomposition of an earlier live endpoint. Raw-kind
+counts cannot establish equal values, identical contexts or reuse hits.
+
+At the same graph pass there are 737,763 maps, 505,906 arrays and 308,887 records.
+After that collection reaches its terminal live graph, 545,445 maps, 325,642
+arrays and 153,755 records remain. These populations make concrete retained
+container layouts the next target. All fourteen stages, expression denominators,
+per-pass counts and evidence joins are recorded in
+`../decl-analysis/2026-09-14/scan-attribution/analysis-v1/`. This helper adds its
+own preallocated observer buffers, so its live/peak totals are not an unchanged-
+instrumentation comparison with the older E helper. Completed200 remains open.
+
+## 33. Compact container headers and inline path handles (2026-09-15)
+
+The Rust candidate stores `PrefixPath` directly in `ArrV` and `MapV`, removing
+the outer allocation while sharing immutable prefix nodes. Cloning a container
+path creates an independent small handle; modifying it preserves snapshots.
+`Engine::container_path` and `PrefixPathPool::retain_value` return this inline
+form. Existing `retained_path` and `retain` methods still return a distinct outer
+Rc for native callers that need it. The migration guide updates public field
+construction, mutation and lifetime examples. Record/reference paths are unchanged.
+
+The private map representation moves the large ordinary table header behind a
+Box, so it no longer determines the size of every shared small map. An explicit
+Empty state keeps empty construction and replacement placeholders allocation-free.
+Ordinary maps pay for a separate header allocation; shared maps continue to own
+their values independently. Insertion order, capacity observations, duplicate
+replacement, native destruction, and publication after failed construction retain
+their existing rules. Boxing was previously deferred, not previously measured and
+rejected. Its tradeoff must be measured with the actual storage distribution.
+
+The combined candidate passed 190 diagnostic library tests, including inline and
+legacy path interoperability, snapshot mutation, empty-map transitions and native
+drop/entry-identity checks. Full lint, unchanged formatting and `make verify`
+passed on the measured source, with 1,278 identical comparisons and no differences.
+The archived G source identity is
+`fce7f9def1351d8680324c9044d754d3413de023c15804520ef0915f738a1e46`.
+The compiled-library layout probe reports Value 24, ArrV 40, MapV 48, MapEntries
+32, OrderedMap 56 and PrefixPath 16 bytes, all with alignment 8. These are actual
+G layouts, not an allocator-size decomposition or separately measured map/path
+effects.
+
+The same-helper 50x50 diagnostic compares F from section 32 with G, using the
+same rewritten model on both sides. Output, high-level work and the per-pass
+runtime-owner projection match exactly. At binding-owner release, requested
+live bytes fall from 1,156,865,736 to 1,100,536,259 (4.869%); cumulative requested
+peak through that boundary falls from 1,196,589,568 to 1,140,275,307 (4.706%).
+Both satisfy the predeclared 3% OR selection. Evaluation gross requests fall by
+88,394,536 bytes and allocation calls by 2,515,681. Output emission allocation
+is unchanged. Inline path-value counts increase because more handles are stored
+directly; this counter does not count outer Rc allocations. The combined change
+does not establish either component's isolated contribution.
+
+Four fresh feature-empty CLI/Session binaries were built from the actual F/G
+archives. Ordinary measurements keep the same helper, compiler, locked
+dependencies and rewritten model. The CLI campaign completed all 18 children:
+two warmups, three same-binary pairs and five treatment pairs. The Session
+campaign completed six processes and 30 exact outputs, with every non-time work
+ledger equal to the observed rewritten-model reference and to every other row.
+
+| Ordinary measure | CLI, five paired observations | Session, three paired observations |
+| --- | ---: | ---: |
+| Median paired wall change | -0.922% | -0.430% |
+| Median paired CPU change | -0.905% | -0.451% |
+| Median paired peak RSS change | -0.721% | -2.765% |
+| Lower wall/CPU pairs | 5/5 | 2/3 |
+| Lower RSS pairs | 3/5 | 2/3 |
+
+The CLI same-binary controls pass: maximum wall/CPU fold deviations are 1.690%
+and 1.758%. Its native screen allowing at most 3% median wall/CPU/RSS regression
+passes; the separate screen requiring greater than 3% joint wall/CPU improvement
+fails. The observed sub-percent time difference does not establish stable
+speedup. Session has no automatic speed-adoption threshold. Its request totals
+show the following paired medians; percentage and absolute medians are computed
+separately.
+
+| Session request | Total change | Absolute change |
+| --- | ---: | ---: |
+| Initial | -1.808% | -83.531 ms |
+| Hot | -4.957% | -1.797 ms |
+| Equal edit | -3.368% | -1.322 ms |
+| Changed edit | -0.133% | -10.394 ms |
+| Restore | +0.029% | +2.304 ms |
+
+The hot Full evaluation component rises 3.061%, but its absolute increase is
+only 0.043 ms; serialization falls 1.738 ms. This illustrates why request
+components need absolute changes alongside percentages. Changed/restore work
+remains largely unchanged. All request components and raw pairs are retained in
+`../decl-analysis/2026-09-14/container-layout/ordinary-analysis-v1/`.
+
+The subsequent 100x100 pair completed with exact matching output. Native wall
+time is 16.367771 versus 15.932091 seconds (2.662% lower), CPU is 2.542% lower,
+and peak RSS is 3,912,400,896 versus 3,959,947,264 bytes (1.215% higher). This
+single pair shows that diagnostic requested-byte savings do not translate into
+a uniform native RSS reduction.
+
+Candidate 200x200 stopped on the first observed non-NORMAL kernel pressure at
+62.123083-62.123191 seconds. The sample reports physical footprint
+8,251,857,208 bytes and resident memory 3,977,281,536 bytes; the previous NORMAL
+sample at 61.870855-61.871003 seconds reports footprint 8,066,259,136 bytes.
+No sample crossed the unchanged 8 GiB footprint cap. All 242 native samples
+have valid identity, and all 61 runtime competitor scans are empty. Host swap
+growth and swapout growth from the last prehealth observation are zero. The
+native output file is absent, the owned group was reaped and cleanup passed.
+The conditional A200 cell was skipped. These are censored observations, with
+no completed peak, time, typed output or engine-phase attribution.
+
+The result supports a reduction in requested retained storage and modest
+observed ordinary changes. It leaves completed200 unresolved on the current
+16 GiB host. Both diagnostic cumulative requested peaks are reached during
+evaluation; later requested peaks within the measured fourteen stages do not
+explain the native RSS discrepancy. Allocator size classes, page retention and
+the distinct process measurement boundary remain hypotheses requiring evidence.
+An offline join of the existing CLOCK_MONOTONIC sample brackets and phase
+events resolves the diagnostic sample locations without running another model.
+The observed resident maxima occur in `command_sweep` for both F and G:
+1,565.125 versus 1,478.219 MiB, during GC scratch/graph drop and clear,
+respectively. Evaluation's sampled resident maxima are 1,307.734 and
+1,297.953 MiB. Each run has only three samples wholly inside cleanup; the true
+wait4 RSS maximum has no exact phase timestamp. This supports a separate
+cleanup-residency investigation, while leaving specific allocator/GC causes
+and the ordinary200 phase unproven. The joined records are under
+`../decl-analysis/2026-09-14/container-layout/phase-residency-v1/`.
+The source, diagnostic report, ordinary report and guarded large report are
+under `../decl-analysis/2026-09-14/container-layout/`. Earlier censored datasets
+remain unchanged and are never pooled with this campaign.
+
+The next candidate should reduce representations repeated throughout retained
+values, slots and compute descriptors. A separate std-only Value16 proxy
+demonstrates a possible layout on this compiler; it is not an implemented crate
+change or a measured saving. An actual port must account for any additional
+text, quantity or native-function allocations and preserve public API migration,
+ownership, snapshot behavior and parity. A new small diagnostic and ordinary
+comparison must justify another large campaign.
+
+The measurement workflow now consumes direct build/source/model/validation
+receipts, with five actual metadata preflight checks and twelve pure queue and
+adapter controls. The ordinary report recomputes all pairs and acceptance
+arithmetic from 59 direct metadata files without rehashing output bodies,
+recursively copying historical dependency records or running another model.
+The large report reads the saved resource prefix separately. This keeps
+analysis reproducible while avoiding repeated model execution and redundant
+evidence scans. The measured archive predates this result-only documentation
+update; its source and quality identities remain immutable.
+
+## 34. Thin scalar payloads (experimental, 2026-09-15)
+
+The next Rust candidate keeps `Num` and uniquely owned range endpoints while
+moving Str/Pat into a thin `SharedText(Rc<Rc<str>>)` descriptor, quantities into
+unique boxed payloads, and native functions into shared boxed callables.
+Existing `Seg` and capture-cache keys retain `Rc<str>`; explicit conversions
+share character allocations at those boundaries. The compatibility descriptor
+costs more than a direct `Rc<Box<str>>` text representation, but avoids new
+character copies on existing path/capture bridges. Neither a proxy layout nor
+the representation change establishes net memory savings.
+
+The actual implementation compiled and passed 194 diagnostic-feature library
+tests, including four new native witnesses for text/path identity, COW, weak
+owners, capture-cache reuse and last-callable destruction. Quantity magnitude
+bits and dimension COW, pattern equality and range ownership retain their
+existing tests. The migration guide documents the new payloads and accessors,
+including the fact that Value clones increment the text descriptor's Rc rather
+than each inner character Rc. Full `make verify`, `make lint` and an unchanged
+`make format` passed on the same final source; parity reports 1,278 identical
+cases and zero differences. The final diagnostic-feature library check also
+passed all 194 tests. The measured archive has source identity
+`a6545839b31d405e955e8a4d6388897f8e899c37ba46566a91984d199fc61618`.
+
+The actual-crate probe confirms Value 24 -> 16 bytes and Compute 96 -> 88 bytes;
+H Slot is 32 bytes and LocalFrame is 40 bytes. All 108 fixed text lifecycle
+cases pass character-sharing, COW and final requested-live restoration checks.
+Wrapping an existing character Rc adds one 32-byte descriptor allocation;
+cloning the resulting wrapper or exporting its character Rc allocates nothing.
+Four independent path imports add four descriptors, 128 bytes. These local
+observations are not multiplied by an unmeasured whole-model string count.
+
+The same-model diagnostic50 passes exact output, existing work and owner/raw/
+edge checks. Only Compute body size is excluded from owner equality and is
+separately checked against the actual crate layout in every GC pass.
+
+| Diagnostic requested memory | G bytes | H bytes | Change |
+| --- | ---: | ---: | ---: |
+| Live after binding-owner release | 1,100,536,259 | 1,040,106,871 | -5.491% |
+| Cumulative peak through that boundary | 1,140,275,307 | 1,071,434,087 | -6.037% |
+| Cumulative peak through final measured boundary | 1,140,275,307 | 1,077,857,553 | -5.474% |
+
+Both pre-emission metrics pass the prospective 3% OR selector. H's requested
+peak subsequently rises during emission and post-emission diagnostic work.
+Evaluation gross requests fall by 488,246,648 bytes (5.671%), but alloc calls
+rise by 4,065,880 and realloc calls by 3,872 (3.550% more combined requests).
+The first settle's deferred-slot forcing accounts for 259,922,472 fewer gross
+bytes outside its nested child spans. The first advance freeze accounts for
+36,477,592 fewer gross bytes and 30,626,080 fewer net-live bytes in that
+interval. These stage contributions are nested detail, not extra savings to
+add to evaluation's total. They establish the location of the combined
+treatment's effect, without isolating text, quantity and callable costs.
+
+GC cleanup's gross requested allocation remains unchanged. An offline join of
+the saved CLOCK_MONOTONIC brackets places both diagnostic sampled resident
+maxima in command-sweep GC clear: G 1,478.219 MiB, H 1,492.953 MiB. Sampled
+evaluation resident maxima instead fall from 1,297.953 to 1,234.938 MiB.
+Each run has only three samples wholly inside cleanup. This locates the
+observed maxima, but does not assign the unlocated wait4 high-water or prove
+which allocator/GC mechanism caused residency.
+
+Fresh feature-empty ordinary G/H builds then completed the fixed CLI18 and
+Session6 comparisons. All ordinary outputs and all six Session work arrays
+match; source/model endpoints and owned-process cleanup pass.
+
+| Ordinary comparison | Wall | CPU | Peak RSS | Evidence |
+| --- | ---: | ---: | ---: | --- |
+| CLI50 | -2.375% | -2.417% | -3.702% | Median of 5 pairs; all 5 favorable per metric |
+| Session50 process | +0.327% | +0.334% | -3.507% | Median of 3 pairs; time higher in all 3, RSS lower in all 3 |
+| CLI100 | -2.645% | -2.669% | -4.079% | One complete pair; byte-identical output |
+
+CLI50's median absolute wall change is -116.815 ms and RSS change is
+-59,457,536 bytes. Its largest same-binary wall/CPU fold deviations are
+0.864%/0.882%; no timing veto fires. The native memory-objective screen passes,
+while the separate greater-than-3% wall-and-CPU speed screen does not.
+Session's process wall median rises 70.142 ms while RSS falls 100,990,976 bytes.
+The small process-time change must not hide the interactive request regression:
+
+| Session request | Serialization change | Total request change |
+| --- | ---: | ---: |
+| Initial | +9.903% / +3.393 ms | -0.519% / -23.893 ms |
+| Hot | +8.962% / +2.948 ms | +8.647% / +2.962 ms |
+| Equal edit | +6.519% / +2.181 ms | +5.439% / +2.078 ms |
+| Changed edit | +14.525% / +5.067 ms | +0.053% / +4.181 ms |
+| Restore | +13.691% / +4.823 ms | +1.560% / +126.274 ms |
+
+Each percentage and absolute change is a separately computed paired median.
+All three pairs have at least 3% higher serialization time for each request.
+The writer loop and escaping code are unchanged; Str now accesses an inner
+character handle through SharedText before the same byte scan. No descriptor
+allocation or text clone occurs in normal Str emission. Extra indirection,
+layout/code generation and locality are candidate explanations, not established
+causes. A bounded actual-crate integer/string array/map emission comparison
+can distinguish these mechanisms before another representation change.
+
+Inspection of the authenticated ordinary Session executables narrows the
+candidate mechanisms. The Str branch calls `write_json_str` directly in both
+builds: G loads the character pointer and length from Value, while H first
+loads the descriptor pointer and then the character pointer and length.
+There is one additional dependent load instruction, with no accessor call,
+reference-count update or allocation in that branch. An accessor-only inline
+annotation therefore has no demonstrated target in these binaries. The main
+`go` dispatch also changes: G reads a byte discriminant; H reads a word and
+normalizes the two integer representations before indexing the dispatch table.
+This is a concrete competing explanation affecting more than string values,
+not a measurement of its runtime cost. Original symbols, disassembly, binary
+hashes and command receipts are retained in
+`value-layout/serialization-probe/disassembly-v1/` under the evidence directory.
+
+The guarded H200 cell stops at its 8 GiB physical-footprint cap. The first
+crossing sample at 61.078570-61.078682 seconds reports 8,924,568,464 bytes;
+the preceding sample at 60.826358-60.826480 seconds reports 8,565,807,680 bytes.
+All 238 native samples report NORMAL pressure, all 60 runtime competitor scans
+are empty, and observed swap-growth/swapout-growth are zero. The output file
+is absent; the guardian is reaped and owned cleanup passes. Conditional G200
+is skipped. This differs from G's earlier pressure censor and does not prove
+that the host or runtime cannot complete at another prospectively defined
+resource limit. It supplies no completed200 time, peak, typed output or
+ordinary engine-phase attribution. The completed200 requirement remains open.
+
+The next investigations are the measured serialization regression, repeated
+path-to-Value descriptor creation, cleanup residency, and an evidence-based
+capacity follow-up. A Seg text-owner change could avoid repeated `$key`
+wrapping, but would also create descriptors for paths never read as Values;
+its net effect needs measurement. Current CaptureKey conversion already
+allocates nothing. Keep these mechanisms separate from the combined H result.
+
+Evidence is under `../decl-analysis/2026-09-14/value-layout/`: `analysis-v1/`
+contains the fourteen-stage arithmetic; `ordinary-analysis-v2/` preserves the
+accepted numeric analysis with a versioned prose-only correction;
+`phase-residency-work/analysis-v1/` contains the saved-clock joins; and
+`large-analysis-v1/` records complete100 and censored200. These analyses use
+saved bounded metadata and run no additional model. Thin entry adapters reuse
+the previous execution and validation code; exact analyzer string substitutions
+and their occurrence counts are recorded where required. Historical campaigns
+remain immutable. The measured source archive predates this result-only
+documentation update.

@@ -111,7 +111,7 @@ fn values() {
         .ok()
         .expect("v");
     assert!(
-        matches!(&v, Value::Q { dim, value } if dim == "Length*Time^-1" && *value == 1500.0),
+        matches!(&v, Value::Q(quantity) if quantity.dim.as_str() == "Length*Time^-1" && quantity.value == 1500.0),
         "{v:?}"
     );
     let r = run_pipeline(&parse_source("type S = { name: string, inbound = $referrers(L, \"target\") }\ntype L = { source: ref<S>, target: ref<S> }\ntype Top = { services: S[], links: L[] }\nexport output top: Top = { services: [{ name: \"a\" }, { name: \"b\" }], links: [{ source: services[0], target: services[1] }] }\n").decls);

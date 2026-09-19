@@ -32,6 +32,33 @@ fn shared_prefixes_preserve_segments_and_outer_identity() {
 }
 
 #[test]
+fn inline_paths_share_nodes_with_legacy_handles_and_mutate_independently() {
+    let mut pool = PrefixPathPool::default();
+    let segments = [name("root"), name("items"), Seg::Idx(1)];
+    let mut inline = pool.retain_value(&segments);
+    let snapshot = inline.clone();
+    let legacy = pool.retain(&segments);
+    let tail = Rc::downgrade(inline.tail.as_ref().unwrap());
+    assert_eq!(inline, snapshot);
+    assert_eq!(&inline, legacy.as_ref());
+    assert_eq!(
+        inline.prefix_node_ids().collect::<Vec<_>>(),
+        legacy.prefix_node_ids().collect::<Vec<_>>()
+    );
+    inline.push(Seg::Key("changed".into()));
+    assert_eq!(snapshot.to_vec(), segments);
+    assert_eq!(legacy.to_vec(), segments);
+    assert_eq!(inline.pop(), Some(Seg::Key("changed".into())));
+    inline.clear();
+    drop(pool);
+    assert!(tail.upgrade().is_some());
+    drop(snapshot);
+    assert_eq!(legacy.format(Some("root")), "$.items[1]");
+    drop(legacy);
+    assert!(tail.upgrade().is_none());
+}
+
+#[test]
 fn borrowed_iteration_and_copy_on_write_do_not_cache_flat_vectors() {
     let mut pool = PrefixPathPool::default();
     let mut path = pool.retain(&[name("root"), Seg::Idx(1)]);
@@ -336,14 +363,14 @@ fn cursor_reuses_the_full_inline_depth_boundary() {
 
 fn equality_array(path: Vec<Seg>, items: Vec<Value>) -> Value {
     Value::Arr(Rc::new(RefCell::new(ArrV {
-        path: Rc::new(PrefixPath::from(path)),
+        path: PrefixPath::from(path),
         items,
     })))
 }
 
 fn equality_map(path: Vec<Seg>, value: Value) -> Value {
     Value::Map(Rc::new(RefCell::new(MapV {
-        path: Rc::new(PrefixPath::from(path)),
+        path: PrefixPath::from(path),
         entries: [("payload".into(), value)].into_iter().collect(),
     })))
 }
@@ -370,7 +397,7 @@ fn structural_equality_does_not_export_container_paths() {
     let null = Value::Null;
     let scalar = Value::Bool(true);
     let left_path = match &left {
-        Value::Arr(array) => Rc::downgrade(&array.borrow().path),
+        Value::Arr(array) => Rc::downgrade(array.borrow().path.tail.as_ref().unwrap()),
         _ => unreachable!(),
     };
     #[cfg(feature = "runtime-diagnostics")]
@@ -398,7 +425,7 @@ fn structural_equality_does_not_export_container_paths() {
     assert_eq!(
         left_path.strong_count(),
         1,
-        "comparison retains no path owner"
+        "comparison retains no prefix owner"
     );
     drop(left);
     assert!(left_path.upgrade().is_none());

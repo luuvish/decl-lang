@@ -56,7 +56,7 @@ fn compact_emission_preserves_non_document_failure() {
     for indent in [None, Some(0)] {
         // The Rust API permits values that cannot be document roots. Empty
         // serialization must keep failing, rather than emit a blank document.
-        for value in [Value::Absent, Value::Undef, Value::Pat("x".into())] {
+        for value in [Value::Absent, Value::Undef, Value::pattern("x")] {
             let request = emission(value, indent);
             let panic = catch_unwind(AssertUnwindSafe(|| emit_root(&request)))
                 .expect_err("a non-document value must not emit successfully");
@@ -115,7 +115,7 @@ mod serialization {
                     Value::Int(Num::from(1)),
                 ])),
             );
-            record.entry_order.push("extra".into());
+            record.entry_order_mut().push("extra".into());
         }
         assert_eq!(
             eng.serialize(&value, "output", false),
@@ -145,26 +145,20 @@ mod serialization {
                 Value::Int(Num::from(1)),
                 Value::Undef,
                 Value::Null,
-                Value::Pat("x".into()),
+                Value::pattern("x"),
             ],
-            path: Rc::new(vec![].into()),
+            path: Default::default(),
         }));
         let entries = Rc::new(RefCell::new(MapV {
             entries: Default::default(),
-            path: Rc::new(vec![].into()),
+            path: Default::default(),
         }));
         {
             let mut map = entries.borrow_mut();
             map.set("skip".into(), Value::Absent);
             map.set("array".into(), Value::Arr(items.clone()));
             map.set("empty".into(), Value::JObj(Rc::new(vec![])));
-            map.set(
-                "quantity".into(),
-                Value::Q {
-                    dim: "Time".into(),
-                    value: 1.0,
-                },
-            );
+            map.set("quantity".into(), Value::quantity("Time", 1.0));
             map.set(
                 "ref".into(),
                 Value::Ref(Rc::new(vec![
@@ -200,7 +194,7 @@ mod serialization {
         let make = |label: &'static str| {
             let eng = eng.clone();
             let calls = calls.clone();
-            let function: NatFn = Rc::new(move |_| {
+            let function: NatFn = Rc::new(Box::new(move |_| {
                 calls.borrow_mut().push(label);
                 eng.env.report(Diag::error(label, "output".into(), None));
                 eng.record(format!("pre:{label}"));
@@ -210,7 +204,7 @@ mod serialization {
                     "first" => Ok(Value::Int(Num::from(1))),
                     _ => Ok(Value::Int(Num::from(4))),
                 }
-            });
+            }));
             Value::PreVal(Rc::new(PreValV {
                 expr: parse_expr_text("tick()").unwrap(),
                 scope: Scope::new("output", None)
@@ -254,7 +248,7 @@ mod serialization {
         assert!(eng.serialize(&first, "output", false).is_empty());
         let typed = Value::Arr(Rc::new(RefCell::new(ArrV {
             items: vec![first],
-            path: Rc::new(vec![].into()),
+            path: Default::default(),
         })));
         assert_eq!(eng.serialize(&typed, "output", false), "[]");
         assert_eq!(*calls.borrow(), expected);
@@ -786,7 +780,7 @@ mod representation {
                     })))),
                 },
             )],
-            entry_order: Vec::new(),
+            entry_order: Vec::new().into(),
             extras: Vec::new(),
             menv: None,
         }));
@@ -829,7 +823,7 @@ mod representation {
         let segments = vec![Seg::Name("output".into()), Seg::Name("items".into())];
         let array = Rc::new(RefCell::new(ArrV {
             items: vec![Value::Int(Num::from(1))],
-            path: engine.retained_path(&segments),
+            path: engine.container_path(&segments),
         }));
         let value = Value::Arr(array.clone());
         let snapshot = array.borrow().path.clone();
@@ -845,7 +839,7 @@ mod representation {
             prefix_path_diagnostics().flat_exports,
             before.flat_exports + 1
         );
-        Rc::make_mut(&mut array.borrow_mut().path).push(Seg::Idx(3));
+        array.borrow_mut().path.push(Seg::Idx(3));
         assert_eq!(snapshot.len(), 2);
         assert_eq!(value.place().unwrap().last(), Some(&Seg::Idx(3)));
         drop(engine);
@@ -858,7 +852,7 @@ mod representation {
         let flat = vec![Seg::Name("output".into()), Seg::Key("a.b".into())];
         let map = Value::Map(Rc::new(RefCell::new(MapV {
             entries: Default::default(),
-            path: Rc::new(PrefixPath::from(flat.clone())),
+            path: PrefixPath::from(flat.clone()),
         })));
         assert_eq!(map.place().unwrap(), flat);
         let reference = Value::Ref(Rc::new(flat.clone()));

@@ -7,7 +7,7 @@
 //! through here, so that the three implementations print the same bytes.
 //! A port of the reference's render.ts.
 use crate::ast::{Decl, Expr};
-use crate::semantics::{Locals, NatFn, Num, Value, R};
+use crate::semantics::{Locals, Num, Value, R};
 use crate::yaml::{to_json, to_yaml};
 use regex::Regex;
 use std::sync::LazyLock;
@@ -765,15 +765,15 @@ pub fn text_form(eng: &Engine, v: &Value, root_name: &str) -> Result<String, (St
         Value::Null => Ok("null".into()),
         Value::Absent | Value::Undef => no(": absent"),
         Value::Clo(_) | Value::Nat(_) | Value::Std(_) | Value::NsRef(_) => no(": a function"),
-        Value::Q { dim, value } => {
+        Value::Q(q) => {
             let unit = eng
                 .env
                 .base_unit_of
                 .borrow()
-                .get(dim)
+                .get(q.dim.as_str())
                 .cloned()
-                .unwrap_or(dim.clone());
-            Ok(format!("{} {unit}", fmt_f(*value)))
+                .unwrap_or_else(|| q.dim.as_ref().clone());
+            Ok(format!("{} {unit}", fmt_f(q.value)))
         }
         Value::Ref(segs) => Ok(path_str(segs, Some(root_name))),
         Value::Arr(_) | Value::Map(_) | Value::Rec(_) => Ok(eng.serialize(v, root_name, false)),
@@ -806,9 +806,9 @@ fn render_namespace(eng: Rc<Engine>, root_name: &str) -> Value {
             _ => Err(eval_err("render: indent must be an integer in 0..16")),
         }
     };
-    let json: NatFn = {
+    let json = {
         let raw = raw.clone();
-        Rc::new(move |a: &[Value]| -> R<Value> {
+        Value::native(move |a: &[Value]| -> R<Value> {
             if a.is_empty() {
                 return Err(eval_err("render.json expects a value"));
             }
@@ -816,9 +816,9 @@ fn render_namespace(eng: Rc<Engine>, root_name: &str) -> Value {
             Ok(Value::Str(to_json(&raw(&a[0])?, n).into()))
         })
     };
-    let yaml: NatFn = {
+    let yaml = {
         let raw = raw.clone();
-        Rc::new(move |a: &[Value]| -> R<Value> {
+        Value::native(move |a: &[Value]| -> R<Value> {
             if a.is_empty() {
                 return Err(eval_err("render.yaml expects a value"));
             }
@@ -827,7 +827,7 @@ fn render_namespace(eng: Rc<Engine>, root_name: &str) -> Value {
             Ok(Value::Str(to_yaml(&raw(&a[0])?, n).into()))
         })
     };
-    let indent: NatFn = Rc::new(|a: &[Value]| -> R<Value> {
+    let indent = Value::native(|a: &[Value]| -> R<Value> {
         match (a.first(), a.get(1)) {
             (Some(Value::Str(s)), Some(Value::Int(n))) if *n >= Num::from(0) => Ok(Value::Str(
                 s.replace('\n', &format!("\n{}", " ".repeat(n.to_usize().unwrap())))
@@ -837,9 +837,9 @@ fn render_namespace(eng: Rc<Engine>, root_name: &str) -> Value {
         }
     });
     Value::PreObj(Rc::new(vec![
-        ("json".into(), Value::Nat(json)),
-        ("yaml".into(), Value::Nat(yaml)),
-        ("indent".into(), Value::Nat(indent)),
+        ("json".into(), json),
+        ("yaml".into(), yaml),
+        ("indent".into(), indent),
     ]))
 }
 
@@ -849,7 +849,7 @@ fn record_entries(eng: &Engine, inst: &Inst) -> R<Vec<(String, Value)>> {
         let b = inst.borrow();
         let mut out: Vec<String> = vec![];
         let mut done: HashSet<String> = HashSet::new();
-        for n in &b.entry_order {
+        for n in b.entry_order.iter() {
             done.insert(n.clone());
             if b.extra(n).is_some() {
                 continue;
@@ -893,7 +893,7 @@ fn absent_members(inst: &Inst) -> Vec<String> {
         .slots
         .iter()
         .filter(|(_, s)| s.state == SlotState::Absent)
-        .map(|(n, _)| n.clone())
+        .map(|(n, _)| n.to_string())
         .collect()
 }
 
@@ -958,7 +958,7 @@ fn render_nodes(
     let scope = |locals: &FxHashMap<String, Value>| Scope {
         inst: None,
         locals: Locals::from_map(locals),
-        root_name: cx.root_name.clone(),
+        root_name: Rc::from(cx.root_name.as_str()),
         menv: Some(cx.menv.clone()),
     };
     let eval_at = |e: &Rc<Expr>, locals: &FxHashMap<String, Value>, p: Pos| -> RR<Value> {

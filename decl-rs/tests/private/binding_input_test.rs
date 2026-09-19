@@ -19,7 +19,7 @@ fn map_type() -> RT {
 fn callback(run: impl Fn() -> R<Value> + 'static) -> Value {
     Value::PreVal(Rc::new(PreValV {
         expr: Rc::new(Expr::Call {
-            fun: Rc::new(Expr::Lit(Value::Nat(Rc::new(move |_| run())))),
+            fun: Rc::new(Expr::Lit(Value::native(move |_| run()))),
             args: vec![],
         }),
         scope: Scope::new("root", None),
@@ -149,7 +149,7 @@ fn immutable_map_keeps_entry_snapshot_across_cow_mutation() {
 fn mutable_array_snapshots_siblings_before_callbacks_without_holding_a_borrow() {
     let eng = Engine::bare(Env::new());
     let input = Rc::new(RefCell::new(ArrV {
-        path: Rc::new(PrefixPath::default()),
+        path: PrefixPath::default(),
         items: vec![Value::Null, Value::Bool(true)],
     }));
     let weak_input = Rc::downgrade(&input);
@@ -176,7 +176,7 @@ fn mutable_array_snapshots_siblings_before_callbacks_without_holding_a_borrow() 
 fn mutable_map_snapshots_removed_entries_before_callbacks() {
     let eng = Engine::bare(Env::new());
     let input = Rc::new(RefCell::new(MapV {
-        path: Rc::new(PrefixPath::default()),
+        path: PrefixPath::default(),
         entries: [
             ("first".into(), Value::Null),
             ("second".into(), Value::Bool(true)),
@@ -412,7 +412,7 @@ fn immutable_record_survives_tagger_cow_and_reentry_before_lazy_values_are_force
     };
     assert_eq!(tagger_calls.get(), 1);
     assert_eq!(calls.get(), 0, "record binding leaves native values lazy");
-    assert_eq!(inst.borrow().entry_order, ["lazy", "extra.key"]);
+    assert_eq!(inst.borrow().entry_order(), ["lazy", "extra.key"]);
     assert_eq!(
         inst.borrow().slot("missing").unwrap().state,
         SlotState::Invalid
@@ -470,7 +470,7 @@ fn immutable_record_preserves_duplicate_order_last_supply_and_each_unknown_diagn
     };
     assert!(original.upgrade().is_none());
     assert_eq!(
-        inst.borrow().entry_order,
+        inst.borrow().entry_order(),
         ["same", "a.b", "same", "한글", "a.b"]
     );
     assert!(inst.borrow().extras.is_empty());
@@ -505,7 +505,7 @@ fn immutable_record_preserves_duplicate_order_last_supply_and_each_unknown_diagn
 fn mutable_record_input_is_snapshotted_before_tagger_mutates_its_map() {
     let eng = Engine::bare(Env::new());
     let input = Rc::new(RefCell::new(MapV {
-        path: Rc::new(PrefixPath::default()),
+        path: PrefixPath::default(),
         entries: [
             ("later".into(), Value::Bool(true)),
             ("extra.key".into(), Value::Bool(true)),
@@ -542,7 +542,7 @@ fn mutable_record_input_is_snapshotted_before_tagger_mutates_its_map() {
         input.borrow().get("extra.key"),
         Some(Value::Bool(false))
     ));
-    assert_eq!(inst.borrow().entry_order, ["later", "extra.key"]);
+    assert_eq!(inst.borrow().entry_order(), ["later", "extra.key"]);
     assert!(matches!(
         inst.borrow().extra("extra.key"),
         Some(Value::Bool(true))
@@ -734,7 +734,7 @@ fn native_duplicate_record_edits_keep_first_lookup_and_last_supply_distinct() {
         panic!("record result");
     };
     assert!(Rc::ptr_eq(&rebound, &inst));
-    assert_eq!(inst.borrow().entry_order, ["same", "same"]);
+    assert_eq!(inst.borrow().entry_order(), ["same", "same"]);
     assert_eq!(
         inst.borrow().slot("same").unwrap().state,
         SlotState::Unforced
@@ -780,7 +780,7 @@ fn borrowed_record_values_remain_gc_roots_during_diagnostic_callbacks() {
         let entries = vec![("child".into(), Value::Rec(child))];
         let source = if mutable_input {
             Value::Map(Rc::new(RefCell::new(MapV {
-                path: Rc::new(PrefixPath::default()),
+                path: PrefixPath::default(),
                 entries: entries.into_iter().collect(),
             })))
         } else {
@@ -914,7 +914,7 @@ fn duplicate_record_values_gain_ownership_only_when_the_selected_slot_is_created
         1,
         "selected descriptor owns its value after raw release"
     );
-    assert_eq!(inst.borrow().entry_order, ["same", "same"]);
+    assert_eq!(inst.borrow().entry_order(), ["same", "same"]);
     assert!(matches!(
         eng.force_slot(&inst, "same"),
         Ok(Value::Bool(false))

@@ -1943,7 +1943,7 @@ impl Session {
                                 let iv = eng.ev(i, &sc)?;
                                 base.push(match iv {
                                     Value::Int(n) => Seg::Idx(n.to_string().parse().unwrap_or(0)),
-                                    Value::Str(s) => Seg::Key(s),
+                                    Value::Str(s) => Seg::Key(s.into_rc()),
                                     other => Seg::Key(Rc::from(crate::infer::js_str(&other))),
                                 });
                                 segs = Some(base);
@@ -2269,7 +2269,7 @@ impl Session {
         let sc = Scope {
             inst: Some(inst.clone()),
             locals: Locals::new(),
-            root_name,
+            root_name: root_name.into(),
             menv: Some(entry.env.clone()),
         };
         eng.eval_place(rd, &sc).ok().flatten()

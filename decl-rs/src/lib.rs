@@ -36,4 +36,13 @@ pub use api::{
 pub mod evaluation_diagnostics;
 
 #[cfg(feature = "runtime-diagnostics")]
+pub mod expression_diagnostics;
+
+#[cfg(feature = "runtime-diagnostics")]
+pub mod root_binding_diagnostics;
+
+#[cfg(feature = "runtime-diagnostics")]
+pub mod phase_events;
+
+#[cfg(feature = "runtime-diagnostics")]
 pub mod allocation_diagnostics;

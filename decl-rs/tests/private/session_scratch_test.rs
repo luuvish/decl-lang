@@ -13,7 +13,7 @@ fn instance(path: &str) -> Inst {
         ps: RefCell::new(None),
         parent: None,
         slots: Vec::new(),
-        entry_order: Vec::new(),
+        entry_order: Vec::new().into(),
         extras: Vec::new(),
         menv: None,
     })

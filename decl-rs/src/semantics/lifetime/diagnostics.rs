@@ -108,11 +108,95 @@ pub(super) fn stamp() -> Stamp {
     }
 }
 
+/// Raw value variants of unique Check descriptors inspected in one graph pass.
+/// This is a population census, not a count of equal values or cache hits.
+/// No raw value is evaluated, cloned, retained, or compared with another value.
+#[derive(Clone, Copy, Default, Serialize)]
+pub struct CheckRawWork {
+    pub small_int: usize,
+    pub big_int: usize,
+    pub float: usize,
+    pub string: usize,
+    pub boolean: usize,
+    pub null: usize,
+    pub absent: usize,
+    pub undefined: usize,
+    pub quantity: usize,
+    pub reference: usize,
+    pub record: usize,
+    pub array: usize,
+    pub map: usize,
+    pub range: usize,
+    pub closure: usize,
+    pub native: usize,
+    pub std_path: usize,
+    pub namespace: usize,
+    pub pattern: usize,
+    pub pre_object: usize,
+    pub pre_array: usize,
+    pub pre_value: usize,
+    pub json_object: usize,
+    pub json_array: usize,
+    pub segments: usize,
+}
+impl CheckRawWork {
+    pub(super) fn record(&mut self, raw: &super::Value) {
+        use super::{Num, Value};
+        let count = match raw {
+            Value::Int(Num::Small(_)) => &mut self.small_int,
+            Value::Int(Num::Big(_)) => &mut self.big_int,
+            Value::Float(_) => &mut self.float,
+            Value::Str(_) => &mut self.string,
+            Value::Bool(_) => &mut self.boolean,
+            Value::Null => &mut self.null,
+            Value::Absent => &mut self.absent,
+            Value::Undef => &mut self.undefined,
+            Value::Q(_) => &mut self.quantity,
+            Value::Ref(_) => &mut self.reference,
+            Value::Rec(_) => &mut self.record,
+            Value::Arr(_) => &mut self.array,
+            Value::Map(_) => &mut self.map,
+            Value::Range(_) => &mut self.range,
+            Value::Clo(_) => &mut self.closure,
+            Value::Nat(_) => &mut self.native,
+            Value::Std(_) => &mut self.std_path,
+            Value::NsRef(_) => &mut self.namespace,
+            Value::Pat(_) => &mut self.pattern,
+            Value::PreObj(_) => &mut self.pre_object,
+            Value::PreArr(_) => &mut self.pre_array,
+            Value::PreVal(_) => &mut self.pre_value,
+            Value::JObj(_) => &mut self.json_object,
+            Value::JArr(_) => &mut self.json_array,
+            Value::Segs(_) => &mut self.segments,
+        };
+        *count += 1;
+    }
+}
+
+#[derive(Clone, Copy, Default, Serialize)]
+pub struct ComputeWork {
+    /// Unique descriptor nodes in this pass, never slot-handle occurrences.
+    pub check: usize,
+    /// Disjoint subsets whose sum equals `check`; expired nodes are excluded.
+    pub check_raw: CheckRawWork,
+    pub default: usize,
+    pub derived: usize,
+    /// Subset of derived descriptors with an explicitly supplied value.
+    pub derived_supplied: usize,
+    pub bridge: usize,
+    /// Weak descriptor nodes that could no longer be inspected.
+    pub expired: usize,
+    /// Inline descriptor body only; excludes Rc headers and captured allocations.
+    pub body_size_bytes: usize,
+}
+
 #[derive(Clone, Copy, Default, Serialize)]
 pub struct Work {
     pub add_attempts: usize,
     pub duplicate_node_hits: usize,
     pub node_kinds: [usize; 19],
+    /// Optional representation attribution; not an additional set of graph nodes.
+    pub compute: ComputeWork,
     pub seed_nodes: usize,
     pub traced_nodes: usize,
     pub strong_edge_occurrences: usize,

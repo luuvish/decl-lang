@@ -2,26 +2,88 @@
 //! engine and lexical frame at execution time; none capture a record instance.
 use crate::ast::*;
 use crate::engine::{to_index, Engine};
+#[cfg(feature = "runtime-diagnostics")]
+use crate::expression_diagnostics as expr_diag;
 use crate::semantics::*;
-use rustc_hash::{FxHashMap, FxHashSet};
+use rustc_hash::FxHashMap;
 use std::cell::{Cell, RefCell};
-use std::rc::Rc;
+use std::rc::{Rc, Weak};
 
 /// One shared expression, supplied with an engine and runtime scope.
 pub type Op = Rc<dyn Fn(&Engine, &Scope) -> R<Value>>;
 type Cache = RefCell<FxHashMap<usize, (Rc<Expr>, Op)>>;
 
+#[cfg(test)]
+#[path = "../../tests/private/member_compute_test.rs"]
+mod member_compute_tests;
+
 pub(crate) struct MemberPlan {
+    pub name: Rc<str>,
     pub types: Rc<Vec<RT>>,
     pub expression: Option<Op>,
     pub fallback: Option<Op>,
     pub deferred: bool,
+    // One recent descriptor, tied to this exact declaration/source snapshot.
+    // Weak storage never keeps its expression/environment captures alive.
+    recent_compute: RefCell<Weak<Compute>>,
+}
+
+impl MemberPlan {
+    pub(crate) fn reusable_compute(
+        &self,
+        kind: MKind,
+        root_name: Rc<str>,
+        menv: Option<Rc<Env>>,
+        create: impl FnOnce(Rc<str>, Option<Rc<Env>>) -> Compute,
+    ) -> Rc<Compute> {
+        let cached = self.recent_compute.borrow().upgrade();
+        if let Some(compute) = cached {
+            let context = match (kind, &*compute) {
+                (
+                    MKind::Dflt,
+                    Compute::Default {
+                        root_name, menv, ..
+                    },
+                )
+                | (
+                    MKind::Der,
+                    Compute::Derived {
+                        supplied: None,
+                        root_name,
+                        menv,
+                        ..
+                    },
+                ) => Some((root_name, menv)),
+                _ => None,
+            };
+            if let Some((old_root, old_env)) = context {
+                let same_env = match (old_env, &menv) {
+                    (None, None) => true,
+                    (Some(a), Some(b)) => Rc::ptr_eq(a, b),
+                    _ => false,
+                };
+                if Rc::ptr_eq(old_root, &root_name) && same_env {
+                    return compute;
+                }
+            }
+            drop(compute);
+        }
+        // Neither descriptor destruction nor construction runs under the
+        // cache borrow. Native COW dissociates a lone owner's cached Weak.
+        let compute = Rc::new(create(root_name, menv));
+        let old = self.recent_compute.replace(Rc::downgrade(&compute));
+        drop(old);
+        compute
+    }
 }
 
 pub(crate) struct Schema {
     source: Rc<Vec<Member>>,
     pub members: Vec<MemberPlan>,
-    pub names: FxHashSet<String>,
+    pub names: FxHashMap<Rc<str>, usize>,
+    // One weak recent input shape per compiled schema: no record/value owners,
+    // and no unbounded cache of arbitrary document keys or order permutations.
+    entry_order: RefCell<Weak<Vec<String>>>,
 }
 
 /// Executable expressions and schema plans shared for one module universe.
@@ -38,6 +100,28 @@ pub struct Programs {
 }
 
 impl Programs {
+    pub(crate) fn entry_order(&self, rt: &RT, entries: &[(String, Value)]) -> Rc<Vec<String>> {
+        let schemas = self.schemas.borrow();
+        let schema = schemas
+            .get(&(Rc::as_ptr(rt) as usize))
+            .map(|(_, schema)| schema);
+        if let Some(order) = schema.and_then(|schema| schema.entry_order.borrow().upgrade()) {
+            if order.len() == entries.len()
+                && order
+                    .iter()
+                    .zip(entries)
+                    .all(|(name, (key, _))| name == key)
+            {
+                return order;
+            }
+        }
+        let order = Rc::new(entries.iter().map(|(key, _)| key.clone()).collect());
+        if let Some(schema) = schema {
+            *schema.entry_order.borrow_mut() = Rc::downgrade(&order);
+        }
+        order
+    }
+
     pub(crate) fn schema(&self, rt: &RT) -> Rc<Schema> {
         let id = Rc::as_ptr(rt) as usize;
         let source = rec_members(rt);
@@ -46,9 +130,10 @@ impl Programs {
                 return hit.clone();
             }
         }
-        let members = source
+        let members: Vec<MemberPlan> = source
             .iter()
             .map(|m| MemberPlan {
+                name: Rc::from(m.name.as_str()),
                 types: Rc::new(
                     m.conj
                         .clone()
@@ -57,13 +142,19 @@ impl Programs {
                 expression: m.expr.as_ref().map(|e| self.get(e)),
                 fallback: m.dflt.as_ref().map(|e| self.get(e)),
                 deferred: m.expr.as_ref().is_some_and(|e| mentions_referrers(e)),
+                recent_compute: RefCell::new(Weak::new()),
             })
             .collect();
-        let names = source.iter().map(|m| m.name.clone()).collect();
+        let names = members
+            .iter()
+            .enumerate()
+            .map(|(index, member)| (member.name.clone(), index))
+            .collect();
         let schema = Rc::new(Schema {
             source,
             members,
             names,
+            entry_order: RefCell::new(Weak::new()),
         });
         self.schemas
             .borrow_mut()
@@ -160,7 +251,7 @@ impl Programs {
                     if let Value::Segs(p) = raw {
                         let mut p = (*p).clone();
                         p.push(match &i {
-                            Value::Str(k) => Seg::Key(k.clone()),
+                            Value::Str(k) => Seg::Key(k.to_rc()),
                             _ => Seg::Idx(to_index(&i)?.max(0) as usize),
                         });
                         return Ok(Value::Segs(Rc::new(p)));
@@ -187,7 +278,7 @@ impl Programs {
                                 Some(v) => Ok(v.clone()),
                                 None => {
                                     let mut p = b.path.to_vec();
-                                    p.push(Seg::Key(k.clone()));
+                                    p.push(Seg::Key(k.to_rc()));
                                     Ok(Value::Segs(Rc::new(p)))
                                 }
                             }
@@ -199,7 +290,7 @@ impl Programs {
                             let v = eng.access(&x, k)?;
                             if v.is_absent() {
                                 let mut p = r.borrow().path.to_vec();
-                                p.push(Seg::Name(k.clone()));
+                                p.push(Seg::Name(k.to_rc()));
                                 Ok(Value::Segs(Rc::new(p)))
                             } else {
                                 Ok(v)
@@ -224,17 +315,14 @@ impl Programs {
                 Rc::new(move |_, _| Ok(v.clone()))
             }
             Expr::Pattern(s) => {
-                let s = s.clone();
+                let s = SharedText::from(s.as_str());
                 Rc::new(move |_, _| Ok(Value::Pat(s.clone())))
             }
             Expr::UnitLit { num, unit } => {
                 let (num, unit) = (*num, unit.clone());
                 Rc::new(move |eng, _| {
                     let (key, to_base) = eng.env.unit_info(&unit).or_else(err)?;
-                    Ok(Value::Q {
-                        dim: key,
-                        value: num * to_base,
-                    })
+                    Ok(Value::quantity(key, num * to_base))
                 })
             }
             Expr::Paren(x) => self.get(x),
@@ -307,7 +395,10 @@ impl Programs {
                         "!" => Ok(Value::Bool(!eng.truthy(&x)?)),
                         "-" => match x {
                             Value::Absent => err("absent consumed"),
-                            Value::Q { dim, value } => Ok(Value::Q { dim, value: -value }),
+                            Value::Q(mut q) => {
+                                q.value = -q.value;
+                                Ok(Value::Q(q))
+                            }
                             Value::Int(i) => Ok(Value::Int(-i)),
                             Value::Float(f) => Ok(Value::Float(-f)),
                             _ => err("bad operand for unary -"),
@@ -455,31 +546,55 @@ impl Programs {
             }
             Expr::Comp { head, clauses } => {
                 self.get(head);
+                #[cfg(feature = "runtime-diagnostics")]
+                let site = expr_diag::selected(e, true);
                 let (head, clauses) = (head.clone(), self.clauses(clauses));
                 Rc::new(move |eng, sc| {
-                    let mut items = vec![];
-                    visit(eng, sc, &clauses, &mut |scope| {
-                        items.push((false, pre(&head, scope)));
-                        Ok(())
-                    })?;
-                    Ok(Value::PreArr(Rc::new(items)))
+                    #[cfg(feature = "runtime-diagnostics")]
+                    let mut attempt = expr_diag::Attempt::begin(site, eng.phase.get());
+                    let evaluate = || {
+                        let mut items = vec![];
+                        visit(
+                            eng,
+                            sc,
+                            &clauses,
+                            &mut |scope| {
+                                items.push((false, pre(&head, scope)));
+                                Ok(())
+                            },
+                            #[cfg(feature = "runtime-diagnostics")]
+                            attempt.handle().map(|h| (h, 0)),
+                        )?;
+                        Ok(Value::PreArr(Rc::new(items)))
+                    };
+                    let result = evaluate();
+                    #[cfg(feature = "runtime-diagnostics")]
+                    attempt.finish(&result);
+                    result
                 })
             }
             Expr::MapComp { key, val, clauses } => {
                 let (key, val, clauses) = (self.get(key), self.get(val), self.clauses(clauses));
                 Rc::new(move |eng, sc| {
                     let mut entries = vec![];
-                    visit(eng, sc, &clauses, &mut |scope| {
-                        let Value::Str(k) = key(eng, scope)? else {
-                            return err("map key must be string");
-                        };
-                        let k = k.to_string();
-                        if entries.iter().any(|(n, _)| *n == k) {
-                            return err_code(format!("duplicate key {k}"), "E5004");
-                        }
-                        entries.push((k, val(eng, scope)?));
-                        Ok(())
-                    })?;
+                    visit(
+                        eng,
+                        sc,
+                        &clauses,
+                        &mut |scope| {
+                            let Value::Str(k) = key(eng, scope)? else {
+                                return err("map key must be string");
+                            };
+                            let k = k.to_string();
+                            if entries.iter().any(|(n, _)| *n == k) {
+                                return err_code(format!("duplicate key {k}"), "E5004");
+                            }
+                            entries.push((k, val(eng, scope)?));
+                            Ok(())
+                        },
+                        #[cfg(feature = "runtime-diagnostics")]
+                        None,
+                    )?;
                     Ok(Value::PreObj(Rc::new(entries)))
                 })
             }
@@ -520,21 +635,52 @@ fn visit(
     sc: &Scope,
     clauses: &[Clause],
     emit: &mut dyn FnMut(&Scope) -> R<()>,
+    #[cfg(feature = "runtime-diagnostics")] trace: Option<(expr_diag::Handle, usize)>,
 ) -> R<()> {
     let Some(c) = clauses.first() else {
-        return emit(sc);
+        emit(sc)?;
+        #[cfg(feature = "runtime-diagnostics")]
+        expr_diag::emitted(trace.map(|(h, _)| h));
+        return Ok(());
     };
+    #[cfg(feature = "runtime-diagnostics")]
+    if let Some((h, i)) = trace {
+        expr_diag::clause(Some(h), i, 0);
+    }
     for item in eng.iterate(&(c.iter)(eng, sc)?)? {
+        #[cfg(feature = "runtime-diagnostics")]
+        if let Some((h, i)) = trace {
+            expr_diag::clause(Some(h), i, 1);
+        }
         let next = sc.with_locals(sc.locals.with(c.name.clone(), item));
         let mut keep = true;
         for f in &c.filters {
+            #[cfg(feature = "runtime-diagnostics")]
+            if let Some((h, i)) = trace {
+                expr_diag::clause(Some(h), i, 2);
+            }
             if !eng.truthy(&f(eng, &next)?)? {
+                #[cfg(feature = "runtime-diagnostics")]
+                if let Some((h, i)) = trace {
+                    expr_diag::clause(Some(h), i, 3);
+                }
                 keep = false;
                 break;
             }
         }
         if keep {
-            visit(eng, &next, &clauses[1..], emit)?;
+            #[cfg(feature = "runtime-diagnostics")]
+            if let Some((h, i)) = trace {
+                expr_diag::clause(Some(h), i, 4);
+            }
+            visit(
+                eng,
+                &next,
+                &clauses[1..],
+                emit,
+                #[cfg(feature = "runtime-diagnostics")]
+                trace.map(|(h, i)| (h, i + 1)),
+            )?;
         }
     }
     Ok(())

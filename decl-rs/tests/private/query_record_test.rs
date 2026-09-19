@@ -129,7 +129,7 @@ fn diagnostic_record(name: &str, state: SlotState) -> Inst {
                 compute: None,
             },
         )],
-        entry_order: vec![name.into()],
+        entry_order: vec![name.into()].into(),
         extras: vec![],
         menv: None,
     })

@@ -27,8 +27,8 @@ pub(crate) fn comparable(v: &Value, eng: &Engine) -> bool {
         | Value::Float(_)
         | Value::Str(_)
         | Value::Bool(_)
-        | Value::Q { .. }
-        | Value::Range { .. } => true,
+        | Value::Q(_)
+        | Value::Range(_) => true,
         Value::Ref(p) => {
             let id = Rc::as_ptr(p) as usize;
             !eng.snap_refs.borrow().contains_key(&id)

@@ -3,9 +3,13 @@
 //! slots with cycle detection, taint / root-cause diagnostics,
 //! $referrers universe ordering, canonical JSON output.
 use crate::ast::*;
+#[cfg(feature = "runtime-diagnostics")]
+use crate::evaluation_diagnostics::EventStage;
+#[cfg(feature = "runtime-diagnostics")]
+use crate::expression_diagnostics as expr_diag;
 use crate::qengine::edits::Edits;
 use crate::qengine::graph::{QueryId, QueryPool, ReadSet};
-use crate::qengine::programs::Programs;
+use crate::qengine::programs::{Programs, Schema};
 use crate::qengine::revisions::Revisions;
 use crate::qengine::rounds::RoundCache;
 use crate::semantics::*;
@@ -37,6 +41,10 @@ mod binding_path_tests;
 #[path = "../tests/private/binding_input_test.rs"]
 mod binding_input_tests;
 
+#[cfg(test)]
+#[path = "../tests/private/binding_lookup_test.rs"]
+mod binding_lookup_tests;
+
 // Immutable JSON containers remain owned by `raw` throughout binding. Clone
 // only the item being visited; mutable and expanded inputs keep their eager
 // snapshots and move each item out without an additional clone.
@@ -65,6 +73,132 @@ impl<T: Clone> Iterator for BindingInput<'_, T> {
 
 impl<T: Clone> ExactSizeIterator for BindingInput<'_, T> {}
 
+// Scratch lookup borrows the ordered input snapshot. Only the selected value
+// gains an owner when its slot is constructed. Each reentrant bind owns its
+// own scratch storage, while the immutable schema supplies stable indices.
+enum RecordLookup<'a> {
+    Direct(&'a [(String, Value)]),
+    Named(HashMap<&'a str, &'a Value>),
+    Indexed(IndexedInput<'a>),
+}
+
+impl<'a> RecordLookup<'a> {
+    fn new(entries: &'a [(String, Value)], members: usize, schema: Option<&Schema>) -> Self {
+        if entries.len() <= 1 || members <= 1 {
+            return Self::Direct(entries);
+        }
+        if let Some(schema) = schema.filter(|s| s.names.len() == members) {
+            let mut supplied = IndexedInput::Inline {
+                entries: [None; 8],
+                len: 0,
+            };
+            for (name, value) in entries {
+                if let Some(&index) = schema.names.get(name.as_str()) {
+                    supplied.insert(index, value, members);
+                }
+            }
+            Self::Indexed(supplied)
+        } else {
+            // Bare engines and native duplicate schema names keep the name
+            // lookup: each repeated member receives the same last input.
+            let mut supplied = HashMap::new();
+            for (name, value) in entries {
+                supplied.insert(name.as_str(), value);
+            }
+            Self::Named(supplied)
+        }
+    }
+
+    fn get(&self, index: usize, name: &str) -> Option<&'a Value> {
+        match self {
+            Self::Direct(entries) => entries
+                .iter()
+                .rev()
+                .find_map(|(key, value)| (key == name).then_some(value)),
+            Self::Named(entries) => entries.get(name).copied(),
+            Self::Indexed(entries) => entries.get(index),
+        }
+    }
+}
+
+enum IndexedInput<'a> {
+    // Eight distinct hits require no heap allocation, regardless of schema
+    // width, unknown keys, or repeated occurrences of the same input key.
+    Inline {
+        entries: [Option<(usize, &'a Value)>; 8],
+        len: usize,
+    },
+    Sparse(FxHashMap<usize, &'a Value>),
+    Dense(Vec<Option<&'a Value>>),
+}
+
+impl<'a> IndexedInput<'a> {
+    fn insert(&mut self, index: usize, value: &'a Value, members: usize) {
+        match self {
+            Self::Inline { entries, len } => {
+                if let Some((_, previous)) = entries[..*len]
+                    .iter_mut()
+                    .flatten()
+                    .find(|(key, _)| *key == index)
+                {
+                    *previous = value;
+                    return;
+                }
+                if *len < entries.len() {
+                    entries[*len] = Some((index, value));
+                    *len += 1;
+                    return;
+                }
+                // A dense cell is one pointer; a sparse pair is an index and
+                // pointer. At half density, dense payload does not exceed the
+                // distinct sparse pairs, before any hash-table overhead.
+                if *len + 1 >= members.div_ceil(2) {
+                    let mut dense = vec![None; members];
+                    for &(key, value) in entries.iter().flatten() {
+                        dense[key] = Some(value);
+                    }
+                    dense[index] = Some(value);
+                    *self = Self::Dense(dense);
+                } else {
+                    let mut sparse = FxHashMap::default();
+                    sparse.reserve(*len + 1);
+                    for &(key, value) in entries.iter().flatten() {
+                        sparse.insert(key, value);
+                    }
+                    sparse.insert(index, value);
+                    *self = Self::Sparse(sparse);
+                }
+            }
+            Self::Sparse(entries) => {
+                if let Some(previous) = entries.get_mut(&index) {
+                    *previous = value;
+                } else if entries.len() + 1 >= members.div_ceil(2) {
+                    let mut dense = vec![None; members];
+                    for (&key, &value) in entries.iter() {
+                        dense[key] = Some(value);
+                    }
+                    dense[index] = Some(value);
+                    *self = Self::Dense(dense);
+                } else {
+                    entries.insert(index, value);
+                }
+            }
+            Self::Dense(entries) => entries[index] = Some(value),
+        }
+    }
+
+    fn get(&self, index: usize) -> Option<&'a Value> {
+        match self {
+            Self::Inline { entries, len } => entries[..*len]
+                .iter()
+                .flatten()
+                .find_map(|&(key, value)| (key == index).then_some(value)),
+            Self::Sparse(entries) => entries.get(&index).copied(),
+            Self::Dense(entries) => entries[index],
+        }
+    }
+}
+
 /// the evaluator (§9): binds documents and expressions to types, forces slots
 /// lazily with dependency tracking, validates, serializes
 pub struct Engine {
@@ -89,7 +223,7 @@ pub struct Engine {
     /// the slots being forced, innermost last: a key already here is a cycle (E5007)
     pub(crate) computing: RefCell<Vec<QueryId>>,
     /// every slot by its key, for the dependency graph
-    pub(crate) slots_by_key: RefCell<FxHashMap<QueryId, (Inst, String)>>,
+    pub(crate) slots_by_key: RefCell<FxHashMap<QueryId, (Inst, Rc<str>)>>,
     query_keys: Rc<QueryPool>,
     /// roots whose binding deferred through `$referrers` in phase 1: bound again after the deferred slots
     pub deferred_roots: RefCell<Vec<DeferredRoot>>,
@@ -128,10 +262,13 @@ pub struct Engine {
     pub(crate) snap_refs: RefCell<FxHashMap<usize, (Rc<SegPath>, Rc<Engine>)>>,
     /// An unmaterialized literal is materialized once by allocation identity.
     /// Weak raw owners pin that identity without retaining discarded captures;
-    /// results stay strong, so live raw literals still reuse the same result.
+    /// Results stay strong while raw literals can be reused. Expired raw
+    /// identities are periodically retired without keeping their result graphs.
     mat_cache: RefCell<MaterializedCache>,
+    materialized_sweep_at: Cell<usize>,
     /// Bounded weak sharing for typed-container paths; it owns no runtime values.
     path_pool: RefCell<PrefixPathPool>,
+    map_shapes: RefCell<MapShapePool>,
     /// Shared executable programs, enabled by the query evaluator.
     pub programs: RefCell<Option<Rc<Programs>>>,
     /// Revision stamps for retained queries.
@@ -150,8 +287,9 @@ pub struct Engine {
 }
 
 // Keep the Rc allocation identity pinned without retaining the raw literal's
-// Vec contents and their captured scopes. Cached materialized values remain
-// strong until the same clear/transient/Engine lifetime boundary as before.
+// Vec contents and their captured scopes. A live raw owner must keep the same
+// strong result even when every caller drops its returned handle: recomputing
+// could repeat native callbacks or observe later mutable inputs.
 // A Weak keeps its allocation address unavailable for reuse even after the
 // last raw strong owner drops; array/object variants retain the correct type.
 enum MaterializedLiteral {
@@ -159,7 +297,14 @@ enum MaterializedLiteral {
     Object(Weak<Vec<(String, Value)>>),
 }
 type MaterializedCache = FxHashMap<usize, (MaterializedLiteral, Value)>;
+const MATERIALIZED_SWEEP_MIN: usize = 1024;
 impl MaterializedLiteral {
+    fn alive(&self) -> bool {
+        match self {
+            Self::Array(owner) => owner.strong_count() != 0,
+            Self::Object(owner) => owner.strong_count() != 0,
+        }
+    }
     fn matches(&self, raw: &Value) -> bool {
         match (self, raw) {
             (Self::Array(owner), Value::PreArr(v)) => owner.as_ptr() == Rc::as_ptr(v),
@@ -448,7 +593,7 @@ fn structural_of(v: &Value) -> RT {
                 hi: None,
             })
         }
-        Value::Q { dim, .. } => ty(RTk::Quantity(dim.clone())),
+        Value::Q(q) => ty(RTk::Quantity(q.dim.as_ref().clone())),
         _ => ty(RTk::Any),
     }
 }
@@ -490,7 +635,37 @@ impl Engine {
     pub(crate) fn clear_materialized(&self) {
         #[cfg(feature = "runtime-diagnostics")]
         crate::retention_diagnostics::cache_clear(self.mat_cache.borrow().len());
-        self.mat_cache.borrow_mut().clear();
+        let retired = std::mem::take(&mut *self.mat_cache.borrow_mut());
+        self.materialized_sweep_at.set(MATERIALIZED_SWEEP_MIN);
+        drop(retired);
+    }
+
+    /// A dead raw allocation cannot be materialized again. Remove its entry
+    /// before releasing either identity or result, and run native destructors
+    /// only after releasing the cache borrow. Survivors stay strong.
+    fn prune_materialized(&self) {
+        let mut retired = Vec::new();
+        {
+            let mut cache = self.mat_cache.borrow_mut();
+            cache.retain(|_, (raw, result)| {
+                if raw.alive() {
+                    true
+                } else {
+                    retired.push(std::mem::replace(result, Value::Undef));
+                    false
+                }
+            });
+            let live = cache.len().max(MATERIALIZED_SWEEP_MIN);
+            // retain scans capacity. Avoid repeatedly scanning a once-large
+            // table after most raw owners expire, without shrinking on every
+            // sweep or retaining an unbounded scratch buffer.
+            if cache.capacity() > live.saturating_mul(4) {
+                cache.shrink_to(live);
+            }
+            self.materialized_sweep_at
+                .set(cache.len().saturating_mul(2).max(MATERIALIZED_SWEEP_MIN));
+        }
+        drop(retired);
     }
 
     /// Request syntax and literal materializations live only for that request.
@@ -499,6 +674,7 @@ impl Engine {
             engine: &'a Engine,
             programs: Option<Rc<Programs>>,
             materialized: MaterializedCache,
+            materialized_sweep_at: usize,
         }
         impl Drop for Restore<'_> {
             fn drop(&mut self) {
@@ -508,7 +684,14 @@ impl Engine {
                     self.engine.mat_cache.borrow().len(),
                     self.materialized.len(),
                 );
-                *self.engine.mat_cache.borrow_mut() = std::mem::take(&mut self.materialized);
+                let retired = std::mem::replace(
+                    &mut *self.engine.mat_cache.borrow_mut(),
+                    std::mem::take(&mut self.materialized),
+                );
+                self.engine
+                    .materialized_sweep_at
+                    .set(self.materialized_sweep_at);
+                drop(retired);
             }
         }
         let programs = self.programs.borrow_mut().take();
@@ -521,6 +704,7 @@ impl Engine {
             engine: self,
             programs,
             materialized: std::mem::take(&mut *self.mat_cache.borrow_mut()),
+            materialized_sweep_at: self.materialized_sweep_at.replace(MATERIALIZED_SWEEP_MIN),
         };
         f()
     }
@@ -558,7 +742,9 @@ impl Engine {
             const_envs: RefCell::new(vec![]),
             snap_refs: RefCell::new(FxHashMap::default()),
             mat_cache: RefCell::new(FxHashMap::default()),
+            materialized_sweep_at: Cell::new(MATERIALIZED_SWEEP_MIN),
             path_pool: RefCell::new(PrefixPathPool::default()),
+            map_shapes: RefCell::new(MapShapePool::default()),
             programs: RefCell::new(None),
             revisions: RefCell::new(None),
             edits: RefCell::new(None),
@@ -581,6 +767,12 @@ impl Engine {
     pub fn retained_path(&self, segments: &[Seg]) -> Rc<PrefixPath> {
         self.path_pool.borrow_mut().retain(segments)
     }
+
+    /// Retain an inline container path, sharing immutable prefix nodes.
+    /// Use this for `ArrV::path` and `MapV::path`; no outer Rc is allocated.
+    pub fn container_path(&self, segments: &[Seg]) -> PrefixPath {
+        self.path_pool.borrow_mut().retain_value(segments)
+    }
     /// Explicit diagnostic scan of the bounded path pool, outside hot binding.
     pub fn retained_path_pool_stats(&self) -> PrefixPathPoolStats {
         self.path_pool.borrow().stats()
@@ -598,14 +790,19 @@ impl Engine {
     pub fn query_slot(&self, key: &str) -> Option<(Inst, String)> {
         let id = self.query_keys.lookup(key)?;
         self.query_slot_id(&id)
+            .map(|(inst, name)| (inst, name.to_string()))
     }
-    pub(crate) fn query_slot_id(&self, key: &QueryId) -> Option<(Inst, String)> {
+    pub(crate) fn query_slot_shared(&self, key: &str) -> Option<(Inst, Rc<str>)> {
+        let id = self.query_keys.lookup(key)?;
+        self.query_slot_id(&id)
+    }
+    pub(crate) fn query_slot_id(&self, key: &QueryId) -> Option<(Inst, Rc<str>)> {
         self.slots_by_key.borrow().get(key).cloned()
     }
-    pub(crate) fn register_query_slot(&self, key: &str, inst: Inst, member: String) {
+    pub(crate) fn register_query_slot(&self, key: &str, inst: Inst, member: Rc<str>) {
         self.register_query_slot_id(self.query_id(key), inst, member);
     }
-    pub(crate) fn register_query_slot_id(&self, key: QueryId, inst: Inst, member: String) {
+    pub(crate) fn register_query_slot_id(&self, key: QueryId, inst: Inst, member: Rc<str>) {
         self.slots_by_key.borrow_mut().insert(key, (inst, member));
     }
     pub(crate) fn remove_query_slot(&self, key: &str) {
@@ -768,7 +965,7 @@ impl Engine {
             ("slot_index_capacity", slots.capacity()),
             (
                 "slot_index_entry_bytes",
-                std::mem::size_of::<(QueryId, (Inst, String))>(),
+                std::mem::size_of::<(QueryId, (Inst, Rc<str>))>(),
             ),
             ("computing_depth", self.computing.borrow().len()),
         ])
@@ -902,13 +1099,10 @@ impl Engine {
         }
         match &**e {
             Expr::Lit(v) => Ok(v.clone()),
-            Expr::Pattern(s) => Ok(Value::Pat(s.clone())),
+            Expr::Pattern(s) => Ok(Value::pattern(s.as_str())),
             Expr::UnitLit { num, unit } => {
                 let (key, to_base) = self.env.unit_info(unit).or_else(err)?;
-                Ok(Value::Q {
-                    dim: key,
-                    value: num * to_base,
-                })
+                Ok(Value::quantity(key, num * to_base))
             }
             Expr::Paren(x) => self.ev(x, sc),
             Expr::MapComp { key, val, clauses } => {
@@ -958,9 +1152,27 @@ impl Engine {
                     .collect(),
             ))),
             Expr::Comp { head, clauses } => {
-                let mut items = vec![];
-                self.comp(head, clauses, 0, sc.locals.clone(), sc, &mut items)?;
-                Ok(Value::PreArr(Rc::new(items)))
+                #[cfg(feature = "runtime-diagnostics")]
+                let mut attempt =
+                    expr_diag::Attempt::begin(expr_diag::selected(e, false), self.phase.get());
+                let evaluate = || {
+                    let mut items = vec![];
+                    self.comp(
+                        head,
+                        clauses,
+                        0,
+                        sc.locals.clone(),
+                        sc,
+                        &mut items,
+                        #[cfg(feature = "runtime-diagnostics")]
+                        attempt.handle(),
+                    )?;
+                    Ok(Value::PreArr(Rc::new(items)))
+                };
+                let result = evaluate();
+                #[cfg(feature = "runtime-diagnostics")]
+                attempt.finish(&result);
+                result
             }
             Expr::If { c, t, f } => {
                 if self.truthy(&self.ev(c, sc)?)? {
@@ -1003,7 +1215,10 @@ impl Engine {
                     "!" => Ok(Value::Bool(!self.truthy(&x)?)),
                     "-" => match x {
                         Value::Absent => err("absent consumed"),
-                        Value::Q { dim, value } => Ok(Value::Q { dim, value: -value }),
+                        Value::Q(mut q) => {
+                            q.value = -q.value;
+                            Ok(Value::Q(q))
+                        }
                         Value::Int(i) => Ok(Value::Int(-i)),
                         Value::Float(f) => Ok(Value::Float(-f)),
                         _ => err("bad operand for unary -"),
@@ -1126,9 +1341,7 @@ impl Engine {
                 if sc.root_name.is_empty() || self.root(&sc.root_name).is_none() {
                     return err_code("$root outside an evaluation root", "E4090");
                 }
-                Ok(Value::Ref(Rc::new(vec![Seg::Name(Rc::from(
-                    sc.root_name.clone(),
-                ))])))
+                Ok(Value::Ref(Rc::new(vec![Seg::Name(sc.root_name.clone())])))
             }
             "$key" => {
                 // the key or index under which $this sits in its parent's
@@ -1146,7 +1359,9 @@ impl Engine {
                 }
                 Ok(match b.path.last() {
                     Some(Seg::Idx(k)) => Value::Int(Num::from(*k)),
-                    Some(Seg::Name(k)) | Some(Seg::Key(k)) => Value::Str(k.clone()),
+                    Some(Seg::Name(k)) | Some(Seg::Key(k)) => {
+                        Value::Str(SharedText::from_rc(k.clone()))
+                    }
                     None => Value::Absent,
                 })
             }
@@ -1177,6 +1392,7 @@ impl Engine {
         locals: Locals,
         sc: &Scope,
         out: &mut Vec<(bool, Value)>,
+        #[cfg(feature = "runtime-diagnostics")] trace: Option<expr_diag::Handle>,
     ) -> R<()> {
         if ci == clauses.len() {
             out.push((
@@ -1190,22 +1406,43 @@ impl Engine {
                     scope: sc.with_locals(locals),
                 })),
             ));
+            #[cfg(feature = "runtime-diagnostics")]
+            expr_diag::emitted(trace);
             return Ok(());
         }
         let cl = &clauses[ci];
+        #[cfg(feature = "runtime-diagnostics")]
+        expr_diag::clause(trace, ci, 0);
         let it = self.ev(&cl.iter, &sc.with_locals(locals.clone()))?;
         for el in self.iterate(&it)? {
+            #[cfg(feature = "runtime-diagnostics")]
+            expr_diag::clause(trace, ci, 1);
             let l2 = locals.with(Rc::from(cl.v.as_str()), el);
             let sc2 = sc.with_locals(l2.clone());
             let mut ok = true;
             for f in &cl.filters {
+                #[cfg(feature = "runtime-diagnostics")]
+                expr_diag::clause(trace, ci, 2);
                 if !self.truthy(&self.ev(f, &sc2)?)? {
+                    #[cfg(feature = "runtime-diagnostics")]
+                    expr_diag::clause(trace, ci, 3);
                     ok = false;
                     break;
                 }
             }
             if ok {
-                self.comp(head, clauses, ci + 1, l2, sc, out)?;
+                #[cfg(feature = "runtime-diagnostics")]
+                expr_diag::clause(trace, ci, 4);
+                self.comp(
+                    head,
+                    clauses,
+                    ci + 1,
+                    l2,
+                    sc,
+                    out,
+                    #[cfg(feature = "runtime-diagnostics")]
+                    trace,
+                )?;
             }
         }
         Ok(())
@@ -1402,7 +1639,22 @@ impl Engine {
     }
     /// Bind a root, retaining its source when it must defer to phase two.
     pub fn bind_root(&self, name: &str, src: RootSrc, rt: &RT, sc: &Scope) {
+        #[cfg(feature = "runtime-diagnostics")]
+        use crate::root_binding_diagnostics::{Completion, Outcome, RootAttempt, SourceKind};
+        // Declare diagnostic guards before runtime locals; their final boundary
+        // includes local releases without extending any source/value lifetime.
+        #[cfg(feature = "runtime-diagnostics")]
+        let root_diagnostic = RootAttempt::new(
+            name,
+            self.phase.get(),
+            match &src {
+                RootSrc::Expr(_) => SourceKind::Expr,
+                RootSrc::Doc(_) => SourceKind::Doc,
+            },
+        );
         if !self.should_bind_root(name) {
+            #[cfg(feature = "runtime-diagnostics")]
+            root_diagnostic.skipped();
             return;
         }
         let keep = match &src {
@@ -1410,11 +1662,18 @@ impl Engine {
             RootSrc::Doc(v) => OwnedRootSrc::Doc(v.clone()),
         };
         let produce = || -> R<Value> {
+            #[cfg(feature = "runtime-diagnostics")]
+            root_diagnostic.source_started();
             let raw = match &src {
                 RootSrc::Expr(e) => self.ev(e, sc)?,
                 RootSrc::Doc(v) => v.clone(),
             };
-            self.bind(raw, rt, &[Seg::Name(Rc::from(name))], None, sc)
+            #[cfg(feature = "runtime-diagnostics")]
+            root_diagnostic.source_evaluated();
+            let result = self.bind(raw, rt, &[Seg::Name(Rc::from(name))], None, sc);
+            #[cfg(feature = "runtime-diagnostics")]
+            root_diagnostic.binding_returned();
+            result
         };
         let bound = self.step(&format!("root:{name}"), || {
             match self.edits.borrow().as_ref() {
@@ -1422,17 +1681,32 @@ impl Engine {
                 None => produce(),
             }
         });
+        #[cfg(feature = "runtime-diagnostics")]
+        root_diagnostic.dispatch_returned(match &bound {
+            Ok(_) => Outcome::Bound,
+            Err(Fail::Defer) => Outcome::Defer,
+            Err(Fail::Eval(_)) => Outcome::EvalError,
+            Err(Fail::Taint) => Outcome::Taint,
+        });
         match bound {
-            Ok(v) => self.env.set_root(name, v),
-            Err(Fail::Eval(e)) => self.env.report(Diag {
-                severity: "error".into(),
-                id: None,
-                message: e.msg,
-                path: name.to_string(),
-                code: e.code,
-                loc: None,
-                by: None,
-            }),
+            Ok(v) => {
+                self.env.set_root(name, v);
+                #[cfg(feature = "runtime-diagnostics")]
+                root_diagnostic.body_returned(Completion::Published);
+            }
+            Err(Fail::Eval(e)) => {
+                self.env.report(Diag {
+                    severity: "error".into(),
+                    id: None,
+                    message: e.msg,
+                    path: name.to_string(),
+                    code: e.code,
+                    loc: None,
+                    by: None,
+                });
+                #[cfg(feature = "runtime-diagnostics")]
+                root_diagnostic.body_returned(Completion::EvalError);
+            }
             Err(Fail::Defer) => {
                 if self.phase.get() < 2 {
                     self.deferred_roots.borrow_mut().push(DeferredRoot {
@@ -1441,9 +1715,17 @@ impl Engine {
                         rt: rt.clone(),
                         sc: sc.clone(),
                     });
+                    #[cfg(feature = "runtime-diagnostics")]
+                    root_diagnostic.body_returned(Completion::DeferredQueued);
+                } else {
+                    #[cfg(feature = "runtime-diagnostics")]
+                    root_diagnostic.body_returned(Completion::DeferIgnored);
                 }
             }
-            Err(Fail::Taint) => {}
+            Err(Fail::Taint) => {
+                #[cfg(feature = "runtime-diagnostics")]
+                root_diagnostic.body_returned(Completion::Taint);
+            }
         }
     }
     /// phase 2: the roots that deferred are bound again (after the deferred slots)
@@ -1469,27 +1751,27 @@ impl Engine {
         };
         match op {
             "+" | "-" => {
-                let (Value::Q { dim: ld, value: lv }, Value::Q { dim: rd, value: rv }) = (l, r)
-                else {
+                let (Value::Q(lq), Value::Q(rq)) = (l, r) else {
                     return err(format!("`{op}` mixes quantity and plain number"));
                 };
+                let (ld, lv, rd, rv) = (&lq.dim, &lq.value, &rq.dim, &rq.value);
                 if ld != rd {
                     return err(format!(
                         "quantity dimension mismatch: {} vs {}",
-                        dim_or_1(ld),
-                        dim_or_1(rd)
+                        dim_or_1(ld.as_str()),
+                        dim_or_1(rd.as_str())
                     ));
                 }
-                Ok(Value::Q {
+                Ok(Value::Q(Box::new(QuantityValue {
                     dim: ld.clone(),
                     value: if op == "+" { lv + rv } else { lv - rv },
-                })
+                })))
             }
             "<" | "<=" | ">" | ">=" => {
-                let (Value::Q { dim: ld, value: lv }, Value::Q { dim: rd, value: rv }) = (l, r)
-                else {
+                let (Value::Q(lq), Value::Q(rq)) = (l, r) else {
                     return err("quantity dimension mismatch in comparison");
                 };
+                let (ld, lv, rd, rv) = (&lq.dim, &lq.value, &rq.dim, &rq.value);
                 if ld != rd {
                     return err("quantity dimension mismatch in comparison");
                 }
@@ -1503,7 +1785,7 @@ impl Engine {
             _ => {
                 let mag = |v: &Value| -> Option<f64> {
                     match v {
-                        Value::Q { value, .. } => Some(*value),
+                        Value::Q(q) => Some(q.value),
                         Value::Int(i) => Some(i.to_f64().unwrap_or(f64::INFINITY)),
                         Value::Float(f) => Some(*f),
                         _ => None,
@@ -1516,7 +1798,7 @@ impl Engine {
                     return err_code("division by zero", "E5001");
                 }
                 let dv = |v: &Value| match v {
-                    Value::Q { dim, .. } => vec_of_key(dim),
+                    Value::Q(q) => vec_of_key(q.dim.as_str()),
                     _ => DimVec::new(),
                 };
                 let vec = vec_combine(&dv(l), &dv(r), if op == "*" { 1 } else { -1 });
@@ -1528,7 +1810,7 @@ impl Engine {
                 Ok(if key.is_empty() {
                     Value::Float(value)
                 } else {
-                    Value::Q { dim: key, value }
+                    Value::quantity(key, value)
                 })
             }
         }
@@ -1539,11 +1821,11 @@ impl Engine {
         match v {
             Value::PreArr(_) | Value::PreObj(_) => self.mat_arr(v),
             Value::Arr(a) => Ok(a.borrow().items.clone()),
-            Value::Range { lo, hi, excl } => {
-                let (Value::Int(lo), Value::Int(hi)) = (&**lo, &**hi) else {
+            Value::Range(range) => {
+                let (Value::Int(lo), Value::Int(hi)) = (&range.lo, &range.hi) else {
                     return err("range bounds must be integers");
                 };
-                let hi = if *excl { hi.clone() } else { hi + 1 };
+                let hi = if range.excl { hi.clone() } else { hi + 1 };
                 let mut out = vec![];
                 let mut i = lo.clone();
                 while i < hi {
@@ -1628,21 +1910,15 @@ impl Engine {
     }
     pub(crate) fn apply_bin(&self, op: &str, l: Value, mut r: Value) -> R<Value> {
         match op {
-            ".." | "..<" => {
-                return Ok(Value::Range {
-                    lo: Box::new(l),
-                    hi: Box::new(r),
-                    excl: op == "..<",
-                })
-            }
+            ".." | "..<" => return Ok(Value::range(l, r, op == "..<")),
             "matches" => {
                 let (Value::Str(s), Value::Pat(p)) = (&l, &r) else {
                     return err("matches needs a string and a pattern");
                 };
-                if let Some(bad) = pattern_error(p) {
+                if let Some(bad) = pattern_error(p.as_ref()) {
                     return err_code(format!("malformed pattern /{p}/: {bad}"), "E4119");
                 }
-                let re = compile_pattern(p).or_else(err)?;
+                let re = compile_pattern(p.as_ref()).or_else(err)?;
                 return Ok(Value::Bool(re.is_match(s)));
             }
             // a literal operand is materialized: equality is structural over values (§4.5)
@@ -1661,12 +1937,12 @@ impl Engine {
                     r = self.deref(r)?; // the container may be reached through a reference ($this, $parent)
                 }
                 return match &r {
-                    Value::Range { lo, hi, excl } => {
-                        let ge = matches!(num_cmp(&l, lo), Some(Greater | Equal));
-                        let hi_ok = if *excl {
-                            num_cmp(&l, hi) == Some(Less)
+                    Value::Range(range) => {
+                        let ge = matches!(num_cmp(&l, &range.lo), Some(Greater | Equal));
+                        let hi_ok = if range.excl {
+                            num_cmp(&l, &range.hi) == Some(Less)
                         } else {
-                            matches!(num_cmp(&l, hi), Some(Less | Equal))
+                            matches!(num_cmp(&l, &range.hi), Some(Less | Equal))
                         };
                         Ok(Value::Bool(ge && hi_ok))
                     }
@@ -1699,7 +1975,7 @@ impl Engine {
         if l.is_absent() || r.is_absent() {
             return err("absent consumed");
         }
-        if (matches!(l, Value::Q { .. }) || matches!(r, Value::Q { .. }))
+        if (matches!(l, Value::Q(_)) || matches!(r, Value::Q(_)))
             && ["+", "-", "*", "/", "<", "<=", ">", ">="].contains(&op)
         {
             return self.q_arith(op, &l, &r);
@@ -1988,6 +2264,10 @@ impl Engine {
     }
 
     fn std(&self, name: &str, a: Vec<Value>, sc: &Scope) -> R<Value> {
+        #[cfg(feature = "runtime-diagnostics")]
+        if name == "map.values" {
+            expr_diag::values_attempt();
+        }
         let domain = |msg: String| -> Fail {
             Fail::Eval(EvalErr {
                 msg: format!("std.{name}: {msg}"),
@@ -1996,10 +2276,14 @@ impl Engine {
         };
         let arr = |path: Vec<Value>| {
             #[cfg(feature = "runtime-diagnostics")]
+            if name == "map.values" {
+                expr_diag::values_return(path.len(), path.capacity());
+            }
+            #[cfg(feature = "runtime-diagnostics")]
             crate::retention_diagnostics::standard_array(name, path.len(), path.capacity());
             Value::Arr(Rc::new(RefCell::new(ArrV {
                 items: path,
-                path: self.retained_path(&[]),
+                path: self.container_path(&[]),
             })))
         };
         let s = |v: &Value| -> R<String> {
@@ -2257,7 +2541,7 @@ impl Engine {
             "int.at_least" | "int.at_most" => {
                 let n = arg(&a, 0, name)?.clone();
                 let least = name == "int.at_least";
-                let f: NatFn = Rc::new(move |args: &[Value]| {
+                Ok(Value::native(move |args: &[Value]| {
                     let Some(x) = args.first() else {
                         return err("missing argument");
                     };
@@ -2265,8 +2549,7 @@ impl Engine {
                         Some(o) => Ok(Value::Bool(if least { o != Less } else { o != Greater })),
                         None => err("bad operands"),
                     }
-                });
-                Ok(Value::Nat(f))
+                }))
             }
             "float.of" => {
                 let v = match arg(&a, 0, name)? {
@@ -2316,7 +2599,7 @@ impl Engine {
         };
         for r in [&base, &patch] {
             let b = r.borrow();
-            for n in &b.entry_order {
+            for n in b.entry_order.iter() {
                 push(n);
             }
             for m in rec_members(&b.rt).iter() {
@@ -2401,6 +2684,10 @@ impl Engine {
             let cache = self.mat_cache.borrow();
             diagnostic_cache.inserted(diagnostic_before, cache.len(), cache.capacity());
         }
+        let sweep = self.mat_cache.borrow().len() >= self.materialized_sweep_at.get();
+        if sweep {
+            self.prune_materialized();
+        }
         Ok(m)
     }
     /// The entries of an unbound object literal with its spreads (§4.2)
@@ -2465,7 +2752,7 @@ impl Engine {
                 };
                 let mut entries: Vec<(String, Value)> = vec![];
                 let mut seen: Vec<String> = vec![];
-                for n in order.into_iter().chain(names) {
+                for n in order.iter().cloned().chain(names) {
                     if seen.contains(&n) {
                         continue;
                     }
@@ -2474,7 +2761,7 @@ impl Engine {
                         let b = r.borrow();
                         (
                             b.extra(&n).cloned(),
-                            b.slots.iter().any(|(s, sl)| *s == n && sl.hidden),
+                            b.slots.iter().any(|(s, sl)| s.as_ref() == n && sl.hidden),
                             b.has_slot(&n),
                         )
                     };
@@ -2534,7 +2821,7 @@ impl Engine {
             Value::Map(m) => Ok(m),
             // a record reads as the map of its value entries (§3.17)
             Value::Rec(r) => {
-                let path = self.retained_path(&r.borrow().path);
+                let path = self.container_path(&r.borrow().path);
                 let entries = self.spread_entries(Value::Rec(r))?;
                 Ok(Rc::new(RefCell::new(MapV {
                     entries: entries.into_iter().collect(),
@@ -2622,7 +2909,7 @@ impl Engine {
         );
         Ok(Value::Arr(Rc::new(RefCell::new(ArrV {
             items,
-            path: self.retained_path(&[]),
+            path: self.container_path(&[]),
         }))))
     }
     /// the edge `T|m` of the snapshot: computed from its instances on first demand
@@ -2720,29 +3007,43 @@ impl Engine {
     pub fn settle(&self, env: &Env, edges: HashMap<String, Edge>) -> Settled {
         #[cfg(feature = "runtime-diagnostics")]
         let mut timings = crate::evaluation_diagnostics::Span::new("settle", 0);
+        #[cfg(feature = "runtime-diagnostics")]
+        timings.enter(EventStage::SettleTakeSnapshot);
         self.phase.set(2);
         self.take_snapshot(edges);
         #[cfg(feature = "runtime-diagnostics")]
         timings.mark("take_snapshot");
+        #[cfg(feature = "runtime-diagnostics")]
+        timings.enter(EventStage::SettleDeferredSnapshot);
         let deferred: Vec<(Inst, String)> = self.deferred_slots.borrow_mut().drain(..).collect();
 
         #[cfg(feature = "runtime-diagnostics")]
         timings.mark("deferred_snapshot");
+        #[cfg(feature = "runtime-diagnostics")]
+        timings.enter(EventStage::SettleForceDeferredSlots);
         for (inst, name) in &deferred {
             self.force_slot_safe(inst, name);
         }
 
         #[cfg(feature = "runtime-diagnostics")]
         timings.mark("force_deferred_slots");
+        #[cfg(feature = "runtime-diagnostics")]
+        timings.enter(EventStage::SettleBindDeferredRoots);
         self.bind_deferred_roots();
         #[cfg(feature = "runtime-diagnostics")]
         timings.mark("bind_deferred_roots");
+        #[cfg(feature = "runtime-diagnostics")]
+        timings.enter(EventStage::SettleForceRoots);
         self.force_roots(env);
         #[cfg(feature = "runtime-diagnostics")]
         timings.mark("force_roots");
+        #[cfg(feature = "runtime-diagnostics")]
+        timings.enter(EventStage::SettleLiveEdges);
         let live = self.live_edges();
         #[cfg(feature = "runtime-diagnostics")]
         timings.mark("live_edges");
+        #[cfg(feature = "runtime-diagnostics")]
+        timings.enter(EventStage::SettleCompareEdges);
         let snap = self.snap.borrow();
         let snap_edges = &snap.as_ref().unwrap().edges;
         let mut changed: Vec<String> = live
@@ -2816,6 +3117,8 @@ impl Engine {
     ) -> Rc<Engine> {
         #[cfg(feature = "runtime-diagnostics")]
         let mut timings = crate::evaluation_diagnostics::Span::new("evaluate_setup", 0);
+        #[cfg(feature = "runtime-diagnostics")]
+        timings.enter(EventStage::EvaluateSetup);
         let mut prev: Option<Rc<Engine>> = None;
         let mut edges: HashMap<String, Edge> = HashMap::new();
         // the queried edges each round have been seen before (rounds are
@@ -2843,6 +3146,8 @@ impl Engine {
             round += 1;
             #[cfg(feature = "runtime-diagnostics")]
             let mut timings = crate::evaluation_diagnostics::Span::new("round", round as usize);
+            #[cfg(feature = "runtime-diagnostics")]
+            timings.enter(EventStage::RoundEngineSetup);
             let reusing = retained.is_some();
             let eng = retained.take().unwrap_or_else(|| {
                 let eng = Self::bare_with_queries(env.clone(), query_keys.clone());
@@ -2861,28 +3166,40 @@ impl Engine {
 
             #[cfg(feature = "runtime-diagnostics")]
             timings.mark("engine_setup");
+            #[cfg(feature = "runtime-diagnostics")]
+            timings.enter(EventStage::RoundBind);
             bind(&eng);
             #[cfg(feature = "runtime-diagnostics")]
             timings.mark("bind");
+            #[cfg(feature = "runtime-diagnostics")]
+            timings.enter(EventStage::RoundForceRootsInitial);
             eng.force_roots(env);
             #[cfg(feature = "runtime-diagnostics")]
             timings.mark("force_roots_initial");
+            #[cfg(feature = "runtime-diagnostics")]
+            timings.enter(EventStage::RoundSettle);
             eng.track.set(eng.track.get() || incremental);
             let r = eng.settle(env, edges);
             #[cfg(feature = "runtime-diagnostics")]
             timings.mark("settle");
+            #[cfg(feature = "runtime-diagnostics")]
+            timings.enter(EventStage::RoundEditsFinish);
             if let Some(edits) = eng.edits.borrow().as_ref() {
                 edits.finish(&eng);
             }
 
             #[cfg(feature = "runtime-diagnostics")]
             timings.mark("edits_finish");
+            #[cfg(feature = "runtime-diagnostics")]
+            timings.enter(EventStage::RoundEdgeKeyAndCycle);
             let ekey = edges_key(&r.edges);
             let cycled = !r.stable && seen.contains(&ekey);
 
             #[cfg(feature = "runtime-diagnostics")]
             timings.mark("edge_key_and_cycle");
             if r.stable || cycled || round == Engine::ROUNDS {
+                #[cfg(feature = "runtime-diagnostics")]
+                timings.enter(EventStage::RoundCompleteDropPrevious);
                 if !r.stable {
                     let snap = eng.snap.borrow();
                     let snap_edges = &snap.as_ref().unwrap().edges;
@@ -2902,6 +3219,9 @@ impl Engine {
                 eng.settled.set(true);
                 *eng.prev.borrow_mut() = None;
                 drop(prev);
+                if let Some(cache) = &cache {
+                    cache.release_rebased();
+                }
                 eng.sweep_query_ids();
 
                 #[cfg(feature = "runtime-diagnostics")]
@@ -2911,10 +3231,14 @@ impl Engine {
                 return eng;
             }
             // the round is the next one's snapshot; the universe starts over
+            #[cfg(feature = "runtime-diagnostics")]
+            timings.enter(EventStage::RoundAdvance);
             let snapshot = cache.as_ref().and_then(|c| c.advance(&eng, &r.edges));
             #[cfg(feature = "runtime-diagnostics")]
             timings.mark("advance");
             if let Some(snapshot) = snapshot {
+                #[cfg(feature = "runtime-diagnostics")]
+                timings.enter(EventStage::RoundRetainedTransfer);
                 seen.insert(ekey);
                 prev = Some(snapshot);
                 edges = r.edges;
@@ -2926,6 +3250,8 @@ impl Engine {
                 timings.finish();
                 continue;
             }
+            #[cfg(feature = "runtime-diagnostics")]
+            timings.enter(EventStage::RoundFallbackFreezeReset);
             cache = None;
             incremental = false;
             eng.freeze();
@@ -3076,8 +3402,8 @@ impl Engine {
                 _ => Err(fail(format!("does not match /{src}/"), None)),
             },
             RTk::Quantity(dim) => {
-                if let Value::Q { dim: d, .. } = &raw {
-                    if d == dim {
+                if let Value::Q(q) = &raw {
+                    if q.dim.as_str() == dim.as_str() {
                         return Ok(raw);
                     }
                 }
@@ -3097,10 +3423,7 @@ impl Engine {
                                 Value::Float(f) => *f,
                                 _ => return Err(fail("expected quantity".into(), None)),
                             };
-                            return Ok(Value::Q {
-                                dim: dim.clone(),
-                                value: f * to_base,
-                            });
+                            return Ok(Value::quantity(dim.clone(), f * to_base));
                         }
                     }
                 }
@@ -3157,7 +3480,7 @@ impl Engine {
                 );
                 let arr = Rc::new(RefCell::new(ArrV {
                     items: Vec::with_capacity(items.len()),
-                    path: self.retained_path(path),
+                    path: self.container_path(path),
                 }));
                 // Bound containers own their paths. Reuse only this call's
                 // temporary flat buffer, allocating it at the first child.
@@ -3203,12 +3526,18 @@ impl Engine {
                     _ => return Err(fail("expected map".into(), None)),
                 };
                 let m = Rc::new(RefCell::new(MapV {
-                    entries: OrderedMap::default(),
-                    path: self.retained_path(path),
+                    entries: MapEntries::building(),
+                    path: self.container_path(path),
                 }));
                 let mut child_path = None;
                 for (k, v) in es {
-                    match self.bind(Value::Str(Rc::from(k.as_str())), key, path, parent, sc) {
+                    match self.bind(
+                        Value::Str(SharedText::from_rc(Rc::from(k.as_str()))),
+                        key,
+                        path,
+                        parent,
+                        sc,
+                    ) {
                         Ok(_) => {}
                         Err(Fail::Taint) => continue,
                         Err(e) => return Err(e),
@@ -3229,6 +3558,9 @@ impl Engine {
                         Err(e) => return Err(e),
                     }
                 }
+                self.map_shapes
+                    .borrow_mut()
+                    .seal(&mut m.borrow_mut().entries);
                 Ok(Value::Map(m))
             }
             RTk::Union(arms) => {
@@ -3459,7 +3791,7 @@ impl Engine {
                     // past a missing place a string index can only be a map key (bracket
                     // access to a dot-spellable member is a compile error, §4.3)
                     match &i {
-                        Value::Str(k) => p.push(Seg::Key(k.clone())),
+                        Value::Str(k) => p.push(Seg::Key(k.to_rc())),
                         _ => p.push(Seg::Idx(to_index(&i)?.max(0) as usize)),
                     }
                     return Ok(Value::Segs(Rc::new(p)));
@@ -3486,7 +3818,7 @@ impl Engine {
                             Some(v) => Ok(v.clone()),
                             None => {
                                 let mut p = b.path.to_vec();
-                                p.push(Seg::Key(k.clone()));
+                                p.push(Seg::Key(k.to_rc()));
                                 Ok(Value::Segs(Rc::new(p)))
                             }
                         }
@@ -3498,7 +3830,7 @@ impl Engine {
                         let v = self.access(&x, k)?;
                         if v.is_absent() {
                             let mut p = r.borrow().path.to_vec();
-                            p.push(Seg::Name(k.clone()));
+                            p.push(Seg::Name(k.to_rc()));
                             Ok(Value::Segs(Rc::new(p)))
                         } else {
                             Ok(v)
@@ -3550,8 +3882,8 @@ impl Engine {
                     )
                 };
                 let mut out = vec![];
-                for n in order {
-                    if ders.contains(&n) {
+                for n in order.iter().cloned() {
+                    if ders.iter().any(|name| name.as_ref() == n) {
                         continue;
                     }
                     if let Some((_, v)) = extras.iter().find(|(k, _)| *k == n) {
@@ -3584,6 +3916,15 @@ impl Engine {
                 return Ok(Value::Rec(previous.clone()));
             }
         }
+        // This captures only ordered key text, never input Values. Looking up an
+        // already compiled schema does not move compilation across registration
+        // callbacks or change the captured member sequence.
+        let entry_order = self
+            .programs
+            .borrow()
+            .as_ref()
+            .map(|programs| programs.entry_order(rt, &entries))
+            .unwrap_or_else(|| Rc::new(entries.iter().map(|(key, _)| key.clone()).collect()));
         let old_slots = previous
             .as_ref()
             .map(|i| std::mem::take(&mut i.borrow_mut().slots))
@@ -3596,7 +3937,7 @@ impl Engine {
                 path: Rc::new(path.to_vec()),
                 parent: parent.cloned(),
                 slots: vec![],
-                entry_order: vec![],
+                entry_order: entry_order.clone(),
                 extras: vec![],
                 menv: sc.menv.clone(),
             })
@@ -3608,7 +3949,7 @@ impl Engine {
             // invalid members. Rebinding took the old vector for Edits::bound.
             b.slots.reserve_exact(members.len());
             b.extras.clear();
-            b.entry_order = entries.iter().map(|(k, _)| k.clone()).collect();
+            b.entry_order = entry_order;
             b.menv = sc.menv.clone();
         }
         if self.no_reg.get() == 0 {
@@ -3618,21 +3959,13 @@ impl Engine {
                 self.env.registry_push(inst.clone());
             }
         }
-        // With at most one input or member, direct lookup needs at most
-        // entries.len() + members.len() comparisons and no temporary table.
-        // Keep incremental growth for larger inputs: entry count can greatly
-        // exceed distinct keys when a native caller supplies duplicates.
-        let supplied = (entries.len() > 1 && members.len() > 1).then(|| {
-            let mut supplied: HashMap<&str, &Value> = HashMap::new();
-            for (k, v) in entries.iter() {
-                supplied.insert(k.as_str(), v);
-            }
-            supplied
-        });
         let schema = self.programs.borrow().as_ref().map(|p| p.schema(rt));
+        let supplied = RecordLookup::new(&entries, members.len(), schema.as_deref());
         for (index, m) in members.iter().enumerate() {
             let plan = schema.as_ref().map(|s| &s.members[index]);
-            let name = m.name.clone();
+            let name = plan
+                .map(|p| p.name.clone())
+                .unwrap_or_else(|| Rc::from(m.name.as_str()));
             let types = plan.map(|p| p.types.clone()).unwrap_or_else(|| {
                 Rc::new(
                     m.conj
@@ -3642,21 +3975,13 @@ impl Engine {
             });
             let menv = m.menv.clone().or_else(|| sc.menv.clone());
             let root_name = sc.root_name.clone();
-            let has = match &supplied {
-                Some(supplied) => supplied.get(name.as_str()).copied(),
-                // Last supplied value wins, including duplicate native keys.
-                None => entries
-                    .iter()
-                    .rev()
-                    .find_map(|(k, v)| (k == &name).then_some(v)),
-            }
-            .cloned();
+            let has = supplied.get(index, name.as_ref()).cloned();
             let mut push_deferred = false;
             // a hidden member (D34) is never part of the value: a document or
             // literal that supplies it is in error — there is nothing to restate
             if m.kind == MKind::Der && m.hidden && has.is_some() {
                 let mut p = path.to_vec();
-                p.push(Seg::Name(Rc::from(name.as_str())));
+                p.push(Seg::Name(name.clone()));
                 self.env.report(Diag::error(
                     format!("hidden member {name} supplied"),
                     path_str(&p, None),
@@ -3684,20 +4009,26 @@ impl Engine {
                     push_deferred = plan
                         .map(|p| p.deferred)
                         .unwrap_or_else(|| mentions_referrers(&expr));
+                    let reusable = plan.filter(|_| has.is_none());
+                    let create = |root_name, menv| Compute::Derived {
+                        expr,
+                        op: plan.and_then(|p| p.expression.clone()),
+                        ty: m.ty.clone(),
+                        supplied: has,
+                        name: name.clone(),
+                        root_name,
+                        menv,
+                    };
+                    let compute = match reusable {
+                        Some(plan) => plan.reusable_compute(MKind::Der, root_name, menv, create),
+                        None => Rc::new(create(root_name, menv)),
+                    };
                     Slot {
                         kind: MKind::Der,
                         hidden: m.hidden,
                         state: SlotState::Unforced,
                         value: Value::Undef,
-                        compute: Some(Rc::new(Compute::Derived {
-                            expr,
-                            op: plan.and_then(|p| p.expression.clone()),
-                            ty: m.ty.clone(),
-                            supplied: has,
-                            name: name.clone(),
-                            root_name,
-                            menv,
-                        })),
+                        compute: Some(compute),
                     }
                 }
                 (kind, Some(raw_v)) => Slot {
@@ -3718,19 +4049,24 @@ impl Engine {
                         .dflt
                         .clone()
                         .unwrap_or_else(|| Rc::new(Expr::Lit(Value::Null)));
+                    let create = |root_name, menv| Compute::Default {
+                        expr,
+                        op: plan.and_then(|p| p.fallback.clone()),
+                        types,
+                        name: name.clone(),
+                        root_name,
+                        menv,
+                    };
+                    let compute = match plan {
+                        Some(plan) => plan.reusable_compute(MKind::Dflt, root_name, menv, create),
+                        None => Rc::new(create(root_name, menv)),
+                    };
                     Slot {
                         kind: MKind::Dflt,
                         hidden: false,
                         state: SlotState::Unforced,
                         value: Value::Undef,
-                        compute: Some(Rc::new(Compute::Default {
-                            expr,
-                            op: plan.and_then(|p| p.fallback.clone()),
-                            types,
-                            name: name.clone(),
-                            root_name,
-                            menv,
-                        })),
+                        compute: Some(compute),
                     }
                 }
                 (MKind::Opt, None) => Slot {
@@ -3742,7 +4078,7 @@ impl Engine {
                 },
                 (MKind::Req, None) => {
                     let mut p = path.to_vec();
-                    p.push(Seg::Name(Rc::from(name.as_str())));
+                    p.push(Seg::Name(name.clone()));
                     self.env.report(Diag::error(
                         format!("required member {name} missing"),
                         path_str(&p, None),
@@ -3759,13 +4095,15 @@ impl Engine {
             };
             inst.borrow_mut().slots.push((name.clone(), slot));
             if push_deferred {
-                self.deferred_slots.borrow_mut().push((inst.clone(), name));
+                self.deferred_slots
+                    .borrow_mut()
+                    .push((inst.clone(), name.to_string()));
             }
         }
         for (k, v) in entries.iter() {
             if schema
                 .as_ref()
-                .map(|s| s.names.contains(k))
+                .map(|s| s.names.contains_key(k.as_str()))
                 .unwrap_or_else(|| members.iter().any(|m| m.name == *k))
             {
                 continue;
@@ -3798,10 +4136,10 @@ impl Engine {
 
     fn run_compute(&self, inst: &Inst, c: &Compute) -> R<Value> {
         let path = inst.borrow().path.clone();
-        let scope_for = |root_name: &str, menv: &Option<Rc<Env>>| Scope {
+        let scope_for = |root_name: &Rc<str>, menv: &Option<Rc<Env>>| Scope {
             inst: Some(inst.clone()),
             locals: Locals::new(),
-            root_name: root_name.to_string(),
+            root_name: root_name.clone(),
             menv: menv.clone(),
         };
         let member_path = |name: &str| {
@@ -3964,7 +4302,7 @@ impl Engine {
                 );
                 let arr = Rc::new(RefCell::new(ArrV {
                     items: Vec::with_capacity(raw.len()),
-                    path: self.retained_path(path),
+                    path: self.container_path(path),
                 }));
                 for (i, y) in raw.into_iter().enumerate() {
                     let mut p = path.to_vec();
@@ -3981,8 +4319,8 @@ impl Engine {
             }
             Value::PreObj(entries) => {
                 let m = Rc::new(RefCell::new(MapV {
-                    entries: OrderedMap::default(),
-                    path: self.retained_path(path),
+                    entries: MapEntries::building(),
+                    path: self.container_path(path),
                 }));
                 for (k, pv) in self.entries_of(&entries)?.iter() {
                     let x = match pv {
@@ -3994,6 +4332,9 @@ impl Engine {
                     let mv = self.materialize(x, &p)?;
                     m.borrow_mut().set(k.clone(), mv);
                 }
+                self.map_shapes
+                    .borrow_mut()
+                    .seal(&mut m.borrow_mut().entries);
                 Ok(Value::Map(m))
             }
             other => Ok(other),
@@ -4046,7 +4387,7 @@ impl Engine {
             (b.entry_order.clone(), rec_members(&b.rt))
         };
         let mut entries: Vec<(String, Value)> = vec![];
-        for n in order {
+        for n in order.iter().cloned() {
             let (extra, skip) = {
                 let b = r.borrow();
                 match b.extra(&n) {
@@ -4209,15 +4550,19 @@ impl Engine {
         // Cached, deferred and cyclic reads do not execute the descriptor.
         // Retain immutable binding-time metadata across the force without
         // cloning its names, supplied value, or captured owner handles.
-        let compute = {
+        let (compute, member_name) = {
             let mut b = inst.borrow_mut();
-            let s = b.slot_mut(name).unwrap();
+            let (member_name, s) = b
+                .slots
+                .iter_mut()
+                .find(|(n, _)| n.as_ref() == name)
+                .unwrap();
             let compute = s.compute.clone();
             s.state = SlotState::Forcing;
-            compute
+            (compute, member_name.clone())
         };
         let id = recorded_id.unwrap_or_else(|| self.query_id(&key));
-        self.register_query_slot_id(id.clone(), inst.clone(), name.to_string());
+        self.register_query_slot_id(id.clone(), inst.clone(), member_name);
         let res = match &compute {
             Some(c) => self.step_id(id.clone(), || {
                 let edits = self.edits.borrow().clone();
@@ -4354,7 +4699,7 @@ impl Engine {
                 {
                     return;
                 }
-                let names: Vec<String> = r.borrow().slots.iter().map(|(n, _)| n.clone()).collect();
+                let names: Vec<_> = r.borrow().slots.iter().map(|(n, _)| n.clone()).collect();
                 for n in names {
                     self.force_slot_safe(r, &n);
                     let child = {
@@ -4440,7 +4785,7 @@ impl Engine {
     }
     /// reset a computed slot so that it is computed again (dependency tracking)
     pub fn reset_slot(&self, key: &str) -> bool {
-        let entry = self.query_slot(key);
+        let entry = self.query_slot_shared(key);
         let Some((inst, name)) = entry else {
             return false;
         };
@@ -4466,7 +4811,7 @@ impl Engine {
         let sc0 = Scope {
             inst: Some(inst.clone()),
             locals: Locals::new(),
-            root_name: root_name.to_string(),
+            root_name: Rc::from(root_name),
             menv: menv0.clone(),
         };
         for a in asserts {
@@ -4592,7 +4937,7 @@ impl Engine {
                     let psc = Scope {
                         inst: None,
                         locals,
-                        root_name: root_name.to_string(),
+                        root_name: Rc::from(root_name),
                         menv: menv0.clone(),
                     };
                     let msg = self.render_lenient(&d.template, &psc);
@@ -4655,16 +5000,16 @@ impl Engine {
             Value::Int(i) => write!(out, "{i}").expect("writing to String"),
             Value::Float(f) => out.push_str(&fmt_f(*f)),
             Value::Str(s) => write_json_str(out, s),
-            Value::Q { dim, value } => {
+            Value::Q(q) => {
                 let unit = self
                     .env
                     .base_unit_of
                     .borrow()
-                    .get(dim)
+                    .get(q.dim.as_str())
                     .cloned()
-                    .unwrap_or_else(|| dim.clone());
+                    .unwrap_or_else(|| q.dim.as_ref().clone());
                 out.push_str("{\"value\":");
-                out.push_str(&fmt_f(*value));
+                out.push_str(&fmt_f(q.value));
                 out.push_str(",\"unit\":");
                 write_json_str(out, &unit);
                 out.push('}');
@@ -4709,7 +5054,7 @@ impl Engine {
                 out.push('{');
                 let mut comma = false;
                 let mut done: HashSet<&str> = HashSet::new();
-                for n in &b.entry_order {
+                for n in b.entry_order.iter() {
                     done.insert(n);
                     if let Some(v) = b.extra(n) {
                         if comma {
