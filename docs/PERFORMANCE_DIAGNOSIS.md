@@ -2,8 +2,9 @@
 
 Source baseline: `1a76e625` (2026-09-12). Sections 1–6 record the original
 investigation and its private experiments. Sections 7–34 record subsequent
-implementation steps; sections 35–37 record measurement-only follow-ups, and
-section 38 the first step they led to.
+implementation steps; sections 35–37 record measurement-only follow-ups,
+section 38 the first step they led to, and section 39 a candidate that a
+paired comparison did not support.
 Observable behavior and the frozen specification are unchanged.
 External models, profiles, and engine comparison reports remain
 outside this repository, as required by [the measurement policy](DEVELOPMENT.md#performance-measurements).
@@ -2501,6 +2502,23 @@ comparison on a quiet host remains the evidence for that. Full `make verify`,
 `make lint` and an unchanged `make format` pass, with 200 diagnostic-feature
 library tests.
 
+A paired comparison against the previous `main`, with its rule fixed
+beforehand, then checked ordinary timing: one recorded warm-up per binary and
+six pairs in the order M,K / K,M / K,M / M,K / M,K / K,M for the unchanged
+Session helper and for the command line, on the accepted model and input. The
+instrumented initial request's full run makes 118,306,879 allocation calls
+before the step and 113,496,726 after it, -4,810,153 (-4.07%) and 45 calls from
+the predicted two per avoided handle, with as many fewer releases and 1.52%
+fewer requested bytes; live requested bytes after the run and the requested
+peak are unchanged, because the avoided Values were transient. No timing
+segment differs: none is in one direction in all six pairs, on an uneven host
+whose same-arm spread reached 10% in the evaluation segments. The medians of
+the map-binding segments lean toward the step (initial evaluation -1.79%,
+Session wall -0.99%, command-line wall -0.62%) inside that spread and are not
+a measured speedup. The rule was that the step is kept unless a segment
+regresses beyond spread; none does. Evidence is under
+`../decl-analysis/2026-09-14/value-layout/map-key-ab/`.
+
 The serialization mechanism of sections 36 and 37 is untouched by this step.
 The review under `../decl-analysis/2026-09-14/value-layout/text-handle-review/`
 records the measurements above with their patch, the emitted text lengths
@@ -2508,3 +2526,68 @@ records the measurements above with their patch, the emitted text lengths
 from them: an inline body behind the existing 8-byte handle, one allocation and
 one dependent load for short text. It is a candidate for a paired comparison,
 not a change made here.
+
+## 39. Inline text candidate: not adopted (2026-09-20)
+
+Section 38's review named one candidate for the serialization mechanism of
+sections 36 and 37: keep the 8-byte text handle and the 16-byte Value, and hold
+text of at most 22 bytes inside the handle's own allocation, a 40-byte block,
+retaining an `Rc<str>` only for longer text. Reading inline bytes as `str` on
+every access cannot be checked (6-9 ns against about 12.5 ns for a whole
+emitted leaf), so the candidate used two unchecked reads under one constructor
+invariant. It kept zero-copy import of long text, gave up character identity
+for short text, and let the capture memo's text key hold the handle. It passed
+the full gate with byte-identical output and lives unmerged on branch
+`inline-text-candidate`.
+
+A paired comparison against section 38's tree, with its reading rule fixed
+beforehand, ran three instruments on the accepted model and input: counts, the
+locality discriminator of section 36, and the unchanged Session helper and
+command line, each with a recorded warm-up and four pairs in the order H,I /
+I,H / I,H / H,I. Both timing runners refuse to start under the host's Low Power
+Mode, which had doubled the run time of their functional checks. A difference
+needs one direction in all four pairs and a median beyond both arms' spread;
+the passive load reads were 3.85-5.52.
+
+| I versus H | Result | Beyond spread |
+| --- | ---: | --- |
+| Text visits with descriptor within 64 B of characters | 43.95% to 96.13% | count |
+| Allocation calls, full run | -1.37% | count |
+| Requested bytes, live after the run, requested peak | -0.33%, -0.14%, -0.13% | count |
+| Discriminator, scattered text, 16,384 leaves | -27.228% | yes |
+| Discriminator, scattered text, 1,048,576 leaves | -66.457% | yes |
+| Discriminator, integer, 1,048,576 leaves | +11.329% | yes |
+| Session serialization, initial | +4.706% (+1.735 ms) | yes |
+| Session serialization, equal edit | +3.979% (+1.426 ms) | yes |
+| Session serialization, hot | +2.85% | one direction, inside |
+| Session process wall, command-line wall | -0.41%, -0.06% | no |
+
+The candidate removes the dependent descriptor load wherever that load costs:
+scattered text falls from 64.36 to 22.87 ns per leaf. It does not help the
+segment it was for. Session serialization is slower in I, and the
+discriminator's integer rows, which hold no text, are slower too. By the rule
+fixed beforehand the candidate is not adopted.
+
+The two results are compatible. In the discriminator's scattered layout every
+descriptor is a fresh miss. In the evaluated output three of four text visits
+revisit a descriptor already emitted, and all 150,240 distinct descriptors are
+4.8 MB, so most descriptor loads hit the cache and there was little to save,
+while the candidate adds an inline-or-shared test to every text visit. Section
+37 said the descriptor load could account for section 34's regression; this
+comparison shows that in this workload it does not. That regression is still
+unexplained. What remains are the per-value candidates section 34's
+disassembly named for every value, not only text: the widened tag read and its
+normalization, Value stride, and code layout. `go`'s prologue, 288-byte frame
+and dispatch are instruction-identical in the two arms' Session binaries and
+the function differs by 56 bytes; the cause of the integer rows is not
+established.
+
+Both arms contain section 38's map-key step, so this comparison does not judge
+it. What the sequence of sections 35-39 leaves is a set of instruments (two
+discriminators, the census, the paired runners with their warm-up and
+power-mode guards) and one measured fact about this serializer: a cost of one
+to two nanoseconds per visited value decides the segment, so a change there
+needs its own paired comparison however sound its mechanism. Evidence is under
+`../decl-analysis/2026-09-14/value-layout/inline-text-ab/`: the pinned README
+with the rule, `pins.json` binding each artifact to its commit, the consumed
+`counts-v1/`, `locality-v1/` and `timing-v1/`, and `analysis-v1/`.
