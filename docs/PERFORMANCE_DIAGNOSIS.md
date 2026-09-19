@@ -2,14 +2,17 @@
 
 Source baseline: `1a76e625` (2026-09-12). Sections 1–6 record the original
 investigation and its private experiments. Sections 7–34 record subsequent
-implementation steps. Observable behavior and the frozen specification are unchanged.
+implementation steps; section 35 records a measurement-only follow-up.
+Observable behavior and the frozen specification are unchanged.
 External models, profiles, and engine comparison reports remain
 outside this repository, as required by [the measurement policy](DEVELOPMENT.md#performance-measurements).
 
 For the latest implementation step, see
 [thin scalar payloads](#34-thin-scalar-payloads-experimental-2026-09-15). The preceding
 [progress checkpoint](#19-progress-checkpoint-2026-09-13) records the measurement
-blocker and the larger-workload evidence still outstanding.
+blocker and the larger-workload evidence still outstanding. The
+[serializer discriminator](#35-serializer-discriminator-2026-09-19) follows up
+the serialization regression measured with those payloads.
 
 The current engine already shares Programs, retains eligible reference rounds,
 and cuts off propagation when results are equal. The remaining costs include
@@ -2197,3 +2200,92 @@ the previous execution and validation code; exact analyzer string substitutions
 and their occurrence counts are recorded where required. Historical campaigns
 remain immutable. The measured source archive predates this result-only
 documentation update.
+
+## 35. Serializer discriminator (2026-09-19)
+
+The bounded comparison proposed in section 34 links one identical probe against
+the authenticated G and H diagnostic libraries with the accepted recipe. Its
+ten cases of 256 leaves are one integer array, three string arrays, three
+integer-valued maps and three string-valued maps, over plain ASCII, explicit
+escapes and Unicode text; matching map cases share keys and order. Each case
+records one first emission and one held batch of 32, checked against an
+independent oracle that uses neither Decl's serializer nor its parser. The
+schedule is fixed at G, H, H, G with no retry. These controls exercise no
+record, lazy member, native callback or model.
+
+The witness is accepted: four processes, 1,320 of 1,320 output byte checks,
+157 pinned inputs and both archived sources unchanged at the endpoints, empty
+stderr and no cleanup signal. The operator issued the one command from a
+separate terminal. The runner invokes no host sampler, so the run itself has no
+host observation; a passive sample seven minutes earlier read a one-minute load
+of 1.58 with no competing build or test process.
+
+Allocation traffic is identical. All 20 emission ledgers have the same alloc,
+realloc and free call counts and the same gross and freed requested bytes in G
+and H, and the same values in both runs of each arm. Each emission is one
+allocation plus 9-12 growth reallocations and no free; output bytes and returned
+String capacities are equal across arms. Equal requested traffic weakens a
+new-emission-allocation explanation for these containers.
+
+| Repeated batch, H versus G | Fixture | Pair 1 (G, then H) | Pair 2 (H, then G) |
+| --- | --- | ---: | ---: |
+| Integer array | ASCII | +5.789% | -0.652% |
+| String array | ASCII | +43.265% | +0.777% |
+| String array | Escaped | +10.244% | -0.815% |
+| String array | Unicode | +2.383% | -2.023% |
+| Integer map | ASCII | +6.139% | -0.960% |
+| Integer map | Escaped | +19.054% | +8.676% |
+| Integer map | Unicode | +7.179% | -1.008% |
+| String map | ASCII | -5.147% | -0.932% |
+| String map | Escaped | +7.057% | +5.863% |
+| String map | Unicode | +4.686% | +3.190% |
+
+Each value is one paired observation of a 32-emission batch. First emissions
+are reported separately in the evidence and are not pooled with batches;
+absolute times of different-sized output families are not compared. In pair 1,
+H is slower in nine of ten cases. In pair 2, seven of ten changes lie between
+-2.023% and +0.777%. H is slower in both pairs for the ASCII string array, the
+escaped integer map and the escaped and Unicode string maps, and faster in both
+for the ASCII string map.
+
+Pair 1 is the first execution of each freshly compiled probe and pair 2 the
+second. The same binary's batch time in its first execution is 2.442-3.294 times
+its second for G and 2.470-4.683 times for H, in every case including the last,
+so the shift is not confined to cold first touches. Its cause is not
+established; first-execution cost of a newly written executable and processor
+state are candidates. Pair-1 differences are therefore confounded with order
+and machine state, and no same-arm, same-state repeat supplies a within-pair
+noise floor. A later bounded comparison should run each new binary once,
+recorded separately, before its timed pairs.
+
+The archived sources bound what can differ in the probed path. `serialize` and
+`write_json_str` are identical in G and H. `go` has 132 lines in both and
+differs in four, all inside the quantity arm, which the probe does not
+exercise. `map_entries.rs` is byte-identical and map keys are `String` in both
+arms. The arms therefore differ only in `Value::Str(Rc<str>)` versus
+`Value::Str(SharedText)` and in Value's size and tag encoding.
+
+The integer and key-only controls differ as much as the string-valued cases,
+and the largest same-direction difference is an integer-valued map, which holds
+no SharedText. The string-value-specific pattern that a text-access explanation
+predicts is absent: the three pair-2 string arrays change by +0.777%, -0.815%
+and -2.023%. This weakens a strings-only explanation. The same-direction
+escaped-key map cases cannot come from the text representation, because keys
+and the escape writer are unchanged; code layout after fat LTO and noise
+remain, and two pairs cannot separate them.
+
+The second pair does not reproduce section 34's Session serialization
+regression on scalar containers. That regression remains unexplained rather
+than refuted: these controls do not exercise records, lazy-member forcing
+inside emission, native callbacks or OAD-scale locality. Two pairs are a
+discriminator, not evidence of a stable speed change, and they supply no
+ordinary-performance or adoption claim. No representation change follows from
+this result; the SharedText descriptor and its zero-copy path bridge are
+unchanged.
+
+Evidence is under
+`../decl-analysis/2026-09-14/value-layout/serialization-probe/`: `results-v1/`
+holds the consumed one-shot witness with its claim, frozen inputs, compile and
+process receipts; `analysis-v1/` holds the offline arithmetic, its analyzer and
+the source-identity comparison. The analysis executes no probe or model and
+pools no historical timing.
