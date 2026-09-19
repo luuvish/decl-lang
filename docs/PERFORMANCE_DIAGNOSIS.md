@@ -2,7 +2,7 @@
 
 Source baseline: `1a76e625` (2026-09-12). Sections 1–6 record the original
 investigation and its private experiments. Sections 7–34 record subsequent
-implementation steps; section 35 records a measurement-only follow-up.
+implementation steps; sections 35–36 record measurement-only follow-ups.
 Observable behavior and the frozen specification are unchanged.
 External models, profiles, and engine comparison reports remain
 outside this repository, as required by [the measurement policy](DEVELOPMENT.md#performance-measurements).
@@ -12,7 +12,9 @@ For the latest implementation step, see
 [progress checkpoint](#19-progress-checkpoint-2026-09-13) records the measurement
 blocker and the larger-workload evidence still outstanding. The
 [serializer discriminator](#35-serializer-discriminator-2026-09-19) follows up
-the serialization regression measured with those payloads.
+the serialization regression measured with those payloads, and the
+[locality discriminator](#36-serializer-locality-discriminator-2026-09-19)
+identifies a mechanism sufficient to produce it.
 
 The current engine already shares Programs, retains eligible reference rounds,
 and cuts off propagation when results are equal. The remaining costs include
@@ -2289,3 +2291,87 @@ holds the consumed one-shot witness with its claim, frozen inputs, compile and
 process receipts; `analysis-v1/` holds the offline arithmetic, its analyzer and
 the source-identity comparison. The analysis executes no probe or model and
 pools no historical timing.
+
+## 36. Serializer locality discriminator (2026-09-19)
+
+Section 35's cases held 256 adjacent leaves, so every descriptor stayed in the
+first-level cache. They could not test the one mechanism that section 34's
+disassembly leaves open for string values: H reaches the characters through one
+more dependent load (Value, SharedText descriptor, characters), which is nearly
+free while cached and can cost a miss at the scale of an evaluated graph. The
+Session output is a `Json` graph of arrays, maps and scalars, and many of its
+text descriptors are created apart from their characters, because a
+path-to-Value import wraps an existing character allocation in a new descriptor.
+
+A second identical G/H probe therefore varies scale and placement only. Fifteen
+array cases cross three widths (256, 16,384 and 1,048,576 leaves) with five
+layouts. Text Values are always `Value::Str(characters.into())` from an existing
+`Rc<str>`: the identity conversion in G, one new descriptor in H, so one source
+reproduces the import pattern in both arms. Adjacent text builds characters and
+Value leaf by leaf; separated text builds all characters and then all Values;
+scattered text builds both in fixed random orders unrelated to traversal;
+shared text clones one Value; the integer layout holds no text. All graphs stay
+alive until the clocks end, so each construction takes fresh allocator blocks.
+Each case records one first emission and a held batch of 32 (4 at the largest
+width), checked against an independent oracle. The schedule runs each freshly
+compiled binary once as a recorded warm-up that never enters a comparison, then
+four pairs in the order G,H / H,G / H,G / G,H, with no retry. The reading rules
+were fixed in the pinned README before any run.
+
+The witness is accepted: ten processes, 3,550 of 3,550 output byte checks, 158
+pinned inputs and both archived sources unchanged, empty stderr and no cleanup
+signal. The runner's passive load reads before launch were 3.22-3.34, above the
+operator's quiet-host criterion, with the two compiles just before contributing.
+The reading therefore rests on the measured same-arm spread. The noise bound of
+a case is the largest of G's spread, H's spread across the four timed runs, and
+G's separated-versus-adjacent change at that width (G places both identically);
+a difference is reported only when all four pairs share a direction and the
+absolute median exceeds that bound. This numerical form was written after the
+data existed; the qualitative rule was not.
+
+| Repeated batch, H versus G | Leaves | Four pairs | Median | Noise bound |
+| --- | ---: | --- | ---: | ---: |
+| Scattered text | 16,384 | +24.8% to +43.8% | +34.295% | 10.164% |
+| Scattered text | 1,048,576 | +129.1% to +143.3% | +132.277% | 4.983% |
+| Separated text | 16,384 | +3.9% to +8.5% | +6.707% | 6.362% |
+| Separated text | 1,048,576 | +2.1% to +4.2% | +3.450% | 3.159% |
+| Integer | 1,048,576 | -6.2% to -0.3% | -4.346% | 4.170% |
+
+Every other case is inside its bound, including all five layouts at 256 leaves
+and adjacent and shared text at every width. With scattered text the median
+paired cost of H is +4.805 ns per leaf at 16,384 leaves and +35.764 ns at
+1,048,576 (G 27.000 ns, H 62.514 ns per leaf); every other case lies between
+11.7 and 14.1 ns per leaf in both arms. First emissions agree: scattered text is
++28.750% and +128.914%. Separated text and the integer layout exceed their
+bounds by less than half a percentage point and are marginal. Emission
+allocation traffic is identical in every pair; construction allocates one block
+per text leaf in G and two in H, as declared; adjacent and separated layouts
+have about 100% of consecutive characters within 64 bytes and the scattered
+layout none.
+
+The warm-up rows locate section 35's execution-order effect. A new binary's
+first execution starts 3.05-3.36 times slower than its median timed run, the
+ratio decays over the first cases and reaches 0.95-1.00 by the largest ones,
+equally in both arms. The timed runs do not show it. Short probes should keep a
+recorded warm-up execution.
+
+Descriptors placed apart from their characters are therefore a sufficient
+mechanism, in the actual crate, for a regression of the Session's size:
+adjacent and cached descriptors cost nothing, which explains section 35's clean
+pair, and scattered ones cost up to a full dependent miss per string. It is not
+yet shown to be the Session cause. A +3.5 ms serialization difference equals
+about 98,000 descriptors at the beyond-cache cost or about 730,000 at the
+near-cache cost; whether the evaluated graph holds that many needs a census of
+the evaluated model, which this probe cannot supply. The mechanism points at
+how descriptors are created, not at the unchanged writer: removing repeated
+path-to-Value imports, sharing one descriptor per character allocation, or
+reaching length and characters through a single thin handle are candidate
+directions. None is chosen or measured here, and four pairs are a discriminator,
+not an ordinary-performance or adoption claim.
+
+Evidence is under
+`../decl-analysis/2026-09-14/value-layout/serialization-locality-probe/`:
+`functional-check-v1/` holds the discarded-timing functional execution,
+`results-v1/` the consumed one-shot witness, and `analysis-v1/` the offline
+arithmetic and its analyzer. The analysis executes no probe or model and pools
+no historical timing.
