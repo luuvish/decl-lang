@@ -2,7 +2,7 @@
 
 Source baseline: `1a76e625` (2026-09-12). Sections 1–6 record the original
 investigation and its private experiments. Sections 7–34 record subsequent
-implementation steps; sections 35–36 record measurement-only follow-ups.
+implementation steps; sections 35–37 record measurement-only follow-ups.
 Observable behavior and the frozen specification are unchanged.
 External models, profiles, and engine comparison reports remain
 outside this repository, as required by [the measurement policy](DEVELOPMENT.md#performance-measurements).
@@ -14,7 +14,9 @@ blocker and the larger-workload evidence still outstanding. The
 [serializer discriminator](#35-serializer-discriminator-2026-09-19) follows up
 the serialization regression measured with those payloads, and the
 [locality discriminator](#36-serializer-locality-discriminator-2026-09-19)
-identifies a mechanism sufficient to produce it.
+identifies a mechanism sufficient to produce it. The
+[serialization census](#37-serialization-census-2026-09-19) places the
+evaluated output against that mechanism.
 
 The current engine already shares Programs, retains eligible reference rounds,
 and cuts off propagation when results are equal. The remaining costs include
@@ -2375,3 +2377,77 @@ Evidence is under
 `results-v1/` the consumed one-shot witness, and `analysis-v1/` the offline
 arithmetic and its analyzer. The analysis executes no probe or model and pools
 no historical timing.
+
+## 37. Serialization census (2026-09-19)
+
+Section 36 could not say where the evaluated Session output lies between its
+layouts. `serialization_diagnostics::census` answers with counts. It visits
+what `Engine::serialize` emits, in the same order and under the same omission
+rules, evaluates nothing, and records for each text value the addresses of its
+descriptor and its characters in five fixed distance buckets. A Rust-only
+regression holds it to the serializer's actual output in both projections, and
+the serializer itself is untouched. The evaluation hooks of
+`runtime-diagnostics` record, and recording allocates, so a build with them can
+place text differently from the ordinary binary that showed the regression. The
+census therefore has its own `serialization-census` Cargo feature; the example
+built with that feature alone observes the ordinary engine under MiMalloc. See
+the runtime memory
+[migration guide](RUNTIME_MEMORY_MIGRATION.md#serialization-census).
+
+One census process ran over the identical model and 50x50 input of section 34's
+Session comparison, with the same pins and environment. Every operation's
+output size equals the accepted Session output for that operation, which ties
+the census to the measured graph without reading an output body. It took 21.7
+seconds at 2.64 GiB peak RSS; it is not a timing. Counts are identical across
+the initial run, a repeated run and the three edits.
+
+| Emitted per serialization | Count |
+| --- | ---: |
+| Text values | 619,630 (6,090,523 bytes) |
+| Distinct text descriptors | 150,240 (24.2% of text values) |
+| Distinct character allocations | 150,240 |
+| Keys | 1,084,474 |
+| Integers | 414,671 |
+| Maps | 356,187 |
+| Arrays | 153,692 |
+| Records, quantities, references, raw documents | 0 |
+
+| Share of pairs | <= 64 B | <= 4 KiB | <= 16 KiB | <= 2 MiB | Beyond |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| Descriptor to its characters | 43.518% | 19.571% | 3.478% | 12.595% | 20.838% |
+| Consecutive descriptors | 7.375% | 27.215% | 3.059% | 12.270% | 50.080% |
+| Consecutive characters | 4.441% | 37.905% | 3.869% | 8.288% | 45.497% |
+
+The output is a pure `Json` graph, as section 34's source inference expected.
+It is not close to section 36's adjacent layout: 349,977 text visits reach
+characters outside their descriptor's cache line, 207,159 of them more than
+16 KiB away, and half of all consecutive visits move more than 2 MiB between
+descriptors, so emission order is unrelated to where text was allocated. For
+the text that is apart, the graph resembles the scattered layout, inside a
+traversal far beyond the caches. Three of four visits revisit a descriptor
+already emitted, so not every visit can miss.
+
+The counts bound the mechanism by arithmetic, not by measurement. At section
+36's per-leaf costs, one miss per distinct descriptor is 0.722 ms near the
+cache and 5.373 ms beyond it; one per visit outside the cache line is 1.682 ms
+and 12.517 ms. Section 34's regression is +2.181 to +5.067 ms per
+serialization, equal to 60,983 to 141,679 descriptors at the beyond-cache
+cost. It lies inside these bounds, and one beyond-cache miss per distinct
+descriptor is close to its upper end. The dependent descriptor load can
+therefore account for the whole regression under plausible cache behavior. A
+census cannot show which visits missed, and a distance is not a cost.
+
+Distinct descriptors equal distinct character allocations: no character
+allocation is wrapped twice anywhere in this output. Removing repeated
+path-to-Value imports, by a `$key` descriptor cache or by holding descriptors
+in path segments, would not change one descriptor here and cannot address this
+regression. Reaching length and characters through one allocation for every
+text value would; it is a different and larger change, it is not chosen here,
+and an A/B of an actual handle is the measurement that would decide it against
+section 34's accepted memory and command-line results.
+
+Evidence is under
+`../decl-analysis/2026-09-14/value-layout/serialization-census/`: the pinned
+README with the reading rules, `pins.json` binding the binary to its commit and
+the accepted model and input, the consumed `results-v1/`, and `analysis-v1/`
+with the offline arithmetic. The analysis executes no model.
