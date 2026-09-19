@@ -809,6 +809,44 @@ sums. No extra runtime owner is retained. All added storage and updates are
 compiled out when the feature is disabled. These record types add no ordinary
 CLI report mode.
 
+### Serialization census
+
+`serialization_diagnostics::census(value, settable_only)` counts what
+`Engine::serialize` would emit for that value: visited values by emitted form,
+written keys and member names, container depth, and the text values with their
+bytes. It follows the serializer's order and omission rules, including hidden,
+derived and unforced record members and the `null` a raw-document position
+receives, and a Rust-only regression holds it to the serializer's actual output.
+It is a separate traversal that the serializer never calls, so it adds no work
+or storage to emission in either build.
+
+The module has its own `serialization-census` Cargo feature, which
+`runtime-diagnostics` implies. The evaluation hooks of `runtime-diagnostics`
+record, and recording allocates, so a build with those hooks can place text
+differently from an ordinary one. Enabled alone, `serialization-census`
+compiles none of them: the engine it observes is the ordinary engine, and the
+`serialization-census` example reads placement under the allocator the command
+line uses.
+
+The census evaluates nothing. A raw-document `PreVal` is counted in
+`unevaluated_raw_values` and not entered, so whatever that expression would
+produce is absent from every other count; a native callback therefore never
+runs during a census. It retains no value, scope or engine, and it must not run
+while a container of the value is mutably borrowed.
+
+For each text value it also records the addresses of the two allocations behind
+`SharedText`: the distance from the descriptor to its characters, and the
+distances between the descriptors and between the characters of consecutively
+emitted values, each in one of five fixed buckets from a cache line to beyond
+2 MiB. `distinct_descriptors` and `distinct_characters` separate shared
+descriptors from repeated imports of one character allocation. Addresses are
+observations of one process's allocator at the time of the call: they are not
+stable across runs, they say nothing about cache or page state, and a distance
+is not a cost. Map keys and member names are borrowed `String` text without a
+descriptor and carry no placement record. The call allocates two address sets
+proportional to the distinct text allocations it meets; take it outside any
+timed or ledgered interval.
+
 
 ### Proposed path cursor and phase traffic fields
 

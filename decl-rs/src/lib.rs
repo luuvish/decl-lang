@@ -46,3 +46,6 @@ pub mod phase_events;
 
 #[cfg(feature = "runtime-diagnostics")]
 pub mod allocation_diagnostics;
+
+#[cfg(feature = "serialization-census")]
+pub mod serialization_diagnostics;
