@@ -2,13 +2,16 @@
 
 Source baseline: `1a76e625` (2026-09-12). Sections 1–6 record the original
 investigation and its private experiments. Sections 7–34 record subsequent
-implementation steps; sections 35–37 record measurement-only follow-ups.
+implementation steps; sections 35–37 record measurement-only follow-ups, and
+section 38 the first step they led to.
 Observable behavior and the frozen specification are unchanged.
 External models, profiles, and engine comparison reports remain
 outside this repository, as required by [the measurement policy](DEVELOPMENT.md#performance-measurements).
 
 For the latest implementation step, see
-[thin scalar payloads](#34-thin-scalar-payloads-experimental-2026-09-15). The preceding
+[map keys bound without a text value](#38-map-keys-bound-without-a-text-value-2026-09-19).
+[Thin scalar payloads](#34-thin-scalar-payloads-experimental-2026-09-15) is the
+representation step before it. The preceding
 [progress checkpoint](#19-progress-checkpoint-2026-09-13) records the measurement
 blocker and the larger-workload evidence still outstanding. The
 [serializer discriminator](#35-serializer-discriminator-2026-09-19) follows up
@@ -2451,3 +2454,57 @@ Evidence is under
 README with the reading rules, `pins.json` binding the binary to its commit and
 the accepted model and input, the consumed `results-v1/`, and `analysis-v1/`
 with the offline arithmetic. The analysis executes no model.
+
+## 38. Map keys bound without a text value (2026-09-19)
+
+Section 37 located the serialization cost in how text handles are made, so the
+next measurement counted their construction. A scratch build of the census
+commit, with relaxed atomic counters in `SharedText` and at its eleven
+production call sites and never committed, ran the same model, input and
+environment. The initial evaluation constructs 4,076,383 text handles, within
+0.3% of the +4,065,880 allocation calls section 34 reported for H's evaluation:
+essentially every call H added is a text descriptor. Of those handles 1,621,001
+are fresh and 2,455,382 come through `from_rc`, but only 50,328 of the latter
+are `$key` imports. The other 2,405,054 are one expression in the map-binding
+loop, which wrapped every bound key in a fresh text Value only to bind it to
+the key type and discard the result: two allocations in H where G paid one. No
+export occurs in the initial, repeated or equal operations; each changed edit
+exports 1,278,772 times, all at the capture memo's `CaptureKey::String`.
+
+Binding text to `string` returns it unchanged, and binding it to a pattern
+returns it unchanged when the pattern matches; neither reports, reads or
+retains anything. The loop now asks `key_accepts_text` first and builds the
+Value only for a key that may be rejected: every other key type, and a pattern
+that does not match, take the full bind and report exactly as before, with the
+type's own `else` text where it has one. The pattern is tested with the same
+compiled expression the full bind uses, so a rejected key is matched twice and
+an accepted one once. Accepted keys reach no native callback in either form,
+and the child path still builds its own key. A Rust-only regression holds the
+shortcut to the full bind on every key it may answer for, and checks the
+accepted entries and the two reports of an evaluated module.
+
+| Text handles constructed | Before | After | Change |
+| --- | ---: | ---: | ---: |
+| Initial evaluation | 4,076,383 | 1,671,329 | -59.0% |
+| Changed edit, each | 2,963,308 | 786,654 | -73.5% |
+| Map-key validation, initial | 2,405,054 | 0 | -100% |
+| `$key` imports, initial | 50,328 | 50,328 | 0 |
+| Exports per changed edit | 1,278,772 | 1,278,772 | 0 |
+
+Every key of this model is a `string` or a matching pattern. Each avoided
+handle was two allocations and two releases. Output sizes equal the accepted
+Session outputs in all five operations and the census of section 37 is
+unchanged, as it must be: the transient Values were never emitted. These are
+construction counts from one instrumented run, not timings, requested bytes or
+resident memory, and they carry no native speed or adoption claim; a paired
+comparison on a quiet host remains the evidence for that. Full `make verify`,
+`make lint` and an unchanged `make format` pass, with 200 diagnostic-feature
+library tests.
+
+The serialization mechanism of sections 36 and 37 is untouched by this step.
+The review under `../decl-analysis/2026-09-14/value-layout/text-handle-review/`
+records the measurements above with their patch, the emitted text lengths
+(94.1% of text visits are at most 22 bytes) and the candidate that follows
+from them: an inline body behind the existing 8-byte handle, one allocation and
+one dependent load for short text. It is a candidate for a paired comparison,
+not a change made here.

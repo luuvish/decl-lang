@@ -45,6 +45,10 @@ mod binding_input_tests;
 #[path = "../tests/private/binding_lookup_test.rs"]
 mod binding_lookup_tests;
 
+#[cfg(test)]
+#[path = "../tests/private/binding_key_test.rs"]
+mod binding_key_tests;
+
 // Immutable JSON containers remain owned by `raw` throughout binding. Clone
 // only the item being visited; mutable and expanded inputs keep their eager
 // snapshots and move each item out without an additional clone.
@@ -606,6 +610,19 @@ pub fn fmt_f(n: f64) -> String {
         s
     } else {
         format!("{s}.0")
+    }
+}
+
+// Whether binding `text` to a map's key type is known to succeed with no
+// report, read or owner: `string` accepts any text and a pattern accepts what
+// it matches, both by returning the value unchanged. Every other key type, and
+// a pattern that does not match, answers false and takes the full bind, which
+// reports exactly as before.
+fn key_accepts_text(key: &RT, text: &str) -> bool {
+    match &key.k {
+        RTk::Prim(name) => name == "string",
+        RTk::Pattern { re, .. } => re.is_match(text),
+        _ => false,
     }
 }
 
@@ -3531,16 +3548,21 @@ impl Engine {
                 }));
                 let mut child_path = None;
                 for (k, v) in es {
-                    match self.bind(
-                        Value::Str(SharedText::from_rc(Rc::from(k.as_str()))),
-                        key,
-                        path,
-                        parent,
-                        sc,
-                    ) {
-                        Ok(_) => {}
-                        Err(Fail::Taint) => continue,
-                        Err(e) => return Err(e),
+                    // Only a key that may be rejected is given a text value to
+                    // bind; an accepted `string` or pattern key binds to itself
+                    // with no report, and that result was always discarded.
+                    if !key_accepts_text(key, &k) {
+                        match self.bind(
+                            Value::Str(SharedText::from_rc(Rc::from(k.as_str()))),
+                            key,
+                            path,
+                            parent,
+                            sc,
+                        ) {
+                            Ok(_) => {}
+                            Err(Fail::Taint) => continue,
+                            Err(e) => return Err(e),
+                        }
                     }
                     // Rejected keys need no child path. Remove each accepted
                     // key before validating the next one, including on taint.
