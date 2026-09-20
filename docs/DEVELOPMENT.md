@@ -294,7 +294,7 @@ others by reading the same pins into `actions/setup-node`,
 
 | Workflow | When | Jobs |
 |---|---|---|
-| `verify.yml` | every push to `main`, every pull request | `verify`: `make verify`, and that `rust-toolchain.toml` agrees with `mise.toml` · `lint`: `make lint` · `minimums`: `cargo check` on Rust 1.90, the reference's tests on Node 22, `make test-python` on Python 3.10 — the minimums the manifests declare, each with exactly that version |
+| `verify.yml` | every push to `main`, every pull request | `verify`: `make verify`, and that `rust-toolchain.toml` agrees with `mise.toml` · `lint`: `make lint` · `minimums`: `cargo check` on Rust 1.90, the reference's tests on Node 22, `make test-python` on Python 3.10 — the minimums the manifests declare, each with exactly that version · `windows`: the Python package installed on Windows, `decl --version`, `decl-lsp --version`, and two examples against their goldens — what the release's wheels are tested with, before a tag |
 | `extension.yml` | pushes touching `extension/`, `decl-ts/`, the grammar | `vscode`: build and the desktop tests in a downloaded VS Code · `web`: the browser suite with Playwright's Chromium · `zed`: `extension/zed/test.sh` (wasm build, manifest, every query over the fixtures) · `vscode-rust`: the desktop tests against the Rust server, on dispatch |
 | `site.yml` | pushes touching `docs/`, `examples/`, `site/`, the reference, the READMEs | `build`: the site from the docs and the playground bundle · `deploy`: GitHub Pages |
 | `release.yml` | a `v*` tag (or dispatch, which builds without publishing) | §7 |

@@ -7,13 +7,22 @@ import name in Python is `decl`, and the binary is `decl` everywhere.
 
 | Channel | Package | Install | Status |
 |---|---|---|---|
-| GitHub release | `v0.4.0`: `decl` and `decl-lsp` for six platforms, the wheels, the `.vsix` | [releases/tag/v0.4.0](https://github.com/luuvish/decl-lang/releases/tag/v0.4.0) | **published 2026-09-06** by `release.yml` |
-| npm | `decl-lang` | `npm install -g decl-lang` | **published 2026-09-06** (0.4.0, by `release.yml` through trusted publishing, with provenance; `decl-ts/`) |
-| PyPI | `decl-lang` | `pip install decl-lang` | **published 2026-09-06** (0.4.0: 39 wheels and the sdist, by `release.yml` through trusted publishing; `decl-py/`) |
-| Homebrew | tap `luuvish/tap`, formula `decl-lang` | `brew install luuvish/tap/decl-lang` | **published 2026-09-06** (0.4.0, by `release.yml`): [luuvish/homebrew-tap](https://github.com/luuvish/homebrew-tap), the formula mirrored from `homebrew/` |
-| crates.io | `decl-lang` (bins `decl`, `decl-lsp`) | `cargo install decl-lang` | **published 2026-09-06** (0.4.0, by `release.yml` through trusted publishing; `decl-rs/`) |
-| Visual Studio Marketplace, Open VSX | `luuvish.vscode-decl` (the VS Code extension, bundling npm `decl-lang`) | Extensions view: "Decl" | **published 2026-09-06** on both (`luuvish.vscode-decl` 0.4.0, by `release.yml` with `VSCE_PAT` / `OVSX_PAT`); the Open VSX namespace claim is filed |
+| GitHub release | `v0.4.6`: `decl` and `decl-lsp` for six platforms, the wheels, the `.vsix` | [releases/tag/v0.4.6](https://github.com/luuvish/decl-lang/releases/tag/v0.4.6) | **published 2026-09-20**, by hand from the artifacts of `release.yml` (the binaries and the `.vsix` of the tag's run, the wheels and the sdist PyPI serves): see the note below |
+| npm | `decl-lang` | `npm install -g decl-lang` | **published 2026-09-20** (0.4.6, by `release.yml` through trusted publishing, with provenance; `decl-ts/`) |
+| PyPI | `decl-lang` | `pip install decl-lang` | **published 2026-09-20** (0.4.6: 39 wheels and the sdist, by a dispatch of `release.yml` through trusted publishing; `decl-py/`) |
+| Homebrew | tap `luuvish/tap`, formula `decl-lang` | `brew install luuvish/tap/decl-lang` | **published 2026-09-20** (0.4.6, by `release.yml`): [luuvish/homebrew-tap](https://github.com/luuvish/homebrew-tap), the formula mirrored from `homebrew/` |
+| crates.io | `decl-lang` (bins `decl`, `decl-lsp`) | `cargo install decl-lang` | **published 2026-09-20** (0.4.6, by `release.yml` through trusted publishing; `decl-rs/`) |
+| Visual Studio Marketplace, Open VSX | `luuvish.vscode-decl` (the VS Code extension, bundling npm `decl-lang`) | Extensions view: "Decl" | **published 2026-09-20** on both (`luuvish.vscode-decl` 0.4.6, by `release.yml` with `VSCE_PAT` / `OVSX_PAT`); the Open VSX namespace claim is filed |
 | Zed extension registry | `decl` (the Zed extension: grammar, queries, `decl-lsp` pointer) | Zed: extensions, "Decl" | submitted 2026-09-05: [zed-industries/extensions#7488](https://github.com/zed-industries/extensions/pull/7488) (submodule at `extension/zed`; the `decl-lsp` binaries come from the GitHub release) |
+
+The 0.4.6 tag's run published npm, crates.io, Homebrew, and the two
+extension stores, and stopped before PyPI and the GitHub release: the
+Windows wheels failed their `decl --version`, because the Python command
+line asked for a thread stack CPython refuses on Windows. The Python files
+of 0.4.6 are therefore the tag plus that one fix (`85e7d29`), built and
+published by a dispatch of `release.yml`, and the GitHub release was put
+together from the two runs' artifacts. `verify.yml` has run the installed
+Python package on Windows since, so the next tag does not meet this.
 
 npm and Homebrew ship **the same bytes**: `decl-ts/dist/` — the esbuild
 bundles of the CLI, LSP server, and library (web-tree-sitter included,

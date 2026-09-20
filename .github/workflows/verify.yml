@@ -33,6 +33,41 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - run: make lint
 
+  # the Python package installed and run on Windows, as the release's wheels are
+  # there and as nothing else is before a tag: CPython on Windows differs from the
+  # platforms the gate runs on (it admits a smaller thread stack), and the wheels'
+  # own `decl --version` runs only when a release builds them
+  windows:
+    name: python on windows
+    runs-on: windows-latest
+    steps:
+      # the goldens are compared byte for byte: no CRLF conversion on Windows
+      - run: git config --global core.autocrlf false
+        shell: bash
+      - uses: actions/checkout@v7
+      - id: pins
+        name: the pinned versions (mise.toml)
+        shell: bash
+        run: for t in node python; do echo "$t=$(sed -n "s/^$t = \"\(.*\)\"/\1/p" mise.toml)" >> "$GITHUB_OUTPUT"; done
+      - uses: actions/setup-node@v7
+        with:
+          node-version: ${{ steps.pins.outputs.node }}
+          cache: npm
+      - uses: actions/setup-python@v7
+        with:
+          python-version: ${{ steps.pins.outputs.python }}
+      # the grammar sources the extension compiles are synced by the reference build
+      - run: npm ci
+      - run: npm run build -w decl-lang
+      - run: python -m pip install ./decl-py
+      - name: the installed command reports its version and evaluates two examples to their goldens
+        shell: bash
+        run: |
+          decl --version
+          decl-lsp --version
+          decl evaluate docs/examples/01_interconnect.decl | diff - tests/golden/docs__examples__01_interconnect.json
+          decl evaluate docs/examples/02_config.decl | diff - tests/golden/docs__examples__02_config.json
+
   # the minimums the manifests declare, each checked with exactly that version:
   # rust-version (decl-rs/Cargo.toml), engines.node (decl-ts/package.json),
   # requires-python (decl-py/pyproject.toml)
