@@ -49,6 +49,10 @@ mod binding_lookup_tests;
 #[path = "../tests/private/binding_key_test.rs"]
 mod binding_key_tests;
 
+#[cfg(test)]
+#[path = "../tests/private/record_emission_test.rs"]
+mod record_emission_tests;
+
 // Immutable JSON containers remain owned by `raw` throughout binding. Clone
 // only the item being visited; mutable and expanded inputs keep their eager
 // snapshots and move each item out without an additional clone.
@@ -610,6 +614,31 @@ pub fn fmt_f(n: f64) -> String {
         s
     } else {
         format!("{s}.0")
+    }
+}
+
+/// The names a record was supplied with, asked once per member while the
+/// record is emitted. A short list is scanned; only a long one is indexed, so
+/// emitting a record allocates nothing unless it is wide.
+struct Supplied<'a> {
+    order: &'a [String],
+    index: Option<FxHashSet<&'a str>>,
+}
+
+impl<'a> Supplied<'a> {
+    const SCANNED: usize = 16;
+
+    fn new(order: &'a [String]) -> Self {
+        let index =
+            (order.len() > Self::SCANNED).then(|| order.iter().map(String::as_str).collect());
+        Self { order, index }
+    }
+
+    fn has(&self, name: &str) -> bool {
+        match &self.index {
+            Some(index) => index.contains(name),
+            None => self.order.iter().any(|n| n == name),
+        }
     }
 }
 
@@ -5087,9 +5116,8 @@ impl Engine {
                 let b = r.borrow();
                 out.push('{');
                 let mut comma = false;
-                let mut done: HashSet<&str> = HashSet::new();
+                let done = Supplied::new(&b.entry_order);
                 for n in b.entry_order.iter() {
-                    done.insert(n);
                     if let Some(v) = b.extra(n) {
                         if comma {
                             out.push(',');
@@ -5119,7 +5147,7 @@ impl Engine {
                     }
                 }
                 for m in rec_members(&b.rt).iter() {
-                    if done.contains(m.name.as_str()) && m.kind != MKind::Der {
+                    if done.has(m.name.as_str()) && m.kind != MKind::Der {
                         continue;
                     }
                     if settable_only && m.kind == MKind::Der {
