@@ -617,6 +617,66 @@ pub fn fmt_f(n: f64) -> String {
     }
 }
 
+/// Where the serializer's text goes: a `String` keeps all of it, [`Pieces`]
+/// hands what is complete to a writer as it grows.
+trait Emit {
+    fn text(&mut self) -> &mut String;
+    /// A container's entry is complete. All text is final here: a value that
+    /// writes anything is never rolled back, and every enclosing container has
+    /// written its opening bracket.
+    fn entry_done(&mut self);
+}
+
+impl Emit for String {
+    #[inline(always)]
+    fn text(&mut self) -> &mut String {
+        self
+    }
+    #[inline(always)]
+    fn entry_done(&mut self) {}
+}
+
+/// Serialized text drained to a writer whenever a piece of it is complete.
+/// The first write error is kept and the rest of the text discarded.
+struct Pieces<'a> {
+    text: String,
+    to: &'a mut dyn std::io::Write,
+    failed: Option<std::io::Error>,
+}
+
+impl<'a> Pieces<'a> {
+    const PIECE: usize = 256 * 1024;
+
+    fn new(to: &'a mut dyn std::io::Write) -> Self {
+        Self {
+            text: String::with_capacity(Self::PIECE + Self::PIECE / 4),
+            to,
+            failed: None,
+        }
+    }
+    fn drain(&mut self) {
+        if self.failed.is_none() {
+            self.failed = self.to.write_all(self.text.as_bytes()).err();
+        }
+        self.text.clear();
+    }
+    fn finish(mut self) -> std::io::Result<()> {
+        self.drain();
+        self.failed.map_or(Ok(()), Err)
+    }
+}
+
+impl Emit for Pieces<'_> {
+    fn text(&mut self) -> &mut String {
+        &mut self.text
+    }
+    fn entry_done(&mut self) {
+        if self.text.len() >= Self::PIECE {
+            self.drain();
+        }
+    }
+}
+
 /// The names a record was supplied with, asked once per member while the
 /// record is emitted. A short list is scanned; only a long one is indexed, so
 /// emitting a record allocates nothing unless it is wide.
@@ -5091,18 +5151,34 @@ impl Engine {
         out
     }
 
+    /// The same text handed to a writer in pieces as it grows, so a large
+    /// document is never held whole. `Ok(false)`: the value has no text and
+    /// nothing was written.
+    pub(crate) fn serialize_to(
+        &self,
+        v: &Value,
+        root_name: &str,
+        settable_only: bool,
+        to: &mut dyn std::io::Write,
+    ) -> std::io::Result<bool> {
+        let mut out = Pieces::new(to);
+        let written = self.go(v, root_name, settable_only, &mut out);
+        out.finish()?;
+        Ok(written)
+    }
+
     // Append one typed value. An unsupported/absent value appends nothing and
     // returns false, allowing its container to omit the member or array item.
-    fn go(&self, x: &Value, root: &str, settable_only: bool, out: &mut String) -> bool {
+    fn go<O: Emit>(&self, x: &Value, root: &str, settable_only: bool, out: &mut O) -> bool {
         use std::fmt::Write;
 
         match x {
             Value::Absent | Value::Undef => return false,
-            Value::Null => out.push_str("null"),
-            Value::Bool(b) => out.push_str(if *b { "true" } else { "false" }),
-            Value::Int(i) => write!(out, "{i}").expect("writing to String"),
-            Value::Float(f) => out.push_str(&fmt_f(*f)),
-            Value::Str(s) => write_json_str(out, s),
+            Value::Null => out.text().push_str("null"),
+            Value::Bool(b) => out.text().push_str(if *b { "true" } else { "false" }),
+            Value::Int(i) => write!(out.text(), "{i}").expect("writing to String"),
+            Value::Float(f) => out.text().push_str(&fmt_f(*f)),
+            Value::Str(s) => write_json_str(out.text(), s),
             Value::Q(q) => {
                 let unit = self
                     .env
@@ -5111,50 +5187,52 @@ impl Engine {
                     .get(q.dim.as_str())
                     .cloned()
                     .unwrap_or_else(|| q.dim.as_ref().clone());
-                out.push_str("{\"value\":");
-                out.push_str(&fmt_f(q.value));
-                out.push_str(",\"unit\":");
-                write_json_str(out, &unit);
-                out.push('}');
+                out.text().push_str("{\"value\":");
+                out.text().push_str(&fmt_f(q.value));
+                out.text().push_str(",\"unit\":");
+                write_json_str(out.text(), &unit);
+                out.text().push('}');
             }
-            Value::Ref(p) => write_json_str(out, &path_str(p, Some(root))),
+            Value::Ref(p) => write_json_str(out.text(), &path_str(p, Some(root))),
             Value::Arr(a) => {
-                out.push('[');
+                out.text().push('[');
                 let mut comma = false;
                 for item in &a.borrow().items {
-                    let start = out.len();
+                    let start = out.text().len();
                     if comma {
-                        out.push(',');
+                        out.text().push(',');
                     }
                     if self.go(item, root, settable_only, out) {
                         comma = true;
+                        out.entry_done();
                     } else {
-                        out.truncate(start);
+                        out.text().truncate(start);
                     }
                 }
-                out.push(']');
+                out.text().push(']');
             }
             Value::Map(m) => {
-                out.push('{');
+                out.text().push('{');
                 let mut comma = false;
                 for (key, value) in &m.borrow().entries {
-                    let start = out.len();
+                    let start = out.text().len();
                     if comma {
-                        out.push(',');
+                        out.text().push(',');
                     }
-                    write_json_str(out, key);
-                    out.push(':');
+                    write_json_str(out.text(), key);
+                    out.text().push(':');
                     if self.go(value, root, settable_only, out) {
                         comma = true;
+                        out.entry_done();
                     } else {
-                        out.truncate(start);
+                        out.text().truncate(start);
                     }
                 }
-                out.push('}');
+                out.text().push('}');
             }
             Value::Rec(r) => {
                 let b = r.borrow();
-                out.push('{');
+                out.text().push('{');
                 let mut comma = false;
                 let members = rec_members(&b.rt);
                 // Binding pushes one slot per member, in member order. A record
@@ -5186,12 +5264,13 @@ impl Engine {
                     };
                     if let Some(v) = b.extra(n) {
                         if comma {
-                            out.push(',');
+                            out.text().push(',');
                         }
-                        write_json_str(out, n);
-                        out.push(':');
+                        write_json_str(out.text(), n);
+                        out.text().push(':');
                         self.raw_json(v, root, out);
                         comma = true;
+                        out.entry_done();
                         continue;
                     }
                     let slot = if aligned {
@@ -5205,16 +5284,17 @@ impl Engine {
                     {
                         continue;
                     }
-                    let start = out.len();
+                    let start = out.text().len();
                     if comma {
-                        out.push(',');
+                        out.text().push(',');
                     }
-                    write_json_str(out, n);
-                    out.push(':');
+                    write_json_str(out.text(), n);
+                    out.text().push(':');
                     if self.go(&s.value, root, settable_only, out) {
                         comma = true;
+                        out.entry_done();
                     } else {
-                        out.truncate(start);
+                        out.text().truncate(start);
                     }
                 }
                 for (i, m) in members.iter().enumerate() {
@@ -5245,19 +5325,20 @@ impl Engine {
                     {
                         continue;
                     }
-                    let start = out.len();
+                    let start = out.text().len();
                     if comma {
-                        out.push(',');
+                        out.text().push(',');
                     }
-                    write_json_str(out, &m.name);
-                    out.push(':');
+                    write_json_str(out.text(), &m.name);
+                    out.text().push(':');
                     if self.go(&s.value, root, settable_only, out) {
                         comma = true;
+                        out.entry_done();
                     } else {
-                        out.truncate(start);
+                        out.text().truncate(start);
                     }
                 }
-                out.push('}');
+                out.text().push('}');
             }
             Value::JObj(_) | Value::JArr(_) => self.raw_json(x, root, out),
             _ => return false,
@@ -5267,41 +5348,43 @@ impl Engine {
 
     // Raw documents retain every position. Non-document values and failed or
     // unsupported PreVal results become null, unlike omitted typed children.
-    fn raw_json(&self, v: &Value, root: &str, out: &mut String) {
+    fn raw_json<O: Emit>(&self, v: &Value, root: &str, out: &mut O) {
         match v {
             Value::JArr(items) => {
-                out.push('[');
+                out.text().push('[');
                 for (index, item) in items.iter().enumerate() {
                     if index != 0 {
-                        out.push(',');
+                        out.text().push(',');
                     }
                     self.raw_json(item, root, out);
+                    out.entry_done();
                 }
-                out.push(']');
+                out.text().push(']');
             }
             Value::JObj(entries) => {
-                out.push('{');
+                out.text().push('{');
                 for (index, (key, value)) in entries.iter().enumerate() {
                     if index != 0 {
-                        out.push(',');
+                        out.text().push(',');
                     }
-                    write_json_str(out, key);
-                    out.push(':');
+                    write_json_str(out.text(), key);
+                    out.text().push(':');
                     self.raw_json(value, root, out);
+                    out.entry_done();
                 }
-                out.push('}');
+                out.text().push('}');
             }
             Value::PreVal(pv) => match self.ev(&pv.expr, &pv.scope) {
                 Ok(v) => {
                     if !self.go(&v, root, false, out) {
-                        out.push_str("null");
+                        out.text().push_str("null");
                     }
                 }
-                Err(_) => out.push_str("null"),
+                Err(_) => out.text().push_str("null"),
             },
             other => {
                 if !self.go(other, root, false, out) {
-                    out.push_str("null");
+                    out.text().push_str("null");
                 }
             }
         }

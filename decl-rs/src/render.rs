@@ -1277,6 +1277,27 @@ fn fan_out_path(
     Ok(p.to_string())
 }
 
+/// Whether a root's text is the engine's compact JSON and nothing else: no
+/// template, no fan-out, no layout pass, and a container, whose
+/// serialization always has text. Such a root can go to a file in pieces.
+pub fn emits_in_pieces(e: &Emission) -> bool {
+    e.template.is_none()
+        && e.form.each.is_none()
+        && !e.yaml.unwrap_or(e.form.yaml)
+        && e.indent.or(e.form.indent).unwrap_or(0) == 0
+        && matches!(
+            e.value,
+            Value::Arr(_) | Value::Map(_) | Value::Rec(_) | Value::JObj(_) | Value::JArr(_)
+        )
+}
+
+/// Emit such a root to a writer without building its text whole; the bytes
+/// are [`emit_root`]'s.
+pub fn emit_root_to(e: &Emission, to: &mut dyn std::io::Write) -> std::io::Result<()> {
+    e.eng.serialize_to(&e.value, &e.root_name, false, to)?;
+    to.write_all(b"\n")
+}
+
 /// emit one root (§3.1): its structured text or its template's text, as one text or one file per element
 pub fn emit_root(e: &Emission) -> RR<Emitted> {
     let yaml = e.yaml.unwrap_or(e.form.yaml);

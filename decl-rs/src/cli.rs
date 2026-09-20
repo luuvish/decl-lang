@@ -8,7 +8,8 @@ use crate::fmt::format;
 use crate::module::{load_modules, run_universe, Bind, LoadResult, Module};
 use crate::package::{open_package_universe, verify_lock};
 use crate::render::{
-    absolute, declared_form, emit_root, layout, resolve_in, Emission, Emitted, Form,
+    absolute, declared_form, emit_root, emit_root_to, emits_in_pieces, layout, resolve_in,
+    Emission, Emitted, Form,
 };
 use crate::semantics::{json_str, read_json, Diag, Value};
 use crate::yaml::{is_yaml_path, read_yaml, to_json};
@@ -518,7 +519,7 @@ pub fn evaluate(
                 },
             };
             let has_template = template.is_some();
-            let em = match emit_root(&Emission {
+            let emission = Emission {
                 eng: eng.clone(),
                 menv: entry.env.clone(),
                 root_name: n.clone(),
@@ -528,18 +529,33 @@ pub fn evaluate(
                 indent: over.indent,
                 template,
                 read_template: &read_tpl,
-            }) {
+            };
+            let dest = match dest {
+                Some(d) if d == "-" => None,
+                Some(d) => Some(d.clone()),
+                None => form.file.clone(),
+            };
+            // A compact JSON document bound for a file goes there in pieces: a
+            // large one is never held whole beside the universe it came from.
+            if let Some(path) = dest.as_ref().filter(|_| emits_in_pieces(&emission)) {
+                if let Some(dir) = std::path::Path::new(path).parent() {
+                    let _ = std::fs::create_dir_all(dir);
+                }
+                let written =
+                    std::fs::File::create(path).and_then(|mut to| emit_root_to(&emission, &mut to));
+                if written.is_err() {
+                    notes.push(format!("cannot write {path}"));
+                    return (1, None, all.clone(), notes);
+                }
+                continue;
+            }
+            let em = match emit_root(&emission) {
                 Ok(e) => e,
                 Err(e) => {
                     all.push((e.file.clone().unwrap_or_else(|| file.to_string()), e.diag()));
                     bad = true;
                     continue;
                 }
-            };
-            let dest = match dest {
-                Some(d) if d == "-" => None,
-                Some(d) => Some(d.clone()),
-                None => form.file.clone(),
             };
             match em {
                 Emitted::Many(files) => {
