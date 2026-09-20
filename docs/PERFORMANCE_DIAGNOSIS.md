@@ -6,16 +6,19 @@ implementation steps; sections 35–37 record measurement-only follow-ups,
 section 38 the first step they led to, section 39 a candidate that a
 paired comparison did not support, section 40 the first completed
 largest-size run, section 41 the completed pair at that size, section 42
-the teardown step and the key check that followed from them, and section 43
-the explanation of section 34's serialization regression.
+the teardown step and the key check that followed from them, section 43
+the explanation of section 34's serialization regression, and section 44 the
+memory a round transition holds.
 Observable behavior and the frozen specification are unchanged.
 External models, profiles, and engine comparison reports remain
 outside this repository, as required by [the measurement policy](DEVELOPMENT.md#performance-measurements).
 
 For the latest implementation step, see
-[teardown left to the process exit](#42-teardown-left-to-the-process-exit-2026-09-20);
+[what a round transition holds](#44-what-a-round-transition-holds-2026-09-20);
+[teardown left to the process exit](#42-teardown-left-to-the-process-exit-2026-09-20)
+and
 [map keys bound without a text value](#38-map-keys-bound-without-a-text-value-2026-09-19)
-precedes it, and
+precede it, and
 [thin scalar payloads](#34-thin-scalar-payloads-experimental-2026-09-15) is the
 representation step before that. The preceding
 [progress checkpoint](#19-progress-checkpoint-2026-09-13) records the measurement
@@ -3003,3 +3006,173 @@ consumed `results-v1/` and `analysis-v1/`;
 `serialization-shape-exploration/` holds the exploratory probes, the counter
 harness with the operator's outputs and `counters/analysis.md`, marked as not
 evidence where they are not.
+
+## 44. What a round transition holds (2026-09-20)
+
+Section 42 placed the late doubling of the footprint in evaluation and asked
+for a phase-labelled run at the third size. Section 43 left two items of its
+own, the record walk and the container candidate. This section closes those
+two, reads the labelled run, and records the step it led to.
+
+Binding pushes one slot per member in member order, so a record whose slots
+follow its members is now emitted by position, with a bit set for the supplied
+names and a cursor for the supplied order; any other record, and one wider
+than 64 members, keeps the walk by name. Private tests cover widths on both
+sides of 16 and 64, supplied against declared order, extras, and absent,
+defaulted and derived members. On a busy host, six alternating processes per
+build, the record document of section 43 went from 34.9 to 31.2 ms and the map
+document did not move; records still cost about twice maps, so the lookups by
+name were not the bulk of what remains. Writing those tests found a defect of
+behavior, not of cost: a literal that supplies an undeclared member to an open
+record was emitted as `null` by Rust when the member was nested or failed, and
+stopped the reference and Python with an internal error. All three now
+evaluate and materialize such a member before the record instance exists and
+report a failing one at that member; section 3.11 of the specification gained
+one sentence, `docs/REVISIONS.md` a clarification, and the shared corpus one
+valid and one invalid fixture.
+
+The container candidate was approached by two exploratory experiments, neither
+merged. Touching a few siblings' allocations ahead of the descent made every
+shape slower, by 10 to 18% when it read each child's buffer and by 3 to 5%
+when it read only the child's header: starting a load early does not shorten
+the dependent hop. Reserving small buffers at their header's size class, five
+values for a map and four for an array, moved the nest's containers with
+header and buffer on one page from 12.6% to 91.1% and its emission by -6.7%
+and -8.3%, with flat text at +0.5% and the chain at +6.9%. Placement therefore
+causes section 43's gap by intervention as well as by correlation. The
+intervention is not a candidate, since it pays with memory and with the chain;
+holding the values inside the header remains unmeasured.
+
+The labelled run is the diagnostic Session helper at the third size on `main`,
+requested bytes live at the end of each stage:
+
+| Stage | Share of evaluation | Live after it | Change |
+| --- | ---: | ---: | ---: |
+| Round 1: roots bound and forced | 12.2% | 657.7 MiB | +642.2 |
+| Round 1: deferred members forced | 41.0% | 1,597.4 MiB | +926.5 |
+| Round 1: deferred roots bound | 10.7% | 2,107.9 MiB | +510.5 |
+| Transition: classification | 11.8% | 2,162.1 MiB | +20.6, and 788 MiB of scratch |
+| Transition: snapshot | 2.1% | 2,736.1 MiB | +574.1 |
+| Transition: reset | 2.1% | 2,503.8 MiB | -232.3 |
+| Round 2: deferred roots bound | 11.7% | 2,869.2 MiB | +335.7 |
+| Round 2: previous round released | 0.2% | 2,831.1 MiB | -49.3 |
+
+The plateau of section 42 is the forcing of deferred members. The rise is
+everything after it, and the ledger's peak, 2,929.6 MiB, is not at the end of
+the run but inside classification. A first candidate made that visible: it
+let the snapshot share arrays and maps that hold no record and no reference
+instead of copying them, which lowered the bytes live after the run by 3.0%
+and left the peak unchanged to within 4 KB, so the peak had to lie before the
+snapshot. Temporary probes inside the transition, never committed, give the
+scratch:
+
+| Classification scratch | Bytes | What it holds |
+| --- | ---: | --- |
+| Record paths with their prefix ends | 112.9 MiB | 498,010 records, 4.86 million prefixes |
+| Reverse read index | 549.3 MiB | 901,149 readers, 8.66 million read edges, 3.63 million dependencies |
+| Subtree index | 101.2 MiB | 514,627 prefixes, 4.86 million entries |
+| Invalidation walk | 19.7 MiB | 167,254 keys invalid, 5,715 records dropped, one root |
+
+The reverse index was a hash set per dependency: a 48-byte table entry and a
+separately allocated set for each of 3.63 million dependencies, most with one
+to three readers, read by a walk that reaches 167 thousand keys.
+
+Probes on the roots answer what the rise is. The model has three roots: the
+input document, a typed tree that holds every record, and an output document
+that projects the tree into maps, arrays and scalars. No record lives under
+the output document. It reads members that wait on `$referrers`, so it defers
+in each round and is bound in the second phase, the +510.5 MiB above. Its
+answers change between round 1, which has none, and round 2, so the transition
+invalidates it and round 2 binds it from its expression again, the +335.7 MiB.
+Two questions follow.
+
+Must round 2 build it again? As the engine stands, yes. A root's computation
+has one read set, and nothing finer is recorded inside a value that is not a
+record; 96% of the records under the typed tree are clean and reused, and none
+of the output document can be. Building less of it needs dependency tracking
+inside plain values, which is a design of its own and was not attempted.
+
+Must the run keep round 1's copy meanwhile? No. The frozen snapshot held it
+through the whole of round 2, while its replacement was built, and nothing
+could read it. A frozen root is read only by the frozen engine resolving a
+path, which it does only for a reference that carries the snapshot as its
+owner; those references are `$referrers` answers, and an answer is the path of
+a registered record. Every member is forced before a round may be frozen, so
+nothing is evaluated inside a snapshot, and an ordinary reference read out of
+a frozen record is resolved by the live engine that reads it.
+
+The step has three parts, all in Rust's performance layer; the reference and
+Python keep their snapshots whole, and nothing observable differs.
+
+- The snapshot shares an array or map that holds only scalars and such
+  containers, to a depth of 64 so that a natively built self-holding container
+  falls back to the memoized copy. Nothing mutates a built container in place:
+  the mutation sites are construction, the snapshot copy itself and the
+  collector's clearing.
+- The reverse index is one table entry per dependency and one 8-byte chained
+  link per read edge, sized exactly from the read sets. A graph beyond 32-bit
+  indices returns to the existing fallback, a round that is not incremental.
+- The snapshot leaves out a root that is bound again in the next round, holds
+  no record, reference or unevaluated value, and heads no registered record's
+  path. The last condition covers a record registered under a root's name that
+  the root's value does not contain: without it an answer naming that record
+  would turn into a dangling reference that the other two implementations do
+  not report.
+
+Private tests cover the index (each reader once, an unknown dependency, an
+empty graph, the 32-bit bound) and the snapshot: it shares a plain root, leaves
+out one that is bound again and thereby releases the removed value, keeps a
+record root that is bound again, and keeps a plain root that heads a
+registered record's path. The gate passed on the formatted tree with 1,299
+identical comparisons.
+
+Requested bytes from the same helper, outputs byte-identical in every arm:
+
+| Size | Arm | Peak | Live after the run | Allocation calls | Bytes allocated |
+| --- | --- | ---: | ---: | ---: | ---: |
+| Second | `main` | 1,092.2 MiB | 1,048.4 MiB | | |
+| Second | shared containers alone | 1,092.2 MiB | 1,015.5 MiB (-3.1%) | -1.7% | -2.1% |
+| Second | the step | 950.4 MiB (-13.0%) | 917.7 MiB (-12.5%) | -2.8% | -4.7% |
+| Third | `main` | 2,929.6 MiB | 2,825.4 MiB | | |
+| Third | shared containers alone | 2,929.6 MiB | 2,740.5 MiB (-3.0%) | -1.0% | -1.4% |
+| Third | the step | 2,560.2 MiB (-12.6%) | 2,487.9 MiB (-12.0%) | -1.9% | -3.2% |
+
+At the third size the snapshot now adds 307.9 MiB instead of 574.1, the reset
+releases 304.8 MiB instead of 232.3, because round 1's output document goes
+with it, and round 2 ends at 2,543.7 MiB instead of 2,881.3. Classification
+takes 1.08 s instead of 1.82 s and the snapshot 0.19 s instead of 0.33 s.
+
+The one-shot command line, alternating order on a busy host, outputs
+identical:
+
+| Size | Build | Peak footprint | Peak RSS | Wall |
+| --- | --- | --- | --- | --- |
+| Second | `main` | 1,223.3, 1,221.6 MiB | 1,242.8, 1,252.3 MiB | 4.60, 4.20 s |
+| Second | the step | 1,070.3, 1,075.4 MiB | 1,088.4, 1,106.1 MiB | 4.32, 3.95 s |
+| Third | `main` | 3.061, 3.071, 3.050 GiB | 3.151, 3.157, 3.148 GiB | 14.21, 14.35, 14.18 s |
+| Third | the step | 2.701, 2.700, 2.700 GiB | 2.787, 2.787, 2.787 GiB | 13.47, 13.53, 13.47 s |
+
+The footprint falls by 12.5% and 12.0% in the two pairs at the second size and
+by 11.8%, 12.1% and 11.5% in the three at the third; wall falls by 5.0 to 5.7%
+in the three. That is a functional observation with no rule fixed beforehand,
+not a witness, although the footprint moves from run to run by less than a
+tenth of the effect. The largest size was not run, so section 41's 9.988 GiB
+stands as the last measured figure there.
+
+What is left is level on both sides at the third size: classification reaches
+the new peak, 2,560.2 MiB, with 419 MiB of scratch, and round 2 ends at
+2,543.7 MiB. Lowering the peak further needs both. On the first side the
+record paths and the subtree index hold one entry per prefix per record; an
+index by owner would hold one per record, but leans on parent links agreeing
+with paths, which a native caller can break. On the second the snapshot still
+copies the typed tree, 308 MiB, although 96% of its records are clean; a
+copy-on-write snapshot changes which round owns a shared instance and is a
+design of its own. Neither was attempted.
+
+Evidence is under `../decl-analysis/2026-09-14/value-layout/`: `late-rise/`
+holds the first labelled runs and their stage report, `round-snapshot/` the
+probes' outputs, the three arms' ledgers with the output hashes, the
+command-line runs and the gated patch, `container-buffer-review/` the review
+with both experiments' patches and runs, and `open-record-extra/` the
+reproduction of the defect. All of it is exploratory and marked so. No saved
+campaign was reopened or pooled.
