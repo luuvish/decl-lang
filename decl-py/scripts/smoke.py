@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import subprocess
 import sys
 import tempfile
@@ -47,8 +48,8 @@ with tempfile.TemporaryDirectory(prefix="decl-py-smoke-") as tmp:
     check("decl console script installed", decl_bin.exists())
 
     src = Path(tmp) / "t.decl"
-    src.write_text("type T = { a: int, const b = a * 2 }\nexport output t: T = { a: 21 }\n")
-    r = sh(str(decl_bin), "evaluate", str(src), "--root", "t")
+    src.write_text("type T = { a: int, b = a * 2 }\nexport output t: T = { a: 21 }\n")
+    r = sh(str(decl_bin), "evaluate", str(src), "--output", "t")
     check(
         "installed decl evaluates",
         r.returncode == 0 and r.stdout.strip() == '{"a":21,"b":42}',
@@ -57,7 +58,7 @@ with tempfile.TemporaryDirectory(prefix="decl-py-smoke-") as tmp:
 
     prog = f"""
 import json, decl
-v = decl.evaluate({str(src)!r}, root='t')
+v = decl.evaluate({str(src)!r}, outputs=['t'])['t']
 d = decl.check({str(src)!r})
 bad = {str(Path(tmp) / "bad.decl")!r}
 open(bad, 'w').write('type Bad = 10..3\\n')
@@ -74,8 +75,13 @@ print(json.dumps({{'v': v, 'clean': d, 'codes': [x['code'] for x in e], 'f': f}}
     )
     check("decl.format_source canonicalizes", out.get("f") == "const x = 1 + 2\n")
 
+    # the version every manifest carries (make version), not a literal to forget at a release
+    manifest = (HERE / "pyproject.toml").read_text()
+    version = re.search(r'^version = "([^"]+)"', manifest, re.M).group(1)  # type: ignore[union-attr]
     r = sh(str(py), "-c", "import decl; print(decl.__version__)")
-    check("package version exposed", r.stdout.strip() == "0.2.0", r.stdout)
+    check("package version exposed", r.stdout.strip() == version, r.stdout)
+    r = sh(str(decl_bin), "--version")
+    check("installed decl reports it", r.stdout.strip() == f"decl {version}", r.stdout)
 
 print(f"\nTOTAL {passed} ok, {failed} failed")
 sys.exit(1 if failed else 0)

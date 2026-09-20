@@ -38,7 +38,7 @@ Issues = "https://github.com/luuvish/decl-lang/issues"
 
 [tool.setuptools]
 package-dir = { "" = "src" }
-packages = ["decl", "decl._tree_sitter"]
+packages = ["decl", "decl._tree_sitter", "decl.qengine"]
 
 # src/decl/_tree_sitter/src/ (grammar C sources) is synced from ../tree-sitter-decl
 # by `npm run build` in ../decl-ts (or by setup.py) and gitignored
