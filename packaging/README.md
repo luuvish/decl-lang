@@ -22,7 +22,9 @@ line asked for a thread stack CPython refuses on Windows. The Python files
 of 0.4.6 are therefore the tag plus that one fix (`85e7d29`), built and
 published by a dispatch of `release.yml`, and the GitHub release was put
 together from the two runs' artifacts. `verify.yml` has run the installed
-Python package on Windows since, so the next tag does not meet this.
+Python package on Windows since, so the next tag does not meet this; its
+first run there found that the package wrote carriage returns on Windows,
+which is fixed as well.
 
 npm and Homebrew ship **the same bytes**: `decl-ts/dist/` — the esbuild
 bundles of the CLI, LSP server, and library (web-tree-sitter included,

@@ -1562,7 +1562,7 @@ class Session:
 
     def write(self, file: str) -> None:
         try:
-            with open(file, "w", encoding="utf-8") as f:
+            with open(file, "w", encoding="utf-8", newline="\n") as f:
                 f.write(self.module_text())
         except OSError:
             raise SessionError(f"cannot write {file}") from None
@@ -1582,7 +1582,7 @@ class Session:
     def save(self, name: str, file: str) -> None:
         text = self.document_text(name)
         try:
-            with open(file, "w", encoding="utf-8") as f:
+            with open(file, "w", encoding="utf-8", newline="\n") as f:
                 f.write(text + "\n")
         except OSError:
             raise SessionError(f"cannot write {file}") from None

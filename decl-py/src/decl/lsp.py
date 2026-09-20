@@ -3711,7 +3711,7 @@ def handle(msg: dict[str, Any]) -> None:
         # file system
         for f in params.get("files") or []:
             try:
-                with open(path_of(f["uri"]), "w", encoding="utf-8") as fh:
+                with open(path_of(f["uri"]), "w", encoding="utf-8", newline="\n") as fh:
                     fh.write(f["text"])
             except OSError:
                 pass

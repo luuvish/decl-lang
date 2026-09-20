@@ -377,7 +377,7 @@ def evaluate_file(
                     target = absolute(os.path.join(where or ".", rel))
                     try:
                         os.makedirs(os.path.dirname(target) or ".", exist_ok=True)
-                        with open(target, "w", encoding="utf-8") as fh:
+                        with open(target, "w", encoding="utf-8", newline="\n") as fh:
                             fh.write(body)
                     except OSError:
                         notes.append(f"cannot write {target}")
@@ -393,7 +393,7 @@ def evaluate_file(
                 continue
             try:
                 os.makedirs(os.path.dirname(where) or ".", exist_ok=True)
-                with open(where, "w", encoding="utf-8") as fh:
+                with open(where, "w", encoding="utf-8", newline="\n") as fh:
                     fh.write(em)
             except OSError:
                 notes.append(f"cannot write {where}")
@@ -473,12 +473,24 @@ def main(argv: list[str] | None = None) -> int:
     hops deep (§9.9 sets no limit)."""
     if threading.current_thread() is not threading.main_thread():
         return _main(argv)
+    plain_streams()
     result: list[int] = []
     sys.setrecursionlimit(large_stack(threading.stack_size))
     worker = threading.Thread(target=lambda: result.append(_main(argv)), name="decl")
     worker.start()
     worker.join()
     return result[0] if result else 1
+
+
+def plain_streams() -> None:
+    """Standard output and error as the reference writes them on every
+    platform: UTF-8, and a line feed where the text has one. Left alone,
+    Windows turns each into a carriage return and a line feed and encodes in
+    the console's code page, and the documents stop being the same bytes."""
+    for stream in (sys.stdout, sys.stderr):
+        reconfigure = getattr(stream, "reconfigure", None)
+        if reconfigure is not None:
+            reconfigure(encoding="utf-8", newline="\n")
 
 
 # The stack asked for, largest first. A platform refuses a size it cannot
@@ -584,7 +596,7 @@ def _main(argv: list[str] | None = None) -> int:
                 if flags.get("check"):
                     print(f"would reformat {f}", file=sys.stderr)
                 else:
-                    with open(f, "w", encoding="utf-8") as fh:
+                    with open(f, "w", encoding="utf-8", newline="\n") as fh:
                         fh.write(out)
                     print(f"reformatted {f}", file=sys.stderr)
         return 1 if (bad or (flags.get("check") and changed)) else 0

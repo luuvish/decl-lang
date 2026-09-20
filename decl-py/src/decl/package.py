@@ -230,7 +230,7 @@ def lock_text(u: dict[str, Any]) -> str:
 
 def write_lock(u: dict[str, Any]) -> str:
     path = os.path.join(u["root_dir"], "decl.lock")
-    with open(path, "w", encoding="utf-8") as f:
+    with open(path, "w", encoding="utf-8", newline="\n") as f:
         f.write(lock_text(u))
     return path
 

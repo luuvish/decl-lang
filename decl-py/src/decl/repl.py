@@ -503,7 +503,7 @@ class Repl:
         if cmd == ":history":
             if rest:
                 try:
-                    with open(rest, "w", encoding="utf-8") as f:
+                    with open(rest, "w", encoding="utf-8", newline="\n") as f:
                         f.write("\n".join(s.script_lines()) + "\n")
                 except OSError:
                     raise SessionError(f"cannot write {rest}") from None

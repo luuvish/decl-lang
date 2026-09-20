@@ -389,7 +389,7 @@ def format_file(path: str | os.PathLike[str], *, check: bool = False) -> bool:
         src = f.read()
     out = format_source(src)
     if out != src and not check:
-        with open(path, "w", encoding="utf-8") as f:
+        with open(path, "w", encoding="utf-8", newline="\n") as f:
             f.write(out)
     return out != src
 

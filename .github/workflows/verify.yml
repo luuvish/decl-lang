@@ -67,6 +67,9 @@ jobs:
           decl-lsp --version
           decl evaluate docs/examples/01_interconnect.decl | diff - tests/golden/docs__examples__01_interconnect.json
           decl evaluate docs/examples/02_config.decl | diff - tests/golden/docs__examples__02_config.json
+          # a document written to a file has line feeds too, as on every other platform
+          decl evaluate docs/examples/02_config.decl --output prod=prod.json
+          test -s prod.json && ! grep -q $'\r' prod.json
 
   # the minimums the manifests declare, each checked with exactly that version:
   # rust-version (decl-rs/Cargo.toml), engines.node (decl-ts/package.json),
