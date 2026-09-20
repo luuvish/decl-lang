@@ -32,7 +32,7 @@ __all__ = [
     "format_source",
     "validate",
 ]
-__version__ = "0.4.6"
+__version__ = "0.4.7"
 
 
 class Diagnostic(TypedDict, total=False):
