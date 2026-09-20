@@ -258,6 +258,10 @@ type Router = {
   through. Passed-through fields are **opaque** (D10): they are
   preserved, compared for equality, and re-serialized faithfully, but
   no expression can read them. To compute on a field, declare it.
+  An undeclared field written in a **literal** is a value like any
+  other: its expression is evaluated when the record is constructed, the
+  value passes through as a document's field does, and a failing
+  expression is reported at that field, as a declared member's is.
 
   *Counterexample:* with `type P = { debug?: bool, ... }` and
   `input p: P`, the expression `p.verbose` is a name error even if the

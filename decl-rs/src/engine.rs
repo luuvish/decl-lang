@@ -3979,6 +3979,42 @@ impl Engine {
                 return Ok(Value::Rec(previous.clone()));
             }
         }
+        // A literal's undeclared members on an open record are values like any
+        // other (§3.11): evaluated and materialized before the instance exists,
+        // so a failing one fails the binding and leaves nothing half-bound. A
+        // document's are values already and pass through as they are; so does
+        // whatever a native caller put in one, which stays as lazy as it came.
+        let mut literal_extras: Vec<(&String, Value)> = vec![];
+        if rec.open.get() && matches!(raw, Value::PreObj(_)) {
+            for (k, v) in entries.iter() {
+                let Value::PreVal(pv) = v else { continue };
+                if members.iter().any(|m| m.name == *k) {
+                    continue;
+                }
+                let value = self
+                    .ev(&pv.expr, &pv.scope)
+                    .and_then(|value| self.mat_val(value));
+                match value {
+                    Ok(value) => literal_extras.push((k, value)),
+                    // reported where a declared member's failure is: at the member
+                    Err(Fail::Eval(e)) => {
+                        let mut p = path.to_vec();
+                        p.push(Seg::Name(Rc::from(k.as_str())));
+                        self.env.report(Diag {
+                            severity: "error".into(),
+                            id: None,
+                            message: e.msg,
+                            path: path_str(&p, None),
+                            code: e.code,
+                            loc: None,
+                            by: None,
+                        });
+                        return Err(Fail::Taint);
+                    }
+                    Err(other) => return Err(other),
+                }
+            }
+        }
         // This captures only ordered key text, never input Values. Looking up an
         // already compiled schema does not move compilation across registration
         // callbacks or change the captured member sequence.
@@ -4172,7 +4208,11 @@ impl Engine {
                 continue;
             }
             if rec.open.get() {
-                inst.borrow_mut().set_extra(k, v.clone());
+                let value = literal_extras
+                    .iter()
+                    .find(|(name, _)| *name == k)
+                    .map_or_else(|| v.clone(), |(_, value)| value.clone());
+                inst.borrow_mut().set_extra(k, value);
             } else {
                 let nm = rt
                     .name

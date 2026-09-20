@@ -1,0 +1,8 @@
+// @expect-phase: binding
+// @expect-error: E5001
+// @expect-message: division by zero
+// a literal's undeclared member on an open record is evaluated as the record is bound; a
+// failing one is reported at the member, like a declared member's (§3.11)
+type T = { a: int, ... }
+input divisor: int = 0
+export output t: T = { bad: 1 / divisor, a: 2 }

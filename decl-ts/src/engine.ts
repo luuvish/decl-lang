@@ -1714,6 +1714,28 @@ export class Engine {
       this.edits!.activate(this, previous);
       return previous;
     }
+    // A literal's undeclared members on an open record are values like any other
+    // (§3.11): evaluated and materialized before the instance exists, so a failing
+    // one fails the binding and leaves nothing half-bound. A document's are values
+    // already and pass through as they are.
+    const literalExtras = new Map<string, any>();
+    if (rt.open)
+      for (const [k, v] of entries) {
+        if (!(v && v.__expr) || rt.members.some((m: any) => m.name === k)) continue;
+        try {
+          literalExtras.set(k, this.matVal(this.ev(v.__expr, v.scope)));
+        } catch (e) {
+          if (!(e instanceof EvalErr)) throw e;
+          // reported where a declared member's failure is: at the member
+          this.env.report({
+            severity: 'error',
+            message: e.message,
+            path: pathStr([...path, k]),
+            code: (e as any).code,
+          });
+          throw new Taint();
+        }
+      }
     const oldSlots = previous?.slots;
     const inst: RecInst = previous ?? {
       __rec: true,
@@ -1854,7 +1876,7 @@ export class Engine {
     }
     for (const [k, v] of entries) {
       if (schema ? schema.names.has(k) : rt.members.some((m: any) => m.name === k)) continue;
-      if (rt.open) inst.extras.set(k, v);
+      if (rt.open) inst.extras.set(k, literalExtras.has(k) ? literalExtras.get(k) : v);
       else
         this.env.report({
           severity: 'error',
@@ -2204,7 +2226,7 @@ export class Engine {
         for (const n of x.entryOrder) {
           done.add(n);
           if (x.extras.has(n)) {
-            parts.push(`${JSON.stringify(n)}:${rawJson(x.extras.get(n))}`);
+            parts.push(`${JSON.stringify(n)}:${rawJson(x.extras.get(n), (v) => go(v) ?? 'null')}`);
             continue;
           }
           const s = x.slots.get(n);
@@ -2237,7 +2259,10 @@ export class Engine {
   }
 }
 
-function rawJson(v: any): string {
+// Raw documents retain every position. A value that is not a document's (a
+// literal's extra member, evaluated when its record was bound) is emitted as the
+// value it is; one with nothing to emit holds its position as null.
+function rawJson(v: any, other: (v: any) => string): string {
   if (v === null) return 'null';
   if (typeof v === 'boolean') return String(v);
   if (typeof v === 'bigint') return v.toString();
@@ -2246,10 +2271,12 @@ function rawJson(v: any): string {
     return /[.eE]/.test(s) ? s : s + '.0';
   }
   if (typeof v === 'string') return JSON.stringify(v);
-  if (Array.isArray(v)) return `[${v.map(rawJson).join(',')}]`;
+  if (Array.isArray(v)) return `[${v.map((x) => rawJson(x, other)).join(',')}]`;
   if (v && v.__jobj)
-    return `{${v.entries.map(([k, x]: any) => `${JSON.stringify(k)}:${rawJson(x)}`).join(',')}}`;
-  throw new Error('rawJson');
+    return `{${v.entries
+      .map(([k, x]: any) => `${JSON.stringify(k)}:${rawJson(x, other)}`)
+      .join(',')}}`;
+  return other(v);
 }
 
 function exprName(e: any): string {

@@ -1,0 +1,13 @@
+// a literal's undeclared members on an open record are values like any other: evaluated as
+// the record is bound and passed through beside a document's (§3.11)
+type T = { a: int, twice = a * 2, ... }
+const base = 10
+export output t: T = {
+    s: "x"
+    n: base + 1
+    f: 1.5
+    z: null
+    arr: [1, "two", [3]]
+    obj: { k: 1, inner: { deep: [true] } }
+    a: 2
+}

@@ -1756,6 +1756,28 @@ class Engine:
         ):
             self.edits.activate(self, previous)
             return previous
+        # A literal's undeclared members on an open record are values like any other
+        # (§3.11): evaluated and materialized before the instance exists, so a failing
+        # one fails the binding and leaves nothing half-bound. A document's are values
+        # already and pass through as they are.
+        literal_extras: dict[str, Any] = {}
+        if rt.get("open"):
+            for k_, v in entries:
+                if not isinstance(v, PreVal) or any(m["name"] == k_ for m in rt["members"]):
+                    continue
+                try:
+                    literal_extras[k_] = self.mat_val(self.ev(v.expr, v.scope))
+                except EvalErr as e:
+                    # reported where a declared member's failure is: at the member
+                    self.env.report(
+                        {
+                            "severity": "error",
+                            "message": e.msg,
+                            "path": path_str([*path, k_]),
+                            "code": e.code,
+                        }
+                    )
+                    raise Taint() from None
         old_slots = previous.slots if previous is not None else None
         inst = previous if previous is not None else RecInst(rt.get("name"), rt, path, parent)
         if previous is not None:
@@ -1834,7 +1856,7 @@ class Engine:
             if k_ in schema[1] if schema else any(m["name"] == k_ for m in rt["members"]):
                 continue
             if rt.get("open"):
-                inst.extras[k_] = v
+                inst.extras[k_] = literal_extras.get(k_, v)
             else:
                 nm = f" {rt['name']}" if rt.get("name") else ""
                 self.env.report(
@@ -2264,6 +2286,10 @@ class Engine:
             s = js_num_str(n)
             return s if ("." in s or "e" in s or "E" in s) else s + ".0"
 
+        def extra_value(x: Any) -> str:
+            g = go(x)
+            return "null" if g is None else g
+
         def go(x: Any) -> str | None:
             if x is ABSENT or isinstance(x, (Closure, NatFn, StdRef)):
                 return None
@@ -2297,7 +2323,7 @@ class Engine:
                 for n in x.entry_order:
                     done.add(n)
                     if n in x.extras:
-                        parts.append(f"{json_str(n)}:{_raw_json(x.extras[n])}")
+                        parts.append(f"{json_str(n)}:{_raw_json(x.extras[n], extra_value)}")
                         continue
                     s = x.slots.get(n)
                     if s is None or s.state in ("invalid", "absent") or s.kind == "der":
@@ -2352,7 +2378,10 @@ def _num_s(v: Any) -> str:
     return js_num_str(v) if is_float(v) else str(v)
 
 
-def _raw_json(v: Any) -> str:
+def _raw_json(v: Any, other: Callable[[Any], str]) -> str:
+    """Raw documents retain every position. A value that is not a document's (a
+    literal's extra member, evaluated when its record was bound) is emitted as the
+    value it is; one with nothing to emit holds its position as null."""
     if v is None:
         return "null"
     if is_bool(v):
@@ -2365,10 +2394,10 @@ def _raw_json(v: Any) -> str:
     if is_str(v):
         return json_str(v)
     if isinstance(v, list):
-        return "[" + ",".join(_raw_json(x) for x in v) + "]"
+        return "[" + ",".join(_raw_json(x, other) for x in v) + "]"
     if isinstance(v, JObj):
-        return "{" + ",".join(f"{json_str(k)}:{_raw_json(x)}" for k, x in v.entries) + "}"
-    raise RuntimeError("raw_json")
+        return "{" + ",".join(f"{json_str(k)}:{_raw_json(x, other)}" for k, x in v.entries) + "}"
+    return other(v)
 
 
 def _expr_name(e: Any) -> str:
