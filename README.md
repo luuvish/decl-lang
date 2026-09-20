@@ -94,11 +94,15 @@ core (`decl-lang/core`) in the browser.
 
 ## Status
 
-**Specification v0.4 (2026-09-06)** — v0.1 was frozen on 2026-08-31,
+**Specification v0.4.6 (2026-09-08)** — v0.1 was frozen on 2026-08-31,
 revised through the v0.2 cycle (D31–D33, D29 amended), v0.3 (member
-kinds by shape and hidden members `x$ = e`: D4 amended, D34), then v0.4
-(D35: rendering is tooling, declared in the module with `@render`;
-[docs/REVISIONS.md](docs/REVISIONS.md)). All roadmap phases are
+kinds by shape and hidden members `x$ = e`: D4 amended, D34), v0.4
+(D35: rendering is tooling, declared in the module with `@render`), and
+within it v0.4.1–v0.4.6: a record flows into a map (D36), `$referrers`
+answers in rounds, `std.array` grows `sort` / `sort_by` / `unique` /
+`reverse`, a computed document binds at its site, discrimination is
+hierarchical, and a `match` subject is a value position
+([docs/REVISIONS.md](docs/REVISIONS.md)). All roadmap phases are
 complete: the tree-sitter grammar, the TypeScript reference
 implementation with its full static checker, modules and packages with
 a reproducible lock, the complete standard library, the `decl` CLI /
