@@ -577,6 +577,7 @@ impl Programs {
                 let (key, val, clauses) = (self.get(key), self.get(val), self.clauses(clauses));
                 Rc::new(move |eng, sc| {
                     let mut entries = vec![];
+                    let mut seen = KeysSeen::default();
                     visit(
                         eng,
                         sc,
@@ -586,7 +587,7 @@ impl Programs {
                                 return err("map key must be string");
                             };
                             let k = k.to_string();
-                            if entries.iter().any(|(n, _)| *n == k) {
+                            if !seen.admits(&entries, &k) {
                                 return err_code(format!("duplicate key {k}"), "E5004");
                             }
                             entries.push((k, val(eng, scope)?));

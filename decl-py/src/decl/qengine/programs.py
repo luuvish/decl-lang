@@ -316,6 +316,7 @@ class Programs:
             def comprehension(eng: Engine, sc: Scope) -> Any:
                 entries: list[Any] = []
                 items: list[Any] = []
+                seen: set[str] = set()  # the keys so far: a scan would be quadratic
 
                 def visit(ci: int, scope: Scope) -> None:
                     if ci == len(clauses):
@@ -326,8 +327,9 @@ class Programs:
                             n = key(eng, scope)
                             if not is_str(n):
                                 raise EvalErr("map key must be string")
-                            if any(kk == n for kk, _ in entries):
+                            if n in seen:
                                 raise EvalErr(f"duplicate key {n}", "E5004")
+                            seen.add(n)
                             entries.append((n, val(eng, scope)))
                         return
                     name, iterator, filters = clauses[ci]

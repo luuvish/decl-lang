@@ -1,0 +1,6 @@
+// @expect-phase: binding
+// @expect-error: E5004
+// @expect-message: duplicate key 7
+// a key produced twice is an error wherever it falls in a long comprehension (§4.8)
+type T = { v = { std.string.of(if i == 300 then 7 else i): i for i in 0..<400 } }
+export output t: T = {}

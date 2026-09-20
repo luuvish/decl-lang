@@ -6,13 +6,38 @@
 //! does not copy keys or affect another map.
 
 use super::{OrderedMap, Value};
-use rustc_hash::{FxBuildHasher, FxHashMap, FxHasher};
-use std::hash::{Hash, Hasher};
+use rustc_hash::{FxBuildHasher, FxHashMap, FxHashSet, FxHasher};
+use std::hash::{BuildHasher, Hash, Hasher};
 use std::iter::FusedIterator;
 use std::rc::{Rc, Weak};
 
 const MAX_SHAPE_KEYS: usize = 8;
 const MAX_POOL_ENTRIES: usize = 4096;
+const SCANNED_KEYS: usize = 16;
+
+/// The keys an entry list under construction already holds (E5004). A short
+/// list is scanned. From `SCANNED_KEYS` entries on the keys' hashes are kept
+/// and only a hash seen before is confirmed by a scan, so a long comprehension
+/// checks each key in constant time, not in the length of the list.
+#[derive(Default)]
+pub(crate) struct KeysSeen {
+    hashes: Option<FxHashSet<u64>>,
+}
+
+impl KeysSeen {
+    /// Whether `key` is new among `entries`. The caller pushes it next or
+    /// abandons the list: every later call sees the entries this one admitted.
+    pub(crate) fn admits(&mut self, entries: &[(String, Value)], key: &str) -> bool {
+        if entries.len() < SCANNED_KEYS {
+            return !entries.iter().any(|(k, _)| k == key);
+        }
+        let hash = |k: &str| FxBuildHasher.hash_one(k);
+        let hashes = self
+            .hashes
+            .get_or_insert_with(|| entries.iter().map(|(k, _)| hash(k)).collect());
+        hashes.insert(hash(key)) || !entries.iter().any(|(k, _)| k == key)
+    }
+}
 
 struct KeyShape {
     keys: OrderedMap<()>,

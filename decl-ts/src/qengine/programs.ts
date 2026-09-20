@@ -286,14 +286,15 @@ export class Programs {
         return (eng, sc) => {
           const entries: [string, Value][] = [],
             items: Value[] = [];
+          const seen = new Set<string>(); // the keys so far: a scan would be quadratic
           const visit = (ci: number, scope: Scope) => {
             if (ci === clauses.length) {
               if (e.e === 'comp') items.push({ spread: false, v: { __expr: e.head, scope } });
               else {
                 const k = key!(eng, scope);
                 if (typeof k !== 'string') throw new EvalErr('map key must be string');
-                if (entries.some(([n]) => n === k))
-                  throw new EvalErr(`duplicate key ${k}`, 'E5004');
+                if (seen.has(k)) throw new EvalErr(`duplicate key ${k}`, 'E5004');
+                seen.add(k);
                 entries.push([k, val!(eng, scope)]);
               }
               return;

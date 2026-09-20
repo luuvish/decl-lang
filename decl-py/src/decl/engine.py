@@ -272,14 +272,16 @@ class Engine:
             return self.ev(e["x"], sc)
         if k == "mapcomp":
             entries: list[Any] = []
+            seen: set[str] = set()  # the keys so far: a scan would be quadratic
 
             def rec(ci: int, locals_: dict[str, Any]) -> None:
                 if ci == len(e["clauses"]):
                     key = self.ev(e["key"], sc.with_locals(locals_))
                     if not is_str(key):
                         raise EvalErr("map key must be string")
-                    if any(kk == key for kk, _ in entries):
+                    if key in seen:
                         raise EvalErr(f"duplicate key {key}", "E5004")
+                    seen.add(key)
                     entries.append((key, self.ev(e["val"], sc.with_locals(locals_))))
                     return
                 cl = e["clauses"][ci]
@@ -504,10 +506,12 @@ class Engine:
         if not any(is_spread(v) for _, v in pre.entries):
             return list(pre.entries)
         out: list[Any] = []
+        seen: set[str] = set()
 
         def put(k_: str, v: Any) -> None:
-            if any(n == k_ for n, _ in out):
+            if k_ in seen:
                 raise EvalErr(f"duplicate key {k_}", "E5004")
+            seen.add(k_)
             out.append((k_, v))
 
         for k_, v in pre.entries:

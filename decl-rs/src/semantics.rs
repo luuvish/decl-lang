@@ -19,7 +19,7 @@ mod shared_text;
 pub use shared_text::SharedText;
 
 mod map_entries;
-pub(crate) use map_entries::MapShapePool;
+pub(crate) use map_entries::{KeysSeen, MapShapePool};
 pub use map_entries::{
     MapEntries, MapEntriesIntoIter, MapEntriesIter, MapEntriesIterMut, MapEntriesKeys,
     MapEntriesValues, MapEntriesValuesMut,

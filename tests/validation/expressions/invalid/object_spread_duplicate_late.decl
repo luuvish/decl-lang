@@ -1,0 +1,7 @@
+// @expect-phase: binding
+// @expect-error: E5004
+// @expect-message: duplicate key 250
+// a spread's key meets an entry far down the literal (§4.2, §4.14)
+const base = { std.string.of(i): i for i in 0..<400 }
+type T = { v = { ...base, "250": 0 } }
+export output t: T = {}

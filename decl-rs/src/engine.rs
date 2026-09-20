@@ -1124,7 +1124,17 @@ impl Engine {
             Expr::Paren(x) => self.ev(x, sc),
             Expr::MapComp { key, val, clauses } => {
                 let mut entries = vec![];
-                self.map_comp(key, val, clauses, 0, sc.locals.clone(), sc, &mut entries)?;
+                let mut seen = KeysSeen::default();
+                self.map_comp(
+                    key,
+                    val,
+                    clauses,
+                    0,
+                    sc.locals.clone(),
+                    sc,
+                    &mut entries,
+                    &mut seen,
+                )?;
                 Ok(Value::PreObj(Rc::new(entries)))
             }
             Expr::Template(parts) => Ok(Value::Str(self.render(parts, sc)?.into())),
@@ -1474,6 +1484,7 @@ impl Engine {
         locals: Locals,
         sc: &Scope,
         out: &mut Vec<(String, Value)>,
+        seen: &mut KeysSeen,
     ) -> R<()> {
         if ci == clauses.len() {
             let sc2 = sc.with_locals(locals);
@@ -1481,7 +1492,7 @@ impl Engine {
                 return err("map key must be string");
             };
             let k = k.to_string();
-            if out.iter().any(|(kk, _)| *kk == k) {
+            if !seen.admits(out, &k) {
                 return err_code(format!("duplicate key {k}"), "E5004");
             }
             let v = self.ev(val, &sc2)?;
@@ -1501,7 +1512,7 @@ impl Engine {
                 }
             }
             if ok {
-                self.map_comp(key, val, clauses, ci + 1, l2, sc, out)?;
+                self.map_comp(key, val, clauses, ci + 1, l2, sc, out, seen)?;
             }
         }
         Ok(())
@@ -2719,8 +2730,9 @@ impl Engine {
             return Ok(es.to_vec());
         }
         let mut out: Vec<(String, Value)> = vec![];
+        let mut seen = KeysSeen::default();
         let mut put = |k: String, v: Value| -> R<()> {
-            if out.iter().any(|(n, _)| *n == k) {
+            if !seen.admits(&out, &k) {
                 return err_code(format!("duplicate key {k}"), "E5004");
             }
             out.push((k, v));

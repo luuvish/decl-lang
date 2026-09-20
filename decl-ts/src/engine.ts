@@ -245,11 +245,13 @@ export class Engine {
         return { __pat: true, re: e.re };
       case 'mapcomp': {
         const entries: [string, any][] = [];
+        const seen = new Set<string>(); // the keys so far: a scan would be quadratic
         const rec = (ci: number, locals: Map<string, any>) => {
           if (ci === e.clauses.length) {
             const k = this.ev(e.key, { ...sc, locals });
             if (typeof k !== 'string') throw new EvalErr('map key must be string');
-            if (entries.some(([kk]) => kk === k)) throw new EvalErr(`duplicate key ${k}`, 'E5004');
+            if (seen.has(k)) throw new EvalErr(`duplicate key ${k}`, 'E5004');
+            seen.add(k);
             entries.push([k, this.ev(e.val, { ...sc, locals })]);
             return;
           }
@@ -492,8 +494,10 @@ export class Engine {
     const isSpread = (v: any) => v && v.__expr && v.__expr.e === 'spread';
     if (!x.entries.some(([, v]: any) => isSpread(v))) return (x.flat = x.entries);
     const out: [string, any][] = [];
+    const seen = new Set<string>();
     const put = (k: string, v: any) => {
-      if (out.some(([n]) => n === k)) throw new EvalErr(`duplicate key ${k}`, 'E5004');
+      if (seen.has(k)) throw new EvalErr(`duplicate key ${k}`, 'E5004');
+      seen.add(k);
       out.push([k, v]);
     };
     for (const [k, v] of x.entries) {

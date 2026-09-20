@@ -1,0 +1,16 @@
+// a long comprehension keeps every key, in order, and a spread of it keeps
+// them all beside its own entries (§4.8, §4.14)
+const squares = { std.string.of(i): i * i for i in 0..<400 }
+const more = { ...squares, extra: 0 }
+type T = {
+    count: int
+    last: int
+    beside: int
+    first_keys: string[]
+}
+export output t: T = {
+    count: std.array.count(std.map.keys(squares))
+    last: squares["399"] ?? -1
+    beside: std.array.count(std.map.keys(more))
+    first_keys: [k for k in std.map.keys(squares) if std.string.length(k) == 1]
+}
