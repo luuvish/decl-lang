@@ -199,6 +199,8 @@ export class Engine {
   prev: Engine | null = null;
   frozenRoots: Map<string, Value> | null = null;
   frozenRegistry: RecInst[] | null = null;
+  /** a copied round's records by canonical path: where an answer is looked up */
+  frozenIndex: Map<string, RecInst> | null = null;
   settled = false; // the last round: a reference into the snapshot resolves live
   snap: { insts: Map<string, RecInst[]>; edges: Map<string, Edge> } | null = null;
   queried = new Set<string>();
@@ -860,6 +862,8 @@ export class Engine {
   // member counts as none — §7.5). Lenient about segment kinds: engine-built
   // paths are canonical by construction
   resolveSegs(segs: Seg[]): any {
+    // A copied round holds the records an answer can name, by path.
+    if (this.frozenIndex) return this.frozenIndex.get(pathStr(segs));
     this.record(`root:${segText(segs[0])}`);
     let cur: any = this.rootsMap.get(segs[0] as string);
     for (let i = 1; i < segs.length && cur !== undefined; i++) {
@@ -1302,8 +1306,9 @@ export class Engine {
     const seen = new Map<string, number>();
     let retained: Engine | null = initial;
     const programs = initial?.programs ?? (incremental ? new Programs() : null);
-    incremental &&= RoundCache.needed(env);
-    let cache = incremental ? new RoundCache() : null;
+    const types = incremental ? RoundCache.typesOf(env) : new Set<string>();
+    incremental &&= types.size > 0;
+    let cache = incremental ? new RoundCache(types) : null;
     for (let round = 1; ; round++) {
       const reusing = retained !== null;
       const eng: Engine = retained ?? new Engine(env);

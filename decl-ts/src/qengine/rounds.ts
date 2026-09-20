@@ -76,28 +76,36 @@ function snapshotResult(v: Value, eng: Engine, prefix: string, seen = new Set<ob
 
 /** Statistics describe work, without adding user-visible diagnostics. */
 export class RoundCache {
-  /** Skip dependency recording when the loaded module graph has no reference
-   * queries. A missed optimization still follows the complete fresh driver. */
-  static needed(env: Env, seen = new Set<Env>()): boolean {
-    if (seen.has(env)) return false;
+  /** Every type name a `$referrers` expression of the loaded module graph
+   * names. Empty: no reference queries, so no dependency recording; a missed
+   * optimization still follows the complete fresh driver. */
+  static typesOf(env: Env, seen = new Set<Env>(), out = new Set<string>()): Set<string> {
+    if (seen.has(env)) return out;
     seen.add(env);
-    const contains = (node: unknown): boolean =>
-      node !== null &&
-      typeof node === 'object' &&
-      (('e' in node && node.e === 'referrers') || Object.values(node).some(contains));
-    const asts = [
+    const collect = (node: unknown): void => {
+      if (node === null || typeof node !== 'object') return;
+      if ('e' in node && node.e === 'referrers' && 'type' in node) out.add(String(node.type));
+      Object.values(node).forEach(collect);
+    };
+    [
       ...env.typeAsts.values(),
       ...env.funcs.values(),
       ...env.inputs.values(),
       ...env.outputs,
       ...env.unitDecls.values(),
       ...[...env.consts.values()].map((c) => [c.expr, c.type]),
-    ];
-    return (
-      asts.some(contains) ||
-      [...env.imports.values()].some((im) => this.needed(im.env, seen)) ||
-      [...env.namespaces.values()].some((ns) => this.needed(ns.env, seen))
-    );
+    ].forEach(collect);
+    for (const im of env.imports.values()) this.typesOf(im.env, seen, out);
+    for (const ns of env.namespaces.values()) this.typesOf(ns.env, seen, out);
+    return out;
+  }
+
+  /** A round reaches a snapshot only through a `$referrers` answer, and an
+   * answer names a registered record of one of these types: the snapshot holds
+   * those records and what they contain, and nothing else. */
+  readonly types: ReadonlySet<string>;
+  constructor(types: ReadonlySet<string> = new Set()) {
+    this.types = types;
   }
 
   readonly revisions = new Revisions();
@@ -314,9 +322,10 @@ export class RoundCache {
       if (v.__jobj) return v; // lexical JSON is immutable input data
       if (isRec(v)) {
         if ((v as any).eng && (v as any).eng !== eng) return v;
-        const r = { ...v, eng: frozen };
+        // No member of a frozen record is evaluated, so its parent link has no
+        // reader; keeping it would pull the whole tree into the snapshot.
+        const r = { ...v, eng: frozen, parent: null };
         copies.set(v, r);
-        r.parent = v.parent ? copy(v.parent) : null;
         return r;
       }
       if (isArr(v)) {
@@ -348,14 +357,40 @@ export class RoundCache {
       // fresh-round behavior until they can be represented as snapshot data.
       throw new IneligibleSnapshot('context-bearing snapshot');
     };
-    frozen.frozenRegistry = eng.env.registry.map(copy);
-    frozen.frozenRoots = new Map([...eng.env.roots].map(([k, v]) => [k, copy(v)]));
-    // Validate and memoize container copies once. Record slot maps are shared
+    // A round obtains a frozen record only through a `$referrers` answer,
+    // which names a registered record of a type some `$referrers` expression
+    // names; from there it reads that record's values, down into the records
+    // it contains, and nothing else: an ordinary reference resolves in the
+    // live round. So only those records are frozen, and an answer's path is
+    // looked up among them instead of walked from frozen roots. Container
+    // copies are validated and memoized once. Record slot maps are shared
     // with the snapshot until the live owner replaces a slot (copy-on-write).
-    for (const inst of eng.env.registry) {
-      for (const slot of inst.slots.values()) copy(slot.value);
-      for (const value of inst.extras.values()) copy(value);
-    }
+    const registry: RecInst[] = [];
+    const reached = new Set<object>();
+    const reach = (raw: Value): void => {
+      if (!raw || typeof raw !== 'object' || reached.has(raw)) return;
+      reached.add(raw);
+      if (isRec(raw)) {
+        if ((raw as any).eng && (raw as any).eng !== eng) return;
+        registry.push(copy(raw) as RecInst);
+        for (const slot of raw.slots.values()) {
+          copy(slot.value);
+          reach(slot.value);
+        }
+        for (const value of raw.extras.values()) {
+          copy(value);
+          reach(value);
+        }
+      } else if (isArr(raw)) raw.items.forEach(reach);
+      else if (isMap(raw)) for (const value of raw.entries.values()) reach(value);
+    };
+    for (const inst of eng.env.registry)
+      if (inst.typeName !== undefined && this.types.has(inst.typeName)) reach(inst);
+    frozen.frozenRegistry = registry;
+    frozen.frozenRoots = new Map();
+    frozen.frozenIndex = new Map(registry.map((r) => [pathStr(r.path), r]));
+    if (frozen.frozenIndex.size !== registry.length)
+      throw new IneligibleSnapshot('two frozen records at one path');
     frozen.slotsByKey = new Map();
     frozen.snapshotValue = copy;
     frozen.roundCache = null;

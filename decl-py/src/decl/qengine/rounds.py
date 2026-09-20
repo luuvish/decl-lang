@@ -84,28 +84,48 @@ class RoundCache:
     """A retained dependency graph uses the slots as its single value cache."""
 
     @staticmethod
-    def needed(env: Any, seen: set[Any] | None = None) -> bool:
-        from decl.semantics import mentions_referrers
+    def types_of(env: Any, seen: set[Any] | None = None, out: set[str] | None = None) -> set[str]:
+        """Every type name a `$referrers` expression of the loaded module graph names.
 
+        Empty: no reference queries, so no dependency recording."""
         seen = set() if seen is None else seen
+        out = set() if out is None else out
         if env in seen:
-            return False
+            return out
         seen.add(env)
-        asts = [
-            *env.type_asts.values(),
-            *env.funcs.values(),
-            *env.inputs.values(),
-            *env.outputs,
-            *env.unit_decls.values(),
-            *[[c["expr"], c.get("type")] for c in env.consts.values()],
-        ]
-        return (
-            mentions_referrers(asts)
-            or any(RoundCache.needed(im["env"], seen) for im in env.imports.values())
-            or any(RoundCache.needed(ns["env"], seen) for ns in env.namespaces.values())
-        )
 
-    def __init__(self) -> None:
+        def collect(node: Any) -> None:
+            if isinstance(node, (list, tuple)):
+                for x in node:
+                    collect(x)
+            elif isinstance(node, dict):
+                if node.get("e") == "referrers":
+                    out.add(str(node["type"]))
+                for x in node.values():
+                    if isinstance(x, (dict, list, tuple)):
+                        collect(x)
+
+        collect(
+            [
+                *env.type_asts.values(),
+                *env.funcs.values(),
+                *env.inputs.values(),
+                *env.outputs,
+                *env.unit_decls.values(),
+                *[[c["expr"], c.get("type")] for c in env.consts.values()],
+            ]
+        )
+        for im in env.imports.values():
+            RoundCache.types_of(im["env"], seen, out)
+        for ns in env.namespaces.values():
+            RoundCache.types_of(ns["env"], seen, out)
+        return out
+
+    def __init__(self, types: set[str] | None = None) -> None:
+        # A round reaches a snapshot only through a `$referrers` answer, and an
+        # answer names a registered record of one of these types: the snapshot
+        # holds those records and what they contain, and nothing else.
+        self.types: set[str] = set() if types is None else types
         self.revisions = Revisions()
         self.clean_records: set[RecInst] = set()
         self.rounds = 0
@@ -310,7 +330,9 @@ class RoundCache:
                 copies[id(v)] = r
                 r.eng, r.menv = frozen, v.menv
                 r.entry_order = v.entry_order
-                r.parent = clone(v.parent) if v.parent else None
+                # No member of a frozen record is evaluated, so its parent link has no
+                # reader; keeping it would pull the whole tree into the snapshot.
+                r.parent = None
                 r.slots = v.slots
                 r.extras = v.extras
                 return r
@@ -336,13 +358,48 @@ class RoundCache:
                 return v
             raise IneligibleSnapshot("context-bearing snapshot")
 
-        frozen.frozen_registry = [clone(r) for r in eng.env.registry]
-        frozen.frozen_roots = {k: clone(v) for k, v in eng.env.roots.items()}
+        # A round obtains a frozen record only through a `$referrers` answer,
+        # which names a registered record of a type some `$referrers` expression
+        # names; from there it reads that record's values, down into the records
+        # it contains, and nothing else: an ordinary reference resolves in the
+        # live round. So only those records are frozen, and an answer's path is
+        # looked up among them instead of walked from frozen roots. Container
+        # copies are validated and memoized once; record slot maps are shared
+        # with the snapshot until the live owner replaces a slot.
+        registry: list[Any] = []
+        reached: set[int] = set()
+
+        def reach(raw: Any) -> None:
+            if id(raw) in reached:
+                return
+            if isinstance(raw, RecInst):
+                reached.add(id(raw))
+                if raw.eng is not None and raw.eng is not eng:
+                    return
+                registry.append(clone(raw))
+                for slot in raw.slots.values():
+                    clone(slot.value)
+                    reach(slot.value)
+                for value in raw.extras.values():
+                    clone(value)
+                    reach(value)
+            elif isinstance(raw, ArrV):
+                reached.add(id(raw))
+                for x in raw.items:
+                    reach(x)
+            elif isinstance(raw, MapV):
+                reached.add(id(raw))
+                for x in raw.entries.values():
+                    reach(x)
+
         for inst in eng.env.registry:
-            for slot in inst.slots.values():
-                clone(slot.value)
-            for value in inst.extras.values():
-                clone(value)
+            if inst.type_name is not None and inst.type_name in self.types:
+                reach(inst)
+        frozen.frozen_registry = registry
+        frozen.frozen_roots = {}
+        frozen.frozen_index = {path_str(r.path): r for r in registry}
+        if len(frozen.frozen_index) != len(registry):
+            raise IneligibleSnapshot("two frozen records at one path")
         frozen.slots_by_key = {}
         frozen.snapshot_value = clone
         frozen.round_cache = None

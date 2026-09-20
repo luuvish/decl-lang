@@ -187,6 +187,8 @@ class Engine:
         self.prev: Engine | None = None
         self.frozen_roots: dict[str, Any] | None = None
         self.frozen_registry: list[Any] | None = None
+        # a copied round's records by canonical path: where an answer is looked up
+        self.frozen_index: dict[str, Any] | None = None
         self.settled = False  # the last round: a reference into the snapshot resolves live
         self.snap: dict[str, Any] | None = None  # {"insts": by type, "edges": by `T|m`}
         self.queried: set[str] = set()
@@ -912,6 +914,9 @@ class Engine:
     # member counts as none — §7.5). Lenient about segment kinds: engine-built
     # paths are canonical by construction
     def resolve_segs(self, segs: list[Any]) -> Any:
+        # A copied round holds the records an answer can name, by path.
+        if self.frozen_index is not None:
+            return self.frozen_index.get(path_str(segs), _UNDEF)
         self.record(f"root:{segs[0]}")
         cur = self.roots_map.get(segs[0], _UNDEF)
         for s0 in segs[1:]:
@@ -1346,8 +1351,9 @@ class Engine:
         round_ = 0
         retained: Engine | None = initial
         programs = initial.programs if initial else Programs() if incremental else None
-        incremental = incremental and RoundCache.needed(env)
-        cache = RoundCache() if incremental else None
+        types = RoundCache.types_of(env) if incremental else set()
+        incremental = incremental and bool(types)
+        cache = RoundCache(types) if incremental else None
         while True:
             round_ += 1
             reusing = retained is not None

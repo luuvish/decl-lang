@@ -78,6 +78,16 @@ unaffected records and clean subtrees remain live. TypeScript and Python share
 frozen slot maps and replace live slots with copy-on-write. Rust copies owned
 snapshot slots and carries frozen reference owners through navigation.
 
+A snapshot holds what the next round can reach, not the universe. A round
+obtains a frozen record only through a `$referrers` answer, and an answer is
+the registered path of a record whose type name a `$referrers` expression
+names, a static set. From there a reader goes down into the records it
+contains: no member of a frozen record is evaluated, so its parent link has no
+reader, and an ordinary reference resolves in the live round. So the freeze
+takes the registered records of those types and what they contain, without
+parent links, keeps no roots, and resolves an answer's path in an index of the
+frozen records.
+
 The initial materialization defers reference answers. Dependency capture for
 one-shot evaluation starts at settlement, then covers both phases of a reused
 round. Programs without reference queries skip this bookkeeping. Dependency

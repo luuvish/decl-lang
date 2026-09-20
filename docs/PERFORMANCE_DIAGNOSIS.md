@@ -3467,6 +3467,21 @@ the two commits with 1,305 identical comparisons, six more than before for
 the new fixture. These are functional observations with no rule fixed
 beforehand, not a witness, and the largest size was not run.
 
+The rule is a statement about what the language lets a round read, not about
+Rust's representation, so the reference and Python took it as well. They
+already shared a frozen record's slot map with the live one and replaced live
+slots by copy-on-write, so there was less to save: their freeze made a shallow
+copy of every registered record, copied the roots, and validated and memoized
+every container of the universe. It now takes the registered records of the
+named types and what they contain, without parent links, keeps no roots, and
+resolves an answer's path in an index of the frozen records; a value that
+cannot be frozen falls back only when a candidate holds it, as in Rust. The
+gate passed with the same 1,305 identical comparisons, and both reproduce the
+external model's 178 covered fixtures. On a busy host, two alternating pairs
+of the reference at the second size: wall 10.10 and 9.95 s to 9.66 and 9.53 s,
+peak footprint 4,135.6 to 3,983.4 MiB (-3.7%); one pair of Python at the first
+size: 19.11 to 18.48 s, 1,019.5 to 915.7 MiB (-10.2%); outputs identical.
+
 What is left in the peak at the third size is 293 MiB of classification
 scratch over 2,141 MiB: about 60 for the record paths and about 230 while the
 reverse read index's table doubles. Keying that table by the interned key's
