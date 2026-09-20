@@ -3,8 +3,9 @@
 Source baseline: `1a76e625` (2026-09-12). Sections 1–6 record the original
 investigation and its private experiments. Sections 7–34 record subsequent
 implementation steps; sections 35–37 record measurement-only follow-ups,
-section 38 the first step they led to, and section 39 a candidate that a
-paired comparison did not support.
+section 38 the first step they led to, section 39 a candidate that a
+paired comparison did not support, and section 40 the first completed
+largest-size run.
 Observable behavior and the frozen specification are unchanged.
 External models, profiles, and engine comparison reports remain
 outside this repository, as required by [the measurement policy](DEVELOPMENT.md#performance-measurements).
@@ -2591,3 +2592,70 @@ needs its own paired comparison however sound its mechanism. Evidence is under
 `../decl-analysis/2026-09-14/value-layout/inline-text-ab/`: the pinned README
 with the rule, `pins.json` binding each artifact to its commit, the consumed
 `counts-v1/`, `locality-v1/` and `timing-v1/`, and `analysis-v1/`.
+
+## 40. Capacity at the largest size: the first completed run (2026-09-20)
+
+Section 34 left the largest workload without a completed observation: H stopped
+at the 8 GiB footprint scope after 61 s with kernel pressure NORMAL in every
+sample. Two separately predefined scopes at 10 GiB followed, H first and G only
+if H fully passed, with every other guard unchanged: NORMAL pressure, 256 MiB
+swap-used growth and swapout caps, a 180-second deadline, two launch health
+samples, competitor scans, and complete typed validation of the output outside
+native timing. Neither scope retried, replaced a run or raised its cap.
+
+| Scope | Available at launch | In compressor | Outcome |
+| --- | ---: | ---: | --- |
+| 8 GiB (section 34) | 7.25 GiB | 2.28 GiB | footprint cap at 8.9 GiB, 61 s |
+| 10 GiB, first | 5.23 GiB | 3.82 GiB | pressure WARN at 6.452 GiB, 52.5 s |
+| 10 GiB, second | 9.24 GiB | 1.80 GiB | native completion, 83.1 s |
+
+The first 10 GiB scope was stopped by the pressure guard 2.5 GiB below the
+earlier crossing. Its launch health had been accepted: pressure was NORMAL,
+power eligible and no competitor ran, while only 0.35 GiB was free and 919 MiB
+of swap was already in use. The launch gates do not measure available memory.
+The second scope therefore added one precondition outside the campaign, read
+once before the claim and recorded with it: at least 9 GiB readily available
+(free, speculative, inactive and purgeable pages) and at most 2.3 GiB in the
+compressor, anchored on the launch state of the only run that had stayed
+NORMAL to 8.9 GiB. Those thresholds were written after the present host state
+was known, and the plan says so; they are an operational precondition, not a
+measured requirement.
+
+With memory actually free, H completed natively for the first time: exit zero,
+no cleanup, wall 83.092774 s, CPU 82.835239 s, peak RSS 8,936,079,360 B (8.32
+GiB), 221,166,981 output bytes. The saved trajectories agree on the shape of
+the run: footprint reaches about 4.7 GiB within nine seconds, stays between 4.7
+and 5.1 GiB until about 47 s, and rises again late, so the peak belongs to the
+end of the run. The capacity question has an answer on this 16 GiB host: the
+largest size fits under the unchanged guards when the host's memory is free,
+and does not when it is not.
+
+The campaign is nevertheless rejected and consumed, and G was skipped. The
+unchanged typed validator found every count equal to its independent oracle
+(2,739,193 objects, 1,233,862 arrays, 5,771,022 strings, 4,492,206 numbers and
+69,976 booleans) and a different typed graph digest. Under the campaign's rule
+this is a rejected row: it is not an accepted completed measurement, no pair
+exists, and the completed requirement of section 34 stays open.
+
+A direct comparison with the oracle's canonical output, key order ignored and
+types distinguished, finds exactly 7,680 differing scalars, all strings in one
+field of 40 of the 870 objects that carry it; the other 830 are identical.
+Each value is a fixed-width code built from equal sub-fields, and the two
+outputs align a shorter code to opposite ends of the width. The rule that does
+this is a padding function written in the external model, not in the runtime,
+and it has no effect at the two smaller sizes, whose accepted digests match,
+because codes of unequal width are first joined at the largest size. It is a
+discrepancy of that model against its oracle, to be settled in the model's own
+validation; per the
+[measurement policy](DEVELOPMENT.md#performance-measurements) nothing of the
+model enters this repository. It is recorded here because it is
+what the first completed run found, and because it bounds what this
+observation may be used for: a native time and peak of a run whose output does
+not yet validate.
+
+Evidence is under `../decl-analysis/2026-09-14/value-layout/`:
+`capacity10-work/` holds the first scope's plan, policy and consumed campaign,
+and `capacity10-v2-work/` the second's, with its readiness record and the
+completed run's telemetry. Both pin the section 34 campaign as their
+antecedent, and the second also pins the first. No historical campaign was
+reopened or pooled.
