@@ -2560,8 +2560,8 @@ every access cannot be checked (6-9 ns against about 12.5 ns for a whole
 emitted leaf), so the candidate used two unchecked reads under one constructor
 invariant. It kept zero-copy import of long text, gave up character identity
 for short text, and let the capture memo's text key hold the handle. It passed
-the full gate with byte-identical output and lives unmerged on branch
-`inline-text-candidate`.
+the full gate with byte-identical output and was never merged; its one commit
+is kept as a patch and a bundle with the comparison's evidence.
 
 A paired comparison against section 38's tree, with its reading rule fixed
 beforehand, ran three instruments on the accepted model and input: counts, the
@@ -2613,7 +2613,8 @@ to two nanoseconds per visited value decides the segment, so a change there
 needs its own paired comparison however sound its mechanism. Evidence is under
 `../decl-analysis/2026-09-14/value-layout/inline-text-ab/`: the pinned README
 with the rule, `pins.json` binding each artifact to its commit, the consumed
-`counts-v1/`, `locality-v1/` and `timing-v1/`, and `analysis-v1/`.
+`counts-v1/`, `locality-v1/` and `timing-v1/`, `analysis-v1/`, and
+`branch-record/` with the candidate's commit as a patch and a verified bundle.
 
 ## 40. Capacity at the largest size: the first completed run (2026-09-20)
 
