@@ -2640,11 +2640,19 @@ exists, and the completed requirement of section 34 stays open.
 A direct comparison with the oracle's canonical output, key order ignored and
 types distinguished, finds exactly 7,680 differing scalars, all strings in one
 field of 40 of the 870 objects that carry it; the other 830 are identical.
-Each value is a fixed-width code built from equal sub-fields, and the two
-outputs align a shorter code to opposite ends of the width. The rule that does
-this is a padding function written in the external model, not in the runtime,
-and it has no effect at the two smaller sizes, whose accepted digests match,
-because codes of unequal width are first joined at the largest size. It is a
+Each value is a fixed-width code accumulated along a path through joins. The
+runtime is not involved, and neither is the model's padding or join, which
+match the oracle producer's evaluator: every object upstream of the 40,
+including each one's own source, is identical in both outputs. The producer
+recomputes this one field in a pass after evaluation, following each origin's
+actual path and keeping the first code that reaches a destination, where the
+model copies the merged map of the join upstream, in which a later input
+overwrites an earlier one. The two agree unless one origin reaches a join
+through two inputs. No join has such an origin at the two smaller sizes, whose
+accepted digests match; one join of 31 has 192 at the largest size, which is
+the 192 differing entries in each of the 40 objects downstream of it. An
+earlier revision of this section attributed the difference to the direction of
+a padding function; comparing the upstream objects withdrew that. It is a
 discrepancy of that model against its oracle, to be settled in the model's own
 validation; per the
 [measurement policy](DEVELOPMENT.md#performance-measurements) nothing of the
