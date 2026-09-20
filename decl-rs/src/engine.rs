@@ -5156,8 +5156,34 @@ impl Engine {
                 let b = r.borrow();
                 out.push('{');
                 let mut comma = false;
-                let done = Supplied::new(&b.entry_order);
+                let members = rec_members(&b.rt);
+                // Binding pushes one slot per member, in member order. A record
+                // that holds to that is walked by position; any other (caught
+                // half-bound, or wider than the position set) is walked by name.
+                let aligned = members.len() <= 64
+                    && b.slots.len() == members.len()
+                    && b.slots
+                        .iter()
+                        .zip(members.iter())
+                        .all(|((name, _), m)| name.as_ref() == m.name.as_str());
+                let done = (!aligned).then(|| Supplied::new(&b.entry_order));
+                let (mut supplied, mut cursor) = (0u64, 0usize);
                 for n in b.entry_order.iter() {
+                    // Supplied names mostly follow the member order: try the
+                    // next position before searching.
+                    let position = if aligned {
+                        let hit = (cursor < b.slots.len()
+                            && b.slots[cursor].0.as_ref() == n.as_str())
+                        .then_some(cursor)
+                        .or_else(|| b.slots.iter().position(|(k, _)| k.as_ref() == n.as_str()));
+                        if let Some(i) = hit {
+                            supplied |= 1 << i;
+                            cursor = i + 1;
+                        }
+                        hit
+                    } else {
+                        None
+                    };
                     if let Some(v) = b.extra(n) {
                         if comma {
                             out.push(',');
@@ -5168,7 +5194,12 @@ impl Engine {
                         comma = true;
                         continue;
                     }
-                    let Some(s) = b.slot(n) else { continue };
+                    let slot = if aligned {
+                        position.map(|i| &b.slots[i].1)
+                    } else {
+                        b.slot(n)
+                    };
+                    let Some(s) = slot else { continue };
                     if matches!(s.state, SlotState::Invalid | SlotState::Absent)
                         || s.kind == MKind::Der
                     {
@@ -5186,14 +5217,23 @@ impl Engine {
                         out.truncate(start);
                     }
                 }
-                for m in rec_members(&b.rt).iter() {
-                    if done.has(m.name.as_str()) && m.kind != MKind::Der {
+                for (i, m) in members.iter().enumerate() {
+                    let was_supplied = match &done {
+                        Some(done) => done.has(m.name.as_str()),
+                        None => supplied & (1 << i) != 0,
+                    };
+                    if was_supplied && m.kind != MKind::Der {
                         continue;
                     }
                     if settable_only && m.kind == MKind::Der {
                         continue;
                     }
-                    let Some(s) = b.slot(&m.name) else { continue };
+                    let slot = if aligned {
+                        Some(&b.slots[i].1)
+                    } else {
+                        b.slot(&m.name)
+                    };
+                    let Some(s) = slot else { continue };
                     if s.hidden
                         || matches!(
                             s.state,

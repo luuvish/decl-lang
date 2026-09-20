@@ -1,5 +1,6 @@
-//! Rust-only record emission: the supplied names are scanned when few and indexed when many,
-//! and either way a record is emitted as before.
+//! Rust-only record emission: a record whose slots follow its members is walked by position,
+//! any other by name with the supplied names scanned when few and indexed when many; either
+//! way a record is emitted as before.
 use super::*;
 use crate::parse::parse_source;
 use crate::pipeline::run_pipeline;
@@ -31,7 +32,8 @@ fn module(width: usize) -> String {
 
 #[test]
 fn narrow_and_wide_records_emit_supplied_members_in_document_order_then_the_rest() {
-    for width in [3, Supplied::SCANNED, Supplied::SCANNED + 1, 40] {
+    // 64 members is the last width walked by position; 65 and 70 are walked by name.
+    for width in [3, Supplied::SCANNED, Supplied::SCANNED + 1, 40, 64, 65, 70] {
         let pipeline = run_pipeline(&parse_source(&module(width)).decls);
         assert!(pipeline.diags.is_empty());
         let root = pipeline.env.root("t").expect("root");
@@ -42,4 +44,33 @@ fn narrow_and_wide_records_emit_supplied_members_in_document_order_then_the_rest
         let settable = format!("{{{}}}", supplied.join(","));
         assert_eq!(pipeline.eng.serialize(&root, "t", true), settable);
     }
+}
+
+#[test]
+fn supplied_order_extras_and_absent_members_survive_the_walk_by_position() {
+    // Document order differs from declaration order, an open record carries extras between its
+    // members, an optional member is absent, and a defaulted one is filled after the supplied.
+    let source = r#"
+type T = {
+    a: int
+    b?: string
+    c: int = 7
+    d: bool
+    twice = a * 2
+    ...
+}
+export output t: T = { z: 1, d: true, y: "s", a: 2 }
+"#;
+    let pipeline = run_pipeline(&parse_source(source).decls);
+    assert!(pipeline.diags.is_empty());
+    let root = pipeline.env.root("t").expect("root");
+    assert_eq!(
+        pipeline.eng.serialize(&root, "t", false),
+        r#"{"z":1,"d":true,"y":"s","a":2,"c":7,"twice":4}"#
+    );
+    // Settable members only: what was supplied, with neither the default nor the derived member.
+    assert_eq!(
+        pipeline.eng.serialize(&root, "t", true),
+        r#"{"z":1,"d":true,"y":"s","a":2}"#
+    );
 }
