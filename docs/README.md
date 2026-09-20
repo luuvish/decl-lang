@@ -69,12 +69,8 @@ charter and chapters remains a defect to fix on sight (§1.4).
 | [04. Editor extensions](tooling/04_extension.md) | `vscode-decl` and `zed-decl`: the editor faces of the server and the REPL — VS Code's language contribution, server management, live output preview, bound inputs, trace view, tasks, Test Explorer, and web extension; Zed's grammar, queries, runnables, and server pointer; other editors |
 | [05. Renderer](tooling/05_render.md) | `@render`, documents in YAML, `--format` / `--indent`, and the template dialect implemented three times: the form a module declares for its outputs, as tooling (delivered, Phase 10) |
 | [Development handbook](DEVELOPMENT.md) | How the repository is set up and worked on: layout and configuration files, toolchains and versions, getting started, building and testing, quality tools, CI, releases, editors, conventions |
-| [Performance and optimization](PERFORMANCE.md) | Which runtime optimizations remove work, measured historical improvements, the query engine's current contribution, and further optimization priorities |
-| [Runtime cost and ownership diagnosis](PERFORMANCE_DIAGNOSIS.md) | Disjoint stage measurements, edit preparation, Rust ownership, canonical query identities, and shared dependency storage |
-| [Rust query graph API migration](QUERY_GRAPH_MIGRATION.md) | Restricted Engine graph fields, replacement inspection methods, shared slot handles, and temporary identity maintenance |
-| [Rust runtime memory API migration](RUNTIME_MEMORY_MIGRATION.md) | Shared computation descriptors, retained container paths, raw-literal cache lifetimes, and optional runtime diagnostics |
+| [Performance](PERFORMANCE.md) | What the implementations do to avoid work, current figures and remaining boundaries, how to measure, the Rust runtime representation and its opt-in diagnostics, the measured history through 2026-09-10, and the dated record of the investigation since (sections 1 to 49) |
 | [Reproducible performance comparisons](../tests/benchmarks/COMPARE.md) | Frozen experiment manifests, output contracts, serial paired measurements, failure handling, and efficient iteration records |
-| [Query optimization plan](OPTIMIZATION_PLAN.md) | Implementation scope, completion evidence, batch/edit measurement gates, and remaining performance boundaries |
 
 ### Validation cases (§0.5 desk-check artifacts)
 

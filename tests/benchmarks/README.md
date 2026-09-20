@@ -54,6 +54,6 @@ cargo run --locked --release --example sbench -- tests/benchmarks/aggregate_null
 These cases use two warmups and five measured edits at each size. The drivers
 check the scalar sum and runtime diagnostics; the separate diagnostic probe also
 checks the boolean result and records prepared/executed query counts. See
-[runtime diagnosis](../../docs/PERFORMANCE_DIAGNOSIS.md) for the distinction between
-aggregate scope and repeated subtree traversal. Timings are diagnostic evidence,
+[the performance record](../../docs/PERFORMANCE.md#3-aggregate-observations-have-two-independent-problems)
+for the distinction between aggregate scope and repeated subtree traversal. Timings are diagnostic evidence,
 not CI thresholds.

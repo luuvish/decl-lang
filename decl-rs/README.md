@@ -84,18 +84,16 @@ fan-out root) with `RenderOptions` as the overrides, `to_json` and
 (`decl.evaluate`, …) offer the same functions with the same semantics;
 the modules the functions are built from are public as well.
 
-The low-level Rust query graph API has changed: `Engine.reads`,
-`Engine.slots_by_key`, and `Engine.computing` are now crate-private. Use the
-count, owned-text inspection, slot lookup, and storage methods documented in
-the [query graph migration guide](../docs/QUERY_GRAPH_MIGRATION.md). This is a
-Rust source compatibility change; the high-level functions above and CLI
-formats retain their contracts.
-
-The [runtime memory migration guide](../docs/RUNTIME_MEMORY_MIGRATION.md) covers
-`Slot.compute` and its copy-on-write accessors, `PrefixPath` for array/map paths,
-the materialization cache's weak raw-literal ownership, and the optional
-`runtime-diagnostics` Cargo feature. Code that constructs or mutates these
-low-level Rust values should follow that guide.
+The high-level functions above and the CLI formats are the crate's contract.
+The representation inside those modules is chosen for performance and changes
+between releases without a migration path: the Engine's query graph is private
+behind inspection methods, and slots, containers, paths and values share
+storage behind copy-on-write accessors. Their contracts are in the API
+documentation;
+[Rust runtime representation](../docs/PERFORMANCE.md#rust-runtime-representation)
+says what code that uses them directly can rely on, and
+[Runtime diagnostics](../docs/PERFORMANCE.md#runtime-diagnostics) describes the
+optional `runtime-diagnostics` Cargo feature.
 
 ## Library layout
 

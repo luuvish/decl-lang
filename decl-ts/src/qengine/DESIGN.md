@@ -158,5 +158,6 @@ The shared internal data prove the optimized path as well as correctness:
 `make verify` runs the language tests and byte-for-byte CLI/REPL/LSP parity.
 `qbench` measures preloaded batch work; the shared Session benchmark measures
 apply, evaluate, validate and scalar serialization after initial loading.
-See [performance results](../../../docs/PERFORMANCE.md) and the
-[completion plan](../../../docs/OPTIMIZATION_PLAN.md).
+See [performance](../../../docs/PERFORMANCE.md) for results, their
+[history](../../../docs/PERFORMANCE.md#history-through-2026-09-10) and the
+boundaries that remain.
