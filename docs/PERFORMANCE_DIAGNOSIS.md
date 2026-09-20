@@ -9,14 +9,17 @@ largest-size run, section 41 the completed pair at that size, section 42
 the teardown step and the key check that followed from them, section 43
 the explanation of section 34's serialization regression, section 44 the
 memory a round transition holds, section 45 that step measured at the
-largest size, section 46 the output document written in pieces, and section
-47 the snapshot limited to what a round can reach.
+largest size, section 46 the output document written in pieces, section 47
+the snapshot limited to what a round can reach, and section 48 those steps
+measured at the largest size, with a correction to sections 45 and 46.
 Observable behavior and the frozen specification are unchanged.
 External models, profiles, and engine comparison reports remain
 outside this repository, as required by [the measurement policy](DEVELOPMENT.md#performance-measurements).
 
 For the latest implementation step, see
-[a snapshot of what a round can reach](#47-a-snapshot-of-what-a-round-can-reach-2026-09-20);
+[a snapshot of what a round can reach](#47-a-snapshot-of-what-a-round-can-reach-2026-09-20),
+measured at the largest size in
+[section 48](#48-the-snapshot-steps-at-the-largest-size-2026-09-20);
 [the output document leaves in pieces](#46-the-output-document-leaves-in-pieces-2026-09-20)
 and
 [what a round transition holds](#44-what-a-round-transition-holds-2026-09-20),
@@ -3254,12 +3257,16 @@ The telemetry also says where each peak sits. Both cells hold the plateau of
 the earlier scopes, 4.7 to 5.1 GiB from 10 s to 45 s, and then rise. M peaks
 inside the round transition, at 63.0 s of 74.5, falls to 9.27 GiB and ends at
 9.97. S passes the transition at about 8.49 GiB, falls to 8.03 and peaks in
-its last half second, at 69.7 s of 70.2, where the settled round, the previous
-round's snapshot and the output text, built whole before it is written,
-coexist. At this size the step removed the transition as the peak, and the end
-of the run now sets capacity. That orders what section 44 left open: first
-the snapshot's copy of records that did not change and the emission of a
-221 MB document as one text, then the classification scratch that remains.
+its last half second, at 69.7 s of 70.2, which is the end of round 2, where
+the settled round and the previous round's snapshot coexist. At this size the
+step removed the transition as the peak, and the end of the run now sets
+capacity. That orders what section 44 left open: first the snapshot's copy of
+records that did not change, then the classification scratch that remains. An
+earlier revision of this section placed the output text, built whole before
+it is written, in that peak beside the snapshot, and ordered its emission
+first. Section 48's telemetry withdrew that: evaluation releases the previous
+round at its end, the document is emitted after that, and at this size the
+text stays under the peak.
 
 The completed figure for `main` at the largest size is therefore 8.790 GiB
 under unchanged guards, 1.2 GiB below the H of section 41 and 1.87 GiB below
@@ -3276,9 +3283,13 @@ campaigns as antecedents; none was reopened or pooled.
 
 ## 46. The output document leaves in pieces (2026-09-20)
 
-Section 45 found the largest run peaking in its last half second, where the
-settled round, the previous round's snapshot and the output text coexist, and
-put the text first among what is left. The command line built a root's whole
+An earlier revision of section 45 read the largest run's peak, in its last
+half second, as the settled round, the previous round's snapshot and the
+output text together, and put the text first among what was left. This step
+was taken on that reading. Section 48 withdrew it for the largest size, where
+the previous round is released before the document is emitted and the text
+never reached the peak; at the third size it did, which is what this section
+measures. The command line built a root's whole
 text before writing it: `Engine::serialize` into one `String`, which grows by
 doubling, and then one write of the file. For a compact JSON document that
 text is the engine's own bytes and a newline, 221 MB at the largest size in a
@@ -3326,9 +3337,13 @@ host, outputs byte-identical:
 
 The saving at the third size is the capacity a doubling `String` reaches for
 60.1 MB of text, 64 MiB, so the whole buffer had been part of the peak. At
-the largest size that buffer is 256 MiB, a quarter of a GiB against
-section 45's 8.790 GiB; that is an expectation, not a measurement. Wall time
-did not move: 13.31, 13.35 and 13.47 s before, 13.63, 13.40 and 13.40 s after.
+the largest size that buffer is 256 MiB, and an earlier revision expected a
+quarter of a GiB off section 45's 8.790 GiB there. Section 48 measured none:
+`main` with this step peaked at 8.791 GiB. At that size evaluation releases
+0.32 GiB at its end, more than the text would have added afterwards; at the
+third size it releases 49 MiB of requested bytes, less than the 64 MiB
+buffer, which is why the step shows here. Wall time did not move: 13.31,
+13.35 and 13.47 s before, 13.63, 13.40 and 13.40 s after.
 
 Section 43 showed that this serializer is decided by a nanosecond or two per
 value, so the in-memory path, which the Session uses, was compared as well:
@@ -3495,3 +3510,105 @@ Evidence is under
 its probes, `shadow-build/` with the verification build's patch, its logs and
 the module for the late key, and `limited-snapshot/` with the ledgers, the
 command-line runs and both patches. All of it is exploratory and marked so.
+
+## 48. The snapshot steps at the largest size (2026-09-20)
+
+Section 47 measured its two steps at the second and third sizes. A fifth
+capacity scope was predefined for the largest. It is section 45's scope with
+the arms changed and that scope's terminal pinned as an antecedent: the model,
+the input, the typed validator, the 11 GiB cap, every other guard, the
+readiness precondition and the order are unchanged, and both arms are again
+feature-empty builds of the repository's command line at pinned commits, each
+checked out into its own worktree, every source file hashed for the source
+check at both ends of the run, each binary reproducing the two smallest
+goldens and the two agreeing byte for byte. M is `3b169d4`, `main` before the
+steps, which has section 44's step and section 46's; S is `a7f7d76`, the two
+steps. S ran first and M only if S fully passed.
+
+The reading was fixed beforehand. The measure is each completed cell's sampled
+peak footprint, and the steps differ only if S is away from M by more than 1%
+of M. Three ranges were written down with their reasons, so that they could
+fail. M between 8.4 and 8.7 GiB: section 45's 8.790 less the 256 MiB text
+buffer that section 46 had removed since. S between 7.8 and 8.3 GiB and 3.5%
+to 8% below M: the end of the run should fall by the snapshot copy, about 1.1
+GiB of requested bytes at this size, and the round transition by the path
+tables, about 0.4 GiB, and the higher of the two humps remains, which should
+now be the transition.
+
+After a purge the one reading taken before the claim was 10.57 GiB readily
+available and 0.92 GiB in the compressor, with pressure NORMAL, power
+eligible, Low Power Mode off and no competitor. Both cells completed, 173 s in
+all, and the campaign's terminal is complete: both attempted, none skipped,
+sources and model unchanged, cleanup accepted.
+
+| | S, the steps | M, `main` before them | S against M |
+| --- | ---: | ---: | ---: |
+| Sampled peak footprint | 8.159 GiB | 8.791 GiB | -7.2% (-648 MiB) |
+| at | 58.3 s of 68.4 | 68.9 s of 69.9 | |
+| Under the 11 GiB cap by | 2.841 GiB | 2.209 GiB | |
+| Peak RSS | 8.545 GiB | 9.132 GiB | -6.4% |
+| Wall | 68.35 s | 69.89 s | -2.2% |
+| CPU | 68.34 s | 69.87 s | -2.2% |
+| Typed validation | accepted | accepted | same digest |
+| Output | 221,166,981 B | 221,166,981 B | byte-identical |
+
+Kernel pressure was NORMAL in all 266 and 272 resource samples, swap use was
+zero throughout, no competitor appeared in 67 and 68 scans, the observer took
+0.74% and 0.75% of native CPU against a 1% limit, and there were no major
+faults. The compressor stayed between 0.92 and 0.99 GiB during S and between
+1.00 and 1.09 GiB during M.
+
+By the rule the steps differ at the largest size: S peaks 7.2% below M,
+against a threshold of 1%. S is inside its range and so is the change. M is
+not: 8.791 GiB against 8.4 to 8.7, within 1.4 MB of section 45's S, which is
+the same code without section 46's step. That step did nothing to the peak at
+this size, and the expectation section 46 had written for it failed.
+
+The telemetry says why, and it corrects an attribution. M's last samples read
+8.73, 8.74 and 8.79 GiB and then 8.47 until the process ends. The peak is the
+end of round 2; evaluation then releases the previous round and its scratch,
+0.32 GiB; and only then is the document emitted, flat at 8.47 GiB now that it
+leaves in pieces. Built whole it would have risen by a quarter of a GiB from
+there, to about 8.72, still under 8.79. Section 45 had read the peak in the
+last half second of its S as the settled round, the snapshot and the output
+text together; they never coexist, because the snapshot is released at the
+end of evaluation and the text is built after it. A peak near the end of a
+run is not an attribution until the samples after it have been read. Sections
+45 and 46 are corrected in place. Section 46's measurement at the third size
+stands, and the same telemetry explains it: there the release at the end of
+evaluation is 49 MiB of requested bytes, less than the 64 MiB text buffer, so
+the emission was the peak and removing the buffer lowered it.
+
+Where each cell's footprint goes from 55 s, when both stand at 7.00 GiB and
+the round transition starts:
+
+| | S | M |
+| --- | --- | --- |
+| Classification | 7.00 to 8.16 GiB | 7.00 to 8.36 GiB |
+| Snapshot | 7.88 to 7.90 GiB | 8.06 to 8.57 GiB |
+| After the reset | 6.59 GiB | 7.78 GiB |
+| End of round 2 | 7.55 GiB | 8.79 GiB |
+| After the release, during emission | 7.51 GiB, flat | 8.47 GiB, flat |
+
+The reasoning written down for S held. The snapshot's copy, half a GiB of
+footprint in M, is not visible in S; the end of the run fell by 1.24 GiB;
+classification fell by 0.2 GiB; and the hump that remains is the transition,
+where M's was the end of the run. The shorter wall and CPU time, 2.2%, is one
+observation per arm in a fixed order, reported and not claimed.
+
+The completed figure for `main` at the largest size is therefore 8.159 GiB
+under unchanged guards, 1.83 GiB below the H of section 41 and 2.50 GiB below
+its G. What sets capacity now is classification scratch, 1.16 GiB over 7.00
+at this size, most of it the reverse read index of section 44 while its table
+doubles; the end of the run is 0.6 GiB lower, so that scratch is the next
+thing worth cutting, down to that level and no further.
+
+Evidence is under
+`../decl-analysis/2026-09-14/value-layout/capacity-snapshot-work/`: the plan
+and policy with the rule, the ranges and their reasons, the arm preparation
+with its record, the controller and preflight, the readiness record, the
+consumed campaign with both cells' telemetry and validator receipts, and
+`analysis-v1/` with the analyzer written beforehand, its output and the report
+that names the failed prediction. The fourth scope's report carries an
+appended correction. The scope pins the five earlier campaigns as antecedents;
+none was reopened or pooled.
