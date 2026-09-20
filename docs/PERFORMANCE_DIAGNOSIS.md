@@ -5,15 +5,18 @@ investigation and its private experiments. Sections 7–34 record subsequent
 implementation steps; sections 35–37 record measurement-only follow-ups,
 section 38 the first step they led to, section 39 a candidate that a
 paired comparison did not support, section 40 the first completed
-largest-size run, and section 41 the completed pair at that size.
+largest-size run, section 41 the completed pair at that size, and section 42
+the teardown step and the key check that followed from them.
 Observable behavior and the frozen specification are unchanged.
 External models, profiles, and engine comparison reports remain
 outside this repository, as required by [the measurement policy](DEVELOPMENT.md#performance-measurements).
 
 For the latest implementation step, see
-[map keys bound without a text value](#38-map-keys-bound-without-a-text-value-2026-09-19).
-[Thin scalar payloads](#34-thin-scalar-payloads-experimental-2026-09-15) is the
-representation step before it. The preceding
+[teardown left to the process exit](#42-teardown-left-to-the-process-exit-2026-09-20);
+[map keys bound without a text value](#38-map-keys-bound-without-a-text-value-2026-09-19)
+precedes it, and
+[thin scalar payloads](#34-thin-scalar-payloads-experimental-2026-09-15) is the
+representation step before that. The preceding
 [progress checkpoint](#19-progress-checkpoint-2026-09-13) records the measurement
 blocker and the larger-workload evidence still outstanding. The
 [serializer discriminator](#35-serializer-discriminator-2026-09-19) follows up
@@ -2770,3 +2773,109 @@ offline arithmetic. The corrected model, its validation record and the
 independent rewrite of the producer's pass are under
 `../decl-analysis/2026-09-14/direct-maps/model-work/semantic-v4/`. The scope
 pins the three earlier campaigns as antecedents; none was reopened or pooled.
+
+## 42. Teardown left to the process exit (2026-09-20)
+
+Sections 33 and 34 placed the sampled resident maxima of the diagnostic runs in
+the command's cleanup and left the mechanism open. The saved ordinary runs
+answer it without another execution. Their output file's modification time
+marks the end of emission; everything after it is teardown.
+
+| Run | Wall | Output written at | After the write | Peak footprint before / after |
+| --- | ---: | ---: | ---: | ---: |
+| G, third size | 16.00 s | 14.30 s | 1.70 s (10.6%) | 3.220 / 3.526 GiB |
+| H, third size | 15.58 s | 13.97 s | 1.60 s (10.3%) | 3.010 / 3.279 GiB |
+| H, largest, section 40 | 83.09 s | 74.45 s | 8.64 s (10.4%) | 9.964 / 9.934 GiB |
+| H, largest, section 41 | 80.38 s | 73.87 s | 6.51 s (8.1%) | 9.988 / 9.957 GiB |
+| G, largest, section 41 | 84.20 s | 77.48 s | 6.72 s (8.0%) | 10.527 / 10.660 GiB |
+
+Every run continues for 8-11% of its wall time after its output is complete
+and produces nothing in it. The command line drops the engine and the module
+universe, the last engine's guard runs the cycle collector over every tracked
+record, environment and type, the command's guard runs it again, and only then
+is the result printed and the process ended. The span also holds memory
+maxima: the run's peak footprint at the third size for both arms, 8-9% above
+the highest sample before the write, and at the largest size for G, the
+10.660 GiB that set section 41's margin under its cap. The sampled resident
+peak is after the write in four runs of five, so the peak RSS these runs
+report is a teardown figure: the collector builds its node and edge vectors
+while the freed small-object pages have not been returned. That is the
+mechanism sections 33 and 34 left unassigned.
+
+The teardown is not the late doubling of the footprint that decides capacity.
+Every run holds a plateau (1.5 GiB at the third size, 5 GiB at the largest)
+and then doubles, from 48% of the wall at the third size and 58-62% at the
+largest. That rise ends well before the write and belongs to evaluation. The
+diagnostic runs at the second size show no plateau, so its phase cannot be
+read from saved files; it needs a phase-labelled run at the third size, where
+the shape is present and memory is not scarce.
+
+A process that exits when its command returns does not need the teardown: the
+operating system reclaims the address space at once. The `decl` binary now
+enters through `cli::run_once`. After an evaluation it leaks one handle to the
+engine and to each module, which turns every later drop of them into a count
+decrement, and tells the thread's guards to stop sweeping; the result is
+printed and the process exits with the runtime alive. `cli::main`, the
+library, the Session, the REPL and the language server keep the full
+teardown, because they outlive an evaluation. Standard output, standard error,
+written files and exit codes are unchanged, which the parity gate checks over
+every command line; a private test covers the switch, including that an
+explicit sweep is still honoured after it.
+
+The step was held to a paired comparison whose reading was fixed beforehand:
+the two builds differing in this step only, the accepted model and input at
+the second size, one recorded warm-up per binary, then six pairs in the order
+M,T / T,M / T,M / M,T / M,T / T,M, every output checked against the accepted
+size and hash. A segment differs only if it moves in one direction in all six
+pairs and the median paired change is beyond both arms' same-arm spread. The
+step would have been held back had the time of the output write differed,
+since it must change nothing before the write.
+
+| Segment | M | T | Median paired change | Spread M / T | By the rule |
+| --- | ---: | ---: | ---: | ---: | --- |
+| Wall | 4.745 s | 4.177 s | -12.12% (-573 ms) | 2.35% / 1.23% | differs |
+| User time | 4.646 s | 4.097 s | -11.92% | 2.40% / 1.16% | differs |
+| System time | 93.4 ms | 70.7 ms | -23.44% | 4.25% / 3.70% | differs |
+| Peak RSS | 1,475.5 MiB | 1,241.5 MiB | -15.82% | 0.33% / 2.50% | differs |
+| Output written at | 4.177 s | 4.167 s | -0.26%, mixed | 2.51% / 1.20% | no difference |
+| After the write | 569.2 ms | 11.0 ms | -98.09% | 3.05% / 17.05% | differs |
+
+The prediction held in every part: the time after the write falls to a
+hundredth of a second, wall and CPU time fall by that amount, the time of the
+write does not move, and peak RSS falls by 233 MiB. The passive load reads
+before launch were 4.2-5.1 and the same-arm spreads of the time segments
+stayed at 1.2-2.5%, steady enough for effects of this size. By the rule the
+step goes to `main`. At the larger sizes nothing beyond the offline reading
+above and one functional observation on a busy host exists (at the third
+size, 1.64 and 1.69 s after the write against 0.03 and 0.02 s, and peak
+footprints of 3.37 and 3.40 GiB against 3.06 GiB); those are not part of the
+witness.
+
+Section 41 recorded that a map comprehension checked each new key by scanning
+the entries built so far. All three implementations did so at three sites
+each: the tree walker's comprehension, the expansion of a literal with
+spreads, and the query programs' comprehension. The reference and Python now
+keep the set of keys. Rust scans below sixteen entries, as before, and from
+there keeps the keys' hashes and confirms only a hash seen before, so it
+clones no key. One comprehension of 10,000, 20,000 and 40,000 entries took
+0.07, 0.19 and 0.93 s in Rust and takes 0.00, 0.00 and 0.01 s; the reference
+went from 0.37, 1.15 and 3.32 s to 0.07, 0.07 and 0.10 s, and Python from
+0.96, 3.43 and 13.66 s to 0.06, 0.10 and 0.19 s, with identical outputs. Three
+shared fixtures cover a long comprehension, a late duplicate in one, and a
+late duplicate through a spread.
+
+Section 34's serialization regression is still unexplained. An exploratory
+look, which is not evidence, found that the two recorded discriminators emit
+flat arrays while the evaluated output is mostly maps, and that neither maps
+built through the public collector nor an engine-built generic graph at the
+Session's emission scale is slower in H. What remains untested is what a
+generic graph lacks: values passed through from a bound input document, text
+handles shared by many positions, depth, and the Session helper's own timed
+boundary.
+
+Evidence is under `../decl-analysis/2026-09-14/value-layout/`:
+`cleanup-residency/` holds the offline analyzer and report, `teardown-ab/` the
+pinned README with the rule, `pins.json` binding each artifact to its commit,
+the consumed `timing-v1/` and `analysis-v1/`, and
+`serialization-shape-exploration/` the two throwaway probes with their
+outputs, marked as not evidence. No saved campaign was reopened or pooled.
