@@ -3182,14 +3182,20 @@ pub fn path_str_iter<'a>(
 
 /// Format once and retain UTF-8 byte boundaries for each complete path prefix.
 /// Offsets follow segments, including roots whose bare text contains delimiters.
-pub(crate) fn path_str_prefixes(segs: &[Seg]) -> (String, Vec<usize>) {
-    let mut out = String::new();
-    let mut ends = Vec::with_capacity(segs.len());
+/// The spelling is appended to `text` and the prefix lengths, counted from
+/// where it starts, to `ends`: many paths without an allocation each. `None`
+/// when a length outgrows 32 bits.
+pub(crate) fn path_str_ends_into(
+    segs: &[Seg],
+    text: &mut String,
+    ends: &mut Vec<u32>,
+) -> Option<()> {
+    let start = text.len();
     for (i, s) in segs.iter().enumerate() {
-        write_path_segment(&mut out, s, i == 0, None);
-        ends.push(out.len());
+        write_path_segment(text, s, i == 0, None);
+        ends.push(u32::try_from(text.len() - start).ok()?);
     }
-    (out, ends)
+    Some(())
 }
 
 fn write_path_segment(out: &mut String, s: &Seg, first: bool, rel_root: Option<&str>) {

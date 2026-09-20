@@ -116,6 +116,76 @@ impl CopyMemo {
     }
 }
 
+/// The registered records by canonical spelling, for one invalidation walk:
+/// which records lie under a place. One text and one list of prefix lengths
+/// hold every path, and an order by spelling replaces a table entry per prefix
+/// per record: the records under a place are a run of that order.
+struct RecordPaths {
+    text: String,
+    // where record i's spelling starts in `text`; one more entry ends the last
+    starts: Vec<u32>,
+    // the length of every prefix of every spelling, record by record
+    ends: Vec<u32>,
+    // where record i's prefix lengths start in `ends`; one more entry ends the last
+    firsts: Vec<u32>,
+    // record indices by spelling
+    order: Vec<u32>,
+}
+
+impl RecordPaths {
+    /// `None` when the registry outgrows 32-bit offsets.
+    fn of(registry: &[Inst]) -> Option<Self> {
+        let count = u32::try_from(registry.len()).ok()?;
+        // Sized exactly: this index is live while the walk's other scratch is built.
+        let segments = registry.iter().map(|r| r.borrow().path.len()).sum();
+        let mut paths = Self {
+            text: String::new(),
+            starts: Vec::with_capacity(registry.len() + 1),
+            ends: Vec::with_capacity(segments),
+            firsts: Vec::with_capacity(registry.len() + 1),
+            order: (0..count).collect(),
+        };
+        for r in registry {
+            paths.starts.push(u32::try_from(paths.text.len()).ok()?);
+            paths.firsts.push(u32::try_from(paths.ends.len()).ok()?);
+            path_str_ends_into(&r.borrow().path, &mut paths.text, &mut paths.ends)?;
+        }
+        paths.starts.push(u32::try_from(paths.text.len()).ok()?);
+        paths.firsts.push(u32::try_from(paths.ends.len()).ok()?);
+        paths.text.shrink_to_fit();
+        let mut order = std::mem::take(&mut paths.order);
+        order.sort_unstable_by(|&a, &b| paths.spelling(a as usize).cmp(paths.spelling(b as usize)));
+        paths.order = order;
+        Some(paths)
+    }
+    fn spelling(&self, record: usize) -> &str {
+        &self.text[self.starts[record] as usize..self.starts[record + 1] as usize]
+    }
+    /// Whether no two records share a spelling.
+    fn distinct(&self) -> bool {
+        self.order
+            .windows(2)
+            .all(|pair| self.spelling(pair[0] as usize) != self.spelling(pair[1] as usize))
+    }
+    /// The records at or under a place: those whose spelling starts with the
+    /// place's and has a prefix ending there. Spellings that merely share the
+    /// text (a sibling with a longer name) sit in the same run and are skipped.
+    fn under<'a>(&'a self, place: &'a str) -> impl Iterator<Item = usize> + 'a {
+        let from = self
+            .order
+            .partition_point(|&i| self.spelling(i as usize) < place);
+        let length = u32::try_from(place.len()).ok();
+        self.order[from..]
+            .iter()
+            .map(|&i| i as usize)
+            .take_while(move |&i| self.spelling(i).starts_with(place))
+            .filter(move |&i| {
+                let ends = &self.ends[self.firsts[i] as usize..self.firsts[i + 1] as usize];
+                length.is_some_and(|length| ends.binary_search(&length).is_ok())
+            })
+    }
+}
+
 /// Readers by dependency for one invalidation walk: a chained link per read
 /// edge and one table entry per dependency, instead of a set per dependency.
 struct Readers<'a> {
@@ -517,18 +587,10 @@ impl RoundCache {
         // Each prefix is a slice of its record's one canonical spelling. Store
         // segment boundaries while formatting; parsing delimiters afterwards
         // would be wrong for quoted keys and native bare root names.
-        let registry_paths: Vec<_> = registry
-            .iter()
-            .map(|r| path_str_prefixes(&r.borrow().path))
-            .collect();
-        let records: FxHashSet<&str> = registry_paths
-            .iter()
-            .map(|(path, _)| path.as_str())
-            .collect();
-        if records.len() != registry.len() {
+        let registry_paths = RecordPaths::of(&registry)?;
+        if !registry_paths.distinct() {
             return None;
         }
-        drop(records);
         let snap = eng.snap.borrow();
         let old_edges = snap
             .as_ref()
@@ -596,12 +658,6 @@ impl RoundCache {
         drop(old_edges);
         drop(new_edges);
         drop(snap);
-        let mut subtrees: FxHashMap<&str, Vec<Inst>> = FxHashMap::default();
-        for (inst, (path, ends)) in registry.iter().zip(&registry_paths) {
-            for &end in ends {
-                subtrees.entry(&path[..end]).or_default().push(inst.clone());
-            }
-        }
         let forced = pending.iter().map(|key| key.as_ref().to_owned()).collect();
         let mut invalid = FxHashSet::default();
         let mut dropped = FxHashSet::default();
@@ -634,8 +690,8 @@ impl RoundCache {
                     )
                 })
             };
-            if let Some(insts) = prefix.as_ref().and_then(|p| subtrees.get(p.as_str())) {
-                for inst in insts {
+            if let Some(place) = prefix.as_deref() {
+                for inst in registry_paths.under(place).map(|i| &registry[i]) {
                     if dropped.insert(address(inst)) {
                         for (n, _) in &inst.borrow().slots {
                             pending.push(Cow::Owned(Engine::slot_key(inst, n)));
@@ -646,7 +702,6 @@ impl RoundCache {
         }
         // Keep the registry owner, but release classification scratch before
         // freezing or replacing any dependencies for the next round.
-        drop(subtrees);
         drop(registry_paths);
         drop(pending);
         drop(reverse);

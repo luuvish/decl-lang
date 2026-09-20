@@ -654,6 +654,90 @@ fn a_universe_that_names_no_registered_type_freezes_nothing() {
     assert!(engine.owner_of(&live).is_none());
 }
 
+/// Registered records at these paths, natively built: only their paths matter here.
+fn records_at(paths: &[Vec<Seg>]) -> Vec<Inst> {
+    let engine = fixture();
+    let template = record(engine.env.root("result").unwrap());
+    paths
+        .iter()
+        .map(|path| {
+            let b = template.borrow();
+            record_instance(RecInst {
+                type_name: None,
+                rt: b.rt.clone(),
+                path: Rc::new(path.clone()),
+                ps: RefCell::new(None),
+                parent: None,
+                slots: Vec::new(),
+                entry_order: b.entry_order.clone(),
+                extras: Vec::new(),
+                menv: None,
+            })
+        })
+        .collect()
+}
+
+#[test]
+fn record_paths_list_the_records_under_a_place_as_the_prefix_table_did() {
+    let name = |n: &str| Seg::Name(n.into());
+    let key = |k: &str| Seg::Key(k.into());
+    let paths: Vec<Vec<Seg>> = vec![
+        vec![name("r")],
+        vec![name("r"), name("port")],
+        vec![name("r"), name("port"), name("x")],
+        vec![name("r"), name("port"), Seg::Idx(0)],
+        // siblings whose spelling merely extends another's text
+        vec![name("r"), name("ports"), name("x")],
+        vec![name("r"), name("items"), Seg::Idx(1)],
+        vec![name("r"), name("items"), Seg::Idx(10)],
+        vec![name("r"), name("items"), Seg::Idx(10), name("y")],
+        // a key that holds delimiters, and a native bare root that does
+        vec![name("r"), key("a.b"), name("c")],
+        vec![name("r.port"), name("x")],
+        // an empty root segment
+        vec![name(""), name("x")],
+    ];
+    let registry = records_at(&paths);
+    let index = RecordPaths::of(&registry).expect("index");
+    // `r.port.x` is spelled twice, by a nested path and under the native root `r.port`: such a
+    // registry is refused, and the index still answers as the table did.
+    assert!(!index.distinct());
+    assert!(RecordPaths::of(&registry[..9]).expect("index").distinct());
+    // The table this replaces: every prefix of every spelling names the records under it.
+    let mut table: HashMap<String, Vec<usize>> = HashMap::new();
+    for (i, path) in paths.iter().enumerate() {
+        for end in 1..=path.len() {
+            table
+                .entry(path_str(&path[..end], None))
+                .or_default()
+                .push(i);
+        }
+    }
+    let mut places: Vec<String> = table.keys().cloned().collect();
+    places.extend(["r.por", "r.items[1", "x", "r.port.x.y", "s"].map(String::from));
+    for place in &places {
+        let mut found: Vec<usize> = index.under(place).collect();
+        found.sort_unstable();
+        assert_eq!(
+            &found,
+            table.get(place).unwrap_or(&Vec::new()),
+            "place {place:?}"
+        );
+    }
+    assert_eq!(index.under("r.port").count(), 4);
+    assert_eq!(index.under("r.items[1]").count(), 1);
+    assert_eq!(index.under("r[\"a.b\"]").count(), 1);
+
+    // Two records at one spelling: a native root whose bare name spells a nested path.
+    let clash = records_at(&[
+        vec![name("r.a"), name("b")],
+        vec![name("r"), name("a"), name("b")],
+    ]);
+    assert!(!RecordPaths::of(&clash).expect("index").distinct());
+    assert!(RecordPaths::of(&[]).expect("empty").distinct());
+    assert_eq!(RecordPaths::of(&[]).expect("empty").under("r").count(), 0);
+}
+
 #[test]
 fn readers_index_lists_each_reader_of_a_dependency_once() {
     let mut readers = Readers::with_capacity(3, 5).expect("index");

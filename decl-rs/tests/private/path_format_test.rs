@@ -2,11 +2,17 @@
 use super::*;
 
 fn prefixes(segments: &[Seg], expected: &[&str]) -> String {
-    let (text, ends) = path_str_prefixes(segments);
+    // Appended after an earlier spelling: the lengths count from where this one starts.
+    let mut text = String::from("earlier");
+    let mut ends = vec![7];
+    path_str_ends_into(segments, &mut text, &mut ends).expect("32-bit lengths");
+    let (text, ends) = (text.split_off(7), ends.split_off(1));
     assert_eq!(ends.len(), segments.len());
-    assert!(ends.iter().all(|&end| text.is_char_boundary(end)));
+    assert!(ends.iter().all(|&end| text.is_char_boundary(end as usize)));
     assert_eq!(
-        ends.iter().map(|&end| &text[..end]).collect::<Vec<_>>(),
+        ends.iter()
+            .map(|&end| &text[..end as usize])
+            .collect::<Vec<_>>(),
         expected
     );
     text
