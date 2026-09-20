@@ -10,8 +10,10 @@ memory work below is Rust's.
 
 External models, data, profiles and comparison reports stay outside this
 repository, as [the measurement policy](DEVELOPMENT.md#performance-measurements)
-requires. The record names that evidence by path and carries only
-domain-neutral summaries of it.
+requires. The record carries only domain-neutral summaries of that evidence
+and names it by path, `../decl-analysis/...`: a private directory kept beside
+a clone, which is not part of this repository and which nothing here needs to
+build, test or release.
 
 | Part | Read it for |
 |---|---|
