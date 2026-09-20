@@ -28,6 +28,11 @@ impl QueryId {
     pub(crate) fn as_str(&self) -> &str {
         &self.0.text
     }
+    /// The hash of the text, computed once when the key was interned: what
+    /// [`QueryPool::text_hash`] gives for the same spelling, in any pool.
+    pub(crate) fn text_hash(&self) -> u64 {
+        self.0.hash
+    }
 }
 
 impl Deref for QueryId {
@@ -181,7 +186,9 @@ impl QueryPool {
         id
     }
 
-    fn text_hash(text: &str) -> u64 {
+    /// The hash every key caches for its text; a table keyed by it can be
+    /// asked for a spelling without holding a key.
+    pub(crate) fn text_hash(text: &str) -> u64 {
         let mut hasher = FxHasher::default();
         text.hash(&mut hasher);
         hasher.finish()

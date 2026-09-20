@@ -740,20 +740,27 @@ fn record_paths_list_the_records_under_a_place_as_the_prefix_table_did() {
 
 #[test]
 fn readers_index_lists_each_reader_of_a_dependency_once() {
+    let pool = QueryPool::default();
+    let names: Vec<QueryId> = ["r.a", "r.b", "root:r"]
+        .map(|name| pool.intern(name))
+        .into();
+    let deps: Vec<QueryId> = ["x", "y", "round:nested"]
+        .map(|name| pool.intern(name))
+        .into();
     let mut readers = Readers::with_capacity(3, 5).expect("index");
-    let names = ["r.a", "r.b", "root:r"];
     let ids: Vec<u32> = names.iter().map(|name| readers.reader(name)).collect();
-    readers.insert("x", ids[0]);
-    readers.insert("y", ids[0]);
-    readers.insert("x", ids[1]);
-    readers.insert("x", ids[2]);
-    readers.insert("round:nested", ids[2]);
+    readers.insert(&deps[0], ids[0]);
+    readers.insert(&deps[1], ids[0]);
+    readers.insert(&deps[0], ids[1]);
+    readers.insert(&deps[0], ids[2]);
+    readers.insert(&deps[2], ids[2]);
     let mut of_x: Vec<&str> = readers.of("x").collect();
     of_x.sort_unstable();
     assert_eq!(of_x, ["r.a", "r.b", "root:r"]);
     assert_eq!(readers.of("y").collect::<Vec<_>>(), ["r.a"]);
     assert_eq!(readers.of("round:nested").collect::<Vec<_>>(), ["root:r"]);
     assert_eq!(readers.of("z").count(), 0);
+    assert_eq!(readers.of("").count(), 0);
     assert_eq!(
         Readers::with_capacity(0, 0).expect("empty").of("x").count(),
         0
@@ -761,6 +768,41 @@ fn readers_index_lists_each_reader_of_a_dependency_once() {
     // The links index with 32 bits; a larger graph falls back before allocating.
     assert!(Readers::with_capacity(u32::MAX as usize + 1, 0).is_none());
     assert!(Readers::with_capacity(0, u32::MAX as usize).is_none());
+}
+
+#[test]
+fn readers_index_finds_a_dependency_by_its_text_whichever_pool_interned_it() {
+    // The table is entered by a key's cached hash, which is its text's in any pool, and
+    // compared by text: one spelling is one dependency although two pools made two keys.
+    let (home, foreign) = (QueryPool::default(), QueryPool::default());
+    let (here, there) = (home.intern("shared.dep"), foreign.intern("shared.dep"));
+    assert!(here == there && here.text_hash() == there.text_hash());
+    assert_eq!(here.text_hash(), QueryPool::text_hash("shared.dep"));
+    let (first, second) = (home.intern("reader.one"), foreign.intern("reader.two"));
+    let mut readers = Readers::with_capacity(2, 2).expect("index");
+    let (one, two) = (readers.reader(&first), readers.reader(&second));
+    readers.insert(&here, one);
+    readers.insert(&there, two);
+    let mut found: Vec<&str> = readers.of("shared.dep").collect();
+    found.sort_unstable();
+    assert_eq!(found, ["reader.one", "reader.two"]);
+    assert_eq!(readers.heads.len(), 1, "one table entry for the spelling");
+    // A spelling no pool holds any more is still asked by text alone.
+    assert_eq!(readers.of("shared.de").count(), 0);
+
+    // Many dependencies, so that the table grows and rehashes by the cached hashes.
+    let keys: Vec<QueryId> = (0..5000)
+        .map(|i| home.intern(&format!("dep.{i}")))
+        .collect();
+    let reader = home.intern("reader");
+    let mut many = Readers::with_capacity(1, keys.len() * 2).expect("index");
+    let id = many.reader(&reader);
+    for key in keys.iter().chain(keys.iter()) {
+        many.insert(key, id);
+    }
+    assert_eq!(many.heads.len(), keys.len());
+    assert!((0..5000).all(|i| many.of(&format!("dep.{i}")).count() == 2));
+    assert_eq!(many.of("dep.5000").count(), 0);
 }
 
 #[test]

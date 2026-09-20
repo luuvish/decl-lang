@@ -1,8 +1,10 @@
 //! Reference-round reuse over the value layer; mirrors qengine/rounds.ts.
 use crate::ast::{walk_expr_tree, walk_type_exprs, Expr};
 use crate::engine::{Edge, Engine, Inst};
+use crate::qengine::graph::{QueryId, QueryPool};
 use crate::qengine::revisions::Revisions;
 use crate::semantics::*;
+use hashbrown::{hash_table::Entry, HashTable};
 use rustc_hash::{FxHashMap, FxHashSet};
 use std::borrow::Cow;
 use std::cell::{Cell, RefCell};
@@ -188,9 +190,13 @@ impl RecordPaths {
 
 /// Readers by dependency for one invalidation walk: a chained link per read
 /// edge and one table entry per dependency, instead of a set per dependency.
+/// The table is entered by the hash a key caches for its text and compared by
+/// text: no spelling is hashed while the index is built, and a dependency is
+/// found by its spelling whichever pool interned it.
 struct Readers<'a> {
-    names: Vec<&'a str>,
-    heads: FxHashMap<&'a str, u32>,
+    names: Vec<&'a QueryId>,
+    // (the dependency, the head of its chain: a link's index plus one)
+    heads: HashTable<(&'a QueryId, u32)>,
     // (reader's index in `names`, the dependency's next link plus one; 0 ends)
     links: Vec<(u32, u32)>,
 }
@@ -201,26 +207,42 @@ impl<'a> Readers<'a> {
         (u32::try_from(readers).is_ok() && u32::try_from(edges).is_ok_and(|n| n < u32::MAX)).then(
             || Self {
                 names: Vec::with_capacity(readers),
-                heads: FxHashMap::default(),
+                heads: HashTable::new(),
                 links: Vec::with_capacity(edges),
             },
         )
     }
-    fn reader(&mut self, name: &'a str) -> u32 {
+    fn reader(&mut self, name: &'a QueryId) -> u32 {
         self.names.push(name);
         (self.names.len() - 1) as u32
     }
-    fn insert(&mut self, dep: &'a str, reader: u32) {
-        let head = self.heads.entry(dep).or_insert(0);
-        self.links.push((reader, *head));
-        *head = self.links.len() as u32;
+    fn insert(&mut self, dep: &'a QueryId, reader: u32) {
+        let next = self.links.len() as u32 + 1;
+        match self.heads.entry(
+            dep.text_hash(),
+            |(key, _)| *key == dep,
+            |(key, _)| key.text_hash(),
+        ) {
+            Entry::Occupied(mut entry) => {
+                let head = &mut entry.get_mut().1;
+                self.links.push((reader, *head));
+                *head = next;
+            }
+            Entry::Vacant(entry) => {
+                self.links.push((reader, 0));
+                entry.insert((dep, next));
+            }
+        }
     }
     fn of<'s>(&'s self, dep: &str) -> impl Iterator<Item = &'a str> + 's {
-        let mut next = self.heads.get(dep).copied().unwrap_or(0);
+        let mut next = self
+            .heads
+            .find(QueryPool::text_hash(dep), |(key, _)| key.as_str() == dep)
+            .map_or(0, |(_, head)| *head);
         std::iter::from_fn(move || {
             let (reader, following) = *self.links.get((next as usize).checked_sub(1)?)?;
             next = following;
-            Some(self.names[reader as usize])
+            Some(self.names[reader as usize].as_str())
         })
     }
 }
@@ -604,9 +626,9 @@ impl RoundCache {
             Readers::with_capacity(reads.len(), reads.values().map(|deps| deps.len()).sum())?;
         let mut pending: Vec<Cow<'_, str>> = Vec::new();
         for (reader, deps) in reads.iter() {
-            let index = reverse.reader(reader.as_str());
+            let index = reverse.reader(reader);
             for dep in deps.iter() {
-                reverse.insert(dep.as_str(), index);
+                reverse.insert(dep, index);
                 if let Some(s) = dep.strip_prefix("edge:") {
                     let mut parts = s.splitn(3, '|');
                     let key = format!("{}|{}", parts.next()?, parts.next()?);
