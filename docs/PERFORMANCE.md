@@ -313,16 +313,18 @@ to the optional diagnostics; existing node-kind and phase identities are unchang
 ### Initial Session attribution
 
 The `session-initial` example runs one initial `Session.run(Full)` request,
-serializes the complete `oid`, and writes scalar timing/allocation/GC records.
+serializes one complete output root, and writes scalar timing/allocation/GC records.
 Build it once, then use a fresh output prefix for each invocation:
 
 ```sh
 cargo build --release -p decl-lang --example session-initial --features runtime-diagnostics
-DECL_QENGINE=1 DECL_QENGINE_STRICT=1 target/release/examples/session-initial MODEL INPUT PREFIX
+DECL_QENGINE=1 DECL_QENGINE_STRICT=1 target/release/examples/session-initial MODEL INPUT_ROOT=INPUT_FILE OUTPUT_ROOT PREFIX
 ```
 
-`MODEL` declares the `oad` input and `oid` output. The helper writes
-`PREFIX-oid.json` and `PREFIX-initial.json`, and prints the metrics to standard
+`MODEL` declares the input root that `INPUT_FILE` is bound to, written as the
+command line writes `--input name=file`, and the output root to serialize. The
+helper writes `PREFIX-OUTPUT_ROOT.json` and `PREFIX-initial.json`, records both
+root names in the metrics, and prints the metrics to standard
 output. It keeps the ordinary request owners through serialization, releases
 them and the Session, then drains scalar diagnostics. It adds no explicit
 collection. These instrumented times are supporting evidence, not native CLI
@@ -1460,7 +1462,7 @@ an unsupported public Value follows the existing decode failure path; an
 actual empty-string document is valid JSON and uses the fast path. YAML,
 indented output, and templates retain their format-specific processing.
 
-This optimization covers selected-root emission, including `--output oid`.
+This optimization covers selected-root emission, a single root named with `--output`.
 The CLI's aggregate output without an explicit target has a separate document
 assembly path. Report emission time separately from evaluation time and avoid
 claiming that faster output fixes every internal evaluation cost. Use the
@@ -2762,7 +2764,7 @@ produce validated output. Source/model checks and owned-process cleanup passed.
 
 The saved event prefix contains 40 complete records, with four ended and four
 open spans. The first `settle.force_deferred_slots` interval completed in
-53.778023 seconds. Deferred binding of `oid` then entered
+53.778023 seconds. Deferred binding of the output root then entered
 `root.recursive_bind` at 58.155717 seconds from the recorded native start. That
 was the last confirmed phase at the first WARN sample, whose clock bracket was
 65.933882–65.933914 seconds. The 7.778165–7.778197-second gap from the last event

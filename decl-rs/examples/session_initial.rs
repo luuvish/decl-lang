@@ -76,20 +76,25 @@ fn run() {
     let args: Vec<String> = std::env::args().collect();
     assert_eq!(
         args.len(),
-        4,
-        "usage: initial-session MODEL INPUT OUTPUT_PREFIX"
+        5,
+        "usage: session-initial MODEL INPUT_ROOT=INPUT_FILE OUTPUT_ROOT OUTPUT_PREFIX"
     );
     let model = Path::new(&args[1]).canonicalize().unwrap();
-    let input = Path::new(&args[2]).canonicalize().unwrap();
-    let output_file = format!("{}-oid.json", args[3]);
-    let metrics_file = format!("{}-initial.json", args[3]);
+    // The command line's own spelling of a bound input: `--input name=file`.
+    let (input_root, input_path) = args[2]
+        .split_once('=')
+        .expect("the input is written INPUT_ROOT=INPUT_FILE");
+    let input = Path::new(input_path).canonicalize().unwrap();
+    let output_root = args[3].as_str();
+    let output_file = format!("{}-{output_root}.json", args[4]);
+    let metrics_file = format!("{}-initial.json", args[4]);
     assert!(!Path::new(&output_file).exists() && !Path::new(&metrics_file).exists());
     let mut stamps = [Stamp::default(); 9];
     stamps[0] = stamp();
     let mut session = Session::new(Some(model.to_str().unwrap()));
     session
         .apply(Op::Bind {
-            name: "oad".into(),
+            name: input_root.into(),
             src: BindSource::Inline {
                 text: std::fs::read_to_string(&input).unwrap(),
             },
@@ -100,7 +105,13 @@ fn run() {
     stamps[2] = stamp();
     let eng = run.eng.as_ref().expect("Session did not return an engine");
     stamps[3] = stamp();
-    let output = eng.serialize(&eng.env.root("oid").unwrap(), "oid", false);
+    let output = eng.serialize(
+        &eng.env
+            .root(output_root)
+            .expect("the model declares no such output root"),
+        output_root,
+        false,
+    );
     stamps[4] = stamp();
 
     // Plain copies only. The Edits owner survives the write as in the old probe.
@@ -150,7 +161,7 @@ fn run() {
         "setup_s": setup_s, "apply_s": 0.0,
         "evaluate_validate_s": full_s, "serialize_s": serialize_s,
         "total_s": full_s + serialize_s,
-        "measurement_boundary": "apply + Session.run(Full) + serialize oid; setup, counters, diagnostics inspection, output writes, and teardown excluded",
+        "measurement_boundary": "apply + Session.run(Full) + serialize the output root; setup, counters, diagnostics inspection, output writes, and teardown excluded",
         "internal_timing_s": timing.total / 1000.0,
         "internal_recomputed": timing.recomputed, "internal_slots": timing.slots,
         "revision_total": counters[0],
@@ -180,6 +191,7 @@ fn run() {
     let row = json!({
         "schema": 1, "role": "initial-session-support", "primary_timing": false,
         "build_manifest_dir": env!("CARGO_MANIFEST_DIR"), "model": model, "input": input,
+        "input_root": input_root, "output_root": output_root,
         "output_file": output_file, "output_bytes": output_bytes,
         "module_count": module_count, "request": request,
         "diagnostic_counts": diagnostics, "post_serialize_diags": post_serialize_diags,

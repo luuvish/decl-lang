@@ -73,7 +73,7 @@ fn successful_root_records_do_not_change_the_evaluation_span_sequence() {
     sentinel.mark("before_root");
     sentinel.finish();
     {
-        let attempt = RootAttempt::new("oid", 2, SourceKind::Expr);
+        let attempt = RootAttempt::new("report", 2, SourceKind::Expr);
         attempt.source_started();
         attempt.source_evaluated();
         attempt.binding_returned();
@@ -125,7 +125,7 @@ fn successful_root_records_do_not_change_the_evaluation_span_sequence() {
             .collect::<Vec<_>>(),
         [500, 501, 502, 503, 504, 505, 505]
     );
-    let identity = RootIdentity::new("oid", RootKind::Expression);
+    let identity = RootIdentity::new("report", RootKind::Expression);
     for event in &root_events {
         assert_eq!(wire_u64(event, 48), record.span.ordinal as u64);
         assert_eq!(wire_u64(event, 56), identity.hash);
@@ -143,7 +143,7 @@ fn successful_root_records_do_not_change_the_evaluation_span_sequence() {
 fn skipped_and_reused_roots_do_not_claim_source_or_binding_work() {
     take_root_binding_diagnostics();
     {
-        let skipped = RootAttempt::new("oad", 1, SourceKind::Doc);
+        let skipped = RootAttempt::new("document", 1, SourceKind::Doc);
         skipped.skipped();
     }
     {

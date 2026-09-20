@@ -133,7 +133,7 @@ the session does not have is reported on one line and changes nothing.
 |---|---|
 | `:bind name=doc.json` | bind the document in the file to input `name` (`doc.yaml` / `doc.yml` is read as YAML, 05_render.md §2) |
 | `:bind name { … }` | bind an inline JSON document (multi-line by the §2.9 rule) |
-| `:bind name = expr` | bind the value of an expression as `name`'s document: `:bind oad = u_oic` puts an output's document into an input — the round trip of §10.5, inside the session |
+| `:bind name = expr` | bind the value of an expression as `name`'s document: `:bind doc = xbar` puts an output's document into an input — the round trip of §10.5, inside the session |
 | `:unbind name` | drop the binding; the input falls back to its fallback, or is unbound |
 | `:create path = expr` | add a member, map entry, or array element at a canonical path of a document; an error if the path already holds a value |
 | `:update path = expr` | replace the value at a canonical path of a document; an error if there is none |
@@ -370,7 +370,7 @@ is what a transcript diffs (§9).
   `(invalid)` for a value the diagnostics excluded; a verdict line only
   after `:validate`.
 - `:evaluate` with one root prints its document; with several, each
-  document under a line naming the root (`u_oic:`); with none, the
+  document under a line naming the root (`xbar:`); with none, the
   exported outputs as one object, as `decl evaluate` does. An
   error-severity diagnostic in a root prints the diagnostics and
   `(invalid)` in the document's place. A root whose `@render` declares
@@ -380,7 +380,7 @@ is what a transcript diffs (§9).
   each under a `# path` line; a rendering diagnostic (E7003, E7004, an
   error in the template) is printed and the root is `(invalid)`.
 - `:validate` prints every diagnostic of the roots asked, then one
-  verdict line per root — `oad: ok`, or `oad: 2 errors, 1 warning` — and,
+  verdict line per root — `doc: ok`, or `doc: 2 errors, 1 warning` — and,
   for several roots, nothing more: the verdict lines are the summary.
 - `:roots` prints one line per root — kind, name, status (`exported`,
   `local`, `detached`, `session`; `bound`, `fallback`, `unbound`), the
