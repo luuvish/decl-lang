@@ -5,8 +5,9 @@ investigation and its private experiments. Sections 7–34 record subsequent
 implementation steps; sections 35–37 record measurement-only follow-ups,
 section 38 the first step they led to, section 39 a candidate that a
 paired comparison did not support, section 40 the first completed
-largest-size run, section 41 the completed pair at that size, and section 42
-the teardown step and the key check that followed from them.
+largest-size run, section 41 the completed pair at that size, section 42
+the teardown step and the key check that followed from them, and section 43
+the explanation of section 34's serialization regression.
 Observable behavior and the frozen specification are unchanged.
 External models, profiles, and engine comparison reports remain
 outside this repository, as required by [the measurement policy](DEVELOPMENT.md#performance-measurements).
@@ -24,7 +25,9 @@ the serialization regression measured with those payloads, and the
 [locality discriminator](#36-serializer-locality-discriminator-2026-09-19)
 identifies a mechanism sufficient to produce it. The
 [serialization census](#37-serialization-census-2026-09-19) places the
-evaluated output against that mechanism.
+evaluated output against that mechanism, and
+[section 43](#43-the-serialization-regression-is-allocator-placement-2026-09-20)
+explains the regression.
 
 The current engine already shares Programs, retains eligible reference rounds,
 and cuts off propagation when results are equal. The remaining costs include
@@ -2879,3 +2882,124 @@ pinned README with the rule, `pins.json` binding each artifact to its commit,
 the consumed `timing-v1/` and `analysis-v1/`, and
 `serialization-shape-exploration/` the two throwaway probes with their
 outputs, marked as not evidence. No saved campaign was reopened or pooled.
+
+## 43. The serialization regression is allocator placement (2026-09-20)
+
+Section 34 measured Session serialization 6.5% to 14.5% slower with 16-byte
+Values (H) than with 24-byte ones (G), 2.2 to 5.1 ms. Sections 35 to 39 closed
+the text explanations and left per-value code: the widened tag read, Value
+stride, code layout. Section 42 added an exploratory note. This section
+replaces that note's list of untested ideas with what was then established.
+
+Two facts need no timing. The Session helper's timed segment is exactly the
+public `Engine::serialize` call on the output root, so a probe calling the
+same function on the same kind of graph measures the same thing. And section
+37's census of the evaluated output holds no record and no value passed
+through from the input document: it is 356,187 maps and 153,692 arrays bound
+to a recursive union, 1,084,474 keys, depth twelve. Sections 35 and 36 emitted
+flat arrays built by hand; maps had never been in a probe.
+
+A third discriminator was therefore recorded, with its reading fixed
+beforehand. It evaluates generic modules in process through the public
+pipeline, so every graph has the engine's own storage, and emits four shapes
+at two scales: a nest of five-, three-, two- and one-entry maps with an array
+(`nest_mixed`, with integers, shared text and a boolean; `nest_int_bool`, the
+same with no text), and two controls, flat maps of three shared texts and
+chains of one-entry maps. At the large scale a nest is 1,020,002 values and
+about 10 MB, the Session's emission. All 2,000 outputs matched an oracle
+written from fixed tokens; the runner rebuilt every document's length
+independently and checked every graph's counts against closed forms. One
+recorded warm-up per binary, then four pairs G,H / H,G / H,G / G,H; a case
+differs only with one direction in all four pairs and a median paired change
+beyond the larger same-arm spread. Held batch, time per emission, large scale:
+
+| Shape | G | H | Median paired change | Spread G / H | By the rule |
+| --- | ---: | ---: | ---: | ---: | --- |
+| `nest_int_bool` | 14.939 ms | 16.486 ms | +11.03% (+1.637 ms) | 3.92% / 1.42% | differs |
+| `nest_mixed` | 13.894 ms | 15.607 ms | +9.57%, all four pairs slower | 8.86% / 11.22% | no: inside H's spread |
+| flat text | 6.378 ms | 6.547 ms | +2.41% | 2.68% / 1.86% | no |
+| chain | 4.801 ms | 4.682 ms | -2.19% | 2.88% / 1.66% | no |
+
+Nothing differs at the small scale. No outcome named beforehand fits exactly,
+and the report says which parts hold: a generic, text-free instance of the
+regression exists at the Session's scale (0.85 ns per value or key, which over
+the evaluated output's 2.65 million is 2.2 ms), it needs the large working
+set, and it is not general to engine-built graphs. The mixed nest points the
+same way in every pair without meeting the rule; its first emission does
+(+16.54%). An exploratory round had suggested larger figures for it and a
+faster flat control in H; this witness confirms neither.
+
+Why identical work takes longer was read from hardware counters on the same
+shapes. Instruments is not installed on the host, so a throwaway harness reads
+the calling thread's counters through the private kperf interface around a
+300-emission loop; the operator ran it under root, arms G,H,H,G. This is
+exploratory tooling, but instruction, branch and miss counts repeat to a
+fraction of a percent. Per emission:
+
+| Shape | Instructions | Mispredicted branches | Cycles | Cycles waiting after a first-level data miss |
+| --- | ---: | ---: | ---: | ---: |
+| nest, mixed | +0.61% | +0.08% | +10.68% | 8.40 M to 14.08 M |
+| nest, no text | +0.32% | +0.22% | +7.23% | 8.25 M to 15.67 M |
+| flat text | +0.82% | -0.05% | -0.11% | 2.60 M to 2.60 M |
+| chain | +0.43% | +6.6% | -4.56% | 1.83 M to 0.55 M |
+
+H executes the same branches and within 1% of the same instructions in every
+shape; the extra loads in the text shapes are exactly one per text value, the
+descriptor read. So the per-value code candidates are closed: there is no
+extra work, no dispatch cost and no tag cost to find. The whole cycle gap of
+the nests is one counter, the cycles in which the oldest load or store waits
+for data after missing the first-level data cache. H misses that cache less
+often (loads -17.6% and -3.2%) and waits about twice as long per miss.
+
+An address census of the same graphs says where the wait comes from. The
+allocator places blocks by size class. Every container is a header, which the
+Value points to, and a buffer holding its values, which the header points to;
+the serializer cannot start the second load before the first has arrived.
+
+| | G | H |
+| --- | ---: | ---: |
+| Three-entry containers with header and buffer on one page | 99.1% | 0.0% |
+| Five-entry containers with header and buffer on one page | 0.0% | 88.1% |
+| Nest: header to buffer beyond 1 MiB | 2.2% | 20.2% |
+| Nest: parent slot to header beyond 1 MiB | 17.4% | 34.9% |
+
+A three-entry buffer is 72 bytes in G and shares the container header's size
+class, so the two are allocated side by side; in H it is 48 bytes and lives
+elsewhere, and only the 80-byte five-entry buffers meet the header's class.
+H's working set is smaller, which an earlier count of distinct lines and pages
+had shown and had wrongly been read as clearing placement: that count measures
+how much is touched, not how far a dependent hop goes. In a flat graph headers
+and buffers are each one sequential stream and the hardware keeps up in both
+arms; in a nest the streams interleave across more size classes and the far
+dependent hops appear as waiting. The regression is an interaction of the
+16-byte Value with the allocator's size classes, not a cost of the
+representation's code, and the evaluated output, whose maps average three
+keys, is the shape that pays it.
+
+The candidate this names is structural and unmeasured: hold a small
+container's values inside its header, 48 to 64 bytes for three or four 16-byte
+values, which removes the dependent hop for the commonest containers in
+emission and in every other walk. It needs its own paired comparison and
+memory accounting.
+
+One implementation step came out of the probes. The same document emitted
+from records cost four times what it cost from maps, because the serializer's
+record branch built a hashed set of the supplied names, allocated and freed,
+for every record. Rust now scans a supplied list of at most sixteen names and
+indexes a longer one once; the reference and Python use their runtimes' native
+sets and are unchanged. Private tests cover both sides of the limit and narrow
+and wide records with and without derived members. On a busy host, six
+alternating processes per build, a 10 MB document of 360,000 records went from
+50.5 to 35.3 ms and the same document from maps stayed at 16 ms; that is a
+functional observation, not a witness. Records still cost about twice maps:
+what remains is two by-name linear slot lookups per member, which an
+index-based walk would remove once the slot and member orders are proven
+equal.
+
+Evidence is under `../decl-analysis/2026-09-14/value-layout/`:
+`serialization-nest-probe/` holds the probe, the pinned README with the rule,
+the runner, a kept rejected functional check and the accepted one, the
+consumed `results-v1/` and `analysis-v1/`;
+`serialization-shape-exploration/` holds the exploratory probes, the counter
+harness with the operator's outputs and `counters/analysis.md`, marked as not
+evidence where they are not.
