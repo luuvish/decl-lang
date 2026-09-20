@@ -9,17 +9,20 @@ largest-size run, section 41 the completed pair at that size, section 42
 the teardown step and the key check that followed from them, section 43
 the explanation of section 34's serialization regression, section 44 the
 memory a round transition holds, section 45 that step measured at the
-largest size, and section 46 the output document written in pieces.
+largest size, section 46 the output document written in pieces, and section
+47 the snapshot limited to what a round can reach.
 Observable behavior and the frozen specification are unchanged.
 External models, profiles, and engine comparison reports remain
 outside this repository, as required by [the measurement policy](DEVELOPMENT.md#performance-measurements).
 
 For the latest implementation step, see
-[the output document leaves in pieces](#46-the-output-document-leaves-in-pieces-2026-09-20);
+[a snapshot of what a round can reach](#47-a-snapshot-of-what-a-round-can-reach-2026-09-20);
+[the output document leaves in pieces](#46-the-output-document-leaves-in-pieces-2026-09-20)
+and
 [what a round transition holds](#44-what-a-round-transition-holds-2026-09-20),
 measured at the largest size in
 [section 45](#45-the-round-transition-step-at-the-largest-size-2026-09-20),
-precedes it;
+precede it;
 [teardown left to the process exit](#42-teardown-left-to-the-process-exit-2026-09-20)
 and
 [map keys bound without a text value](#38-map-keys-bound-without-a-text-value-2026-09-19)
@@ -3350,3 +3353,130 @@ Evidence is under
 `../decl-analysis/2026-09-14/value-layout/emit-in-pieces/`: the record with
 the argument for the drain point, the gated patch, the command-line runs and
 the in-memory runs, marked as not evidence.
+
+## 47. A snapshot of what a round can reach (2026-09-20)
+
+Sections 44 and 45 left the snapshot's copy of records that did not change as
+the first thing in the peak and called a copy-on-write snapshot a design of
+its own. A design review set out to write that design and ended elsewhere,
+because its measurements changed the question. At the third size the freeze
+copies every registered record, 498,010 of them, for 317 MiB in 1.66 million
+allocations, about 60% slot vectors and 29% record headers; 97.5% of those
+records are clean. The next round makes 32,958 member reads through the
+snapshot, of 2,959 distinct frozen records: 0.6% of what was copied. And what
+a round *can* reach is decided by the program, not by the data: the model asks
+two `$referrers` keys over one type name, whose 5,108 registered records, 1.0%
+of the registry with 1.5% of the slots, contain no further records.
+
+That bound holds in general, by three facts of the engine. `$referrers` is the
+only producer of references owned by a snapshot, and an answer is the
+registered path of a record whose type name is the literal of a `$referrers`
+expression, a static set that the round cache's setup already walks every
+expression to find. From such a record a reader goes down and never up or
+sideways: member access yields its values and the records it contains; an
+ordinary reference is not owned by the snapshot and already resolves in the
+live round; and a parent link is read only while a record's own member is
+evaluated, which never happens to a frozen record, because a round with an
+unforced slot is not frozen. Frozen roots, finally, are read only to resolve
+an answer's path. Sharing clean instances, the copy-on-write the earlier
+sections had in mind, was set aside: whether a read is a snapshot read is
+decided by the instance's address, so a shared instance would be both; and an
+instance is mutable in place, by a later transition and by a native caller,
+which private witnesses pin. Copy-on-write slot vectors would share only leaf
+records, 47% of the copy, at the price of every slot access; path-copying the
+live side instead is a rewrite of the round machinery.
+
+Before anything was built the argument was tested by a throwaway shadow build.
+The full snapshot served every read, the limited one was built beside it, and
+every way a round obtains a frozen record was checked against it: an answer
+against an index by path, every frozen record obtained for membership and deep
+equality of content, the instances of an edge computed over a frozen round,
+the records the next transition compares, the static set at every `$referrers`
+call, a frozen root read outside an answer, a parent link of a frozen record.
+With the static set emptied every module that reads a snapshot reports
+violations, so a clean log is not a silent detector. It was clean over the
+whole Rust test suite, whose corpora include universes of four rounds, over
+every module in the repository, and over the external model at three sizes and
+its 178 covered fixtures: 136,593 answers. The only violations, four, came
+from three private native tests that handle a snapshot by hand. One path no
+corpus reached: an edge is computed over *frozen* instances only for a key
+first asked in a later round, since keys asked earlier are precomputed from
+the live round. A module was written for it, clean as well, and is now the
+shared fixture `referrers_late_key.decl`, a generated port that learns its
+peer from the previous round and only then asks who watches it, reading the
+watchers' contained records; the three implementations agree on it.
+
+The step: the round cache collects the type names `$referrers` expressions
+name; the freeze copies the registered records of those types and whatever
+the copy reaches from them, and nothing else; a frozen copy carries no parent
+link, which is what keeps one copy from pulling in the whole tree; the frozen
+registry, the ownership set and a new index by path hold exactly the copies,
+in the order they were made; a frozen round resolves an answer's path in that
+index and keeps no roots, so section 44's rule for a rebound plain root went
+with them. A program whose `$referrers` name the type at the top of its tree
+reaches everything and pays what it paid before; nothing pays more. One
+consequence is not about memory: a value that cannot be copied used to send
+the round to the non-incremental fallback wherever it sat, and now does so
+only when a candidate holds it; output is the same either way. Eight private
+witnesses encoded the old shape (frozen roots, a frozen child's parent, a
+snapshot of a universe that asks no `$referrers`) and were rewritten with
+their purposes kept: isolation from later live mutation, aliases and cycles
+inside the copy, the older owners of re-identified references, collectible
+removed records. New ones state the rule: the paths a snapshot holds for two
+queried types, one of which contains records, beside an unasked type and a
+plain root; a candidate resolved by path and anything else to nothing; plain
+containers shared; no root kept, so a rebound one is released; a universe
+naming no registered type freezes nothing.
+
+As the review had warned, that step alone does not move the peak, because
+since section 44 the two humps are level and classification is the higher.
+So its scratch was cut with it. Classification kept every record's spelling
+with a vector of prefix lengths, and a table with one entry per prefix per
+record, to find the records under an invalidated place: 113 and 101 MiB at
+the third size. One text, one flat list of 32-bit prefix lengths and the
+record indices ordered by spelling replace both. The records under a place
+are the run of that order whose spelling starts with the place's text,
+filtered to those with a prefix ending exactly there, which is the table's
+own meaning, since a record was filed under the text of each of its prefixes;
+so a native bare root name or a quoted key that holds delimiters behaves as
+before. A private test rebuilds the table and compares place by place,
+including siblings that merely extend a name, `[1]` against `[10]`, a key
+holding delimiters, a native root that spells a nested path, and an empty
+root segment. Distinct spellings are checked on the order instead of in a
+set, and the index is sized exactly, because it is live while the rest of
+the walk's scratch is built.
+
+Requested bytes from the diagnostic Session helper, outputs byte-identical:
+
+| Size | Arm | Peak | Live after the run | The freeze adds | in |
+| --- | --- | ---: | ---: | ---: | ---: |
+| Second | `main` | 950.4 MiB | 917.7 MiB | 107.1 MiB | 0.062 s |
+| Second | limited snapshot | 950.4 MiB | 810.3 MiB (-11.7%) | 2.2 MiB | 0.002 s |
+| Second | and ordered record paths | 919.1 MiB (-3.3%) | 810.3 MiB | | |
+| Third | `main` | 2,560.2 MiB | 2,487.9 MiB | 307.9 MiB | 0.191 s |
+| Third | limited snapshot | 2,560.2 MiB | 2,177.4 MiB (-12.5%) | 4.4 MiB | 0.006 s |
+| Third | and ordered record paths | 2,434.5 MiB (-4.9%) | 2,177.4 MiB | | |
+
+Round 2 now ends at 2,232 MiB instead of 2,542. The one-shot command line at
+the third size, alternating with `main` on a busy host, outputs identical:
+peak footprint 2,701.7, 2,701.0 and 2,701.2 MiB before and 2,551.5, 2,551.4
+and 2,552.0 MiB after, -5.55% in all three pairs; peak RSS -6.3%; wall 13.13,
+13.27 and 13.45 s against 13.59, 13.11 and 12.95 s, no difference. One pair
+at the second size: 1,057.6 to 985.0 MiB, -6.9%. The gate passed for each of
+the two commits with 1,305 identical comparisons, six more than before for
+the new fixture. These are functional observations with no rule fixed
+beforehand, not a witness, and the largest size was not run.
+
+What is left in the peak at the third size is 293 MiB of classification
+scratch over 2,141 MiB: about 60 for the record paths and about 230 while the
+reverse read index's table doubles. Keying that table by the interned key's
+address instead of its text would shrink it by a third and skip 8.7 million
+string hashes, but keys compare by text across pools by design, so it needs an
+argument that every key of one engine's read graph comes from one pool; it was
+not attempted.
+
+Evidence is under
+`../decl-analysis/2026-09-14/value-layout/snapshot-review/`: the review with
+its probes, `shadow-build/` with the verification build's patch, its logs and
+the module for the late key, and `limited-snapshot/` with the ledgers, the
+command-line runs and both patches. All of it is exploratory and marked so.
