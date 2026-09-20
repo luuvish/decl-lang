@@ -210,6 +210,33 @@ pub fn form_overrides(flags: &HashMap<String, String>) -> Option<Overrides> {
     Some(out)
 }
 
+thread_local! {
+    static ONE_SHOT: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+/// The command line of a process that exits when the command returns (the
+/// `decl` binary). Such a process need not take apart what an evaluation
+/// built: dropping the runtime and sweeping its cycles only delays the exit,
+/// and the operating system reclaims the memory at once. `main` itself keeps
+/// the full teardown, for callers that live on.
+pub fn run_once(args: Vec<String>) -> i32 {
+    ONE_SHOT.with(|f| f.set(true));
+    main(args)
+}
+
+/// In a one-shot process, keep what an evaluation built alive to the exit: one
+/// leaked handle per owner turns every later drop into a count decrement.
+fn leave_to_process(eng: &Rc<crate::engine::Engine>, modules: &[Rc<Module>]) {
+    if !ONE_SHOT.with(std::cell::Cell::get) {
+        return;
+    }
+    std::mem::forget(Rc::clone(eng));
+    for m in modules {
+        std::mem::forget(Rc::clone(m));
+    }
+    crate::semantics::lifetime::leave_to_process();
+}
+
 /// `decl evaluate`: (exit code, the text for stdout, the diagnostics tagged
 /// with their file, the bare stderr lines that follow them); a usage error
 /// is exit 2 with its line already printed
@@ -363,6 +390,7 @@ pub fn evaluate(
         }
     };
     let (eng, diags) = run_universe(&r.modules, &entry, binds);
+    leave_to_process(&eng, &r.modules);
     let mut all = checks; // a warning of the checks (W0001) is reported with the run's
     all.extend(tag(diags.clone()));
     if diags.iter().any(|d| d.severity == "error") {
@@ -605,12 +633,9 @@ pub fn validate_file(file: &str, inputs: &[String]) -> Result<Vec<(String, Diag)
         }
         Err((code, None)) => return Err(-(code as i64)),
     };
-    diags.extend(
-        run_universe(&r.modules, &entry, binds)
-            .1
-            .into_iter()
-            .map(|d| (file.to_string(), d)),
-    );
+    let (eng, run) = run_universe(&r.modules, &entry, binds);
+    leave_to_process(&eng, &r.modules);
+    diags.extend(run.into_iter().map(|d| (file.to_string(), d)));
     Ok(diags)
 }
 

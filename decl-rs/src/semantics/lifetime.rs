@@ -20,6 +20,16 @@ thread_local! {
     static TRACKED: RefCell<Tracked> = RefCell::new(Tracked::default());
     static COLLECTING: Cell<bool> = const { Cell::new(false) };
     static ENGINES: Cell<usize> = const { Cell::new(0) };
+    static LEFT_TO_PROCESS: Cell<bool> = const { Cell::new(false) };
+}
+/// A process about to exit leaves what it built to the operating system: after
+/// this, the thread's guards no longer sweep. Only a one-shot command calls it,
+/// once its runtime is no longer dropped either (cli.rs).
+pub(crate) fn leave_to_process() {
+    let _ = LEFT_TO_PROCESS.try_with(|b| b.set(true));
+}
+fn left_to_process() -> bool {
+    LEFT_TO_PROCESS.try_with(Cell::get).unwrap_or(false)
 }
 pub(super) fn track_env(e: &Rc<Env>) {
     TRACKED.with(|t| t.borrow_mut().envs.push(Rc::downgrade(e)));
@@ -49,7 +59,7 @@ impl Drop for EngineGuard {
                 n.get() == 0
             })
             .unwrap_or(false);
-        if last {
+        if last && !left_to_process() {
             #[cfg(feature = "runtime-diagnostics")]
             diagnostics::set_next_trigger(diagnostics::GcTrigger::LastEngine);
             collect_cycles();
@@ -60,6 +70,9 @@ impl Drop for EngineGuard {
 pub(crate) struct CommandGuard;
 impl Drop for CommandGuard {
     fn drop(&mut self) {
+        if left_to_process() {
+            return;
+        }
         #[cfg(feature = "runtime-diagnostics")]
         diagnostics::set_next_trigger(diagnostics::GcTrigger::Command);
         collect_cycles();

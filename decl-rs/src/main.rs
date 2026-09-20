@@ -14,7 +14,7 @@ fn main() {
     let worker = std::thread::Builder::new()
         .name("decl".into())
         .stack_size(1 << 30)
-        .spawn(move || decl_lang::cli::main(args))
+        .spawn(move || decl_lang::cli::run_once(args))
         .expect("spawn the evaluation thread");
     let code = worker.join().unwrap_or(1);
     std::process::exit(code);

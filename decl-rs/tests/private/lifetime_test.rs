@@ -748,3 +748,27 @@ fn baseline_bridge_drop_characterization_and_reentrant_suppression() {
         "reentrant collection left the thread guard stuck"
     );
 }
+
+#[test]
+fn a_thread_left_to_the_process_stops_sweeping() {
+    // The switch is thread-local and never cleared: a thread of its own keeps
+    // it away from every other test.
+    std::thread::spawn(|| {
+        let tracked = || TRACKED.with(|t| t.borrow().envs.len());
+        drop(Env::new());
+        assert_eq!(tracked(), 1);
+        drop(CommandGuard);
+        assert_eq!(tracked(), 0, "a command's guard sweeps expired handles");
+
+        drop(Env::new());
+        leave_to_process();
+        drop(CommandGuard);
+        drop(EngineGuard::new());
+        assert_eq!(tracked(), 1, "no guard sweeps a thread left to the process");
+        // An explicit sweep is still honoured.
+        collect_cycles();
+        assert_eq!(tracked(), 0);
+    })
+    .join()
+    .unwrap();
+}
