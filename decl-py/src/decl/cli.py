@@ -9,6 +9,7 @@ import os
 import re
 import sys
 import threading
+from collections.abc import Callable
 from typing import Any
 
 from .checker import check_module
@@ -473,12 +474,29 @@ def main(argv: list[str] | None = None) -> int:
     if threading.current_thread() is not threading.main_thread():
         return _main(argv)
     result: list[int] = []
-    threading.stack_size(1 << 30)
-    sys.setrecursionlimit(1_000_000)
+    sys.setrecursionlimit(large_stack(threading.stack_size))
     worker = threading.Thread(target=lambda: result.append(_main(argv)), name="decl")
     worker.start()
     worker.join()
     return result[0] if result else 1
+
+
+# The stack asked for, largest first. A platform refuses a size it cannot
+# give with ValueError: CPython on Windows admits less than 256 MiB.
+STACK_SIZES = (1 << 30, (1 << 28) - (1 << 16), 1 << 26)
+
+
+def large_stack(set_size: Callable[[int], int]) -> int:
+    """Ask for the largest stack the platform gives, and answer the recursion
+    limit that goes with it: a million frames for a GiB, fewer in proportion,
+    and the interpreter's own limit where no size is accepted."""
+    for size in STACK_SIZES:
+        try:
+            set_size(size)
+        except ValueError:
+            continue
+        return 1_000_000 * size // (1 << 30)
+    return sys.getrecursionlimit()
 
 
 def _main(argv: list[str] | None = None) -> int:
