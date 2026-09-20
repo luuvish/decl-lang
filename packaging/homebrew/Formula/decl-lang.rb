@@ -10,8 +10,8 @@
 class DeclLang < Formula
   desc "Declarative language for describing, generating, and validating structured data"
   homepage "https://decl-lang.org/"
-  url "https://registry.npmjs.org/decl-lang/-/decl-lang-0.4.0.tgz"
-  sha256 "69872242085a0cc47d06a66188e183c5707de6be5911deff5b83c49e9cfdda8a"
+  url "https://registry.npmjs.org/decl-lang/-/decl-lang-0.4.6.tgz"
+  sha256 "63c8d5069b0a03ed66122d346dcdd7e4bcd265f44f28815f3ba89bb3b17e267e"
   license "MIT"
 
   depends_on "node"
