@@ -51,6 +51,37 @@ fn identity(v: &Value) -> Option<(u8, usize)> {
 // Freeze memo values have one fixed variant per source kind. Store their thin
 // owners directly instead of repeating a kind tag and a full Value per entry.
 // This scratch owns copied bodies only; it never changes the source graph.
+/// Whether a value holds only scalars, and arrays and maps of such. A record,
+/// a reference, a callable or anything still lazy makes it, and whatever holds
+/// it, not plain. So does nesting beyond `PLAIN_DEPTH`: a native caller can
+/// build an array that holds itself, and the copy that follows is the path
+/// that remembers what it has visited.
+fn plain(v: &Value) -> bool {
+    const PLAIN_DEPTH: usize = 64;
+    fn within(v: &Value, depth: usize) -> bool {
+        match v {
+            Value::Int(_)
+            | Value::Float(_)
+            | Value::Bool(_)
+            | Value::Str(_)
+            | Value::Null
+            | Value::Absent
+            | Value::Undef
+            | Value::Q(_)
+            | Value::Range(_) => true,
+            Value::Arr(_) | Value::Map(_) if depth == PLAIN_DEPTH => false,
+            Value::Arr(a) => a
+                .try_borrow()
+                .is_ok_and(|b| b.items.iter().all(|item| within(item, depth + 1))),
+            Value::Map(m) => m
+                .try_borrow()
+                .is_ok_and(|b| b.entries.values().all(|value| within(value, depth + 1))),
+            _ => false,
+        }
+    }
+    within(v, 0)
+}
+
 #[derive(Default)]
 struct CopyMemo {
     records: FxHashMap<usize, Inst>,
@@ -80,6 +111,45 @@ impl CopyMemo {
                 .map(Value::Ref),
             _ => None,
         }
+    }
+}
+
+/// Readers by dependency for one invalidation walk: a chained link per read
+/// edge and one table entry per dependency, instead of a set per dependency.
+struct Readers<'a> {
+    names: Vec<&'a str>,
+    heads: FxHashMap<&'a str, u32>,
+    // (reader's index in `names`, the dependency's next link plus one; 0 ends)
+    links: Vec<(u32, u32)>,
+}
+
+impl<'a> Readers<'a> {
+    /// `None` when the graph outgrows the links' 32-bit indices.
+    fn with_capacity(readers: usize, edges: usize) -> Option<Self> {
+        (u32::try_from(readers).is_ok() && u32::try_from(edges).is_ok_and(|n| n < u32::MAX)).then(
+            || Self {
+                names: Vec::with_capacity(readers),
+                heads: FxHashMap::default(),
+                links: Vec::with_capacity(edges),
+            },
+        )
+    }
+    fn reader(&mut self, name: &'a str) -> u32 {
+        self.names.push(name);
+        (self.names.len() - 1) as u32
+    }
+    fn insert(&mut self, dep: &'a str, reader: u32) {
+        let head = self.heads.entry(dep).or_insert(0);
+        self.links.push((reader, *head));
+        *head = self.links.len() as u32;
+    }
+    fn of<'s>(&'s self, dep: &str) -> impl Iterator<Item = &'a str> + 's {
+        let mut next = self.heads.get(dep).copied().unwrap_or(0);
+        std::iter::from_fn(move || {
+            let (reader, following) = *self.links.get((next as usize).checked_sub(1)?)?;
+            next = following;
+            Some(self.names[reader as usize])
+        })
     }
 }
 
@@ -455,14 +525,13 @@ impl RoundCache {
         // Classification and invalidation only inspect the dependency graph.
         // Its key text can serve the temporary reverse index without copies.
         let reads = eng.reads.borrow();
-        let mut reverse: FxHashMap<&str, FxHashSet<&str>> = FxHashMap::default();
+        let mut reverse =
+            Readers::with_capacity(reads.len(), reads.values().map(|deps| deps.len()).sum())?;
         let mut pending: Vec<Cow<'_, str>> = Vec::new();
         for (reader, deps) in reads.iter() {
+            let index = reverse.reader(reader.as_str());
             for dep in deps.iter() {
-                reverse
-                    .entry(dep.as_str())
-                    .or_default()
-                    .insert(reader.as_str());
+                reverse.insert(dep.as_str(), index);
                 if let Some(s) = dep.strip_prefix("edge:") {
                     let mut parts = s.splitn(3, '|');
                     let key = format!("{}|{}", parts.next()?, parts.next()?);
@@ -534,9 +603,7 @@ impl RoundCache {
             if key.starts_with("const:") {
                 return None;
             }
-            if let Some(readers) = reverse.get(key.as_ref()) {
-                pending.extend(readers.iter().map(|key| Cow::Borrowed(*key)));
-            }
+            pending.extend(reverse.of(key.as_ref()).map(Cow::Borrowed));
             let prefix = if let Some(name) = key.strip_prefix("root:") {
                 roots.insert(name.to_string());
                 Some(path_str(&[Seg::Name(name.into())], None))
@@ -580,7 +647,7 @@ impl RoundCache {
         }
         #[cfg(feature = "runtime-diagnostics")]
         advance_diagnostic.classified();
-        let snapshot = self.freeze(eng, &registry)?;
+        let snapshot = self.freeze(eng, &registry, &roots)?;
         #[cfg(feature = "runtime-diagnostics")]
         advance_diagnostic.frozen();
         self.revisions.begin(eng, &invalid, &forced, &dropped);
@@ -649,7 +716,12 @@ impl RoundCache {
         Some(snapshot)
     }
 
-    fn freeze(&self, eng: &Rc<Engine>, registry: &[Inst]) -> Option<Rc<Engine>> {
+    fn freeze(
+        &self,
+        eng: &Rc<Engine>,
+        registry: &[Inst],
+        rebound: &HashSet<String>,
+    ) -> Option<Rc<Engine>> {
         let tagger = eng.env.tagger.borrow().clone();
         let frozen = Engine::bare_with_queries(eng.env.clone(), eng.query_pool());
         *eng.env.tagger.borrow_mut() = tagger;
@@ -670,6 +742,16 @@ impl RoundCache {
             .env
             .roots_vec()
             .iter()
+            // A frozen root is read only through an answer's path, and an answer
+            // names a registered record. A root that is bound again, holds no
+            // record or reference and heads no record's path is kept for nobody.
+            .filter(|(k, v)| {
+                !(rebound.contains(k)
+                    && plain(v)
+                    && !registry.iter().any(
+                        |r| matches!(r.borrow().path.first(), Some(Seg::Name(n)) if **n == **k),
+                    ))
+            })
             .map(|(k, v)| Some((k.clone(), self.copy(v, eng, &frozen, &mut copies)?)))
             .collect();
         *frozen.frozen_roots.borrow_mut() = Some(roots?);
@@ -744,6 +826,10 @@ impl RoundCache {
                 }
                 Value::Rec(r)
             }
+            // Nothing in a plain array or map can change or be re-identified in a
+            // later round, and nothing mutates one once it is built: the snapshot
+            // shares it instead of copying it.
+            Value::Arr(_) | Value::Map(_) if plain(&v) => v.clone(),
             Value::Arr(a) => {
                 let b = a.borrow();
                 #[cfg(feature = "runtime-diagnostics")]

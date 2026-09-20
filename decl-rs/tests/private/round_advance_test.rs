@@ -507,6 +507,130 @@ fn advance_preserves_frozen_aliases_and_roots_removed_before_reset_collection() 
     assert!(weak_env.upgrade().is_none());
 }
 
+fn plain_fixture() -> Rc<Engine> {
+    let parsed = parse_source(
+        "type Child = { x: int }\n\
+         type Parent = { left: Child, right: Child }\n\
+         export output result: Parent = { left: { x: 7 }, right: { x: 11 } }\n\
+         export output table: { [string]: int[] } = { \"a\": [1, 2], \"b\": [3] }\n",
+    );
+    let pipeline = run_pipeline(&parsed.decls);
+    assert!(pipeline.diags.is_empty());
+    pipeline.eng
+}
+
+fn frozen_value(engine: &Engine, name: &str) -> Option<Value> {
+    let roots = engine.frozen_roots.borrow();
+    roots
+        .as_ref()
+        .expect("frozen roots")
+        .iter()
+        .find(|(n, _)| n == name)
+        .map(|(_, v)| v.clone())
+}
+
+#[test]
+fn snapshot_shares_a_plain_root_and_leaves_out_one_that_is_bound_again() {
+    // Nothing is dirty: the snapshot holds the plain root itself and a copy of
+    // the record root.
+    let engine = plain_fixture();
+    let cache = RoundCache::default();
+    let live = engine.env.root("table").expect("live table");
+    let kept = cache.advance(&engine, &HashMap::new()).expect("advance");
+    assert_eq!(
+        identity(&frozen_value(&kept, "table").expect("frozen table")),
+        identity(&live)
+    );
+    assert!(!Rc::ptr_eq(
+        &frozen_root(&kept),
+        &record(engine.env.root("result").unwrap())
+    ));
+    drop(kept);
+    drop(live);
+
+    // The plain root is bound again: no answer can name it, so the snapshot
+    // leaves it out and the removed value has no owner left.
+    let engine = plain_fixture();
+    let cache = RoundCache::default();
+    let Value::Map(table) = engine.env.root("table").expect("live table") else {
+        panic!("map root")
+    };
+    let weak = Rc::downgrade(&table);
+    drop(table);
+    engine.track.set(true);
+    engine.step("root:table", || engine.record("round:nested".into()));
+    let snapshot = cache.advance(&engine, &HashMap::new()).expect("advance");
+    assert!(frozen_value(&snapshot, "table").is_none());
+    assert!(snapshot.root("table").is_none());
+    assert!(engine.env.root("table").is_none());
+    assert!(
+        weak.upgrade().is_none(),
+        "the removed plain root is released"
+    );
+    assert_eq!(snapshot.frozen_registry.borrow().as_ref().unwrap().len(), 3);
+    let root = frozen_root(&snapshot);
+    assert!(value_eq(
+        &child(&root, "left").borrow().slot("x").unwrap().value,
+        &Value::Int(7.into())
+    ));
+}
+
+#[test]
+fn snapshot_keeps_a_rebound_root_that_holds_or_heads_a_record() {
+    // A record root that is bound again stays in the snapshot.
+    let engine = plain_fixture();
+    let cache = RoundCache::default();
+    engine.track.set(true);
+    engine.step("root:result", || engine.record("round:nested".into()));
+    engine.step("root:table", || engine.record("round:nested".into()));
+    let snapshot = cache.advance(&engine, &HashMap::new()).expect("advance");
+    assert!(frozen_value(&snapshot, "table").is_none());
+    assert!(value_eq(
+        &child(&frozen_root(&snapshot), "right")
+            .borrow()
+            .slot("x")
+            .unwrap()
+            .value,
+        &Value::Int(11.into())
+    ));
+
+    // A plain root that heads a registered record's path stays as well: an
+    // answer may name that record.
+    let engine = plain_fixture();
+    let cache = RoundCache::default();
+    let left = child(&record(engine.env.root("result").unwrap()), "left");
+    left.borrow_mut().path = Rc::new(vec![Seg::Name("table".into()), Seg::Key("a".into())]);
+    engine.track.set(true);
+    engine.step("root:table", || engine.record("round:nested".into()));
+    let snapshot = cache.advance(&engine, &HashMap::new()).expect("advance");
+    assert!(frozen_value(&snapshot, "table").is_some());
+}
+
+#[test]
+fn readers_index_lists_each_reader_of_a_dependency_once() {
+    let mut readers = Readers::with_capacity(3, 5).expect("index");
+    let names = ["r.a", "r.b", "root:r"];
+    let ids: Vec<u32> = names.iter().map(|name| readers.reader(name)).collect();
+    readers.insert("x", ids[0]);
+    readers.insert("y", ids[0]);
+    readers.insert("x", ids[1]);
+    readers.insert("x", ids[2]);
+    readers.insert("round:nested", ids[2]);
+    let mut of_x: Vec<&str> = readers.of("x").collect();
+    of_x.sort_unstable();
+    assert_eq!(of_x, ["r.a", "r.b", "root:r"]);
+    assert_eq!(readers.of("y").collect::<Vec<_>>(), ["r.a"]);
+    assert_eq!(readers.of("round:nested").collect::<Vec<_>>(), ["root:r"]);
+    assert_eq!(readers.of("z").count(), 0);
+    assert_eq!(
+        Readers::with_capacity(0, 0).expect("empty").of("x").count(),
+        0
+    );
+    // The links index with 32 bits; a larger graph falls back before allocating.
+    assert!(Readers::with_capacity(u32::MAX as usize + 1, 0).is_none());
+    assert!(Readers::with_capacity(0, u32::MAX as usize).is_none());
+}
+
 #[test]
 fn advance_keeps_fallbacks_before_mutation_and_does_not_invoke_resets() {
     for case in 0..4 {
