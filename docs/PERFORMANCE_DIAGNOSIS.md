@@ -4,8 +4,8 @@ Source baseline: `1a76e625` (2026-09-12). Sections 1–6 record the original
 investigation and its private experiments. Sections 7–34 record subsequent
 implementation steps; sections 35–37 record measurement-only follow-ups,
 section 38 the first step they led to, section 39 a candidate that a
-paired comparison did not support, and section 40 the first completed
-largest-size run.
+paired comparison did not support, section 40 the first completed
+largest-size run, and section 41 the completed pair at that size.
 Observable behavior and the frozen specification are unchanged.
 External models, profiles, and engine comparison reports remain
 outside this repository, as required by [the measurement policy](DEVELOPMENT.md#performance-measurements).
@@ -2667,3 +2667,106 @@ and `capacity10-v2-work/` the second's, with its readiness record and the
 completed run's telemetry. Both pin the section 34 campaign as their
 antecedent, and the second also pins the first. No historical campaign was
 reopened or pooled.
+
+## 41. Capacity at the largest size: the completed pair (2026-09-20)
+
+Section 40 ended with a completed run whose output did not validate, because
+the external model lacked a pass its oracle's producer runs after evaluation.
+That was settled in the model's own validation, outside this repository. The
+producer's pass was first rewritten independently and run over the oracle's
+canonical outputs, where it reproduces every stored value of the field at all
+four sizes and in every smaller fixture the model covers, so the reading of
+the pass does not rest on the model. The correction, applied to the model's
+maintained copy, reproduces all of those fixtures. The copy the campaigns pin
+reproduces the three smaller sizes exactly and the same fixtures after the
+change as before it (eight fail in it both times, for a known reason the
+maintained copy had already fixed and the change does not touch); its output
+is byte-identical to the previous model's at the two middle sizes, and at the
+largest size the typed validator accepts it with the oracle's digest. Eight of
+its nine files are unchanged.
+
+Two runtime observations came out of that work. Binding a map value to a
+declared map type rebuilds the map, entry by entry, while an unannotated
+member shares the value it was given: a first version of the correction that
+carried a large map through typed members on every object cost 0.71% of peak
+requested bytes at the second size, and the version that groups the entries
+and passes them through unannotated members costs 0.24% there and 0.21% at the
+third size, on the deterministic allocation ledger. Whole-process footprint
+moved by about 40 MB between identical runs at that size and could not rank
+the two. Separately, a map comprehension checks each new key against the
+entries built so far by a linear scan, so one comprehension is quadratic in
+its entry count: 10,000, 20,000 and 40,000 entries take 0.08, 0.19 and 0.93 s.
+The models measured here stay at a few hundred entries per comprehension, where
+it does not show; it is recorded for the queue, not acted on.
+
+A third scope was then predefined. It keeps the binaries (the actual
+feature-empty ordinary G and H), the input, the typed validator and every
+guard of the two 10 GiB scopes, runs H first and G only if H fully passes, and
+changes two things. Both arms take the corrected model, which the controller
+authenticates against the selected one and records as a substitution, so the
+contrast stays runtime-only. And the footprint cap is raised once, to 11 GiB.
+That value was chosen with section 40's observation in view, and the plan says
+so: H had peaked 38 MB under 10 GiB, inside the movement between identical
+runs, so 10 GiB would have decided H by chance. The plan wrote its
+expectations down beforehand: about 9.98 GiB for H, and about 10.7 GiB for G
+from the 7.5% by which G's footprint exceeded H's at the third size. There is
+no ladder; a cap censor would have been an incomplete bound above 11 GiB.
+
+The readiness precondition of section 40 was kept unchanged and held. After a
+restart, two readings stood at 8.89 and 8.90 GiB readily available, under the
+required 9, and nothing was claimed on them: the difference was file cache
+counted as active pages, which does not become available by waiting. After the
+cache was purged the one reading taken before the claim was 10.44 GiB
+available and 0.36 GiB in the compressor, with pressure NORMAL, power eligible
+and no competitor.
+
+Both cells completed, 202 s in all, and the campaign's terminal is complete:
+both attempted, none skipped, sources and model unchanged, cleanup accepted.
+
+| | H | G | H against G |
+| --- | ---: | ---: | ---: |
+| Wall | 80.38 s | 84.20 s | -4.5% |
+| CPU | 80.27 s | 84.06 s | -4.5% |
+| Sampled peak footprint | 9.988 GiB | 10.660 GiB | -6.3% (-688 MiB) |
+| Under the 11 GiB cap by | 1.012 GiB | 0.340 GiB | |
+| Peak RSS | 10.742 GiB | 10.785 GiB | -0.4% |
+| Typed validation | accepted | accepted | same digest |
+| Output | 221,166,981 B | 221,166,981 B | byte-identical |
+
+Kernel pressure was NORMAL in all 313 and 328 resource samples, swap use was
+zero throughout, no competitor appeared in 79 and 82 scans, the observer took
+0.73% of native CPU in both cells against a 1% limit, and there were no major
+faults. Raw free memory fell to 34-36 MB at the peaks and the compressor grew
+from 0.36 to 1.6 GiB: the host was close to full and stayed NORMAL.
+
+Peak RSS barely separates the arms, and footprint does. On a host with memory
+to spare nothing makes the kernel take back pages the allocator has already
+released for reuse; they remain resident and leave the footprint. Section 40's
+lower RSS for H (8.32 GiB) came from a host that had to compress. Footprint is
+the comparable measure at this size, and section 1's warning applies in both
+directions: peak RSS is neither allocated bytes under compression nor live
+bytes without it.
+
+The expectations written beforehand were met within 0.04 GiB. Under the
+preceding 10 GiB cap H would have passed with 12.7 MB to spare and G would
+have been censored 709 MB over it, so the single raised cap is what made the
+pair observable. H's footprint is 0.24% above section 40's H, the corrected
+model's cost as the ledger predicted; the two runs had different host states
+and are not a paired comparison.
+
+By the rules fixed before the run, the completed and validated H closes the
+completed requirement section 34 left open, and the completed G with an equal
+fresh output makes the pair complete. The capacity contrast at the largest
+size is 688 MiB of footprint: H is 6.3% below G, against 7.0% below at the
+third size. The 4.5% shorter wall and CPU time is one observation per arm in a
+fixed order; it is reported, not claimed, and is not pooled with any earlier
+timing or with the functional run that validated the model.
+
+Evidence is under
+`../decl-analysis/2026-09-14/value-layout/capacity10-v3-work/`: the plan,
+policy, controller and preflight, the readiness record, the consumed campaign
+with both cells' telemetry and validator receipts, and `analysis-v1/` with the
+offline arithmetic. The corrected model, its validation record and the
+independent rewrite of the producer's pass are under
+`../decl-analysis/2026-09-14/direct-maps/model-work/semantic-v4/`. The scope
+pins the three earlier campaigns as antecedents; none was reopened or pooled.
