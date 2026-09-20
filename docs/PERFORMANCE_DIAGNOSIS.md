@@ -8,16 +8,18 @@ paired comparison did not support, section 40 the first completed
 largest-size run, section 41 the completed pair at that size, section 42
 the teardown step and the key check that followed from them, section 43
 the explanation of section 34's serialization regression, section 44 the
-memory a round transition holds, and section 45 that step measured at the
-largest size.
+memory a round transition holds, section 45 that step measured at the
+largest size, and section 46 the output document written in pieces.
 Observable behavior and the frozen specification are unchanged.
 External models, profiles, and engine comparison reports remain
 outside this repository, as required by [the measurement policy](DEVELOPMENT.md#performance-measurements).
 
 For the latest implementation step, see
+[the output document leaves in pieces](#46-the-output-document-leaves-in-pieces-2026-09-20);
 [what a round transition holds](#44-what-a-round-transition-holds-2026-09-20),
 measured at the largest size in
-[section 45](#45-the-round-transition-step-at-the-largest-size-2026-09-20);
+[section 45](#45-the-round-transition-step-at-the-largest-size-2026-09-20),
+precedes it;
 [teardown left to the process exit](#42-teardown-left-to-the-process-exit-2026-09-20)
 and
 [map keys bound without a text value](#38-map-keys-bound-without-a-text-value-2026-09-19)
@@ -3268,3 +3270,83 @@ preflight, the readiness record, the consumed campaign with both cells'
 telemetry and validator receipts, and `analysis-v1/` with the analyzer written
 beforehand, its output and the report. The scope pins the four earlier
 campaigns as antecedents; none was reopened or pooled.
+
+## 46. The output document leaves in pieces (2026-09-20)
+
+Section 45 found the largest run peaking in its last half second, where the
+settled round, the previous round's snapshot and the output text coexist, and
+put the text first among what is left. The command line built a root's whole
+text before writing it: `Engine::serialize` into one `String`, which grows by
+doubling, and then one write of the file. For a compact JSON document that
+text is the engine's own bytes and a newline, 221 MB at the largest size in a
+buffer of 256 MiB.
+
+The serializer is now generic over where its text goes. A `String` keeps all
+of it and compiles to the code that ran before; the other sink holds a 256 KiB
+buffer and hands it to a writer whenever a container's entry is complete and
+the buffer has reached that length. The serializer rolls text back, and that
+point is safe all the same: a rollback removes only the comma and key written
+for a child that turns out to have no text, such a child writes nothing, and a
+child that writes anything, which every container does from its opening
+bracket, is never rolled back. After a completed entry all text in the buffer
+is therefore final and no pending mark points into it. A raw document drains
+after each of its items as well. The first write error is kept, the rest of
+the text is discarded, and the error is returned at the end.
+
+The command line takes that path for a root that is emitted as the engine's
+compact JSON and nothing else: bound for a file, no template, no fan-out, not
+YAML, no indent, and a container at the root, since a scalar is small and a
+value without text keeps the old path together with its failure. The
+destination is created as before, with the same directory creation, the same
+truncation and the same note when it cannot be written. Standard output, the
+`--json` report, YAML, indented, templated and fan-out outputs, the library,
+the Session, the REPL and the language server are unchanged, and so are the
+reference and Python: this is Rust's performance layer, and the bytes are the
+same. The shared command-line corpus and the parity gate already compare the
+bytes a command line writes to a file, and the gate passed with 1,299
+identical comparisons. Private tests cover what they cannot see: the pieces
+concatenate to the whole text for a document of records with an absent
+member, an open record's extras, maps, arrays, a reference and escapes, at
+three sizes and in both projections; every piece but the last is complete
+UTF-8 of at least the piece size and the largest document drains more than
+once; a value without text writes nothing; a writer that fails after its
+first piece returns the error.
+
+The one-shot command line, alternating with the previous binary on a busy
+host, outputs byte-identical:
+
+| Size | Output | Peak footprint before | After | Change |
+| --- | ---: | --- | --- | ---: |
+| First | 6.6 MB | 366.3 MiB | 361.7 MiB | -4.5 MiB |
+| Second | 20.7 MB | 1,067.5 MiB | 1,058.1 MiB | -9.4 MiB |
+| Third | 60.1 MB | 2,765.4, 2,765.2, 2,765.7 MiB | 2,701.1, 2,700.9, 2,701.1 MiB | -64.3 MiB (-2.33%) in all three pairs |
+
+The saving at the third size is the capacity a doubling `String` reaches for
+60.1 MB of text, 64 MiB, so the whole buffer had been part of the peak. At
+the largest size that buffer is 256 MiB, a quarter of a GiB against
+section 45's 8.790 GiB; that is an expectation, not a measurement. Wall time
+did not move: 13.31, 13.35 and 13.47 s before, 13.63, 13.40 and 13.40 s after.
+
+Section 43 showed that this serializer is decided by a nanosecond or two per
+value, so the in-memory path, which the Session uses, was compared as well:
+the four shapes of that section at the Session's scale, six alternating
+processes per build, the same bytes in every shape.
+
+| Shape | Before | After | Change | Ranges apart |
+| --- | ---: | ---: | ---: | --- |
+| Nest, mixed | 14.517 ms | 14.282 ms | -1.6% | no |
+| Nest, no text | 15.537 ms | 15.692 ms | +1.0% | no |
+| Flat text | 18.919 ms | 19.085 ms | +0.9% | no |
+| Chain | 4.498 ms | 4.440 ms | -1.3% | no |
+
+Nothing separates. These are functional observations with no rule fixed
+beforehand, not a witness; the footprint figures repeat to within half a MiB
+because the buffer they remove has one size.
+
+Of what section 45 ordered, the snapshot's copy of unchanged records is now
+first, and it is a design of its own; the classification scratch follows.
+
+Evidence is under
+`../decl-analysis/2026-09-14/value-layout/emit-in-pieces/`: the record with
+the argument for the drain point, the gated patch, the command-line runs and
+the in-memory runs, marked as not evidence.
