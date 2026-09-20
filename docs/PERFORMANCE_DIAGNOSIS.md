@@ -10,16 +10,18 @@ the teardown step and the key check that followed from them, section 43
 the explanation of section 34's serialization regression, section 44 the
 memory a round transition holds, section 45 that step measured at the
 largest size, section 46 the output document written in pieces, section 47
-the snapshot limited to what a round can reach, and section 48 those steps
-measured at the largest size, with a correction to sections 45 and 46.
+the snapshot limited to what a round can reach, section 48 those steps
+measured at the largest size, with a correction to sections 45 and 46, and
+section 49 the reverse read index entered by a key's cached hash.
 Observable behavior and the frozen specification are unchanged.
 External models, profiles, and engine comparison reports remain
 outside this repository, as required by [the measurement policy](DEVELOPMENT.md#performance-measurements).
 
 For the latest implementation step, see
+[the reverse read index by cached hash](#49-the-reverse-read-index-by-cached-hash-2026-09-20);
 [a snapshot of what a round can reach](#47-a-snapshot-of-what-a-round-can-reach-2026-09-20),
 measured at the largest size in
-[section 48](#48-the-snapshot-steps-at-the-largest-size-2026-09-20);
+[section 48](#48-the-snapshot-steps-at-the-largest-size-2026-09-20),
 [the output document leaves in pieces](#46-the-output-document-leaves-in-pieces-2026-09-20)
 and
 [what a round transition holds](#44-what-a-round-transition-holds-2026-09-20),
@@ -3612,3 +3614,80 @@ consumed campaign with both cells' telemetry and validator receipts, and
 that names the failed prediction. The fourth scope's report carries an
 appended correction. The scope pins the five earlier campaigns as antecedents;
 none was reopened or pooled.
+
+## 49. The reverse read index by cached hash (2026-09-20)
+
+Section 48 left classification scratch as what sets capacity at the largest
+size, most of it section 44's reverse read index while its table doubles. The
+table was keyed by a dependency's text, a 24-byte entry and a string hash for
+each of 8.66 million read edges at the third size. The obvious saving, keying
+it by the interned key's address, needs a premise: that every key in one
+engine's read graph comes from that engine's pool.
+
+A read-only review found the premise true of everything the product does and
+still the wrong thing to build on. A key has a private constructor and one
+producer, the pool's interning; a pool holds one live handle per spelling,
+revives a pool-only entry in its own allocation and sweeps only entries
+nobody else owns, so within a pool text and address are one to one for live
+keys. Every writer of an engine's read graph interns in the engine's own pool
+or re-installs read sets of the same lineage, and a lineage has one pool: an
+evaluation takes its initial engine's or makes one, a frozen round shares it,
+and the Session's fresh run makes a new pool together with new edit state.
+But the key's type documents the opposite contract, that text equality
+permits cross-pool use, and its equality is address first and hash and text
+otherwise; a private witness installs a diamond of foreign-pool keys into an
+engine's read graph by hand and requires the edit path, whose reverse map is
+keyed by text, to follow it; and a miss would be silent, a reader left valid
+and a stale value reused. The premise is an invariant of callers, not of the
+type.
+
+The saving does not need it. A key already caches the hash of its text, the
+same function a pool applies to a spelling it is asked for, and the key's own
+hash is exactly that value. So the table is now a raw table of the key's
+reference and the head of its chain: entered on insert by the cached hash
+with the key's own equality, and asked for a popped key's spelling by the
+text's hash with a comparison of text. Entries are 16 bytes, as an address
+key's would be; no spelling is hashed while the index is built; a foreign key
+with the same text lands on the same entry, so the contract holds with no
+premise. The readers' names are kept as thin references as well. Private
+witnesses cover each reader listed once, an unknown and an empty spelling and
+the 32-bit bound; one spelling being one dependency whichever of two pools
+interned it, with one table entry and both readers found; and five thousand
+dependencies inserted twice, so that the table grows and rehashes by cached
+hashes, all found by text. The gate passed with 1,305 identical comparisons.
+
+Requested bytes from the diagnostic Session helper, outputs byte-identical:
+
+| Size | | Peak | Classification |
+| --- | --- | ---: | ---: |
+| Second | `main` | 919.1 MiB | 0.353 s |
+| Second | cached hash | 891.7 MiB (-3.0%) | 0.262 s |
+| Third | `main` | 2,434.5 MiB | 1.004 s |
+| Third | cached hash | 2,379.6 MiB (-2.25%) | 0.699 s |
+
+The review had predicted 48 MiB at the third size; 55 came off, the rest
+being the readers' names. Bytes live after the run are unchanged, as they
+must be for scratch. The one-shot command line at the third size, alternating
+with `main` on a busy host, outputs identical: peak footprint 2,548.0,
+2,545.2 and 2,552.1 MiB before and 2,488.5, 2,480.4 and 2,480.6 MiB after,
+-2.3%, -2.5% and -2.8%; peak RSS -2.5% to -2.8%; wall 13.16, 13.18 and
+13.19 s against 13.45, 12.88 and 12.96 s, no difference that three pairs can
+show, although classification alone is 0.3 s shorter in the ledger. One pair
+at the second size: 984.6 to 951.2 MiB, -3.4%. These are functional
+observations with no rule fixed beforehand, not a witness, and the largest
+size was not run; by the third size's ratio it would be about 0.17 GiB of
+section 48's 8.159.
+
+That does not bring the transition down to the end of the run at the largest
+size, 8.16 against 7.55 GiB in section 48, and nothing in the present
+structure does: the links are 8 bytes per read edge and the table is near its
+floor. Not building a reverse index at all, and scanning the read graph once
+per wave of the invalidation frontier instead, would hold only the invalid
+set, but costs a pass over every read edge per level of the longest
+invalidated chain, which a shared fixture makes sixty levels deep; without a
+bound on that depth it is not recommended.
+
+Evidence is under
+`../decl-analysis/2026-09-14/value-layout/reverse-index-review/`: the review
+of the premise, and `implementation/` with the ledgers, the command-line runs
+and the gated patch, marked as not evidence.
