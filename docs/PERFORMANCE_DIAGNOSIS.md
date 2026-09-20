@@ -7,14 +7,17 @@ section 38 the first step they led to, section 39 a candidate that a
 paired comparison did not support, section 40 the first completed
 largest-size run, section 41 the completed pair at that size, section 42
 the teardown step and the key check that followed from them, section 43
-the explanation of section 34's serialization regression, and section 44 the
-memory a round transition holds.
+the explanation of section 34's serialization regression, section 44 the
+memory a round transition holds, and section 45 that step measured at the
+largest size.
 Observable behavior and the frozen specification are unchanged.
 External models, profiles, and engine comparison reports remain
 outside this repository, as required by [the measurement policy](DEVELOPMENT.md#performance-measurements).
 
 For the latest implementation step, see
-[what a round transition holds](#44-what-a-round-transition-holds-2026-09-20);
+[what a round transition holds](#44-what-a-round-transition-holds-2026-09-20),
+measured at the largest size in
+[section 45](#45-the-round-transition-step-at-the-largest-size-2026-09-20);
 [teardown left to the process exit](#42-teardown-left-to-the-process-exit-2026-09-20)
 and
 [map keys bound without a text value](#38-map-keys-bound-without-a-text-value-2026-09-19)
@@ -3176,3 +3179,92 @@ command-line runs and the gated patch, `container-buffer-review/` the review
 with both experiments' patches and runs, and `open-record-extra/` the
 reproduction of the defect. All of it is exploratory and marked so. No saved
 campaign was reopened or pooled.
+
+## 45. The round-transition step at the largest size (2026-09-20)
+
+Section 44 measured its step at the second and third sizes and left the
+largest as an extrapolation. A fourth capacity scope was predefined to replace
+the extrapolation with a measurement. It keeps the third scope's corrected
+model for both arms, the input, the typed validator, the 11 GiB footprint cap
+under which H and G had both completed, every other guard and the readiness
+precondition, and changes one thing: the binaries. The earlier scopes ran the
+archived ordinary G and H; this question is about `main`, so both arms are
+feature-empty builds of the repository's command line at pinned commits that
+differ in the step alone: M, `5a5b3bd`, `main` before it, and S, `dd900f5`,
+the step. Each commit was checked out into its own worktree and built
+`--locked --release` under one toolchain; every source file of both worktrees
+is hashed into an inventory that the inherited source check reads at both ends
+of the run; each binary reproduced the two smallest goldens with the scope's
+model, and the arms' outputs were byte-identical. The controller authenticates
+that record by hash and keeps the ordinary authority's G and H bindings pinned
+as the chain they replace. M also carries everything `main` gained since the
+archived H: sections 38 and 42, the key check, the record emission steps and
+the open-record fix. None of those changes what is live before the output is
+written, so the plan expected M where H had been.
+
+S ran first and M only if S fully passed. The reading was fixed beforehand:
+the measure is each completed cell's sampled peak footprint, and the step
+differs only if S is away from M by more than 1% of M, about 100 MiB.
+Identical runs at the third size had moved their footprint by about 40 MB, and
+the two completed H runs of sections 40 and 41 differ by 24.5 MiB, which the
+model change between them accounts for. The plan wrote down three ranges: M
+between 9.9 and 10.1 GiB, S between 8.6 and 9.1 GiB, the change between -9%
+and -14%; a result outside them was to be reported as a failed extrapolation
+in the direction it named. An analyzer was written before the run and checked
+for shape over the third scope's saved files.
+
+After a purge the one reading taken before the claim was 10.66 GiB readily
+available and 0.79 GiB in the compressor, with pressure NORMAL, power
+eligible, Low Power Mode off and no competitor. Both cells completed, 179 s in
+all, and the campaign's terminal is complete: both attempted, none skipped,
+sources and model unchanged, cleanup accepted.
+
+| | S, the step | M, `main` before it | S against M |
+| --- | ---: | ---: | ---: |
+| Sampled peak footprint | 8.790 GiB | 9.989 GiB | -12.0% (-1.199 GiB) |
+| Under the 11 GiB cap by | 2.210 GiB | 1.011 GiB | |
+| Peak RSS | 9.000 GiB | 9.713 GiB | -7.4% |
+| Wall | 70.18 s | 74.50 s | -5.8% |
+| CPU | 69.91 s | 74.40 s | -6.0% |
+| Typed validation | accepted | accepted | same digest |
+| Output | 221,166,981 B | 221,166,981 B | byte-identical |
+
+Kernel pressure was NORMAL in all 273 and 290 resource samples, swap use was
+zero throughout, no competitor appeared in 69 and 73 scans, the observer took
+0.76% and 0.77% of native CPU against a 1% limit, and there were no major
+faults. The compressor stayed between 0.77 and 1.50 GiB during S and between
+1.08 and 1.90 GiB during M.
+
+By the rule the step differs at the largest size: S peaks 12.0% below M,
+against a threshold of 1%. All three ranges held, and the change is the one
+seen in the three pairs at the third size (-11.8%, -12.1%, -11.5%), so the
+extrapolation carried over. M stands where the archived H stood, 9.989 against
+9.988 GiB; the two are different binaries on different host states and are not
+a paired comparison, but the plan's expectation that nothing between them
+moves the peak is what was seen. The shorter wall and CPU time, 5.8% and 6.0%,
+lean the way the third size did; they are one observation per arm in a fixed
+order, reported and not claimed, and not pooled with anything.
+
+The telemetry also says where each peak sits. Both cells hold the plateau of
+the earlier scopes, 4.7 to 5.1 GiB from 10 s to 45 s, and then rise. M peaks
+inside the round transition, at 63.0 s of 74.5, falls to 9.27 GiB and ends at
+9.97. S passes the transition at about 8.49 GiB, falls to 8.03 and peaks in
+its last half second, at 69.7 s of 70.2, where the settled round, the previous
+round's snapshot and the output text, built whole before it is written,
+coexist. At this size the step removed the transition as the peak, and the end
+of the run now sets capacity. That orders what section 44 left open: first
+the snapshot's copy of records that did not change and the emission of a
+221 MB document as one text, then the classification scratch that remains.
+
+The completed figure for `main` at the largest size is therefore 8.790 GiB
+under unchanged guards, 1.2 GiB below the H of section 41 and 1.87 GiB below
+its G.
+
+Evidence is under
+`../decl-analysis/2026-09-14/value-layout/capacity-round-work/`: the plan and
+policy with the rule and the ranges, the arm preparation with its record of
+commits, binaries, inventories and golden checks, the controller and
+preflight, the readiness record, the consumed campaign with both cells'
+telemetry and validator receipts, and `analysis-v1/` with the analyzer written
+beforehand, its output and the report. The scope pins the four earlier
+campaigns as antecedents; none was reopened or pooled.
