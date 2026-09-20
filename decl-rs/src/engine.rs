@@ -248,6 +248,8 @@ pub struct Engine {
     pub(crate) frozen_registry: RefCell<Option<Vec<Inst>>>,
     /// the frozen instances by address: what `force_slot` delegates to this round
     pub(crate) frozen_set: RefCell<FxHashSet<usize>>,
+    /// a copied round's records by canonical path: where an answer is looked up
+    pub(crate) frozen_index: RefCell<Option<FxHashMap<String, Inst>>>,
     /// the last round: a reference into the snapshot resolves live
     pub(crate) settled: Cell<bool>,
     /// the snapshot a round answers from
@@ -839,6 +841,7 @@ impl Engine {
             frozen_roots: RefCell::new(None),
             frozen_registry: RefCell::new(None),
             frozen_set: RefCell::new(FxHashSet::default()),
+            frozen_index: RefCell::new(None),
             settled: Cell::new(false),
             snap: RefCell::new(None),
             queried: RefCell::new(BTreeSet::new()),
@@ -2234,6 +2237,12 @@ impl Engine {
     // paths are canonical by construction
     /// The value at a canonical path from a root (§7.2), forcing what the path crosses.
     pub fn resolve_segs(&self, segs: &[Seg]) -> R<Value> {
+        // A copied round holds the records an answer can name, by path.
+        if let Some(index) = self.frozen_index.borrow().as_ref() {
+            return Ok(index
+                .get(&path_str(segs, None))
+                .map_or(Value::Undef, |r| Value::Rec(r.clone())));
+        }
         if let Some(Seg::Name(name)) = segs.first() {
             self.record(format!("root:{name}"));
         }
@@ -3253,8 +3262,11 @@ impl Engine {
             .map(|eng| eng.query_pool())
             .unwrap_or_default();
         let mut retained = initial;
-        let mut incremental = incremental && RoundCache::needed(env);
-        let mut cache = incremental.then(|| Rc::new(RoundCache::default()));
+        let mut cache = incremental
+            .then(|| RoundCache::of(env))
+            .flatten()
+            .map(Rc::new);
+        let mut incremental = cache.is_some();
 
         #[cfg(feature = "runtime-diagnostics")]
         timings.mark("setup");

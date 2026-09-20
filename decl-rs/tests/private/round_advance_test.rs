@@ -7,7 +7,7 @@ use crate::pipeline::run_pipeline;
 fn shared_map_rebase_and_cycle_copy_preserve_keys_without_sharing_value_storage() {
     {
         let engine = fixture();
-        let cache = RoundCache::default();
+        let cache = round_cache();
         let previous = cache.advance(&engine, &HashMap::new()).unwrap();
         let mut pool = MapShapePool::default();
         let unchanged = map_value(vec![("stable".into(), Value::Int(7.into()))]);
@@ -94,7 +94,7 @@ fn shared_map_rebase_and_cycle_copy_preserve_keys_without_sharing_value_storage(
     }
 
     let engine = fixture();
-    let cache = RoundCache::default();
+    let cache = round_cache();
     let frozen = Engine::bare_with_queries(engine.env.clone(), engine.query_pool());
     let live = snapshot_cycle(&engine, Value::Int(7.into()));
     let Value::Arr(live_array) = live.borrow().slot("left").unwrap().value.clone() else {
@@ -170,7 +170,7 @@ fn failed_shared_map_copy_does_not_publish_partial_values_or_retire_live_native_
         }
     }
     let engine = fixture();
-    let cache = RoundCache::default();
+    let cache = round_cache();
     let frozen = Engine::bare_with_queries(engine.env.clone(), engine.query_pool());
     let observer = Engine::bare(Env::new());
     let calls = Rc::new(Cell::new(0));
@@ -245,6 +245,19 @@ fn fixture() -> Rc<Engine> {
     pipeline.eng
 }
 
+/// A cache whose universe asks for the referrers of these types: a snapshot holds their
+/// records, what those contain, and nothing else.
+fn round_cache_naming(types: &[&str]) -> RoundCache {
+    RoundCache {
+        types: types.iter().map(|t| t.to_string()).collect(),
+        ..RoundCache::default()
+    }
+}
+
+fn round_cache() -> RoundCache {
+    round_cache_naming(&["Parent", "Child"])
+}
+
 fn record(value: Value) -> Inst {
     match value {
         Value::Rec(record) => record,
@@ -257,17 +270,14 @@ fn child(parent: &Inst, name: &str) -> Inst {
 }
 
 fn frozen_root(engine: &Engine) -> Inst {
-    let roots = engine.frozen_roots.borrow();
-    record(
-        roots
-            .as_ref()
-            .expect("frozen roots")
-            .iter()
-            .find(|(name, _)| name == "result")
-            .expect("result root")
-            .1
-            .clone(),
-    )
+    engine
+        .frozen_index
+        .borrow()
+        .as_ref()
+        .expect("frozen index")
+        .get("result")
+        .expect("result record")
+        .clone()
 }
 
 #[test]
@@ -281,7 +291,7 @@ fn advance_checks_current_paths_after_native_mutation_leaves_a_cached_query_spel
 
     // The actual paths now collide even though the cached query spellings do
     // not. Classification must reject before freezing or resetting anything.
-    let cache = RoundCache::default();
+    let cache = round_cache();
     assert!(cache.advance(&engine, &HashMap::new()).is_none());
     assert_eq!(cache.reused_rounds.get(), 0);
     assert!(engine.prev.borrow().is_none());
@@ -373,7 +383,7 @@ fn advance_releases_borrowed_edge_snapshot_before_reset_and_on_rejection() {
         assert!(engine.reads.try_borrow_mut().is_ok());
         observed.set(true);
     }));
-    let cache = RoundCache::default();
+    let cache = round_cache();
     let snapshot = cache
         .advance(&engine, &next_edges)
         .expect("duplicate-only edge change");
@@ -407,10 +417,10 @@ fn assert_snapshot(engine: &Engine, expected_x: i64) {
     let left = child(&root, "left");
     let right = child(&root, "right");
     assert!(Rc::ptr_eq(&left, &right), "frozen aliases stay shared");
-    assert!(Rc::ptr_eq(
-        left.borrow().parent.as_ref().expect("parent"),
-        &root
-    ));
+    assert!(
+        root.borrow().parent.is_none() && left.borrow().parent.is_none(),
+        "a frozen copy keeps no parent link"
+    );
     assert!(value_eq(
         &left.borrow().slot("x").expect("x").value,
         &Value::Int(expected_x.into())
@@ -425,7 +435,7 @@ fn assert_snapshot(engine: &Engine, expected_x: i64) {
 #[test]
 fn advance_preserves_frozen_aliases_and_roots_removed_before_reset_collection() {
     let engine = fixture();
-    let cache = RoundCache::default();
+    let cache = round_cache();
     let live_root = record(engine.env.root("result").expect("live result"));
     let live_left = child(&live_root, "left");
     live_root.borrow_mut().slot_mut("right").unwrap().value = Value::Rec(live_left.clone());
@@ -507,51 +517,116 @@ fn advance_preserves_frozen_aliases_and_roots_removed_before_reset_collection() 
     assert!(weak_env.upgrade().is_none());
 }
 
-fn plain_fixture() -> Rc<Engine> {
+/// Two queried types, one of which contains typed records and a plain table, beside a type
+/// nobody asks about and a plain root.
+fn reach_fixture() -> Rc<Engine> {
     let parsed = parse_source(
-        "type Child = { x: int }\n\
-         type Parent = { left: Child, right: Child }\n\
-         export output result: Parent = { left: { x: 7 }, right: { x: 11 } }\n\
+        "type Leaf = { x: int }\n\
+         type Queried = { leaf: Leaf, table: { [string]: int[] }, leaves: Leaf[] }\n\
+         type Asked = { n: int }\n\
+         type Other = { y: int, inner: Leaf }\n\
+         type Top = { q: Queried, asked: Asked[], other: Other }\n\
+         export output result: Top = {\n\
+             q: { leaf: { x: 7 }, table: { \"a\": [1, 2] }, leaves: [{ x: 1 }, { x: 2 }] }\n\
+             asked: [{ n: 1 }, { n: 2 }]\n\
+             other: { y: 3, inner: { x: 9 } }\n\
+         }\n\
          export output table: { [string]: int[] } = { \"a\": [1, 2], \"b\": [3] }\n",
     );
     let pipeline = run_pipeline(&parsed.decls);
-    assert!(pipeline.diags.is_empty());
+    assert!(pipeline.diags.is_empty(), "{:?}", pipeline.diags);
     pipeline.eng
 }
 
-fn frozen_value(engine: &Engine, name: &str) -> Option<Value> {
-    let roots = engine.frozen_roots.borrow();
-    roots
+fn frozen_paths(snapshot: &Engine) -> Vec<String> {
+    let mut paths: Vec<String> = snapshot
+        .frozen_registry
+        .borrow()
         .as_ref()
-        .expect("frozen roots")
+        .expect("frozen registry")
         .iter()
-        .find(|(n, _)| n == name)
-        .map(|(_, v)| v.clone())
+        .map(|r| path_str(&r.borrow().path, None))
+        .collect();
+    paths.sort();
+    paths
 }
 
 #[test]
-fn snapshot_shares_a_plain_root_and_leaves_out_one_that_is_bound_again() {
-    // Nothing is dirty: the snapshot holds the plain root itself and a copy of
-    // the record root.
-    let engine = plain_fixture();
-    let cache = RoundCache::default();
-    let live = engine.env.root("table").expect("live table");
-    let kept = cache.advance(&engine, &HashMap::new()).expect("advance");
-    assert_eq!(
-        identity(&frozen_value(&kept, "table").expect("frozen table")),
-        identity(&live)
-    );
-    assert!(!Rc::ptr_eq(
-        &frozen_root(&kept),
-        &record(engine.env.root("result").unwrap())
-    ));
-    drop(kept);
-    drop(live);
+fn snapshot_holds_the_records_of_queried_types_and_what_they_contain() {
+    let engine = reach_fixture();
+    let cache = round_cache_naming(&["Queried", "Asked"]);
+    let live = record(engine.env.root("result").unwrap());
+    let live_q = child(&live, "q");
+    let Value::Map(live_table) = live_q.borrow().slot("table").unwrap().value.clone() else {
+        panic!("table")
+    };
+    let snapshot = cache.advance(&engine, &HashMap::new()).expect("advance");
 
-    // The plain root is bound again: no answer can name it, so the snapshot
-    // leaves it out and the removed value has no owner left.
-    let engine = plain_fixture();
-    let cache = RoundCache::default();
+    // The candidates and the records they contain; not the top, not the unasked type and what
+    // it contains, although `Leaf` records under a candidate are there.
+    assert_eq!(
+        frozen_paths(&snapshot),
+        [
+            "result.asked[0]",
+            "result.asked[1]",
+            "result.q",
+            "result.q.leaf",
+            "result.q.leaves[0]",
+            "result.q.leaves[1]",
+        ]
+    );
+    assert_eq!(snapshot.frozen_set.borrow().len(), 6);
+    assert_eq!(snapshot.frozen_index.borrow().as_ref().unwrap().len(), 6);
+    // No root is kept: an answer's path is looked up, not walked.
+    assert!(snapshot.root("result").is_none() && snapshot.root("table").is_none());
+    let q_path = [Seg::Name("result".into()), Seg::Name("q".into())];
+    let frozen_q = record(snapshot.resolve_segs(&q_path).ok().unwrap());
+    assert!(!Rc::ptr_eq(&frozen_q, &live_q));
+    assert!(frozen_q.borrow().parent.is_none());
+    assert!(snapshot
+        .resolve_segs(&[Seg::Name("result".into()), Seg::Name("other".into())])
+        .ok()
+        .unwrap()
+        .is_undef());
+    assert!(snapshot
+        .resolve_segs(&[Seg::Name("result".into())])
+        .ok()
+        .unwrap()
+        .is_undef());
+    // What a candidate contains is copied with it and owned by the snapshot; a plain container
+    // is shared, not copied.
+    let frozen_leaf = child(&frozen_q, "leaf");
+    assert!(snapshot
+        .frozen_set
+        .borrow()
+        .contains(&(Rc::as_ptr(&frozen_leaf) as usize)));
+    assert!(frozen_leaf.borrow().parent.is_none());
+    assert!(engine.owner_of(&frozen_leaf).is_some() && engine.owner_of(&live_q).is_none());
+    let Value::Map(frozen_table) = frozen_q.borrow().slot("table").unwrap().value.clone() else {
+        panic!("table")
+    };
+    assert!(Rc::ptr_eq(&frozen_table, &live_table));
+    // The snapshot is closed against the live round.
+    child(&live_q, "leaf")
+        .borrow_mut()
+        .slot_mut("x")
+        .unwrap()
+        .value = Value::Int(19.into());
+    assert!(value_eq(
+        &frozen_leaf.borrow().slot("x").unwrap().value,
+        &Value::Int(7.into())
+    ));
+    for record in snapshot.frozen_registry.borrow().as_ref().unwrap() {
+        for (_, slot) in &record.borrow().slots {
+            assert!(slot.compute.is_none(), "frozen copies have no producers");
+        }
+    }
+}
+
+#[test]
+fn snapshot_keeps_no_root_so_a_rebound_one_is_released() {
+    let engine = reach_fixture();
+    let cache = round_cache_naming(&["Queried", "Asked"]);
     let Value::Map(table) = engine.env.root("table").expect("live table") else {
         panic!("map root")
     };
@@ -560,50 +635,23 @@ fn snapshot_shares_a_plain_root_and_leaves_out_one_that_is_bound_again() {
     engine.track.set(true);
     engine.step("root:table", || engine.record("round:nested".into()));
     let snapshot = cache.advance(&engine, &HashMap::new()).expect("advance");
-    assert!(frozen_value(&snapshot, "table").is_none());
-    assert!(snapshot.root("table").is_none());
     assert!(engine.env.root("table").is_none());
     assert!(
         weak.upgrade().is_none(),
-        "the removed plain root is released"
+        "the removed root has no owner left"
     );
-    assert_eq!(snapshot.frozen_registry.borrow().as_ref().unwrap().len(), 3);
-    let root = frozen_root(&snapshot);
-    assert!(value_eq(
-        &child(&root, "left").borrow().slot("x").unwrap().value,
-        &Value::Int(7.into())
-    ));
+    assert_eq!(frozen_paths(&snapshot).len(), 6);
 }
 
 #[test]
-fn snapshot_keeps_a_rebound_root_that_holds_or_heads_a_record() {
-    // A record root that is bound again stays in the snapshot.
-    let engine = plain_fixture();
-    let cache = RoundCache::default();
-    engine.track.set(true);
-    engine.step("root:result", || engine.record("round:nested".into()));
-    engine.step("root:table", || engine.record("round:nested".into()));
+fn a_universe_that_names_no_registered_type_freezes_nothing() {
+    let engine = reach_fixture();
+    let cache = round_cache_naming(&["Absent"]);
     let snapshot = cache.advance(&engine, &HashMap::new()).expect("advance");
-    assert!(frozen_value(&snapshot, "table").is_none());
-    assert!(value_eq(
-        &child(&frozen_root(&snapshot), "right")
-            .borrow()
-            .slot("x")
-            .unwrap()
-            .value,
-        &Value::Int(11.into())
-    ));
-
-    // A plain root that heads a registered record's path stays as well: an
-    // answer may name that record.
-    let engine = plain_fixture();
-    let cache = RoundCache::default();
-    let left = child(&record(engine.env.root("result").unwrap()), "left");
-    left.borrow_mut().path = Rc::new(vec![Seg::Name("table".into()), Seg::Key("a".into())]);
-    engine.track.set(true);
-    engine.step("root:table", || engine.record("round:nested".into()));
-    let snapshot = cache.advance(&engine, &HashMap::new()).expect("advance");
-    assert!(frozen_value(&snapshot, "table").is_some());
+    assert!(frozen_paths(&snapshot).is_empty());
+    assert!(snapshot.frozen_set.borrow().is_empty());
+    let live = record(engine.env.root("result").unwrap());
+    assert!(engine.owner_of(&live).is_none());
 }
 
 #[test]
@@ -635,7 +683,7 @@ fn readers_index_lists_each_reader_of_a_dependency_once() {
 fn advance_keeps_fallbacks_before_mutation_and_does_not_invoke_resets() {
     for case in 0..4 {
         let engine = fixture();
-        let cache = RoundCache::default();
+        let cache = round_cache();
         let root = record(engine.env.root("result").unwrap());
         let left = child(&root, "left");
         match case {
@@ -713,7 +761,7 @@ fn snapshot_cycle(engine: &Engine, payload: Value) -> Inst {
 #[test]
 fn copy_memo_preserves_mixed_cycles_aliases_and_reference_owners() {
     let engine = fixture();
-    let cache = RoundCache::default();
+    let cache = round_cache();
     let frozen = Engine::bare_with_queries(engine.env.clone(), engine.query_pool());
     let owner = Engine::bare(Env::new());
     let reference = Rc::new(vec![Seg::Name("result".into())]);
@@ -837,7 +885,7 @@ fn failed_copy_releases_partial_cycles_without_dropping_original_native_payload(
     }
 
     let engine = fixture();
-    let cache = RoundCache::default();
+    let cache = round_cache();
     let frozen = Engine::bare_with_queries(engine.env.clone(), engine.query_pool());
     let observer = Engine::bare(Env::new());
     let calls = Rc::new(Cell::new(0));
@@ -890,7 +938,7 @@ fn failed_copy_releases_partial_cycles_without_dropping_original_native_payload(
 #[test]
 fn copy_memo_keeps_foreign_record_bypass_outside_its_owned_copies() {
     let engine = fixture();
-    let cache = RoundCache::default();
+    let cache = round_cache();
     let previous = cache.advance(&engine, &HashMap::new()).unwrap();
     let foreign = frozen_root(&previous);
     let frozen = Engine::bare_with_queries(engine.env.clone(), engine.query_pool());
@@ -912,7 +960,7 @@ fn copy_memo_keeps_foreign_record_bypass_outside_its_owned_copies() {
 #[test]
 fn rebase_reuses_unchanged_empty_and_aliased_containers() {
     let engine = fixture();
-    let cache = RoundCache::default();
+    let cache = round_cache();
     let _previous = cache.advance(&engine, &HashMap::new()).unwrap();
     let shared = array_value(vec![
         Value::quantity("dimension".repeat(32), 7.5),
@@ -933,7 +981,7 @@ fn rebase_reuses_unchanged_empty_and_aliased_containers() {
 #[test]
 fn rebase_retains_non_reflexive_scalar_replacement_behavior() {
     let engine = fixture();
-    let cache = RoundCache::default();
+    let cache = round_cache();
     let _previous = cache.advance(&engine, &HashMap::new()).unwrap();
     for value in [
         Value::Absent,
@@ -957,7 +1005,7 @@ fn rebase_retains_non_reflexive_scalar_replacement_behavior() {
 #[test]
 fn rebase_preserves_prefix_suffix_order_and_reference_aliases() {
     let engine = fixture();
-    let cache = RoundCache::default();
+    let cache = round_cache();
     let previous = cache.advance(&engine, &HashMap::new()).unwrap();
     for changed in [0, 2, 4] {
         let path = Rc::new(vec![Seg::Name("result".into()), Seg::Name("left".into())]);
@@ -1016,7 +1064,7 @@ fn rebase_preserves_prefix_suffix_order_and_reference_aliases() {
 #[test]
 fn frozen_rebased_containers_keep_aliases_old_owners_and_cow_paths() {
     let engine = fixture();
-    let cache = RoundCache::default();
+    let cache = round_cache();
     let original_root = record(engine.env.root("result").unwrap());
     let original_left = child(&original_root, "left");
     original_root.borrow_mut().slot_mut("right").unwrap().value = Value::Rec(original_left);
@@ -1031,28 +1079,21 @@ fn frozen_rebased_containers_keep_aliases_old_owners_and_cow_paths() {
         .borrow_mut()
         .insert(Rc::as_ptr(&reference) as usize, reference.clone());
     let shared = array_value(vec![Value::Int(7.into()), Value::Ref(reference)]);
-    engine.env.set_root(
-        "result",
+    // A snapshot holds records, so the containers are held by one: an extra of the root.
+    original_root.borrow_mut().set_extra(
+        "held",
         map_value(vec![
             ("left".into(), shared.clone()),
             ("right".into(), shared),
         ]),
     );
     let second = cache.advance(&engine, &HashMap::new()).unwrap();
-    let Value::Map(live) = engine.env.root("result").unwrap() else {
+    // The live side as a read sees it: rebased to the round that now owns its references.
+    let held = original_root.borrow().extra("held").unwrap().clone();
+    let Value::Map(live) = cache.value(&held, &engine) else {
         panic!("live map")
     };
-    let Value::Map(frozen) = second
-        .frozen_roots
-        .borrow()
-        .as_ref()
-        .unwrap()
-        .iter()
-        .find(|(name, _)| name == "result")
-        .unwrap()
-        .1
-        .clone()
-    else {
+    let Value::Map(frozen) = frozen_root(&second).borrow().extra("held").unwrap().clone() else {
         panic!("frozen map")
     };
     let get_array = |map: &Rc<RefCell<MapV>>, key: &str| {
@@ -1119,7 +1160,7 @@ fn frozen_rebased_containers_keep_aliases_old_owners_and_cow_paths() {
 #[test]
 fn settled_rebase_release_preserves_live_aliases_and_reference_age_for_replay() {
     let engine = fixture();
-    let cache = Rc::new(RoundCache::default());
+    let cache = Rc::new(round_cache());
     *engine.round_cache.borrow_mut() = Some(cache.clone());
     let previous = cache.advance(&engine, &HashMap::new()).unwrap();
     let root = record(engine.env.root("result").unwrap());
@@ -1128,11 +1169,13 @@ fn settled_rebase_release_preserves_live_aliases_and_reference_age_for_replay() 
         .slot_mut("x")
         .unwrap()
         .value = Value::Int(19.into());
-    let path = Rc::new(vec![
-        Seg::Name("result".into()),
-        Seg::Name("left".into()),
-        Seg::Name("x".into()),
-    ]);
+    // An answer names a record; its age shows in the member read through it.
+    let path = Rc::new(vec![Seg::Name("result".into()), Seg::Name("left".into())]);
+    let x_through = |reference: &Rc<SegPath>| {
+        let target = record(engine.deref(Value::Ref(reference.clone())).ok().unwrap());
+        let value = target.borrow().slot("x").unwrap().value.clone();
+        value
+    };
     engine
         .round_refs
         .borrow_mut()
@@ -1180,10 +1223,7 @@ fn settled_rebase_release_preserves_live_aliases_and_reference_age_for_replay() 
             engine.round_refs.borrow().len(),
         )
     );
-    assert!(value_eq(
-        &engine.deref(Value::Ref(reference.clone())).ok().unwrap(),
-        &Value::Int(19.into())
-    ));
+    assert!(value_eq(&x_through(&reference), &Value::Int(19.into())));
     assert!(Rc::ptr_eq(
         &result,
         &match cache.value(&Value::Arr(result.clone()), &engine) {
@@ -1198,10 +1238,7 @@ fn settled_rebase_release_preserves_live_aliases_and_reference_age_for_replay() 
     // Edits::begin can make the engine unsettled before replay has rebound
     // every root. Old references must still resolve through their old owner.
     engine.settled.set(false);
-    assert!(value_eq(
-        &engine.deref(Value::Ref(reference.clone())).ok().unwrap(),
-        &Value::Int(7.into())
-    ));
+    assert!(value_eq(&x_through(&reference), &Value::Int(7.into())));
     assert!(Rc::ptr_eq(
         &engine
             .snap_refs
@@ -1212,10 +1249,7 @@ fn settled_rebase_release_preserves_live_aliases_and_reference_age_for_replay() 
         &previous,
     ));
     collect_cycles();
-    assert!(value_eq(
-        &engine.deref(Value::Ref(alias)).ok().unwrap(),
-        &Value::Int(7.into())
-    ));
+    assert!(value_eq(&x_through(&alias), &Value::Int(7.into())));
 }
 
 #[test]
@@ -1261,7 +1295,7 @@ fn settled_rebase_release_drops_native_captures_without_a_cache_borrow() {
         }
     }
     let engine = fixture();
-    let cache = Rc::new(RoundCache::default());
+    let cache = Rc::new(round_cache());
     *engine.round_cache.borrow_mut() = Some(cache.clone());
     let previous = cache.advance(&engine, &HashMap::new()).unwrap();
     let calls = Rc::new(Cell::new(0));
@@ -1331,12 +1365,14 @@ mod advance_diagnostics {
 
     #[test]
     fn advance_partition_includes_final_local_owner_destruction() {
-        let parsed = parse_source("export output result: { x: int } = { x: 7 }\n");
+        // A named type, so that the snapshot holds the record the partition is read from.
+        let parsed =
+            parse_source("type Parent = { x: int }\nexport output result: Parent = { x: 7 }\n");
         let pipeline = run_pipeline(&parsed.decls);
         assert!(pipeline.diags.is_empty());
         let engine = pipeline.eng.clone();
         drop(pipeline);
-        let cache = RoundCache::default();
+        let cache = round_cache();
         let root = record(engine.env.root("result").unwrap());
         let weak_root = Rc::downgrade(&root);
         let weak_engine = Rc::downgrade(&engine);
@@ -1387,7 +1423,7 @@ mod advance_diagnostics {
     fn advance_partition_preserves_classification_and_freeze_rejections() {
         for freeze_rejected in [false, true] {
             let engine = fixture();
-            let cache = RoundCache::default();
+            let cache = round_cache();
             let root = record(engine.env.root("result").unwrap());
             if freeze_rejected {
                 root.borrow_mut().slot_mut("left").unwrap().value = Value::pattern("a");
@@ -1426,8 +1462,8 @@ mod advance_diagnostics {
     fn advance_partition_keeps_reentrant_reset_spans_separate() {
         let outer = fixture();
         let inner = fixture();
-        let outer_cache = RoundCache::default();
-        let inner_cache = Rc::new(RoundCache::default());
+        let outer_cache = round_cache();
+        let inner_cache = Rc::new(round_cache());
         let weak_inner = Rc::downgrade(&inner);
         let weak_cache = Rc::downgrade(&inner_cache);
         outer.round_resets.borrow_mut().push(Rc::new(move || {
@@ -1453,7 +1489,7 @@ mod advance_diagnostics {
     #[test]
     fn advance_partition_labels_reset_unwind_without_claiming_reuse() {
         let engine = fixture();
-        let cache = RoundCache::default();
+        let cache = round_cache();
         engine.round_resets.borrow_mut().push(Rc::new(|| {
             panic!("native reset unwind witness");
         }));

@@ -85,6 +85,8 @@ fn plain(v: &Value) -> bool {
 #[derive(Default)]
 struct CopyMemo {
     records: FxHashMap<usize, Inst>,
+    // the record copies in the order they were made
+    order: Vec<Inst>,
     arrays: FxHashMap<usize, Rc<RefCell<ArrV>>>,
     maps: FxHashMap<usize, Rc<RefCell<MapV>>>,
     refs: FxHashMap<usize, Rc<SegPath>>,
@@ -272,16 +274,23 @@ pub struct RoundCache {
     pub invalidated_slots: Cell<usize>,
     clean: RefCell<FxHashSet<usize>>,
     rebased: RefCell<FxHashMap<(u8, usize), (Value, Value)>>,
+    // Every type name a `$referrers` expression of the universe names. A round
+    // reaches a snapshot only through an answer, and an answer names a
+    // registered record of such a type: the snapshot holds those records and
+    // what they contain, and nothing else.
+    types: FxHashSet<String>,
 }
 impl RoundCache {
-    pub(crate) fn needed(env: &Rc<Env>) -> bool {
-        fn visit(env: &Rc<Env>, seen: &mut HashSet<usize>) -> bool {
+    /// The cache of a universe that asks for referrers; `None` when none does.
+    pub(crate) fn of(env: &Rc<Env>) -> Option<Self> {
+        fn visit(env: &Rc<Env>, seen: &mut HashSet<usize>, types: &mut FxHashSet<String>) {
             if !seen.insert(Rc::as_ptr(env) as usize) {
-                return false;
+                return;
             }
-            let mut found = false;
             let mut mark = |e: &Rc<Expr>| {
-                found |= matches!(&**e, Expr::Referrers { .. });
+                if let Expr::Referrers { ty, .. } = &**e {
+                    types.insert(ty.clone());
+                }
             };
             for t in env.type_asts.borrow().values() {
                 walk_type_exprs(&t.ast, true, &mut mark);
@@ -313,15 +322,19 @@ impl RoundCache {
                     walk_expr_tree(e, true, &mut mark);
                 }
             }
-            found
-                || env.imports.borrow().values().any(|im| visit(&im.env, seen))
-                || env
-                    .namespaces
-                    .borrow()
-                    .values()
-                    .any(|(env, _)| visit(env, seen))
+            for im in env.imports.borrow().values() {
+                visit(&im.env, seen, types);
+            }
+            for (env, _) in env.namespaces.borrow().values() {
+                visit(env, seen, types);
+            }
         }
-        visit(env, &mut HashSet::new())
+        let mut types = FxHashSet::default();
+        visit(env, &mut HashSet::new(), &mut types);
+        (!types.is_empty()).then(|| Self {
+            types,
+            ..Self::default()
+        })
     }
 
     pub(crate) fn clean(&self, inst: &Inst) -> bool {
@@ -647,7 +660,7 @@ impl RoundCache {
         }
         #[cfg(feature = "runtime-diagnostics")]
         advance_diagnostic.classified();
-        let snapshot = self.freeze(eng, &registry, &roots)?;
+        let snapshot = self.freeze(eng, &registry)?;
         #[cfg(feature = "runtime-diagnostics")]
         advance_diagnostic.frozen();
         self.revisions.begin(eng, &invalid, &forced, &dropped);
@@ -716,12 +729,15 @@ impl RoundCache {
         Some(snapshot)
     }
 
-    fn freeze(
-        &self,
-        eng: &Rc<Engine>,
-        registry: &[Inst],
-        rebound: &HashSet<String>,
-    ) -> Option<Rc<Engine>> {
+    /// The round as the next one can reach it. A round obtains a frozen record
+    /// only through a `$referrers` answer, which names a registered record of a
+    /// type some `$referrers` expression names; from there it reads that
+    /// record's values, down into the records it contains, and nothing else:
+    /// no member of a frozen record is evaluated, so no parent link is
+    /// followed, and an ordinary reference resolves in the live round. So
+    /// only those records are copied, without parents, and an answer's path is
+    /// looked up among them instead of walked from frozen roots.
+    fn freeze(&self, eng: &Rc<Engine>, registry: &[Inst]) -> Option<Rc<Engine>> {
         let tagger = eng.env.tagger.borrow().clone();
         let frozen = Engine::bare_with_queries(eng.env.clone(), eng.query_pool());
         *eng.env.tagger.borrow_mut() = tagger;
@@ -730,31 +746,30 @@ impl RoundCache {
         *frozen.snap_refs.borrow_mut() = eng.snap_refs.borrow().clone();
         *frozen.inverse_refs.borrow_mut() = eng.inverse_refs.borrow().clone();
         let mut copies = CopyMemo::default();
-        let registry: Option<Vec<_>> = registry
-            .iter()
-            .map(|r| {
-                self.copy(&Value::Rec(r.clone()), eng, &frozen, &mut copies)
-                    .and_then(|v| if let Value::Rec(r) = v { Some(r) } else { None })
-            })
-            .collect();
-        let registry = registry?;
-        let roots: Option<Vec<_>> = eng
-            .env
-            .roots_vec()
-            .iter()
-            // A frozen root is read only through an answer's path, and an answer
-            // names a registered record. A root that is bound again, holds no
-            // record or reference and heads no record's path is kept for nobody.
-            .filter(|(k, v)| {
-                !(rebound.contains(k)
-                    && plain(v)
-                    && !registry.iter().any(
-                        |r| matches!(r.borrow().path.first(), Some(Seg::Name(n)) if **n == **k),
-                    ))
-            })
-            .map(|(k, v)| Some((k.clone(), self.copy(v, eng, &frozen, &mut copies)?)))
-            .collect();
-        *frozen.frozen_roots.borrow_mut() = Some(roots?);
+        for r in registry {
+            let named = r
+                .borrow()
+                .type_name
+                .as_ref()
+                .is_some_and(|t| self.types.contains(t));
+            if named {
+                self.copy(&Value::Rec(r.clone()), eng, &frozen, &mut copies)?;
+            }
+        }
+        // The copies in the order they were made: candidates in registry
+        // order, each followed by the records it contains.
+        let registry = copies.order;
+        let mut index = FxHashMap::default();
+        for r in &registry {
+            if index
+                .insert(path_str(&r.borrow().path, None), r.clone())
+                .is_some()
+            {
+                return None;
+            }
+        }
+        *frozen.frozen_roots.borrow_mut() = Some(vec![]);
+        *frozen.frozen_index.borrow_mut() = Some(index);
         *frozen.frozen_set.borrow_mut() = registry.iter().map(address).collect();
         // Snapshot navigation uses record slots directly. Only observed reads
         // need comparison at a later boundary; no full field-key index here.
@@ -790,13 +805,7 @@ impl RoundCache {
                     menv: b.menv.clone(),
                 });
                 copies.records.insert(address(inst), r.clone());
-                let parent = match &b.parent {
-                    Some(p) => match self.copy(&Value::Rec(p.clone()), eng, frozen, copies)? {
-                        Value::Rec(p) => Some(p),
-                        _ => return None,
-                    },
-                    None => None,
-                };
+                copies.order.push(r.clone());
                 let mut slots = Vec::with_capacity(b.slots.len());
                 for (name, s) in &b.slots {
                     if !matches!(s.state, SlotState::Ok | SlotState::Absent) {
@@ -820,7 +829,6 @@ impl RoundCache {
                     .collect();
                 {
                     let mut r = r.borrow_mut();
-                    r.parent = parent;
                     r.slots = slots;
                     r.extras = extras?;
                 }

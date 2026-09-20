@@ -1,0 +1,47 @@
+// A `$referrers` key may be asked for the first time in a later round: a generated port
+// learns its peer from the previous round's universe and only then asks who watches it.
+// That answer is computed over the previous round's records, and what it names is read
+// down into the records it contains (§7.6).
+type Port = {
+    $key: string
+    name = $key
+    incoming$ = $referrers(Link, "target")
+    flag?: bool = if std.array.count(incoming$) == 0 then true else incoming$[0].source.flag
+    peers = [l.source.name for l in incoming$]
+    // asked inside the condition: the key is first asked once a peer is known
+    watchers =
+        if std.array.count(incoming$) > 0
+        then [`${w.detail.label}:${w.detail.size}` for w in $referrers(Watch, "port")]
+        else []
+}
+type Link = {
+    $parent: ref<{ ports: { [string]: Port }, auto: { [string]: Port }, ... }>
+    name: string
+    source: ref<Port> = $parent.ports[std.string.split(name, "->")[0]]
+    target: ref<Port> =
+        if std.string.split(name, "->")[1] in std.map.keys($parent.ports)
+        then $parent.ports[std.string.split(name, "->")[1]]
+        else $parent.auto[std.string.split(name, "->")[1]]
+}
+type Detail = { label: string, tags: string[], size = std.array.count(tags) }
+type Watch = {
+    $parent: ref<{ auto: { [string]: Port }, ... }>
+    name: string
+    on: string
+    detail: Detail = { label: `watch ${name}`, tags: [name, on] }
+    port: ref<Port> = $parent.auto[on]
+}
+type Hub = {
+    ports: { [string]: Port } = { a: {}, c: {} }
+    generated$ = [e.key for e in std.map.entries(ports) if e.value.flag]
+    auto: { [string]: Port } = { `${k}_gen`: {} for k in generated$ }
+    links: Link[] = [
+        ...[{ name: `${k}->${k}_gen` } for k in generated$]
+    ]
+    watches: Watch[] = [
+        { name: "w1", on: "a_gen" }
+        { name: "w2", on: "c_gen" }
+        { name: "w3", on: "a_gen" }
+    ]
+}
+export output hub: Hub = {}
