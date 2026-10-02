@@ -2041,16 +2041,15 @@ impl Engine {
                 let re = compile_pattern(p.as_ref()).or_else(err)?;
                 return Ok(Value::Bool(re.is_match(s)));
             }
-            // a literal operand is materialized: equality is structural over values (§4.5)
-            "==" => {
-                return Ok(Value::Bool(
-                    self.equal_values(&self.mat_val(l)?, &self.mat_val(r)?),
-                ))
-            }
-            "!=" => {
-                return Ok(Value::Bool(
-                    !self.equal_values(&self.mat_val(l)?, &self.mat_val(r)?),
-                ))
+            "==" | "!=" => {
+                // Preserve reference identity (§4.5): mat_val dereferences its operand.
+                // Only ordinary values need literal materialization for structural equality.
+                let equal = if matches!(l, Value::Ref(_)) || matches!(r, Value::Ref(_)) {
+                    self.equal_values(&l, &r)
+                } else {
+                    self.equal_values(&self.mat_val(l)?, &self.mat_val(r)?)
+                };
+                return Ok(Value::Bool(if op == "==" { equal } else { !equal }));
             }
             "in" => {
                 if matches!(r, Value::Ref(_)) {

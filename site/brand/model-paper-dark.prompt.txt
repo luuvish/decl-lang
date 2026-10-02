@@ -1,0 +1,14 @@
+Mode: built-in ImageGen, precise-object-edit, opaque output (transparent_background: false).
+Reference: site/src/assets/model-paper.png.
+Original output: exec-d085bf1a-8493-40a7-aa45-0eb55aa35a3d.png.
+Source asset: site/src/assets/model-paper-dark.png.
+
+Use case: precise-object-edit, background replacement.
+Input image 1 is the exact existing website artwork to EDIT, not a loose style reference. Produce a dark-theme version of this same image, matching its 1820×864 canvas and keeping every object in the same place.
+
+CHANGE ONLY the off-white surrounding backdrop outside the physical paper folio to uniform matte charcoal #141416 (RGB 20,20,22), matching the website's dark page. The entire outer boundary of the image must be this flat charcoal, with no white rectangle, pale border, bright haze, vignette, texture, gradient, frame, speckle, or detached paper fragments. Preserve natural subtle contact shadows around the paper on the dark surface. Opaque output.
+
+KEEP UNCHANGED: the warm ivory physical folio, all folded paper labels, printed gray tree connectors, the two blue reference threads, their arrow directions, accurate monospaced text, lighting on the folio, and the entire composition and perspective. The paper itself stays ivory and legible, only the surface it rests on becomes charcoal. Do not invert the image, recolor the labels, redraw or rearrange the diagram. No extra elements.
+
+Preserve text exactly: Topology; demo; services; links; Link; source; target; name: "gateway"; port: 8080; name: "auth"; port: 9001; gateway:8080; auth:9001; ref<Service>; checked relationship; source != target.
+Gray tree: demo branches to services and links; services branches to gateway and auth; links branches to Link. Blue source thread points at gateway and blue target thread points at auth. Keep all six folded labels and these exact destinations. Maintain the existing generous margins and full paper silhouette without cropping.

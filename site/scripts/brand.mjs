@@ -55,7 +55,7 @@ const text = (f, s, x, y, size, anchor = 'start') => {
 {
   const p = palette.dark;
   const W = 1200, H = 630, PAD = 80;
-  const tagline = ['Describe structured data. Generate it.', 'Validate the world against it.'];
+  const tagline = ['Describe your data.', 'A semantic modeling language for structured data.'];
   const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${W}" height="${H}" viewBox="0 0 ${W} ${H}">
   <rect width="${W}" height="${H}" fill="#0F1012"/>
   <g fill="${p.ink}">
@@ -63,8 +63,8 @@ const text = (f, s, x, y, size, anchor = 'start') => {
     <path d="${text(mono600, 'decl', PAD + 150, PAD + 105, 112)}"/>
   </g>
   <g fill="${p.text}">
-    <path d="${text(sans400, tagline[0], PAD, 392, 46)}"/>
-    <path d="${text(sans400, tagline[1], PAD, 452, 46)}"/>
+    <path d="${text(sans400, tagline[0], PAD, 380, 64)}"/>
+    <path d="${text(sans400, tagline[1], PAD, 445, 36)}"/>
   </g>
   <g fill="${p.muted}">
     <path d="${text(mono400, `v${version} · one spec, three implementations`, PAD, H - PAD, 24)}"/>

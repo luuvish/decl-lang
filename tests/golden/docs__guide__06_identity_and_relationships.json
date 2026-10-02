@@ -1,0 +1,1 @@
+{"graph":{"services":[{"port":8080},{"port":8080}],"links":[{"source":"$.services[0]","target":"$.services[1]"}]},"comparison":{"same_content":true,"same_entity":false,"target_port":8080,"target_path":"graph.services[1]"}}

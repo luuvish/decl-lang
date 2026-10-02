@@ -1,6 +1,52 @@
-# Validation Cases (ROADMAP §0.5)
+# Models and examples
 
-The generality benchmark: domain specs written with **no domain
+**Prove the model with a real problem.** These examples put types, relationships,
+derivations, constraints, and diagnostics in the same Decl description. Start
+with the Service Graph, then explore the Hardware Interconnect.
+
+| Model | What to look for | Run or read |
+|---|---|---|
+| Service Graph | Typed endpoints, reverse references, derived values, protocol rules, and diagnostics on external documents. | [Walkthrough](../guide/01_overview_by_example.md); [multi-module source](../../examples/svcgraph/main.decl) |
+| Identity | Two equal-valued services remain distinct reference targets. | [Runnable tutorial](../guide/06_identity_and_relationships.md) |
+| Hardware Interconnect | A 2×2 crossbar, width propagation through reverse references, flow and locality constraints, and reusable diagnostics. | [Source and output](01_interconnect.decl) |
+| Configuration | Defaults, optional values, quantities, policy layers, and external validation. | [API/config schema](02_config.decl) |
+| Test generation | Comprehension sweeps and constraints over generated cases. | [Fixture generation](03_fixtures.decl) |
+
+```bash
+decl evaluate examples/svcgraph/main.decl
+decl evaluate docs/examples/01_interconnect.decl
+```
+
+The [shared golden corpus](../../tests/golden/README.md) records expected output
+for these examples and the assembled tutorials. The three implementations replay
+it. The site evaluates its displayed example outputs during the build.
+
+## Compare the same problem
+
+The useful question for CUE, Pkl, Nickel, and Decl is how naturally each expresses
+**type + relationship + derivation + constraint + diagnostic** for the same
+model. Line count and a checklist of feature names do not establish that.
+
+A reproducible comparison should include:
+
+1. The same service topology or interconnect, with equal-valued but distinct
+   entities and valid typed connections.
+2. The same changes: a dangling endpoint, an incompatible protocol or width,
+   and a self-link. State the required meaning before implementing each model.
+3. Runnable source, pinned tool versions, commands, resolved outputs, and
+   failure reports. Include any external code needed to preserve identities,
+   derive reverse relationships, or check a rule.
+4. A discussion of where each model is natural, where conventions are needed,
+   and what the implementation cannot express. Separate modeling results from
+   separately controlled performance measurements.
+
+This repository currently supplies the Decl cases. Matched CUE, Pkl, and Nickel
+implementations and their results are not supplied by this documentation change;
+no comparative superiority claim follows from the Decl examples alone.
+
+## Original validation cases (ROADMAP §0.5)
+
+The original generality benchmark: domain specs written with **no domain
 keywords**, desk-checked against the specification alone — every point
 where writing them stalls is a specification defect by definition
 (requirements §4). These files are review artifacts of Phase 0; in

@@ -1,0 +1,27 @@
+// Equal contents do not merge distinct places. Both equality operators must
+// preserve references before literal materialization, in tree and query engines.
+type Service = { port: int }
+type Model = {
+    services: Service[2]
+    first: ref<Service>
+    again: ref<Service>
+    second: ref<Service>
+
+    assert same_content: services[0] == services[1]
+    assert same_target: first == again
+    assert different_targets: first != second
+    assert not_same_target: !(first == second)
+    assert not_different_target: !(first != again)
+    assert same_place_left: first == services[0]
+    assert same_place_right: services[0] == first
+    assert different_place_left: first != services[1]
+    assert different_place_right: services[1] != first
+    assert equal_literals: { port: 8080 } == { port: 8080 }
+}
+
+export output model: Model = {
+    services: [{ port: 8080 }, { port: 8080 }]
+    first: services[0]
+    again: services[0]
+    second: services[1]
+}

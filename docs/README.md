@@ -1,5 +1,16 @@
 # Decl Documentation
 
+**Describe your data.** Decl is a semantic modeling language for structured
+data: types, values, relationships, constraints, and diagnostics in one
+executable model.
+
+Start with [Why Decl](guide/00_why_decl.md), follow the
+[Service Graph walkthrough](guide/01_overview_by_example.md), then explore
+[identity and relationships](guide/06_identity_and_relationships.md) and the
+[hardware interconnect](examples/01_interconnect.decl). The
+[positioning document](design/04_positioning.md) records the four core messages
+and the evidence behind them. The specification below owns the exact rules.
+
 **Status: v0.4.6 (2026-09-08)** — v0.1 frozen 2026-08-31, revised through
 the v0.2 cycle (D31–D33, D29 amended, clarifications), v0.3 (member
 kinds read off `?` and `= e` with no `const` in record bodies, D4
@@ -29,6 +40,7 @@ charter and chapters remains a defect to fix on sight (§1.4).
 | [01. Design Requirements](design/01_requirements.md) | Goals, non-goals, capability requirements (describe / generate / validate / modules / tooling), the generality benchmark, and the quality bar — with the vision checklist promoted to requirements |
 | [02. Design Decisions](design/02_design_decisions.md) | The charter: principles P1–P7, decisions D1–D36, the rejected-syntax table, the comprehensive example, vision-checklist traceability, and the revision-tracked decision log — spec chapters must not contradict it |
 | [03. v0.2 Revision Candidates](design/03_v02_revision_candidates.md) | Findings from implementing Phases 2–4 and the Phase 5 real-world sweeps, adjudicated 2026-09-01 into revisions v0.1.4–v0.1.8 (the v0.2 cycle); each entry records its outcome |
+| [04. Describe your data](design/04_positioning.md) | Current positioning: the four core messages, proof examples, documentation journey, and application boundaries (informative) |
 
 ### Language specification (normative — the single source of truth)
 
@@ -52,12 +64,14 @@ charter and chapters remains a defect to fix on sight (§1.4).
 
 | Document | Description |
 |---|---|
-| [Why Decl](guide/00_why_decl.md) | Decl beside CUE, Pkl, jsonnet, Nickel, and JSON Schema: what each is for, a side-by-side table, where Decl differs, and when another tool is the better one |
+| [Why Decl](guide/00_why_decl.md) | Describe your data: one semantic model, tree structure and graph relationships, identity, and a small deterministic core |
 | [Decl by Example](guide/01_overview_by_example.md) | One scenario end to end — describe → generate → validate — with the evaluated JSON and the diagnostics it produces |
 | [Validating Documents](guide/02_validating_documents.md) | Tutorial: a machine inventory schema, a document that passes and one that does not, and how to read the report — root causes, paths, severities |
 | [Generating Configuration](guide/03_generating_configuration.md) | Tutorial: a cluster laid out by a constructor function and a comprehension, summarized by derived members, and re-layered with `with` |
 | [Quantities and Units](guide/04_quantities_and_units.md) | Tutorial: dimensions and units of your own, quantity arithmetic, and documents that speak in kilometres and hours |
 | [Modules and Packages](guide/05_modules_and_packages.md) | Tutorial: the service-graph example split across three modules, and a package with a manifest, a dependency, and a lock file |
+| [Identity and relationships](guide/06_identity_and_relationships.md) | Runnable proof of equal content and distinct reference targets; canonical-place identity, integrity, and reverse queries |
+| [Using the semantic model](guide/07_using_the_model.md) | Decl for AI agents and conceptual models: applications of current capabilities, their boundaries, and evidence before expansion |
 
 ### Tooling (informative)
 
@@ -72,8 +86,8 @@ charter and chapters remains a defect to fix on sight (§1.4).
 | [Performance](PERFORMANCE.md) | What the implementations do to avoid work, current figures and remaining boundaries, how to measure, the Rust runtime representation and its opt-in diagnostics, the measured history through 2026-09-10, and the dated record of the investigation since (sections 1 to 49) |
 | [Reproducible performance comparisons](../tests/benchmarks/COMPARE.md) | Frozen experiment manifests, output contracts, serial paired measurements, failure handling, and efficient iteration records |
 
-### Validation cases (§0.5 desk-check artifacts)
+### Models and examples
 
 | Document | Description |
 |---|---|
-| [examples/](examples/README.md) | The generality benchmark cases in the new syntax, with the desk-check findings they produced |
+| [examples/](examples/README.md) | Service Graph and Hardware Interconnect evidence, runnable examples, comparison criteria, and the original desk-check findings |

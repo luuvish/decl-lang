@@ -796,11 +796,15 @@ class Engine:
             if bad:
                 raise EvalErr(f"malformed pattern /{r.re}/: {bad}", "E4119")
             return compile_pattern(r.re).fullmatch(l) is not None
-        # a literal operand is materialized: equality is structural over values (§4.5)
-        if op == "==":
-            return self.equal_values(self.mat_val(l), self.mat_val(r))
-        if op == "!=":
-            return not self.equal_values(self.mat_val(l), self.mat_val(r))
+        if op in ("==", "!="):
+            # Preserve reference identity (§4.5): mat_val dereferences its operand.
+            # Only ordinary values need literal materialization for structural equality.
+            equal = (
+                self.equal_values(l, r)
+                if isinstance(l, Ref) or isinstance(r, Ref)
+                else self.equal_values(self.mat_val(l), self.mat_val(r))
+            )
+            return equal if op == "==" else not equal
         if op == "in":
             if isinstance(r, Ref):
                 r = self.deref(

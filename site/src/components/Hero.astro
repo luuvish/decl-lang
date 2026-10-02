@@ -1,0 +1,150 @@
+---
+import { Image, getImage } from 'astro:assets';
+import DefaultHero from '@astrojs/starlight/components/Hero.astro';
+import { Icon } from '@astrojs/starlight/components';
+import modelPaper from '../assets/model-paper.png';
+import modelPaperDark from '../assets/model-paper-dark.png';
+
+const base = import.meta.env.BASE_URL.replace(/\/$/, '');
+const isHome = Astro.url.pathname === `${base}/`;
+const { hero } = Astro.locals.starlightRoute.entry.data;
+const artwork = await Promise.all([
+  { theme: 'light', source: modelPaper },
+  { theme: 'dark', source: modelPaperDark },
+].map(async (image) => ({
+  ...image,
+  full: await getImage({ src: image.source, format: 'webp', quality: 90 }),
+})));
+const description = 'A paper model of a data tree: demo branches into services and links. The services branch contains gateway on port 8080 and auth on port 9001. Blue reference threads connect a Link’s source to gateway and its target to auth. Attached tabs show the derived endpoints gateway:8080 and auth:9001. The relationship satisfies source != target.';
+---
+
+{isHome ? (
+  <section class="home-hero" aria-labelledby="_top">
+    <div class="home-intro">
+      <h1 id="_top" data-page-title>{hero?.title}</h1>
+      <div class="home-summary">
+        <p class="home-eyebrow">A semantic modeling language</p>
+        <p class="home-tagline">Values, relationships, and rules.<br />One executable model.</p>
+      </div>
+    </div>
+    <figure class="home-model">
+      {artwork.map(({ theme, source, full }) => (
+        <a class="model-art" data-model-theme={theme} href={full.src} data-model-open aria-haspopup="dialog" aria-controls="model-preview" aria-label="Enlarge the tree and graph illustration">
+          <Image src={source} alt={description} format="webp" quality={85}
+            widths={[480, 800, 1200, 1600]} sizes="(min-width: 1440px) 1344px, calc(100vw - 48px)"
+            loading="eager" fetchpriority="high" decoding="async" />
+          <span class="model-enlarge">View larger</span>
+        </a>
+      ))}
+      <figcaption>Trees describe structure. Graphs describe relationships. Decl models both.</figcaption>
+    </figure>
+    <a class="home-next" href="#model">See the model below <Icon name="down-arrow" /></a>
+    <dialog id="model-preview" aria-labelledby="model-preview-title">
+      <div class="model-preview-heading">
+        <h2 id="model-preview-title">Structure and relationships, in one model</h2>
+        <form method="dialog"><button autofocus>Close</button></form>
+      </div>
+      <div class="model-preview-scroll" tabindex="0" role="region" aria-label="Enlarged illustration; scroll horizontally to explore">
+        {artwork.map(({ theme, full }) => (
+          <img data-model-theme={theme} src={full.src} width={full.attributes.width} height={full.attributes.height} alt={description} loading="lazy" />
+        ))}
+      </div>
+    </dialog>
+  </section>
+) : <DefaultHero />}
+
+<script>
+  const modelDialog = document.querySelector<HTMLDialogElement>('#model-preview');
+  if (modelDialog) {
+    document.querySelectorAll<HTMLAnchorElement>('[data-model-open]').forEach((modelOpen) => {
+      modelOpen.addEventListener('click', (event) => {
+        // Preserve the image link for modified clicks and browsers without dialogs.
+        if (event.metaKey || event.ctrlKey || event.shiftKey || event.altKey || !modelDialog.showModal) return;
+        event.preventDefault();
+        modelDialog.showModal();
+      });
+    });
+    modelDialog.addEventListener('click', (event) => {
+      if (event.target === modelDialog) modelDialog.close();
+    });
+  }
+</script>
+
+<style>
+  .home-hero {
+    padding-block: clamp(1.5rem, 2.5vw, 2rem) 0.5rem;
+    border-bottom: 1px solid var(--sl-color-hairline);
+  }
+  .home-intro { position: relative; z-index: 1; display: grid; align-items: center; gap: 1.5rem; }
+  .home-intro h1 {
+    margin: 0;
+    color: var(--sl-color-white);
+    font-size: clamp(2.6rem, 6.5vw, 6.1rem);
+    font-weight: 500;
+    line-height: 1.15;
+    letter-spacing: -0.05em;
+    text-wrap: balance;
+  }
+  .home-summary { font-family: var(--decl-font-ui); }
+  .home-eyebrow { margin: 0 0 0.75rem; color: var(--sl-color-gray-3); font-size: 0.9rem; letter-spacing: 0.06em; }
+  .home-tagline { margin: 0; color: var(--sl-color-white); font-size: clamp(1.2rem, 1.75vw, 1.625rem); line-height: 1.35; }
+  .home-model { margin: 1rem 0 0; }
+  .model-art { display: block; position: relative; cursor: zoom-in; }
+  .model-art img { display: block; width: 100%; height: auto; }
+  .model-enlarge {
+    position: absolute;
+    inset-inline-end: 0;
+    inset-block-end: 0;
+    padding: 0.4rem 0;
+    font-family: var(--decl-font-ui);
+    font-size: 0.8rem;
+    color: var(--sl-color-white);
+    text-decoration: underline;
+    text-underline-offset: 0.2em;
+  }
+  .home-model figcaption { margin-top: 0.5rem; font-size: clamp(1rem, 1.5vw, 1.3rem); line-height: 1.5; text-wrap: pretty; }
+  .home-next {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.8rem;
+    min-height: 2.75rem;
+    margin-top: 0.5rem;
+    color: var(--sl-color-white);
+    font-family: var(--decl-font-ui);
+    text-decoration: underline;
+    text-underline-offset: 0.2em;
+  }
+  .home-next:hover { text-decoration-thickness: 2px; }
+  #model-preview {
+    width: min(calc(100vw - 3rem), 100rem);
+    max-width: none;
+    max-height: 92svh;
+    margin: auto;
+    padding: 1.25rem;
+    border: 1px solid var(--sl-color-hairline);
+    color: var(--sl-color-text);
+    background: var(--sl-color-bg);
+  }
+  #model-preview::backdrop { background: rgb(0 0 0 / 65%); }
+  .model-preview-heading { display: flex; align-items: center; justify-content: space-between; gap: 1rem; margin-bottom: 1rem; font-family: var(--decl-font-ui); }
+  .model-preview-heading h2 { font: inherit; margin: 0; }
+  .model-preview-heading button { min-height: 2.75rem; padding: 0.5rem 1rem; border: 1px solid var(--sl-color-hairline); background: var(--sl-color-bg); color: var(--sl-color-white); font: inherit; cursor: pointer; }
+  .model-preview-scroll { overflow: auto; max-height: 70svh; }
+  .model-preview-scroll img { display: block; width: 100%; min-width: 58rem; max-width: none; height: auto; }
+  /* Follow the site's explicit theme, including a choice that differs from the OS. */
+  [data-model-theme='light'],
+  .model-preview-scroll img[data-model-theme='light'] { display: none; }
+  :global(:root[data-theme='light']) [data-model-theme='light'] { display: block; }
+  :global(:root[data-theme='light']) [data-model-theme='dark'] { display: none; }
+  @media (min-width: 72rem) {
+    .home-intro { grid-template-columns: minmax(0, 2.1fr) minmax(0, 1.1fr); gap: 3rem; }
+    .home-intro h1 { white-space: nowrap; }
+  }
+  @media (max-width: 40rem) {
+    .home-model { margin-top: 1.5rem; }
+    .model-art { padding-bottom: 1.75rem; }
+    .model-enlarge { color: var(--sl-color-white); }
+    .home-hero { padding-bottom: 1.5rem; }
+    .home-eyebrow { margin-bottom: 0.5rem; }
+  }
+</style>

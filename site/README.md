@@ -5,6 +5,19 @@ playground. Published to GitHub Pages by `.github/workflows/site.yml`
 on every push to `main` (repository Settings → Pages → Source: GitHub
 Actions, once).
 
+The homepage leads with **Describe your data.** A paper model shows an ownership
+tree with blue reference threads crossing its branches. Its reading order is the Service
+Graph, identity in immutable data, the three uses of one model, the hardware
+case, core philosophy, and installation. The opening's single action points to
+the on-page model; browser execution and the detailed guide follow that model,
+and installation lives in the final "Use Decl in your project" section. See
+[the positioning document](../docs/design/04_positioning.md) for the message
+architecture and the distinction between current capabilities and applications.
+The identity panel is evaluated from the guide's shared-golden example; the
+Service Graph and identity panels fail the build if their evaluation fails.
+The Start and Guide navigation lists each tutorial once in reading order;
+update `astro.config.mjs` when adding a guide.
+
 - `docs/` stays the single source of truth. `scripts/sync-docs.mjs`
   copies the specification, guide, design documents, revision log,
   validation cases (with their evaluated output), and the package
@@ -17,6 +30,9 @@ Actions, once).
 - Hand-written pages: `src/content/docs/index.mdx` (landing),
   `start/`, `playground.mdx`, `search.mdx` (the search results as a
   page). Starlight components overridden in `src/components/`:
+  `Hero.astro` (the illustrated opening, responsive images, and a native
+  enlargement dialog), `Header.astro` (Guide and Playground links on the
+  homepage; documentation pages retain their searchable header),
   `Search.astro` (a field in the header instead of a dialog; Enter opens
   the search page), `ThemeToggle.astro` (one button, light or dark,
   instead of a select), `Footer.astro` (the colophon).
@@ -56,7 +72,14 @@ comments quiet and italic, punctuation grey) and the four severities.
 The **faces**: Literata for prose and headings, IBM Plex Sans for the
 interface, IBM Plex Mono for code and the wordmark, with coding
 ligatures off so `..`, `||`, and `!=` look like what you type;
-self-hosted from Fontsource. Square corners, hairlines, no shadows.
+self-hosted from Fontsource. Square corners, hairlines, no UI shadows.
+The homepage illustration is a deliberate exception: tactile ivory paper,
+soft photographic shadows, and blue threads distinguish references from
+the graphite ownership tree. The page title, introduction, caption, and
+navigation remain live text. Image annotations are also described in alt
+text and in the runnable example immediately below. On small screens the
+full composition scales down; selecting it opens a keyboard-accessible
+dialog with a scrollable full-size image. Escape or Close dismisses it.
 
 Where it lives:
 
@@ -72,6 +95,17 @@ Where it lives:
 - `src/assets/sign-light.svg`, `sign-dark.svg` — the mark, Starlight's
   logo beside the title; `public/favicon.svg` — the mark on its tile,
   ink for dark tabs and paper for light ones through a media query.
+- `src/assets/model-paper.png` and `model-paper-dark.png` — the selected paper
+  tree/reference graph, extracted from the approved mockup with built-in
+  ImageGen. The dark variant changes only the surrounding backdrop to charcoal;
+  the physical paper stays ivory. Prompts are preserved in
+  `brand/model-paper.prompt.txt` and `brand/model-paper-dark.prompt.txt`.
+  Astro produces responsive WebP sizes at build time; the original PNGs stay
+  in the source tree. Both the hero and its enlargement follow the page's
+  `data-theme`, including an explicit user choice that differs from the OS.
+  The enlargement label uses the corresponding theme's ink color. Preserve
+  the six nodes, reference destinations, and derived values
+  when revising the artwork, and compare them with `src/samples/hero.decl`.
 - `src/components/decl-mode.ts` — the playground editor reads the same
   six roles as `--decl-syn-*`.
 

@@ -1,0 +1,1 @@
+{"demo":{"services":[{"name":"gateway","port":8080,"endpoint":"gateway:8080","inbound_count":0},{"name":"auth","port":9001,"endpoint":"auth:9001","inbound_count":1}],"links":[{"source":"$.services[0]","target":"$.services[1]"}]}}

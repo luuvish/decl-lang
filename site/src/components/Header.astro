@@ -1,0 +1,39 @@
+---
+import DefaultHeader from '@astrojs/starlight/components/Header.astro';
+import SiteTitle from '@astrojs/starlight/components/SiteTitle.astro';
+import SocialIcons from '@astrojs/starlight/components/SocialIcons.astro';
+import ThemeToggle from './ThemeToggle.astro';
+
+const base = import.meta.env.BASE_URL.replace(/\/$/, '');
+const isHome = Astro.url.pathname === `${base}/`;
+---
+
+{isHome ? (
+  <div class="home-header">
+    <SiteTitle />
+    <div class="home-navigation">
+      <nav aria-label="Main navigation">
+        <a href={`${base}/guide/00_why_decl/`}>Guide</a>
+        <a href={`${base}/playground/`}>Playground</a>
+      </nav>
+      <div class="home-social"><SocialIcons /></div>
+      <ThemeToggle />
+    </div>
+  </div>
+) : <DefaultHeader />}
+
+<style>
+  .home-header { display: flex; align-items: center; justify-content: space-between; gap: 1rem; height: 100%; max-width: 84rem; margin-inline: auto; }
+  .home-navigation, nav, .home-social { display: flex; align-items: center; gap: 1.75rem; }
+  nav a { display: inline-flex; align-items: center; min-height: 2.75rem; color: var(--sl-color-white); font-size: 0.95rem; text-decoration: none; }
+  nav a:hover { text-decoration: underline; text-underline-offset: 0.2em; }
+  .home-social :global(a) { display: inline-flex; padding: 0.6rem; color: var(--sl-color-white); }
+  @media (max-width: 40rem) {
+    .home-header { gap: 0.75rem; }
+    .home-navigation, nav { gap: 0.85rem; }
+    .home-social { display: none; }
+    .home-navigation :global(.label) { display: none; }
+    .home-navigation :global(starlight-theme-toggle button) { height: 2.75rem; width: 2.75rem; justify-content: center; padding: 0; }
+    nav a { font-size: 0.875rem; }
+  }
+</style>

@@ -749,9 +749,15 @@ export class Engine {
       if (bad) throw new EvalErr(`malformed pattern /${r.re}/: ${bad}`, 'E4119');
       return compilePattern(r.re).test(l);
     }
-    // a literal operand is materialized: equality is structural over values (§4.5)
-    if (op === '==') return this.equalValues(this.matVal(l), this.matVal(r));
-    if (op === '!=') return !this.equalValues(this.matVal(l), this.matVal(r));
+    if (op === '==' || op === '!=') {
+      // Preserve reference identity (§4.5): matVal dereferences its operand.
+      // Only ordinary values need literal materialization for structural equality.
+      const equal =
+        isRef(l) || isRef(r)
+          ? this.equalValues(l, r)
+          : this.equalValues(this.matVal(l), this.matVal(r));
+      return op === '==' ? equal : !equal;
+    }
     if (op === 'in') {
       if (isRef(r)) r = this.deref(r); // the container may be reached through a reference ($this, $parent)
       if (isRange(r)) return l >= r.lo && (r.excl ? l < r.hi : l <= r.hi);

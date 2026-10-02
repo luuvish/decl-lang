@@ -1,9 +1,12 @@
 # decl-lang
 
-**Decl** is a declarative language for describing, generating, and
-validating structured data — a JSON superset with a strong static type
-system, constraints with first-class diagnostics, references, physical
-quantities, generics, and modules. Pure, deterministic, terminating.
+**Describe your data.**
+
+Decl is a **semantic modeling language for structured data**. Types, values,
+derived values, relationships, constraints, and diagnostics form one executable
+model for generating data and validating documents. Trees describe structure;
+typed references preserve identity and relationships. Pure, deterministic,
+terminating.
 
 This crate is the **native Rust implementation** of the whole language:
 the tree-sitter grammar is compiled in, `decl` checks, evaluates,

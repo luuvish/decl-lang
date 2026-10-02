@@ -1,107 +1,128 @@
 ---
 title: Decl
-description: A declarative language for describing, generating, and validating structured data — a JSON superset with types, constraints, references, quantities, generics, and modules.
+description: Describe your data. Decl is a semantic modeling language for structured data — types, values, relationships, constraints, and diagnostics in one executable model.
 template: splash
 hero:
-  tagline: Describe structured data, generate values from the description, and validate documents against it. A JSON superset with a strong static type system, constraints with first-class diagnostics, references, physical quantities, generics, and modules. Pure, deterministic, terminating.
-  actions:
-    - text: Decl by example
-      link: /guide/01_overview_by_example/
-      icon: right-arrow
-    - text: Try it in the browser
-      link: /playground/
-      icon: rocket
-      variant: secondary
-    - text: Install
-      link: /start/install/
-      variant: minimal
-  image:
-    html: '<svg viewBox="6 5 28 30" role="img" aria-label="The subsumption sign, value ⊑ type"><path fill="currentColor" d="M8 7h24v4H12v10h20v4H8zM8 29h24v4H8z"/></svg>'
+  title: Describe your data.
 ---
 
-import { Card, CardGrid, Code, Tabs, TabItem, LinkCard } from '@astrojs/starlight/components';
+import { Card, CardGrid, Code, Tabs, TabItem, LinkButton, LinkCard } from '@astrojs/starlight/components';
 import hero from '../../samples/hero.decl?raw';
 import heroOut from '../../samples/synced/hero.json?raw';
+import identityOut from '../../samples/synced/identity.json?raw';
+
+<h2 id="model">A model you can read and run</h2>
+
+This Service Graph describes two services and a link between them. Defaults fill
+their ports, expressions derive their addresses, and a rule prevents self-links.
+The services form a tree; `ref<Service>` connects them without copying their values.
+
+<div class="two-col">
+  <Code code={hero} lang="decl" title="services.decl" wrap />
+  <Code code={heroOut} lang="json" title="Evaluated output" wrap />
+</div>
+
+The output includes the resolved values and relationships: `auth` has one incoming
+link, and each endpoint is a path to a service. Change the model in the playground
+to see its output and diagnostics update.
+
+<div class="example-actions">
+  <LinkButton href="/playground/" icon="right-arrow">Try this model in the browser</LinkButton>
+  <a href="/guide/01_overview_by_example/">Read the Service Graph guide</a>
+  <p>No installation needed.</p>
+</div>
+
+## Same values. Different entities.
+
+**Values describe content. References preserve identity.** Two services can have
+identical settings. A reference says **which one** a link reaches.
+
+<div class="identity-example">
+  <div>
+    <h3>Why does immutable data need references?</h3>
+    <p><strong>Not for mutation. For identity and relationships.</strong></p>
+    <p>Give two services the same <code>port: 8080</code>, then connect the first to the second. Their content is equal; their places in the model are distinct.</p>
+    <p>References compare canonical target paths; ordinary values compare content. Moving an entity to a different key or index changes its identity in the model.</p>
+    <a href="/guide/06_identity_and_relationships/">Explore identity and relationships →</a>
+  </div>
+  <Code code={identityOut} lang="json" title="Same content. Different targets." wrap />
+</div>
+
+## Describe once. Generate and validate.
+
+Use the same model for the data you create and the documents you receive.
 
 <div class="three">
 <CardGrid>
   <Card title="Describe" icon="document">
-    Types, defaults, derived members, and constraints live in one flat schema. No domain keywords — graphs, configs, and hardware are all just records, references, and rules.
+    Keep types, relationships, derived values, and rules in one description.
   </Card>
   <Card title="Generate" icon="setting">
-    Comprehensions and derivations turn a description into canonical JSON, byte-identical on every run and every implementation — and, with `@render`, into YAML, indented JSON, or text from a template, one file per element.
+    Resolve defaults and derived values. Produce JSON, YAML, or text from the model.
   </Card>
   <Card title="Validate" icon="approve-check">
-    Bind external documents to the same types. Every failure is a diagnostic with a path, a code, and a root cause — never a cascade.
+    Check external documents against those same rules. Get diagnostics that name the failed rule and its place in the data.
   </Card>
 </CardGrid>
 </div>
 
-## One file, three capabilities
+## From services to hardware
 
-<div class="two-col">
-  <Code code={hero} lang="decl" title="services.decl" />
-  <Code code={heroOut} lang="json" title="decl evaluate services.decl" />
-</div>
+The same core describes ports, connections, propagated widths, and rules across
+connected components. The Hardware Interconnect example puts these relationships
+to work in a 2×2 crossbar, with runnable source and evaluated output.
 
-The same `Service` type that generated `demo` validates `deployed` documents from the outside world:
+<LinkCard title="Explore the Hardware Interconnect" href="/examples/01_interconnect/" description="Follow typed connections, width propagation, and locality constraints through a complete model." />
 
-```bash
-decl validate services.decl --input deployed=prod.json
-```
+[More models and examples](/examples/): configuration, test generation, and the
+evidence behind each case.
 
-## Install
+## More semantics, not more programming.
+
+Immutable values. Pure evaluation. Deterministic results. A terminating core.
+Decl focuses on describing the meaning of data; the host application handles I/O
+and workflows. Read [why Decl is shaped this way](/guide/00_why_decl/).
+
+Applications can use that meaning too.
+[Decl for AI agents and conceptual models](/guide/07_using_the_model/) shows how
+existing models and diagnostics can guide another tool's work.
+
+## Use Decl in your project
+
+Install the implementation that fits your environment. All three share the same
+specified behavior and ship the CLI, formatter, and language server.
 
 <Tabs syncKey="channel">
   <TabItem label="npm">
     ```bash
     npm install -g decl-lang
     ```
-    The TypeScript reference implementation: `decl` and the `decl-lsp` language server (Node.js ≥ 22).
+    TypeScript reference implementation. Node.js ≥ 22.
   </TabItem>
   <TabItem label="pip">
     ```bash
     pip install decl-lang
     ```
-    The native Python implementation: `decl`, `decl-lsp`, and a Python API — no Node.js.
+    Native Python implementation and Python API.
   </TabItem>
   <TabItem label="cargo">
     ```bash
     cargo install decl-lang
     ```
-    The native Rust implementation: `decl` and `decl-lsp` with no Node or wasm.
+    Native Rust implementation.
   </TabItem>
   <TabItem label="brew">
     ```bash
     brew install luuvish/tap/decl-lang
     ```
-    The npm package through a Homebrew tap.
+    The npm package through the Homebrew tap.
   </TabItem>
 </Tabs>
 
-## Tools
+[Installation and editor setup](/start/install/) covers the next steps.
 
-The same language server, formatter, and evaluator in every implementation; the editor extensions and the REPL are clients of them.
-
-```bash
-decl check services.decl                     # the static checks, and nothing else
-decl fmt --check services.decl               # the canonical form
-decl repl services.decl                      # a session over the module: expressions, :type, :trace, undo
-decl-lsp --stdio                             # what VS Code, Zed, Neovim, Helix, and Emacs talk to
-```
-
-<CardGrid>
-  <LinkCard title="Command line" href="/tooling/01_cli/" description="check, evaluate, validate, fmt — universes, bound inputs, the --json report, exit codes." />
-  <LinkCard title="REPL" href="/tooling/02_repl/" description="A session over the evaluation universe: partial evaluation, session outputs, document edits with exact undo." />
-  <LinkCard title="Language server" href="/tooling/03_lsp/" description="Diagnostics, hover, completion, navigation, rename, code actions, semantic tokens — the same answers from all three servers." />
-  <LinkCard title="Editor extensions" href="/tooling/04_extension/" description="VS Code and Zed extensions; configurations for Neovim, Helix, Emacs, Vim, and Sublime." />
-</CardGrid>
-
-## Read on
-
-<CardGrid>
-  <LinkCard title="Decl by example" href="/guide/01_overview_by_example/" description="One scenario end to end — describe, generate, validate — with the JSON and diagnostics it produces." />
-  <LinkCard title="Specification" href="/specification/01_introduction/" description="The normative specification: types, expressions, constraints, modules, semantics, grammar, errors, and the standard library." />
-  <LinkCard title="Examples" href="/examples/" description="A hardware interconnect, an API config schema, and a fixture sweep — written with no domain keywords." />
-  <LinkCard title="Design" href="/design/00_vision/" description="Why the language is shaped this way: vision, requirements, and the decision charter." />
-</CardGrid>
+<nav class="reading-links" aria-label="Further reading">
+  <a href="/guide/00_why_decl/">Language guide</a>
+  <a href="/tooling/01_cli/">Command-line tools</a>
+  <a href="/specification/01_introduction/">Specification</a>
+</nav>

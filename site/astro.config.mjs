@@ -13,7 +13,7 @@ const decl = JSON.parse(readFileSync(new URL('./grammars/decl.tmLanguage.json', 
 // luuvish.github.io) or any other host
 const base = process.env.SITE_BASE ?? '/';
 const site = process.env.SITE_URL ?? 'https://decl-lang.org';
-const description = 'A declarative language for describing, generating, and validating structured data.';
+const description = 'Describe your data. A semantic modeling language for structured data — types, values, relationships, constraints, and diagnostics in one model.';
 const card = `${site}${base.replace(/\/$/, '')}/og.png`;
 
 export default defineConfig({
@@ -38,6 +38,8 @@ export default defineConfig({
       ],
       social: [{ icon: 'github', label: 'GitHub', href: 'https://github.com/luuvish/decl-lang' }],
       components: {
+        Hero: './src/components/Hero.astro', // the homepage's paper tree and reference graph
+        Header: './src/components/Header.astro', // quiet homepage navigation; docs keep their search
         Footer: './src/components/Footer.astro', // the default footer plus the colophon
         ThemeSelect: './src/components/ThemeToggle.astro', // one button, light or dark
         Search: './src/components/Search.astro', // a field in the header; the results are a page
@@ -71,12 +73,24 @@ export default defineConfig({
         {
           label: 'Start',
           items: [
+            { label: 'Why Decl', slug: 'guide/00_why_decl' },
+            { label: 'Service Graph walkthrough', slug: 'guide/01_overview_by_example' },
+            { label: 'Identity and relationships', slug: 'guide/06_identity_and_relationships' },
             { label: 'Install', slug: 'start/install' },
             { label: 'Command line', slug: 'start/cli' },
             { label: 'Playground', slug: 'playground' },
           ],
         },
-        { label: 'Guide', items: [{ autogenerate: { directory: 'guide' } }] },
+        {
+          label: 'Guide',
+          items: [
+            { slug: 'guide/02_validating_documents' },
+            { slug: 'guide/03_generating_configuration' },
+            { slug: 'guide/04_quantities_and_units' },
+            { slug: 'guide/05_modules_and_packages' },
+            { slug: 'guide/07_using_the_model' },
+          ],
+        },
         { label: 'Examples', items: [{ autogenerate: { directory: 'examples' } }] },
         { label: 'Specification', items: [{ autogenerate: { directory: 'specification' } }] },
         {

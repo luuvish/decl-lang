@@ -1,5 +1,8 @@
 # Decl by Example
 
+**Describe your data** with a Service Graph: structure, relationships, derived
+meaning, constraints, and diagnostics in one model.
+
 One scenario, walked end to end through the language's three
 capabilities: **describe** a specification, **generate** values from
 it, **validate** external data against it. This guide is informative —
@@ -82,7 +85,7 @@ export type Link = {
     target: ref<Service>
     weight?: int = 1
 
-    assert no_self_link: source.name != target.name
+    assert no_self_link: source != target
     assert protocols: source.protocol == target.protocol
         else protocol_mismatch(source.protocol, target.protocol)
 }
@@ -105,6 +108,9 @@ export type Topology = {
 - `ref<Service>` is a non-owning reference: links form a graph over
   services owned elsewhere; member access reads through it
   (`source.name`).
+- `source != target` compares identity: the two references must name different
+  places. Equal settings do not make two services the same entity. The
+  [identity tutorial](06_identity_and_relationships.md) demonstrates this directly.
 - The `diagnostic` declaration is a reusable, translatable template
   with a stable catalog id; the assert that references it keeps its
   own occurrence id (`topology.decl:Link.protocols`).
@@ -143,7 +149,7 @@ pipeline — type check, defaults, derived members, constraints
 ([05](../specification/05_declarations.md) §5.5,
 [09](../specification/09_semantics.md)). Inside the literal, `services`
 is a sibling reference, and in a `ref<Service>` position it denotes the
-*reference*, not a copy. `decl eval` emits
+*reference*, not a copy. `decl evaluate topology.decl --output demo` emits
 ([10. Interchange](../specification/10_interchange.md)):
 
 ```json
@@ -177,7 +183,7 @@ Worth noticing:
 - References serialize as **document-relative paths**
   (`"$.services[1]"`) — the document never names its own root, so it
   can re-bind anywhere.
-- The output is plain JSON. Bind it back to an `input Topology` and it
+- The output is plain JSON. Bind it back to an `input external: Topology` and it
   validates and re-serializes byte-identically — round-trip is a
   normative property, not a hope
   ([10](../specification/10_interchange.md) §10.5).

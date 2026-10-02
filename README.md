@@ -1,9 +1,30 @@
 # Decl Language
 
-**Decl** is a general-purpose declarative language for describing, generating,
-and validating structured data. The three capabilities are not separate modes
-but three views of a single evaluation semantics — evaluation always produces
-a pair of *(resolved values, diagnostics)*.
+**Describe your data.**
+
+**Decl** is a **semantic modeling language for structured data**. Describe types,
+values, derived values, relationships, constraints, and diagnostics in one
+executable model — a single source of truth for generating data and validating
+the documents you receive. Evaluation produces *(resolved values, diagnostics)*.
+
+**Trees describe structure. Graphs describe relationships. Decl models both.**
+Composition forms the data's tree; `ref<T>` adds typed relationships between
+places in that tree. References are checked, serialize as canonical paths, and
+can be queried in reverse with `$referrers`.
+
+**Values describe content. References preserve identity.** Two entities can have
+equal values and still be different targets. Identity is a canonical place in
+an evaluation universe; it does not persist automatically when that place moves.
+See the [runnable identity example](docs/guide/06_identity_and_relationships.md).
+
+**More semantics, not more programming.** Decl keeps a pure, deterministic,
+terminating core focused on data meaning. The host owns I/O and application
+workflows. Configuration, hardware models, and agent-assisted validation are
+applications of the same core.
+
+Start with the [Service Graph walkthrough](docs/guide/01_overview_by_example.md),
+then explore the [hardware interconnect](docs/examples/01_interconnect.decl).
+Try both in the [browser playground](https://decl-lang.org/playground/).
 
 - **Describe** — declare types, schemas, constraints, and diagnostics in a
   form people can read and review.

@@ -1,0 +1,14 @@
+// @expect-phase: binding
+// @expect-error: E6001
+// @expect-message: a service must not link to itself
+type Service = { port: int }
+type Link = {
+    source: ref<Service>
+    target: ref<Service>
+    assert different_services: source != target
+        else error `a service must not link to itself`
+}
+output graph: { services: Service[2], links: Link[] } = {
+    services: [{ port: 8080 }, { port: 8080 }]
+    links: [{ source: services[0], target: services[0] }]
+}

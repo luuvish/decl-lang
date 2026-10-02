@@ -1,9 +1,12 @@
 # decl-lang
 
-**Decl** is a declarative language for describing, generating, and
-validating structured data — a JSON superset with a strong static type
-system, constraints with first-class diagnostics, references, physical
-quantities, generics, and modules. Pure, deterministic, terminating.
+**Describe your data.**
+
+Decl is a **semantic modeling language for structured data**. Types, values,
+derived values, relationships, constraints, and diagnostics form one executable
+model for generating data and validating documents. Trees describe structure;
+typed references preserve identity and relationships. Pure, deterministic,
+terminating.
 
 This package is the **reference implementation** of the whole language:
 the `decl` command-line tool, the canonical formatter, the `decl-lsp`

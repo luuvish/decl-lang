@@ -214,5 +214,13 @@
   {
     "module": "tests/packages/app/main.decl",
     "golden": "tests/golden/tests__packages__app.json"
+  },
+  {
+    "module": "site/src/samples/hero.decl",
+    "golden": "tests/golden/site__hero.json"
+  },
+  {
+    "markdown": "docs/guide/06_identity_and_relationships.md",
+    "golden": "tests/golden/docs__guide__06_identity_and_relationships.json"
   }
 ]
